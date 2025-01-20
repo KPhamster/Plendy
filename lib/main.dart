@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'screens/auth_screen.dart';
+import 'screens/home_screen.dart';
 import 'services/auth_service.dart';
 
 void main() async {
@@ -21,17 +22,11 @@ class MyApp extends StatelessWidget {
       home: StreamBuilder<User?>(
         stream: AuthService().authStateChanges,
         builder: (context, snapshot) {
-          // Show loading indicator while checking auth state
           if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Scaffold(
-              body: Center(
-                child: CircularProgressIndicator(),
-              ),
-            );
+            return Center(child: CircularProgressIndicator());
           }
           
-          // Show auth screen if not logged in
-          return AuthScreen();
+          return snapshot.hasData ? HomeScreen() : AuthScreen();
         },
       ),
     );
