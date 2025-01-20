@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # plendy
 
 A new Flutter project.
@@ -14,3 +15,6 @@ A few resources to get you started if this is your first Flutter project:
 For help getting started with Flutter development, view the
 [online documentation](https://docs.flutter.dev/), which offers tutorials,
 samples, guidance on mobile development, and a full API reference.
+=======
+# Plendy
+>>>>>>> 462f1c349360f5ce90835ec3e71597819f813f52
