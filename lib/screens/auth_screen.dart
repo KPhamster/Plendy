@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:plendy/screens/register_screen.dart';
 
 class AuthScreen extends StatefulWidget {
   @override
@@ -67,17 +68,11 @@ class _AuthScreenState extends State<AuthScreen> {
                   child: Text('Sign In'),
                 ),
                 TextButton(
-                  onPressed: () async {
-                    try {
-                      await _authService.signUpWithEmail(
-                        _emailController.text,
-                        _passwordController.text,
-                      );
-                    } catch (e) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text(e.toString())),
-                      );
-                    }
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (context) => RegisterScreen()),
+                    );
                   },
                   child: Text('Create Account'),
                 ),
