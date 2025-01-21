@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'screens/auth_screen.dart';
-import 'screens/home_screen.dart';
+import 'screens/main_screen.dart';
 import 'services/auth_service.dart';
 
 void main() async {
@@ -26,37 +26,11 @@ class MyApp extends StatelessWidget {
             return Center(child: CircularProgressIndicator());
           }
           
-          return snapshot.hasData ? HomeScreen() : AuthScreen();
+          // Print debug info
+          print('Auth state changed: ${snapshot.hasData ? 'Logged in' : 'Logged out'}');
+          
+          return snapshot.hasData ? MainScreen() : AuthScreen();
         },
-      ),
-    );
-  }
-}
-
-class MainScreen extends StatelessWidget {
-  final _authService = AuthService();
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        actions: [
-          IconButton(
-            icon: Icon(Icons.logout),
-            onPressed: () async {
-              try {
-                await _authService.signOut();
-              } catch (e) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text(e.toString())),
-                );
-              }
-            },
-          ),
-        ],
-      ),
-      body: Center(
-        child: Text('Welcome ${_authService.currentUser?.email}!'),
       ),
     );
   }
