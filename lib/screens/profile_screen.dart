@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
+import '../services/user_service.dart';
 import 'edit_profile_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -9,9 +10,28 @@ class ProfileScreen extends StatefulWidget {
 
 class _ProfileScreenState extends State<ProfileScreen> {
   final _authService = AuthService();
+  final _userService = UserService();
+  String? _username;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadUsername();
+  }
+
+  Future<void> _loadUsername() async {
+    final user = _authService.currentUser;
+    if (user != null) {
+      final username = await _userService.getUserUsername(user.uid);
+      setState(() {
+        _username = username;
+      });
+    }
+  }
 
   void _refreshProfile() {
-    setState(() {});  // This will rebuild the widget with new data
+    setState(() {});
+    _loadUsername();
   }
 
   @override
@@ -51,6 +71,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ),
             ),
             SizedBox(height: 16),
+            Text(
+              '@${_username ?? 'username_not_set'}',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            SizedBox(height: 8),
             Text(
               'Email: ${user?.email ?? 'No email'}',
               style: TextStyle(fontSize: 18),
