@@ -23,11 +23,19 @@ class _MainScreenState extends State<MainScreen> {
       BookmarksScreen(),
       ProfileScreen(),
     ];
+  }
+  
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    
+    // Set the context in the sharing service
+    _sharingService.setContext(context);
     
     // Listen for shared files
     _sharingService.sharedFiles.addListener(() {
       final sharedFiles = _sharingService.sharedFiles.value;
-      if (sharedFiles != null) {
+      if (sharedFiles != null && sharedFiles.isNotEmpty) {
         _handleSharedFiles(sharedFiles);
       }
     });
@@ -48,78 +56,11 @@ class _MainScreenState extends State<MainScreen> {
   
   // Handle shared files
   void _handleSharedFiles(List<SharedMediaFile> sharedFiles) {
-    // Show a snackbar or dialog with the shared files
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Received ${sharedFiles.length} shared file(s)'),
-        duration: Duration(seconds: 3),
-        action: SnackBarAction(
-          label: 'View',
-          onPressed: () {
-            // Handle the action, e.g., navigate to a detail screen
-            _showSharedContentDialog(sharedFiles);
-          },
-        ),
-      ),
-    );
-    
-    // Reset after handling
-    _sharingService.resetSharedItems();
+    // Navigate to the dedicated receive share screen
+    _sharingService.showReceiveShareScreen(context, sharedFiles);
   }
   
-  // Show shared content in a dialog
-  void _showSharedContentDialog(List<SharedMediaFile> files) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Shared Files'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Files:'),
-              SizedBox(height: 4),
-              ...files.map((file) {
-                return Container(
-                  padding: EdgeInsets.all(8),
-                  margin: EdgeInsets.only(bottom: 8),
-                  decoration: BoxDecoration(
-                    color: Colors.grey[200],
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('Type: ${file.type}'),
-                      SizedBox(height: 4),
-                      Text('Path: ${file.path}', style: TextStyle(fontSize: 12)),
-                      if (file.thumbnail != null) SizedBox(height: 4),
-                      if (file.thumbnail != null) Text('Thumbnail: ${file.thumbnail}', style: TextStyle(fontSize: 12)),
-                    ],
-                  ),
-                );
-              }).toList(),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text('Close'),
-          ),
-          TextButton(
-            onPressed: () {
-              // Here you can add code to handle the shared content
-              // For example, save it to your database or process it
-              Navigator.pop(context);
-            },
-            child: Text('Save'),
-          ),
-        ],
-      ),
-    );
-  }
+  // This method is removed as we're now using the dedicated screen
 
   @override
   Widget build(BuildContext context) {
