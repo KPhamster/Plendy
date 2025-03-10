@@ -43,6 +43,8 @@ dependencies:
   firebase_storage: ^11.7.7
   cloud_firestore: ^4.17.5
   receive_sharing_intent: 1.8.1
+  any_link_preview: ^3.0.1
+  url_launcher: ^6.2.5
 
 dev_dependencies:
   flutter_test:
