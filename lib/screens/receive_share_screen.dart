@@ -294,7 +294,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
               ),
               SizedBox(height: 12),
               Text(
-                'Tap to open in Instagram app',
+                'Tap to play video',
                 style: TextStyle(
                   color: Colors.grey[700],
                 ),
@@ -360,7 +360,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
   Widget _buildImagePreview(SharedMediaFile file) {
     try {
       return Container(
-        height: 200,
+        height: 400,
         width: double.infinity,
         child: Image.file(
           File(file.path),
@@ -369,7 +369,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
       );
     } catch (e) {
       return Container(
-        height: 200,
+        height: 400,
         width: double.infinity,
         color: Colors.grey[300],
         child: Center(
@@ -381,7 +381,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
 
   Widget _buildVideoPreview(SharedMediaFile file) {
     return Container(
-      height: 200,
+      height: 400,
       width: double.infinity,
       color: Colors.black87,
       child: Center(
@@ -425,7 +425,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
     }
     
     return Container(
-      height: 150,
+      height: 400,
       width: double.infinity,
       color: Colors.grey[200],
       child: Center(
@@ -594,14 +594,13 @@ class _InstagramReelEmbedState extends State<InstagramReelEmbed> {
           }
           .container {
             position: relative;
-            width: 100%;
-            height: 100vh;
+            height: 100%;
             display: flex;
             justify-content: center;
             align-items: center;
           }
           .embed-container {
-            width: 100%;
+            height: 100%;
             max-width: 540px;
             margin: 0 auto;
           }
@@ -609,7 +608,7 @@ class _InstagramReelEmbedState extends State<InstagramReelEmbed> {
             border: none !important;
             margin: 0 !important;
             padding: 0 !important;
-            width: 100% !important;
+            height: 100% !important;
           }
         </style>
       </head>
@@ -680,7 +679,7 @@ class _InstagramReelEmbedState extends State<InstagramReelEmbed> {
           alignment: Alignment.center,
           children: [
             Container(
-              height: 500, // Increased height for better visibility
+              height: 1000, // Increased height for better visibility
               width: double.infinity,
               decoration: BoxDecoration(
                 border: Border.all(color: Colors.grey[300]!),
@@ -691,7 +690,7 @@ class _InstagramReelEmbedState extends State<InstagramReelEmbed> {
             if (isLoading)
               Container(
                 width: double.infinity,
-                height: 500,
+                height: 1000,
                 color: Colors.white.withOpacity(0.7),
                 child: Center(
                   child: Column(
