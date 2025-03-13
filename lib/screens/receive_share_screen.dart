@@ -681,7 +681,7 @@ class _InstagramReelEmbedState extends State<InstagramReelEmbed> {
   @override
   Widget build(BuildContext context) {
     // Define the container height based on expansion state
-    final double containerHeight = isExpanded ? 1000 : 400;
+    final double containerHeight = isExpanded ? 1200 : 400;
     
     return Column(
       children: [
