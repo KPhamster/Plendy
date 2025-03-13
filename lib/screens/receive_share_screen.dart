@@ -40,7 +40,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
               child: widget.sharedFiles.isEmpty
                   ? Center(child: Text('No shared content received'))
                   : ListView.builder(
-                      padding: EdgeInsets.all(16),
+                      padding: EdgeInsets.symmetric(vertical: 16),
                       itemCount: widget.sharedFiles.length,
                       itemBuilder: (context, index) {
                         final file = widget.sharedFiles[index];
