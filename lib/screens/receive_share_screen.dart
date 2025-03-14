@@ -1,9 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 import 'dart:io';
+import 'dart:convert';
 import 'package:any_link_preview/any_link_preview.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:dio/dio.dart';
+import '../models/experience.dart';
+import '../services/experience_service.dart';
 
 class ReceiveShareScreen extends StatefulWidget {
   final List<SharedMediaFile> sharedFiles;
@@ -20,6 +26,338 @@ class ReceiveShareScreen extends StatefulWidget {
 }
 
 class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
+  // Experience Service
+  final ExperienceService _experienceService = ExperienceService();
+  
+  // Form controllers
+  final _titleController = TextEditingController();
+  final _yelpUrlController = TextEditingController();
+  final _websiteUrlController = TextEditingController();
+  final _searchController = TextEditingController();
+  
+  // Form validation key
+  final _formKey = GlobalKey<FormState>();
+  
+  // Experience type selection
+  ExperienceType _selectedType = ExperienceType.restaurant;
+  
+  // Location selection
+  Location? _selectedLocation;
+  bool _isSelectingLocation = false;
+  List<Map<String, dynamic>> _searchResults = [];
+  
+  // Google Maps API key - replace with your actual key
+  static const String _apiKey = 'YOUR_GOOGLE_MAPS_API_KEY';
+  final Dio _dio = Dio();
+  
+  // Loading state
+  bool _isSaving = false;
+  
+  @override
+  void dispose() {
+    _titleController.dispose();
+    _yelpUrlController.dispose();
+    _websiteUrlController.dispose();
+    _searchController.dispose();
+    super.dispose();
+  }
+  
+  // Handle experience save along with shared content
+  Future<void> _saveExperience() async {
+    if (!_formKey.currentState!.validate()) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Please fill in required fields correctly')),
+      );
+      return;
+    }
+    
+    if (_selectedLocation == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Please select a location')),
+      );
+      return;
+    }
+    
+    setState(() {
+      _isSaving = true;
+    });
+    
+    try {
+      // Create the experience object
+      final now = DateTime.now();
+      final newExperience = Experience(
+        id: '', // ID will be assigned by Firestore
+        name: _titleController.text,
+        description: 'Created from shared content',
+        location: _selectedLocation!,
+        type: _selectedType,
+        yelpUrl: _yelpUrlController.text.isNotEmpty ? _yelpUrlController.text : null,
+        website: _websiteUrlController.text.isNotEmpty ? _websiteUrlController.text : null,
+        createdAt: now,
+        updatedAt: now,
+      );
+      
+      // Save the experience to Firestore
+      final experienceId = await _experienceService.createExperience(newExperience);
+      
+      // TODO: Add code to save the shared media files appropriately
+      // For example, if they're images, upload them as photos for the experience
+      // If they're links, associate them with the experience
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Experience created successfully')),
+      );
+      
+      // Return to the main screen
+      widget.onCancel();
+    } catch (e) {
+      print('Error saving experience: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error creating experience: $e')),
+      );
+      setState(() {
+        _isSaving = false;
+      });
+    }
+  }
+  
+  // Search for places using Google Places API (New)
+  Future<void> _searchPlaces(String query) async {
+    if (query.isEmpty) {
+      setState(() {
+        _searchResults = [];
+      });
+      return;
+    }
+    
+    setState(() {
+      _isSelectingLocation = true;
+    });
+    
+    try {
+      // Get location for better results
+      Position? position;
+      try {
+        LocationPermission permission = await Geolocator.checkPermission();
+        if (permission == LocationPermission.denied) {
+          permission = await Geolocator.requestPermission();
+        }
+        
+        if (permission == LocationPermission.whileInUse || 
+            permission == LocationPermission.always) {
+          position = await Geolocator.getCurrentPosition();
+        }
+      } catch (e) {
+        print('Error getting location: $e');
+      }
+      
+      // Prepare request body
+      Map<String, dynamic> requestBody = {
+        "input": query
+      };
+      
+      // Add location bias if we have position
+      if (position != null) {
+        requestBody["locationBias"] = {
+          "circle": {
+            "center": {
+              "latitude": position.latitude,
+              "longitude": position.longitude
+            },
+            "radius": 50000.0 // 50km radius
+          }
+        };
+      }
+      
+      // Call Google Places Autocomplete API (New)
+      final response = await _dio.post(
+        'https://places.googleapis.com/v1/places:autocomplete',
+        data: requestBody,
+        options: Options(
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Goog-Api-Key': _apiKey,
+            'X-Goog-FieldMask': 'suggestions.placePrediction.place,suggestions.placePrediction.placeId,suggestions.placePrediction.text'
+          },
+        ),
+      );
+      
+      if (response.statusCode == 200) {
+        final data = response.data;
+        List<Map<String, dynamic>> results = [];
+        
+        if (data['suggestions'] != null) {
+          for (var suggestion in data['suggestions']) {
+            if (suggestion['placePrediction'] != null) {
+              final placePrediction = suggestion['placePrediction'];
+              results.add({
+                'placeId': placePrediction['placeId'],
+                'description': placePrediction['text']['text'],
+                'place': placePrediction['place']
+              });
+            }
+          }
+        }
+        
+        setState(() {
+          _searchResults = results;
+        });
+      }
+    } catch (e) {
+      print('Error searching places: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error searching places')),
+      );
+    } finally {
+      setState(() {
+        _isSelectingLocation = false;
+      });
+    }
+  }
+  
+  // Get place details and set as selected location
+  Future<void> _selectPlace(String placeId) async {
+    setState(() {
+      _isSelectingLocation = true;
+    });
+    
+    try {
+      // Call Google Places Details API (New)
+      final response = await _dio.get(
+        'https://places.googleapis.com/v1/places/$placeId',
+        options: Options(
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Goog-Api-Key': _apiKey,
+            'X-Goog-FieldMask': 'id,displayName,formattedAddress,location,addressComponents'
+          },
+        ),
+      );
+      
+      if (response.statusCode == 200) {
+        final data = response.data;
+        
+        // Extract coordinates
+        final location = data['location'];
+        final lat = location['latitude'];
+        final lng = location['longitude'];
+        
+        // Extract address components
+        String? address = data['formattedAddress'];
+        String? city, state, country, zipCode;
+        
+        if (data['addressComponents'] != null) {
+          for (var component in data['addressComponents']) {
+            List<dynamic> types = component['types'];
+            if (types.contains('locality')) {
+              city = component['longText'];
+            } else if (types.contains('administrative_area_level_1')) {
+              state = component['shortText']; // Using short name for state
+            } else if (types.contains('country')) {
+              country = component['longText'];
+            } else if (types.contains('postal_code')) {
+              zipCode = component['longText'];
+            }
+          }
+        }
+        
+        setState(() {
+          _selectedLocation = Location(
+            latitude: lat,
+            longitude: lng,
+            address: address,
+            city: city,
+            state: state,
+            country: country,
+            zipCode: zipCode,
+          );
+          _searchController.text = data['displayName']['text'] ?? address ?? '';
+        });
+      }
+    } catch (e) {
+      print('Error getting place details: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error selecting location')),
+      );
+    } finally {
+      setState(() {
+        _isSelectingLocation = false;
+      });
+    }
+  }
+  
+  // Show location search dialog
+  Future<void> _showLocationSearchDialog() async {
+    // Reset search results
+    setState(() {
+      _searchResults = [];
+    });
+    
+    await showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          return AlertDialog(
+            title: Text('Search for a location'),
+            content: Container(
+              width: double.maxFinite,
+              height: 400,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: _searchController,
+                    decoration: InputDecoration(
+                      labelText: 'Search',
+                      hintText: 'Enter location name',
+                      prefixIcon: Icon(Icons.search),
+                      border: OutlineInputBorder(),
+                    ),
+                    onChanged: (value) async {
+                      await _searchPlaces(value);
+                      setDialogState(() {}); // Update dialog state
+                    },
+                  ),
+                  SizedBox(height: 8),
+                  if (_isSelectingLocation)
+                    Center(child: CircularProgressIndicator())
+                  else if (_searchResults.isNotEmpty)
+                    Expanded(
+                      child: ListView.builder(
+                        shrinkWrap: true,
+                        itemCount: _searchResults.length,
+                        itemBuilder: (context, index) {
+                          final prediction = _searchResults[index];
+                          return ListTile(
+                            title: Text(prediction['description']),
+                            onTap: () async {
+                              Navigator.of(context).pop();
+                              await _selectPlace(prediction['placeId']);
+                            },
+                          );
+                        },
+                      ),
+                    )
+                  else if (_searchController.text.isNotEmpty && _searchResults.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.all(8.0),
+                      child: Text('No locations found'),
+                    ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: Text('Cancel'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -34,103 +372,255 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
         ],
       ),
       body: SafeArea(
-        child: Column(
-          children: [
-            Expanded(
-              child: widget.sharedFiles.isEmpty
-                  ? Center(child: Text('No shared content received'))
-                  : ListView.builder(
-                      padding: EdgeInsets.symmetric(vertical: 16),
-                      itemCount: widget.sharedFiles.length,
-                      itemBuilder: (context, index) {
-                        final file = widget.sharedFiles[index];
-                        return Card(
-                          margin: EdgeInsets.only(bottom: 16),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              // Display media content or appropriate icon
-                              _buildMediaPreview(file),
-                                
-                              // Display metadata (only for non-URL content)
-                              if (!(file.type == SharedMediaType.text && _isValidUrl(file.path)))
-                                Padding(
-                                  padding: const EdgeInsets.all(16.0),
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        'Type: ${_getMediaTypeString(file.type)}',
-                                        style: TextStyle(fontWeight: FontWeight.bold),
-                                      ),
-                                      SizedBox(height: 8),
-                                      if (file.type != SharedMediaType.text)
-                                        Text('Path: ${file.path}'),
-                                      if (file.type == SharedMediaType.text && !_isValidUrl(file.path))
-                                        Text('Content: ${file.path}'),
-                                      if (file.thumbnail != null) ...[
-                                        SizedBox(height: 8),
-                                        Text('Thumbnail: ${file.thumbnail}'),
-                                      ],
-                                    ],
-                                  ),
-                                ),
-                              
-                              // For URLs, we'll only show the preview and open button
-                              if (file.type == SharedMediaType.text && _isValidUrl(file.path))
-                                Padding(
-                                  padding: const EdgeInsets.all(16.0),
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        'Type: ${_getMediaTypeString(file.type)}',
-                                        style: TextStyle(fontWeight: FontWeight.bold),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                            ],
-                          ),
-                        );
-                      },
-                    ),
-            ),
-            Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Row(
+        child: _isSaving 
+            ? Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    CircularProgressIndicator(),
+                    SizedBox(height: 16),
+                    Text('Saving experience...'),
+                  ],
+                ),
+              )
+            : Column(
                 children: [
+                  // Shared content display (existing code)
                   Expanded(
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        padding: EdgeInsets.symmetric(vertical: 16),
+                    child: SingleChildScrollView(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // Display the shared content
+                          if (widget.sharedFiles.isEmpty)
+                            Center(child: Text('No shared content received'))
+                          else
+                            ListView.builder(
+                              padding: EdgeInsets.symmetric(vertical: 16),
+                              shrinkWrap: true,
+                              physics: NeverScrollableScrollPhysics(),
+                              itemCount: widget.sharedFiles.length,
+                              itemBuilder: (context, index) {
+                                final file = widget.sharedFiles[index];
+                                return Card(
+                                  margin: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      _buildMediaPreview(file),
+                                        
+                                      // Display metadata (only for non-URL content)
+                                      if (!(file.type == SharedMediaType.text && _isValidUrl(file.path)))
+                                        Padding(
+                                          padding: const EdgeInsets.all(16.0),
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                'Type: ${_getMediaTypeString(file.type)}',
+                                                style: TextStyle(fontWeight: FontWeight.bold),
+                                              ),
+                                              SizedBox(height: 8),
+                                              if (file.type != SharedMediaType.text)
+                                                Text('Path: ${file.path}'),
+                                              if (file.type == SharedMediaType.text && !_isValidUrl(file.path))
+                                                Text('Content: ${file.path}'),
+                                              if (file.thumbnail != null) ...[
+                                                SizedBox(height: 8),
+                                                Text('Thumbnail: ${file.thumbnail}'),
+                                              ],
+                                            ],
+                                          ),
+                                        ),
+                                      
+                                      // For URLs, we'll only show the preview and open button
+                                      if (file.type == SharedMediaType.text && _isValidUrl(file.path))
+                                        Padding(
+                                          padding: const EdgeInsets.all(16.0),
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                'Type: ${_getMediaTypeString(file.type)}',
+                                                style: TextStyle(fontWeight: FontWeight.bold),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                );
+                              },
+                            ),
+                          
+                          // Experience association form
+                          Padding(
+                            padding: const EdgeInsets.all(16.0),
+                            child: Form(
+                              key: _formKey,
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Associate with Experience',
+                                    style: TextStyle(
+                                      fontSize: 18, 
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  SizedBox(height: 16),
+                                  
+                                  // Experience title
+                                  TextFormField(
+                                    controller: _titleController,
+                                    decoration: InputDecoration(
+                                      labelText: 'Experience Title',
+                                      hintText: 'Enter title',
+                                      border: OutlineInputBorder(),
+                                      prefixIcon: Icon(Icons.title),
+                                    ),
+                                    validator: (value) {
+                                      if (value == null || value.isEmpty) {
+                                        return 'Please enter a title';
+                                      }
+                                      return null;
+                                    },
+                                  ),
+                                  SizedBox(height: 16),
+                                  
+                                  // Experience type selection
+                                  DropdownButtonFormField<ExperienceType>(
+                                    value: _selectedType,
+                                    decoration: InputDecoration(
+                                      labelText: 'Experience Type',
+                                      border: OutlineInputBorder(),
+                                      prefixIcon: Icon(Icons.category),
+                                    ),
+                                    items: ExperienceType.values.map((type) {
+                                      return DropdownMenuItem(
+                                        value: type,
+                                        child: Text(type.displayName),
+                                      );
+                                    }).toList(),
+                                    onChanged: (value) {
+                                      if (value != null) {
+                                        setState(() {
+                                          _selectedType = value;
+                                        });
+                                      }
+                                    },
+                                  ),
+                                  SizedBox(height: 16),
+                                  
+                                  // Location selection
+                                  GestureDetector(
+                                    onTap: _isSelectingLocation ? null : _showLocationSearchDialog,
+                                    child: Container(
+                                      decoration: BoxDecoration(
+                                        border: Border.all(color: Colors.grey),
+                                        borderRadius: BorderRadius.circular(4),
+                                      ),
+                                      padding: EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+                                      child: Row(
+                                        children: [
+                                          Icon(Icons.location_on, color: Colors.grey[600]),
+                                          SizedBox(width: 12),
+                                          Expanded(
+                                            child: _selectedLocation != null
+                                                ? Text(_selectedLocation!.address ?? 'Location selected')
+                                                : Text(
+                                                    _isSelectingLocation 
+                                                        ? 'Selecting location...' 
+                                                        : 'Select location',
+                                                    style: TextStyle(color: Colors.grey[600]),
+                                                  ),
+                                          ),
+                                          Icon(Icons.arrow_drop_down, color: Colors.grey[600]),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                  SizedBox(height: 16),
+                                  
+                                  // Yelp URL
+                                  TextFormField(
+                                    controller: _yelpUrlController,
+                                    decoration: InputDecoration(
+                                      labelText: 'Yelp URL (optional)',
+                                      hintText: 'https://yelp.com/...',
+                                      border: OutlineInputBorder(),
+                                      prefixIcon: Icon(Icons.restaurant_menu),
+                                    ),
+                                    keyboardType: TextInputType.url,
+                                    validator: (value) {
+                                      if (value != null && value.isNotEmpty) {
+                                        if (!_isValidUrl(value)) {
+                                          return 'Please enter a valid URL';
+                                        }
+                                      }
+                                      return null;
+                                    },
+                                  ),
+                                  SizedBox(height: 16),
+                                  
+                                  // Official website
+                                  TextFormField(
+                                    controller: _websiteUrlController,
+                                    decoration: InputDecoration(
+                                      labelText: 'Official Website (optional)',
+                                      hintText: 'https://...',
+                                      border: OutlineInputBorder(),
+                                      prefixIcon: Icon(Icons.language),
+                                    ),
+                                    keyboardType: TextInputType.url,
+                                    validator: (value) {
+                                      if (value != null && value.isNotEmpty) {
+                                        if (!_isValidUrl(value)) {
+                                          return 'Please enter a valid URL';
+                                        }
+                                      }
+                                      return null;
+                                    },
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
-                      onPressed: widget.onCancel,
-                      child: Text('Cancel'),
                     ),
                   ),
-                  SizedBox(width: 16),
-                  Expanded(
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.green,
-                        padding: EdgeInsets.symmetric(vertical: 16),
-                      ),
-                      onPressed: () {
-                        // TODO: Implement logic to save or process the shared content
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('Content saved')),
-                        );
-                        widget.onCancel(); // Return to main screen after saving
-                      },
-                      child: Text('Save'),
+                  
+                  // Action buttons
+                  Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: ElevatedButton(
+                            style: ElevatedButton.styleFrom(
+                              padding: EdgeInsets.symmetric(vertical: 16),
+                            ),
+                            onPressed: widget.onCancel,
+                            child: Text('Cancel'),
+                          ),
+                        ),
+                        SizedBox(width: 16),
+                        Expanded(
+                          child: ElevatedButton(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.green,
+                              padding: EdgeInsets.symmetric(vertical: 16),
+                            ),
+                            onPressed: _saveExperience,
+                            child: Text('Save'),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],
               ),
-            ),
-          ],
-        ),
       ),
     );
   }
