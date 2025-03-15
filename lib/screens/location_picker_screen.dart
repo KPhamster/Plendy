@@ -38,7 +38,7 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
               icon: Icon(Icons.check),
               onPressed: () {
                 widget.onLocationSelected(_selectedLocation!);
-                Navigator.of(context).pop();
+                Navigator.of(context).pop(_selectedLocation);
               },
             ),
         ],
@@ -89,7 +89,7 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
                     child: ElevatedButton(
                       onPressed: () {
                         widget.onLocationSelected(_selectedLocation!);
-                        Navigator.of(context).pop();
+                        Navigator.of(context).pop(_selectedLocation);
                       },
                       child: Text('Confirm Location'),
                     ),
