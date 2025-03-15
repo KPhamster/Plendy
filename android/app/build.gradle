@@ -71,6 +71,14 @@ android {
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
         multiDexEnabled true
+        
+        // Get Maps API key from local.properties
+        def mapsApiKey = localProperties.getProperty('maps.api.key')
+        if (mapsApiKey == null) {
+            mapsApiKey = ""
+            println "WARNING: Google Maps API key not found in local.properties. Map features will not work properly."
+        }
+        manifestPlaceholders = [MAPS_API_KEY: mapsApiKey, applicationName: "androidx.multidex.MultiDexApplication"]
     }
 
     buildTypes {

@@ -11,6 +11,8 @@ import 'package:geolocator/geolocator.dart';
 import 'package:dio/dio.dart';
 import '../models/experience.dart';
 import '../services/experience_service.dart';
+import '../services/map_service.dart';
+import '../screens/location_picker_screen.dart';
 
 class ReceiveShareScreen extends StatefulWidget {
   final List<SharedMediaFile> sharedFiles;
@@ -27,8 +29,9 @@ class ReceiveShareScreen extends StatefulWidget {
 }
 
 class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
-  // Experience Service
+  // Services
   final ExperienceService _experienceService = ExperienceService();
+  final MapService _mapService = MapService();
 
   // Form controllers
   final _titleController = TextEditingController();
@@ -47,19 +50,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
   bool _isSelectingLocation = false;
   List<Map<String, dynamic>> _searchResults = [];
 
-  // Google Maps API key - platform-specific keys
-  static String get _apiKey {
-    if (kIsWeb) {
-      return 'AIzaSyBTHkrjXli3OlAhg7KqIjmkkeBAKynpoEs '; // Web key
-    } else if (Platform.isAndroid) {
-      return 'AIzaSyAS-UbmU9cmQbr9pcnVkL3O3mvKE6iuM70'; // Android key
-    } else if (Platform.isIOS) {
-      return 'AIzaSyBrFHBL7vu7yoDblCzN24NyRQi2qd1iUHg'; // iOS key
-    } else {
-      return 'AIzaSyAS-UbmU9cmQbr9pcnVkL3O3mvKE6iuM70'; // Fallback key
-    }
-  }
-
+  // Use MapService instead of direct API keys
   final Dio _dio = Dio();
 
   // Loading state
@@ -137,7 +128,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
     }
   }
 
-  // Search for places using Google Places API (New)
+  // Use MapService for places search
   Future<void> _searchPlaces(String query) async {
     if (query.isEmpty) {
       setState(() {
@@ -151,73 +142,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
     });
 
     try {
-      // Get location for better results
-      Position? position;
-      try {
-        LocationPermission permission = await Geolocator.checkPermission();
-        if (permission == LocationPermission.denied) {
-          permission = await Geolocator.requestPermission();
-        }
+      final results = await _mapService.searchPlaces(query);
 
-        if (permission == LocationPermission.whileInUse ||
-            permission == LocationPermission.always) {
-          position = await Geolocator.getCurrentPosition();
-        }
-      } catch (e) {
-        print('Error getting location: $e');
-      }
-
-      // Prepare request body
-      Map<String, dynamic> requestBody = {"input": query};
-
-      // Add location bias if we have position
-      if (position != null) {
-        requestBody["locationBias"] = {
-          "circle": {
-            "center": {
-              "latitude": position.latitude,
-              "longitude": position.longitude
-            },
-            "radius": 50000.0 // 50km radius
-          }
-        };
-      }
-
-      // Call Google Places Autocomplete API (New)
-      final response = await _dio.post(
-        'https://places.googleapis.com/v1/places:autocomplete',
-        data: requestBody,
-        options: Options(
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Goog-Api-Key': _apiKey,
-            'X-Goog-FieldMask':
-                'suggestions.placePrediction.place,suggestions.placePrediction.placeId,suggestions.placePrediction.text'
-          },
-        ),
-      );
-
-      if (response.statusCode == 200) {
-        final data = response.data;
-        List<Map<String, dynamic>> results = [];
-
-        if (data['suggestions'] != null) {
-          for (var suggestion in data['suggestions']) {
-            if (suggestion['placePrediction'] != null) {
-              final placePrediction = suggestion['placePrediction'];
-              results.add({
-                'placeId': placePrediction['placeId'],
-                'description': placePrediction['text']['text'],
-                'place': placePrediction['place']
-              });
-            }
-          }
-        }
-
-        setState(() {
-          _searchResults = results;
-        });
-      }
+      setState(() {
+        _searchResults = results;
+      });
     } catch (e) {
       print('Error searching places: $e');
       ScaffoldMessenger.of(context).showSnackBar(
@@ -230,64 +159,19 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
     }
   }
 
-  // Get place details and set as selected location
+  // Get place details using MapService
   Future<void> _selectPlace(String placeId) async {
     setState(() {
       _isSelectingLocation = true;
     });
 
     try {
-      // Call Google Places Details API (New)
-      final response = await _dio.get(
-        'https://places.googleapis.com/v1/places/$placeId',
-        options: Options(
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Goog-Api-Key': _apiKey,
-            'X-Goog-FieldMask':
-                'id,displayName,formattedAddress,location,addressComponents'
-          },
-        ),
-      );
+      final location = await _mapService.getPlaceDetails(placeId);
 
-      if (response.statusCode == 200) {
-        final data = response.data;
-
-        // Extract coordinates
-        final location = data['location'];
-        final lat = location['latitude'];
-        final lng = location['longitude'];
-
-        // Extract address components
-        String? address = data['formattedAddress'];
-        String? city, state, country, zipCode;
-
-        if (data['addressComponents'] != null) {
-          for (var component in data['addressComponents']) {
-            List<dynamic> types = component['types'];
-            if (types.contains('locality')) {
-              city = component['longText'];
-            } else if (types.contains('administrative_area_level_1')) {
-              state = component['shortText']; // Using short name for state
-            } else if (types.contains('country')) {
-              country = component['longText'];
-            } else if (types.contains('postal_code')) {
-              zipCode = component['longText'];
-            }
-          }
-        }
-
+      if (location != null) {
         setState(() {
-          _selectedLocation = Location(
-            latitude: lat,
-            longitude: lng,
-            address: address,
-            city: city,
-            state: state,
-            country: country,
-            zipCode: zipCode,
-          );
-          _searchController.text = data['displayName']['text'] ?? address ?? '';
+          _selectedLocation = location;
+          _searchController.text = location.address ?? '';
         });
       }
     } catch (e) {
@@ -302,77 +186,24 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
     }
   }
 
-  // Show location search dialog
-  Future<void> _showLocationSearchDialog() async {
-    // Reset search results
-    setState(() {
-      _searchResults = [];
-    });
-
-    await showDialog(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) {
-          return AlertDialog(
-            title: Text('Search for a location'),
-            content: Container(
-              width: double.maxFinite,
-              height: 400,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(
-                    controller: _searchController,
-                    decoration: InputDecoration(
-                      labelText: 'Search',
-                      hintText: 'Enter location name',
-                      prefixIcon: Icon(Icons.search),
-                      border: OutlineInputBorder(),
-                    ),
-                    onChanged: (value) async {
-                      await _searchPlaces(value);
-                      setDialogState(() {}); // Update dialog state
-                    },
-                  ),
-                  SizedBox(height: 8),
-                  if (_isSelectingLocation)
-                    Center(child: CircularProgressIndicator())
-                  else if (_searchResults.isNotEmpty)
-                    Expanded(
-                      child: ListView.builder(
-                        shrinkWrap: true,
-                        itemCount: _searchResults.length,
-                        itemBuilder: (context, index) {
-                          final prediction = _searchResults[index];
-                          return ListTile(
-                            title: Text(prediction['description']),
-                            onTap: () async {
-                              Navigator.of(context).pop();
-                              await _selectPlace(prediction['placeId']);
-                            },
-                          );
-                        },
-                      ),
-                    )
-                  else if (_searchController.text.isNotEmpty &&
-                      _searchResults.isEmpty)
-                    Padding(
-                      padding: const EdgeInsets.all(8.0),
-                      child: Text('No locations found'),
-                    ),
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: Text('Cancel'),
-              ),
-            ],
-          );
-        },
+  // Use the LocationPickerScreen instead of a dialog
+  Future<void> _showLocationPicker() async {
+    final Location? result = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => LocationPickerScreen(
+          initialLocation: _selectedLocation,
+          onLocationSelected: (location) => location,
+        ),
       ),
     );
+    
+    if (result != null) {
+      setState(() {
+        _selectedLocation = result;
+        _searchController.text = result.address ?? 'Location selected';
+      });
+    }
   }
 
   @override
@@ -543,42 +374,70 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
                                   ),
                                   SizedBox(height: 16),
 
-                                  // Location selection
-                                  GestureDetector(
-                                    onTap: _isSelectingLocation
-                                        ? null
-                                        : _showLocationSearchDialog,
-                                    child: Container(
-                                      decoration: BoxDecoration(
-                                        border: Border.all(color: Colors.grey),
-                                        borderRadius: BorderRadius.circular(4),
-                                      ),
-                                      padding: EdgeInsets.symmetric(
-                                          horizontal: 12, vertical: 16),
-                                      child: Row(
-                                        children: [
-                                          Icon(Icons.location_on,
-                                              color: Colors.grey[600]),
-                                          SizedBox(width: 12),
-                                          Expanded(
-                                            child: _selectedLocation != null
-                                                ? Text(_selectedLocation!
-                                                        .address ??
-                                                    'Location selected')
-                                                : Text(
-                                                    _isSelectingLocation
-                                                        ? 'Selecting location...'
-                                                        : 'Select location',
-                                                    style: TextStyle(
-                                                        color:
-                                                            Colors.grey[600]),
-                                                  ),
+                                  // Location selection with preview
+                                  Column(
+                                    children: [
+                                      GestureDetector(
+                                        onTap: _isSelectingLocation
+                                            ? null
+                                            : _showLocationPicker,
+                                        child: Container(
+                                          decoration: BoxDecoration(
+                                            border: Border.all(color: Colors.grey),
+                                            borderRadius: BorderRadius.circular(4),
                                           ),
-                                          Icon(Icons.arrow_drop_down,
-                                              color: Colors.grey[600]),
-                                        ],
+                                          padding: EdgeInsets.symmetric(
+                                              horizontal: 12, vertical: 16),
+                                          child: Row(
+                                            children: [
+                                              Icon(Icons.location_on,
+                                                  color: Colors.grey[600]),
+                                              SizedBox(width: 12),
+                                              Expanded(
+                                                child: _selectedLocation != null
+                                                    ? Text(_selectedLocation!
+                                                            .address ??
+                                                        'Location selected')
+                                                    : Text(
+                                                        _isSelectingLocation
+                                                            ? 'Selecting location...'
+                                                            : 'Select location',
+                                                        style: TextStyle(
+                                                            color:
+                                                                Colors.grey[600]),
+                                                      ),
+                                              ),
+                                              Icon(Icons.arrow_drop_down,
+                                                  color: Colors.grey[600]),
+                                            ],
+                                          ),
+                                        ),
                                       ),
-                                    ),
+                                      
+                                      // Show a map preview if location is selected
+                                      if (_selectedLocation != null)
+                                        Padding(
+                                          padding: const EdgeInsets.only(top: 8.0),
+                                          child: Container(
+                                            height: 120,
+                                            decoration: BoxDecoration(
+                                              border: Border.all(color: Colors.grey[300]!),
+                                              borderRadius: BorderRadius.circular(4),
+                                              image: DecorationImage(
+                                                image: NetworkImage(
+                                                  _mapService.getStaticMapImageUrl(
+                                                    _selectedLocation!.latitude,
+                                                    _selectedLocation!.longitude,
+                                                    width: 400,
+                                                    height: 200,
+                                                  ),
+                                                ),
+                                                fit: BoxFit.cover,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                    ],
                                   ),
                                   SizedBox(height: 16),
 
