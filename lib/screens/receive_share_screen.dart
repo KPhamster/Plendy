@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 import 'dart:io';
 import 'dart:convert';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:any_link_preview/any_link_preview.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
@@ -28,31 +29,42 @@ class ReceiveShareScreen extends StatefulWidget {
 class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
   // Experience Service
   final ExperienceService _experienceService = ExperienceService();
-  
+
   // Form controllers
   final _titleController = TextEditingController();
   final _yelpUrlController = TextEditingController();
   final _websiteUrlController = TextEditingController();
   final _searchController = TextEditingController();
-  
+
   // Form validation key
   final _formKey = GlobalKey<FormState>();
-  
+
   // Experience type selection
   ExperienceType _selectedType = ExperienceType.restaurant;
-  
+
   // Location selection
   Location? _selectedLocation;
   bool _isSelectingLocation = false;
   List<Map<String, dynamic>> _searchResults = [];
-  
-  // Google Maps API key - replace with your actual key
-  static const String _apiKey = 'YOUR_GOOGLE_MAPS_API_KEY';
+
+  // Google Maps API key - platform-specific keys
+  static String get _apiKey {
+    if (kIsWeb) {
+      return 'AIzaSyBTHkrjXli3OlAhg7KqIjmkkeBAKynpoEs '; // Web key
+    } else if (Platform.isAndroid) {
+      return 'AIzaSyAS-UbmU9cmQbr9pcnVkL3O3mvKE6iuM70'; // Android key
+    } else if (Platform.isIOS) {
+      return 'AIzaSyBrFHBL7vu7yoDblCzN24NyRQi2qd1iUHg'; // iOS key
+    } else {
+      return 'AIzaSyAS-UbmU9cmQbr9pcnVkL3O3mvKE6iuM70'; // Fallback key
+    }
+  }
+
   final Dio _dio = Dio();
-  
+
   // Loading state
   bool _isSaving = false;
-  
+
   @override
   void dispose() {
     _titleController.dispose();
@@ -61,7 +73,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
     _searchController.dispose();
     super.dispose();
   }
-  
+
   // Handle experience save along with shared content
   Future<void> _saveExperience() async {
     if (!_formKey.currentState!.validate()) {
@@ -70,18 +82,18 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
       );
       return;
     }
-    
+
     if (_selectedLocation == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Please select a location')),
       );
       return;
     }
-    
+
     setState(() {
       _isSaving = true;
     });
-    
+
     try {
       // Create the experience object
       final now = DateTime.now();
@@ -91,23 +103,27 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
         description: 'Created from shared content',
         location: _selectedLocation!,
         type: _selectedType,
-        yelpUrl: _yelpUrlController.text.isNotEmpty ? _yelpUrlController.text : null,
-        website: _websiteUrlController.text.isNotEmpty ? _websiteUrlController.text : null,
+        yelpUrl:
+            _yelpUrlController.text.isNotEmpty ? _yelpUrlController.text : null,
+        website: _websiteUrlController.text.isNotEmpty
+            ? _websiteUrlController.text
+            : null,
         createdAt: now,
         updatedAt: now,
       );
-      
+
       // Save the experience to Firestore
-      final experienceId = await _experienceService.createExperience(newExperience);
-      
+      final experienceId =
+          await _experienceService.createExperience(newExperience);
+
       // TODO: Add code to save the shared media files appropriately
       // For example, if they're images, upload them as photos for the experience
       // If they're links, associate them with the experience
-      
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Experience created successfully')),
       );
-      
+
       // Return to the main screen
       widget.onCancel();
     } catch (e) {
@@ -120,7 +136,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
       });
     }
   }
-  
+
   // Search for places using Google Places API (New)
   Future<void> _searchPlaces(String query) async {
     if (query.isEmpty) {
@@ -129,11 +145,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
       });
       return;
     }
-    
+
     setState(() {
       _isSelectingLocation = true;
     });
-    
+
     try {
       // Get location for better results
       Position? position;
@@ -142,20 +158,18 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
         if (permission == LocationPermission.denied) {
           permission = await Geolocator.requestPermission();
         }
-        
-        if (permission == LocationPermission.whileInUse || 
+
+        if (permission == LocationPermission.whileInUse ||
             permission == LocationPermission.always) {
           position = await Geolocator.getCurrentPosition();
         }
       } catch (e) {
         print('Error getting location: $e');
       }
-      
+
       // Prepare request body
-      Map<String, dynamic> requestBody = {
-        "input": query
-      };
-      
+      Map<String, dynamic> requestBody = {"input": query};
+
       // Add location bias if we have position
       if (position != null) {
         requestBody["locationBias"] = {
@@ -168,7 +182,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
           }
         };
       }
-      
+
       // Call Google Places Autocomplete API (New)
       final response = await _dio.post(
         'https://places.googleapis.com/v1/places:autocomplete',
@@ -177,15 +191,16 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
           headers: {
             'Content-Type': 'application/json',
             'X-Goog-Api-Key': _apiKey,
-            'X-Goog-FieldMask': 'suggestions.placePrediction.place,suggestions.placePrediction.placeId,suggestions.placePrediction.text'
+            'X-Goog-FieldMask':
+                'suggestions.placePrediction.place,suggestions.placePrediction.placeId,suggestions.placePrediction.text'
           },
         ),
       );
-      
+
       if (response.statusCode == 200) {
         final data = response.data;
         List<Map<String, dynamic>> results = [];
-        
+
         if (data['suggestions'] != null) {
           for (var suggestion in data['suggestions']) {
             if (suggestion['placePrediction'] != null) {
@@ -198,7 +213,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
             }
           }
         }
-        
+
         setState(() {
           _searchResults = results;
         });
@@ -214,13 +229,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
       });
     }
   }
-  
+
   // Get place details and set as selected location
   Future<void> _selectPlace(String placeId) async {
     setState(() {
       _isSelectingLocation = true;
     });
-    
+
     try {
       // Call Google Places Details API (New)
       final response = await _dio.get(
@@ -229,23 +244,24 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
           headers: {
             'Content-Type': 'application/json',
             'X-Goog-Api-Key': _apiKey,
-            'X-Goog-FieldMask': 'id,displayName,formattedAddress,location,addressComponents'
+            'X-Goog-FieldMask':
+                'id,displayName,formattedAddress,location,addressComponents'
           },
         ),
       );
-      
+
       if (response.statusCode == 200) {
         final data = response.data;
-        
+
         // Extract coordinates
         final location = data['location'];
         final lat = location['latitude'];
         final lng = location['longitude'];
-        
+
         // Extract address components
         String? address = data['formattedAddress'];
         String? city, state, country, zipCode;
-        
+
         if (data['addressComponents'] != null) {
           for (var component in data['addressComponents']) {
             List<dynamic> types = component['types'];
@@ -260,7 +276,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
             }
           }
         }
-        
+
         setState(() {
           _selectedLocation = Location(
             latitude: lat,
@@ -285,14 +301,14 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
       });
     }
   }
-  
+
   // Show location search dialog
   Future<void> _showLocationSearchDialog() async {
     // Reset search results
     setState(() {
       _searchResults = [];
     });
-    
+
     await showDialog(
       context: context,
       builder: (context) => StatefulBuilder(
@@ -338,7 +354,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
                         },
                       ),
                     )
-                  else if (_searchController.text.isNotEmpty && _searchResults.isEmpty)
+                  else if (_searchController.text.isNotEmpty &&
+                      _searchResults.isEmpty)
                     Padding(
                       padding: const EdgeInsets.all(8.0),
                       child: Text('No locations found'),
@@ -372,7 +389,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
         ],
       ),
       body: SafeArea(
-        child: _isSaving 
+        child: _isSaving
             ? Center(
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
@@ -403,46 +420,60 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
                               itemBuilder: (context, index) {
                                 final file = widget.sharedFiles[index];
                                 return Card(
-                                  margin: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                                  margin: EdgeInsets.symmetric(
+                                      horizontal: 16, vertical: 8),
                                   child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: [
                                       _buildMediaPreview(file),
-                                        
+
                                       // Display metadata (only for non-URL content)
-                                      if (!(file.type == SharedMediaType.text && _isValidUrl(file.path)))
+                                      if (!(file.type == SharedMediaType.text &&
+                                          _isValidUrl(file.path)))
                                         Padding(
                                           padding: const EdgeInsets.all(16.0),
                                           child: Column(
-                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
                                             children: [
                                               Text(
                                                 'Type: ${_getMediaTypeString(file.type)}',
-                                                style: TextStyle(fontWeight: FontWeight.bold),
+                                                style: TextStyle(
+                                                    fontWeight:
+                                                        FontWeight.bold),
                                               ),
                                               SizedBox(height: 8),
-                                              if (file.type != SharedMediaType.text)
+                                              if (file.type !=
+                                                  SharedMediaType.text)
                                                 Text('Path: ${file.path}'),
-                                              if (file.type == SharedMediaType.text && !_isValidUrl(file.path))
+                                              if (file.type ==
+                                                      SharedMediaType.text &&
+                                                  !_isValidUrl(file.path))
                                                 Text('Content: ${file.path}'),
                                               if (file.thumbnail != null) ...[
                                                 SizedBox(height: 8),
-                                                Text('Thumbnail: ${file.thumbnail}'),
+                                                Text(
+                                                    'Thumbnail: ${file.thumbnail}'),
                                               ],
                                             ],
                                           ),
                                         ),
-                                      
+
                                       // For URLs, we'll only show the preview and open button
-                                      if (file.type == SharedMediaType.text && _isValidUrl(file.path))
+                                      if (file.type == SharedMediaType.text &&
+                                          _isValidUrl(file.path))
                                         Padding(
                                           padding: const EdgeInsets.all(16.0),
                                           child: Column(
-                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
                                             children: [
                                               Text(
                                                 'Type: ${_getMediaTypeString(file.type)}',
-                                                style: TextStyle(fontWeight: FontWeight.bold),
+                                                style: TextStyle(
+                                                    fontWeight:
+                                                        FontWeight.bold),
                                               ),
                                             ],
                                           ),
@@ -452,7 +483,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
                                 );
                               },
                             ),
-                          
+
                           // Experience association form
                           Padding(
                             padding: const EdgeInsets.all(16.0),
@@ -464,12 +495,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
                                   Text(
                                     'Associate with Experience',
                                     style: TextStyle(
-                                      fontSize: 18, 
+                                      fontSize: 18,
                                       fontWeight: FontWeight.bold,
                                     ),
                                   ),
                                   SizedBox(height: 16),
-                                  
+
                                   // Experience title
                                   TextFormField(
                                     controller: _titleController,
@@ -487,7 +518,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
                                     },
                                   ),
                                   SizedBox(height: 16),
-                                  
+
                                   // Experience type selection
                                   DropdownButtonFormField<ExperienceType>(
                                     value: _selectedType,
@@ -511,37 +542,46 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
                                     },
                                   ),
                                   SizedBox(height: 16),
-                                  
+
                                   // Location selection
                                   GestureDetector(
-                                    onTap: _isSelectingLocation ? null : _showLocationSearchDialog,
+                                    onTap: _isSelectingLocation
+                                        ? null
+                                        : _showLocationSearchDialog,
                                     child: Container(
                                       decoration: BoxDecoration(
                                         border: Border.all(color: Colors.grey),
                                         borderRadius: BorderRadius.circular(4),
                                       ),
-                                      padding: EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+                                      padding: EdgeInsets.symmetric(
+                                          horizontal: 12, vertical: 16),
                                       child: Row(
                                         children: [
-                                          Icon(Icons.location_on, color: Colors.grey[600]),
+                                          Icon(Icons.location_on,
+                                              color: Colors.grey[600]),
                                           SizedBox(width: 12),
                                           Expanded(
                                             child: _selectedLocation != null
-                                                ? Text(_selectedLocation!.address ?? 'Location selected')
+                                                ? Text(_selectedLocation!
+                                                        .address ??
+                                                    'Location selected')
                                                 : Text(
-                                                    _isSelectingLocation 
-                                                        ? 'Selecting location...' 
+                                                    _isSelectingLocation
+                                                        ? 'Selecting location...'
                                                         : 'Select location',
-                                                    style: TextStyle(color: Colors.grey[600]),
+                                                    style: TextStyle(
+                                                        color:
+                                                            Colors.grey[600]),
                                                   ),
                                           ),
-                                          Icon(Icons.arrow_drop_down, color: Colors.grey[600]),
+                                          Icon(Icons.arrow_drop_down,
+                                              color: Colors.grey[600]),
                                         ],
                                       ),
                                     ),
                                   ),
                                   SizedBox(height: 16),
-                                  
+
                                   // Yelp URL
                                   TextFormField(
                                     controller: _yelpUrlController,
@@ -562,7 +602,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
                                     },
                                   ),
                                   SizedBox(height: 16),
-                                  
+
                                   // Official website
                                   TextFormField(
                                     controller: _websiteUrlController,
@@ -590,7 +630,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
                       ),
                     ),
                   ),
-                  
+
                   // Action buttons
                   Padding(
                     padding: const EdgeInsets.all(16.0),
@@ -631,7 +671,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
       throw Exception('Could not launch $url');
     }
   }
-  
+
   bool _isValidUrl(String text) {
     // Simple URL validation
     try {
@@ -728,13 +768,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
   Widget _buildInstagramPreview(String url) {
     // Check if it's a reel
     final bool isReel = _isInstagramReel(url);
-    
+
     if (isReel) {
       return InstagramReelEmbed(url: url, onOpen: () => _launchUrl(url));
     } else {
       // Regular Instagram content (fallback to current implementation)
       final String contentId = _extractInstagramId(url);
-      
+
       return InkWell(
         onTap: () => _launchUrl(url),
         child: Container(
@@ -807,11 +847,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
 
   // Check if URL is an Instagram reel
   bool _isInstagramReel(String url) {
-    return url.contains('instagram.com/reel') || 
-           url.contains('instagram.com/reels') ||
-           (url.contains('instagram.com/p') && 
-            (url.contains('?img_index=') || url.contains('video_index=') || 
-             url.contains('media_index=') || url.contains('?igsh=')));
+    return url.contains('instagram.com/reel') ||
+        url.contains('instagram.com/reels') ||
+        (url.contains('instagram.com/p') &&
+            (url.contains('?img_index=') ||
+                url.contains('video_index=') ||
+                url.contains('media_index=') ||
+                url.contains('?igsh=')));
   }
 
   // Extract content ID from Instagram URL
@@ -823,16 +865,16 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
       if (url.contains('?')) {
         cleanUrl = url.split('?')[0];
       }
-      
+
       // Split the URL by slashes
       List<String> pathSegments = cleanUrl.split('/');
-      
+
       // Instagram URLs usually have the content ID as one of the last segments
       // For reels: instagram.com/reel/{content_id}
       if (pathSegments.length > 2) {
         for (int i = pathSegments.length - 1; i >= 0; i--) {
-          if (pathSegments[i].isNotEmpty && 
-              pathSegments[i] != 'instagram.com' && 
+          if (pathSegments[i].isNotEmpty &&
+              pathSegments[i] != 'instagram.com' &&
               pathSegments[i] != 'reel' &&
               pathSegments[i] != 'p' &&
               !pathSegments[i].startsWith('http')) {
@@ -840,7 +882,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
           }
         }
       }
-      
+
       return 'Instagram Content';
     } catch (e) {
       return 'Instagram Content';
@@ -887,10 +929,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
   Widget _buildFilePreview(SharedMediaFile file) {
     IconData iconData;
     Color iconColor;
-    
+
     // Determine file type from path extension
     final String extension = file.path.split('.').last.toLowerCase();
-    
+
     if (['pdf'].contains(extension)) {
       iconData = Icons.picture_as_pdf;
       iconColor = Colors.red;
@@ -913,7 +955,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
       iconData = Icons.insert_drive_file;
       iconColor = Colors.grey;
     }
-    
+
     return Container(
       height: 400,
       width: double.infinity,
@@ -939,9 +981,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
 class InstagramReelEmbed extends StatefulWidget {
   final String url;
   final VoidCallback onOpen;
-  
-  const InstagramReelEmbed({Key? key, required this.url, required this.onOpen}) : super(key: key);
-  
+
+  const InstagramReelEmbed({Key? key, required this.url, required this.onOpen})
+      : super(key: key);
+
   @override
   _InstagramReelEmbedState createState() => _InstagramReelEmbedState();
 }
@@ -950,20 +993,21 @@ class _InstagramReelEmbedState extends State<InstagramReelEmbed> {
   late final WebViewController controller;
   bool isLoading = true;
   bool isExpanded = false; // Track whether the preview is expanded
-  
+
   @override
   void initState() {
     super.initState();
     _initWebViewController();
   }
-  
+
   void _initWebViewController() {
     controller = WebViewController();
-    
+
     controller
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(const Color(0x00000000))
-      ..setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+      ..setUserAgent(
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
       ..setNavigationDelegate(
         NavigationDelegate(
           onProgress: (int progress) {
@@ -1012,7 +1056,7 @@ class _InstagramReelEmbedState extends State<InstagramReelEmbed> {
           },
           onNavigationRequest: (NavigationRequest request) {
             // Intercept navigation to external links
-            if (!request.url.contains('instagram.com') && 
+            if (!request.url.contains('instagram.com') &&
                 !request.url.contains('cdn.instagram.com') &&
                 !request.url.contains('cdninstagram.com')) {
               widget.onOpen();
@@ -1024,43 +1068,43 @@ class _InstagramReelEmbedState extends State<InstagramReelEmbed> {
       )
       ..loadHtmlString(_generateInstagramEmbedHtml(widget.url));
   }
-  
+
   // Clean Instagram URL for proper embedding
   String _cleanInstagramUrl(String url) {
     // Try to parse the URL
     try {
       // Parse URL
       Uri uri = Uri.parse(url);
-      
+
       // Get base path without query parameters
       String cleanUrl = '${uri.scheme}://${uri.host}${uri.path}';
-      
+
       // Ensure trailing slash if needed
       if (!cleanUrl.endsWith('/')) {
         cleanUrl = '$cleanUrl/';
       }
-      
+
       return cleanUrl;
     } catch (e) {
       // If parsing fails, try basic string manipulation
       if (url.contains('?')) {
         url = url.split('?')[0];
       }
-      
+
       // Ensure trailing slash if needed
       if (!url.endsWith('/')) {
         url = '$url/';
       }
-      
+
       return url;
     }
   }
-  
+
   // Generate HTML for embedding Instagram content
   String _generateInstagramEmbedHtml(String url) {
     // Clean the URL to ensure proper embedding
     final String cleanUrl = _cleanInstagramUrl(url);
-    
+
     // Create an Instagram embed with tap detection
     return '''
       <!DOCTYPE html>
@@ -1167,12 +1211,12 @@ class _InstagramReelEmbedState extends State<InstagramReelEmbed> {
       </html>
     ''';
   }
-  
+
   @override
   Widget build(BuildContext context) {
     // Define the container height based on expansion state
     final double containerHeight = isExpanded ? 1200 : 400;
-    
+
     return Column(
       children: [
         GestureDetector(
