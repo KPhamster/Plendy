@@ -1,3 +1,9 @@
+# API Keys and Sensitive Information
+.env
+*.env
+ios/Config.xcconfig
+lib/config/api_secrets.dart
+web/index.html
 # Miscellaneous
 *.class
 *.log

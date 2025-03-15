@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'screens/auth_screen.dart';
 import 'screens/main_screen.dart';
 import 'screens/receive_share_screen.dart';
@@ -10,6 +11,10 @@ import 'services/sharing_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  
+  // Load environment variables
+  await dotenv.load(fileName: ".env");
+  
   await Firebase.initializeApp();
   // Initialize sharing service
   SharingService().init();

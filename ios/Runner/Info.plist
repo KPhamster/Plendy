@@ -64,8 +64,14 @@
 		<key>NSAllowsArbitraryLoads</key>
 		<true/>
 	</dict>
-	<!-- Google Maps API Key -->
+	<!-- Google Maps API Key using environment variable -->
 	<key>GoogleMapsApiKey</key>
-	<string>AIzaSyBrFHBL7vu7yoDblCzN24NyRQi2qd1iUHg</string>
+	<string>$(MAPS_API_KEY)</string>
+	
+	<!-- Location permissions -->
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>This app needs access to location when open to show you nearby experiences and help you navigate to them.</string>
+	<key>NSLocationAlwaysUsageDescription</key>
+	<string>This app needs access to location when in the background to show you nearby experiences.</string>
 </dict>
 </plist>

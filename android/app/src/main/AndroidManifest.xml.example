@@ -4,6 +4,7 @@
     <!-- Add location permissions for Google Maps -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    
     <application
         android:label="plendy"
         android:name="${applicationName}"
@@ -60,7 +61,7 @@
             android:name="flutterEmbedding"
             android:value="2" />
         
-        <!-- Google Maps API Key - Using the placeholder from build.gradle -->
+        <!-- Google Maps API Key - Using the placeholder from manifestPlaceholders -->
         <meta-data
             android:name="com.google.android.geo.API_KEY"
             android:value="${MAPS_API_KEY}" />
