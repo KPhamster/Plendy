@@ -1,0 +1,14 @@
+//
+// Config.xcconfig
+//
+// This file contains configuration values for your iOS app.
+// Copy this file to Config.xcconfig and replace with your actual API keys.
+// Config.xcconfig should be added to .gitignore to avoid exposing API keys.
+//
+
+// Google Maps API Key
+MAPS_API_KEY=your_ios_maps_api_key_here
+
+// Other configurations (if needed)
+// FIREBASE_API_KEY=your_firebase_api_key
+// FACEBOOK_APP_ID=your_facebook_app_id
