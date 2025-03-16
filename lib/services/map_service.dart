@@ -200,4 +200,115 @@ class MapService {
   String getDirectionsUrlFromCoordinates(double startLat, double startLng, double endLat, double endLng) {
     return getDirectionsUrl(endLat, endLng, originLat: startLat, originLng: startLng);
   }
+  
+  // Find place directly at the tapped coordinates
+  Future<Map<String, dynamic>?> findPlaceAtCoordinates(double latitude, double longitude) async {
+    print('API REQUEST: Searching for place at coordinates: $latitude, $longitude');
+    // Debug the API key (first 8 chars only for security)
+    print('API REQUEST: Using API key starting with: ${apiKey.substring(0, 8)}...');
+    
+    try {
+      // Try using reverse geocoding first - this is more reliable
+      print('API REQUEST: Using reverse geocoding API');
+      
+      final geocodeResponse = await _dio.get(
+        'https://maps.googleapis.com/maps/api/geocode/json',
+        queryParameters: {
+          'latlng': '$latitude,$longitude',
+          'key': apiKey
+        }
+      );
+      
+      print('GEOCODE RESPONSE: Status: ${geocodeResponse.data?['status'] ?? 'Unknown'}');
+      print('GEOCODE RESPONSE: Full data: ${geocodeResponse.data}');
+      
+      if (geocodeResponse.statusCode == 200 && 
+          geocodeResponse.data?['status'] == 'OK' &&
+          geocodeResponse.data?['results'] != null) {
+        
+        // Get the results array safely with null checks
+        final List<dynamic> geocodeResults = (geocodeResponse.data?['results'] as List?) ?? [];
+        print('GEOCODE RESPONSE: Found ${geocodeResults.length} results');
+        
+        // Look for results with establishment or point_of_interest types
+        Map<String, dynamic>? placeResult;
+        
+        if (geocodeResults.isNotEmpty) {
+          for (var result in geocodeResults) {
+            print('GEOCODE RESULT: Types: ${result['types']}');
+            
+            List<dynamic> types = result['types'] as List? ?? [];
+            if (types.contains('establishment') || 
+                types.contains('point_of_interest') ||
+                types.contains('restaurant') ||
+                types.contains('store') ||
+                types.contains('bakery') ||
+                types.contains('cafe')) {
+              
+              placeResult = result;
+              print('GEOCODE RESPONSE: Found establishment: ${result?['formatted_address'] ?? 'No address available'}');
+              break;
+            }
+          }
+          
+          // If we didn't find an establishment, use the most specific result (usually the first one)
+          if (placeResult == null && geocodeResults.isNotEmpty) {
+            placeResult = geocodeResults[0];
+            print('GEOCODE RESPONSE: Using most specific result: ${placeResult?['formatted_address'] ?? 'No address available'}');
+          }
+        }
+        
+        if (placeResult != null) {
+          // Create a clean result object
+          final result = {
+            'placeId': placeResult['place_id'] ?? '',
+            'name': _extractPlaceName(placeResult),
+            'address': placeResult['formatted_address'] ?? '',
+            'latitude': placeResult['geometry']?['location']?['lat'] ?? latitude,
+            'longitude': placeResult['geometry']?['location']?['lng'] ?? longitude,
+            'types': placeResult['types'] as List? ?? []
+          };
+          
+          print('GEOCODE RESPONSE: Final result: $result');
+          return result;
+        }
+      } else {
+        print('GEOCODE RESPONSE: No results or error status: ${geocodeResponse.data['status']}');
+      }
+      
+      return null;
+    } catch (e) {
+      print('API ERROR: Error finding place at coordinates: $e');
+      return null;
+    }
+  }
+  
+  // Helper method to extract a place name from geocoding result
+  String _extractPlaceName(Map<String, dynamic> geocodeResult) {
+    // First check if there's a name in the result (rare for geocoding)
+    if (geocodeResult.containsKey('name') && geocodeResult['name'] != null) {
+      return geocodeResult['name'] as String;
+    }
+    
+    // Try to get the most specific component (first component is usually the place name)
+    if (geocodeResult['address_components'] != null && 
+        (geocodeResult['address_components'] as List).isNotEmpty) {
+      
+      // For establishments, the first component is usually the most specific (name of place)
+      return geocodeResult['address_components'][0]['long_name'] as String;
+    }
+    
+    // If we can't get a name, use the formatted address
+    if (geocodeResult['formatted_address'] != null) {
+      String address = geocodeResult['formatted_address'] as String;
+      // Take only the first part of the address (before the first comma)
+      if (address.contains(',')) {
+        return address.split(',')[0].trim();
+      }
+      return address;
+    }
+    
+    // Fallback
+    return 'Selected Place';
+  }
 }

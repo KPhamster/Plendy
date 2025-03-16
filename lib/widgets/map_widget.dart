@@ -85,23 +85,44 @@ class _PlendyMapWidgetState extends State<PlendyMapWidget> {
     }
   }
   
-  void _updateMarkers() {
+  void _updateMarkers() async {
     final markers = <Marker>{};
     
     if (_selectedLocation != null) {
-      markers.add(
-        Marker(
-          markerId: MarkerId('selected_location'),
-          position: LatLng(_selectedLocation!.latitude, _selectedLocation!.longitude),
-          infoWindow: InfoWindow(
-            title: 'Selected Location',
-            snippet: _selectedLocation!.address ?? 'Location selected',
+      // Create a more distinct marker for established places
+      if (_selectedLocation!.address != null) {
+        // This is likely an established place with an address
+        print('MARKER: Creating established place marker with address: ${_selectedLocation!.address}');
+        markers.add(
+          Marker(
+            markerId: MarkerId('selected_location'),
+            position: LatLng(_selectedLocation!.latitude, _selectedLocation!.longitude),
+            infoWindow: InfoWindow(
+              title: _selectedLocation!.address != null ? _selectedLocation!.address!.split(',').first : 'Selected Place',
+              snippet: _selectedLocation!.address,
+            ),
+            icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
           ),
-        ),
-      );
+        );
+      } else {
+        // This is a new, unestablished location
+        print('MARKER: Creating new unestablished location marker at: ${_selectedLocation!.latitude}, ${_selectedLocation!.longitude}');
+        markers.add(
+          Marker(
+            markerId: MarkerId('selected_location'),
+            position: LatLng(_selectedLocation!.latitude, _selectedLocation!.longitude),
+            infoWindow: InfoWindow(
+              title: 'New Location',
+              snippet: 'Lat: ${_selectedLocation!.latitude.toStringAsFixed(6)}, Lng: ${_selectedLocation!.longitude.toStringAsFixed(6)}',
+            ),
+            icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueViolet),
+          ),
+        );
+      }
     }
     
     if (_userPosition != null && widget.showUserLocation) {
+      print('MARKER: Creating user location marker at: ${_userPosition!.latitude}, ${_userPosition!.longitude}');
       markers.add(
         Marker(
           markerId: MarkerId('user_location'),
@@ -120,22 +141,85 @@ class _PlendyMapWidgetState extends State<PlendyMapWidget> {
   Future<void> _onMapTapped(LatLng position) async {
     if (!widget.allowSelection) return;
     
-    // Create a location from the tapped position
-    final location = Location(
-      latitude: position.latitude,
-      longitude: position.longitude,
-    );
+    print('MAP TAP: Tapped at coordinates: ${position.latitude}, ${position.longitude}');
     
     setState(() {
-      _selectedLocation = location;
+      _isLoading = true;
     });
     
-    _updateMarkers();
-    
-    if (widget.onLocationSelected != null) {
-      widget.onLocationSelected!(_selectedLocation!);
+    try {
+      print('MAP TAP: Checking for established places at tap location...');
+      // Try to find if an established place was tapped
+      final place = await _mapService.findPlaceAtCoordinates(
+        position.latitude,
+        position.longitude
+      );
+      
+      if (place != null) {
+        // An established place was found at the tapped location
+        print('MAP TAP: ✅ ESTABLISHED PLACE FOUND!');
+        print('MAP TAP: Place details: ${place.toString()}');
+        print('MAP TAP: Name: ${place['name']}');
+        print('MAP TAP: Address: ${place['address']}');
+        print('MAP TAP: Place ID: ${place['placeId']}');
+        
+        // Create a Location object from the place
+        final location = Location(
+          latitude: place['latitude'],
+          longitude: place['longitude'],
+          address: place['address'],
+        );
+        
+        setState(() {
+          _selectedLocation = location;
+          _isLoading = false;
+        });
+        
+        _updateMarkers();
+        
+        if (widget.onLocationSelected != null) {
+          widget.onLocationSelected!(_selectedLocation!);
+        }
+      } else {
+        // No established place was found, create a new location
+        print('MAP TAP: ❌ No established place found at tap location');
+        print('MAP TAP: Creating new unestablished location');
+        
+        setState(() {
+          _selectedLocation = Location(
+            latitude: position.latitude,
+            longitude: position.longitude,
+          );
+          _isLoading = false;
+        });
+        
+        _updateMarkers();
+        
+        if (widget.onLocationSelected != null) {
+          widget.onLocationSelected!(_selectedLocation!);
+        }
+      }
+    } catch (e) {
+      print('MAP TAP: ❌ Error in onMapTapped: $e');
+      
+      // Fall back to creating a new location
+      setState(() {
+        _selectedLocation = Location(
+          latitude: position.latitude,
+          longitude: position.longitude,
+        );
+        _isLoading = false;
+      });
+      
+      _updateMarkers();
+      
+      if (widget.onLocationSelected != null) {
+        widget.onLocationSelected!(_selectedLocation!);
+      }
     }
   }
+  
+
   
   void _onMapCreated(GoogleMapController controller) {
     _mapController = controller;
