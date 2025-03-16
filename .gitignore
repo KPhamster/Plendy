@@ -3,6 +3,7 @@
 *.env
 ios/Config.xcconfig
 lib/config/api_secrets.dart
+lib/config/api_keys.dart
 web/index.html
 # Miscellaneous
 *.class
