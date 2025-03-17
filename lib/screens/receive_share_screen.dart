@@ -11,8 +11,8 @@ import 'package:geolocator/geolocator.dart';
 import 'package:dio/dio.dart';
 import '../models/experience.dart';
 import '../services/experience_service.dart';
-import '../services/map_service.dart';
-import '../screens/location_picker_screen.dart';
+import '../services/google_maps_service.dart';
+import 'location_picker_screen.dart';
 
 class ReceiveShareScreen extends StatefulWidget {
   final List<SharedMediaFile> sharedFiles;
@@ -31,7 +31,7 @@ class ReceiveShareScreen extends StatefulWidget {
 class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
   // Services
   final ExperienceService _experienceService = ExperienceService();
-  final MapService _mapService = MapService();
+  final GoogleMapsService _mapsService = GoogleMapsService();
 
   // Form controllers
   final _titleController = TextEditingController();
@@ -128,7 +128,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
     }
   }
 
-  // Use MapService for places search
+  // Use GoogleMapsService for places search
   Future<void> _searchPlaces(String query) async {
     if (query.isEmpty) {
       setState(() {
@@ -142,7 +142,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
     });
 
     try {
-      final results = await _mapService.searchPlaces(query);
+      final results = await _mapsService.searchPlaces(query);
 
       setState(() {
         _searchResults = results;
@@ -159,14 +159,14 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
     }
   }
 
-  // Get place details using MapService
+  // Get place details using GoogleMapsService
   Future<void> _selectPlace(String placeId) async {
     setState(() {
       _isSelectingLocation = true;
     });
 
     try {
-      final location = await _mapService.getPlaceDetails(placeId);
+      final location = await _mapsService.getPlaceDetails(placeId);
 
       if (location != null) {
         setState(() {
@@ -197,7 +197,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
         ),
       ),
     );
-    
+
     if (result != null) {
       setState(() {
         _selectedLocation = result;
@@ -383,8 +383,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
                                             : _showLocationPicker,
                                         child: Container(
                                           decoration: BoxDecoration(
-                                            border: Border.all(color: Colors.grey),
-                                            borderRadius: BorderRadius.circular(4),
+                                            border:
+                                                Border.all(color: Colors.grey),
+                                            borderRadius:
+                                                BorderRadius.circular(4),
                                           ),
                                           padding: EdgeInsets.symmetric(
                                               horizontal: 12, vertical: 16),
@@ -403,8 +405,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
                                                             ? 'Selecting location...'
                                                             : 'Select location',
                                                         style: TextStyle(
-                                                            color:
-                                                                Colors.grey[600]),
+                                                            color: Colors
+                                                                .grey[600]),
                                                       ),
                                               ),
                                               Icon(Icons.arrow_drop_down,
@@ -413,21 +415,25 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
                                           ),
                                         ),
                                       ),
-                                      
+
                                       // Show a map preview if location is selected
                                       if (_selectedLocation != null)
                                         Padding(
-                                          padding: const EdgeInsets.only(top: 8.0),
+                                          padding:
+                                              const EdgeInsets.only(top: 8.0),
                                           child: Container(
                                             height: 120,
                                             decoration: BoxDecoration(
-                                              border: Border.all(color: Colors.grey[300]!),
-                                              borderRadius: BorderRadius.circular(4),
+                                              border: Border.all(
+                                                  color: Colors.grey[300]!),
+                                              borderRadius:
+                                                  BorderRadius.circular(4),
                                               image: DecorationImage(
                                                 image: NetworkImage(
-                                                  _mapService.getStaticMapImageUrl(
+                                                  _mapsService.getStaticMapUrl(
                                                     _selectedLocation!.latitude,
-                                                    _selectedLocation!.longitude,
+                                                    _selectedLocation!
+                                                        .longitude,
                                                     width: 400,
                                                     height: 200,
                                                   ),

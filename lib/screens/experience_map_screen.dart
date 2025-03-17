@@ -2,7 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/experience.dart';
-import '../services/map_service.dart';
+import '../widgets/google_maps_widget.dart';
+import '../services/google_maps_service.dart';
 
 class ExperienceMapScreen extends StatefulWidget {
   final Experience experience;
@@ -17,103 +18,25 @@ class ExperienceMapScreen extends StatefulWidget {
 }
 
 class _ExperienceMapScreenState extends State<ExperienceMapScreen> {
-  final MapService _mapService = MapService();
-  GoogleMapController? _mapController;
-  Set<Marker> _markers = {};
-  
-  @override
-  void initState() {
-    super.initState();
-    _updateMarkers();
-  }
-  
-  @override
-  void dispose() {
-    _mapController?.dispose();
-    super.dispose();
-  }
-  
-  void _updateMarkers() {
-    final markers = <Marker>{};
-    
-    // Add the experience marker
-    markers.add(
-      Marker(
-        markerId: MarkerId('experience_${widget.experience.id}'),
-        position: LatLng(
-          widget.experience.location.latitude,
-          widget.experience.location.longitude,
-        ),
-        infoWindow: InfoWindow(
-          title: widget.experience.name,
-          snippet: widget.experience.location.address ?? '',
-        ),
-      ),
-    );
-    
-    setState(() {
-      _markers = markers;
-    });
-  }
-  
-  void _onMapCreated(GoogleMapController controller) {
-    _mapController = controller;
-  }
-  
-  Future<void> _getDirections() async {
-    // Get user's current location if available
-    final position = await _mapService.getCurrentLocation();
-    
-    String url;
-    if (position != null) {
-      url = _mapService.getDirectionsUrl(
-        widget.experience.location.latitude,
-        widget.experience.location.longitude,
-        originLat: position.latitude,
-        originLng: position.longitude,
-      );
-    } else {
-      url = _mapService.getDirectionsUrl(
-        widget.experience.location.latitude,
-        widget.experience.location.longitude,
-      );
-    }
-    
-    final uri = Uri.parse(url);
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-    } else {
-      throw 'Could not launch $url';
-    }
-  }
+  final GoogleMapsService _mapsService = GoogleMapsService();
   
   @override
   Widget build(BuildContext context) {
-    final initialPosition = LatLng(
-      widget.experience.location.latitude,
-      widget.experience.location.longitude,
-    );
-    
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.experience.name),
       ),
       body: Stack(
         children: [
-          GoogleMap(
-            initialCameraPosition: CameraPosition(
-              target: initialPosition,
-              zoom: 15.0,
-            ),
-            onMapCreated: _onMapCreated,
-            markers: _markers,
-            myLocationEnabled: true,
-            myLocationButtonEnabled: true,
-            zoomControlsEnabled: true,
-            compassEnabled: true,
-            mapToolbarEnabled: true,
+          // Map
+          GoogleMapsWidget(
+            initialLocation: widget.experience.location,
+            initialZoom: 15.0,
+            showUserLocation: true,
+            allowSelection: false, // Read-only map
           ),
           
+          // Information panel
           Positioned(
             bottom: 16,
             left: 16,
@@ -166,5 +89,39 @@ class _ExperienceMapScreenState extends State<ExperienceMapScreen> {
         ],
       ),
     );
+  }
+  
+  Future<void> _getDirections() async {
+    // Get user's current location
+    try {
+      final position = await _mapsService.getCurrentLocation();
+      
+      final url = _mapsService.getDirectionsUrl(
+        widget.experience.location.latitude,
+        widget.experience.location.longitude,
+        originLat: position.latitude,
+        originLng: position.longitude,
+      );
+      
+      final uri = Uri.parse(url);
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      } else {
+        throw 'Could not launch $url';
+      }
+    } catch (e) {
+      // If we can't get current location, provide directions without origin
+      final url = _mapsService.getDirectionsUrl(
+        widget.experience.location.latitude,
+        widget.experience.location.longitude,
+      );
+      
+      final uri = Uri.parse(url);
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      } else {
+        throw 'Could not launch $url';
+      }
+    }
   }
 }

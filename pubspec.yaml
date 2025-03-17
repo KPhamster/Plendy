@@ -43,11 +43,11 @@ dependencies:
   image_picker: ^1.1.2
   firebase_storage: ^11.7.7
   cloud_firestore: ^4.17.5
-  receive_sharing_intent: 1.8.1
+  receive_sharing_intent: ^1.8.1
   any_link_preview: ^3.0.1
   url_launcher: ^6.2.5
   webview_flutter: ^4.7.0  # Added WebView Flutter package
-  google_maps_flutter: ^2.5.3
+  google_maps_flutter: ^2.10.1
   geolocator: ^10.1.1
   dio: ^5.4.0
 

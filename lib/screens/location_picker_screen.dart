@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
-import '../widgets/map_widget.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
+import '../widgets/google_maps_widget.dart';
 import '../models/experience.dart';
+import '../services/google_maps_service.dart';
 
 class LocationPickerScreen extends StatefulWidget {
   final Location? initialLocation;
@@ -19,12 +21,90 @@ class LocationPickerScreen extends StatefulWidget {
 }
 
 class _LocationPickerScreenState extends State<LocationPickerScreen> {
+  final GoogleMapsService _mapsService = GoogleMapsService();
   Location? _selectedLocation;
+  List<Map<String, dynamic>> _searchResults = [];
+  bool _showSearchResults = false;
+  final TextEditingController _searchController = TextEditingController();
+  bool _isSearching = false;
   
   @override
   void initState() {
     super.initState();
     _selectedLocation = widget.initialLocation;
+  }
+  
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+  
+  Future<void> _searchPlaces(String query) async {
+    if (query.isEmpty) {
+      setState(() {
+        _searchResults = [];
+        _showSearchResults = false;
+      });
+      return;
+    }
+    
+    setState(() {
+      _isSearching = true;
+    });
+    
+    try {
+      final results = await _mapsService.searchPlaces(query);
+      
+      setState(() {
+        _searchResults = results;
+        _showSearchResults = results.isNotEmpty;
+        _isSearching = false;
+      });
+    } catch (e) {
+      print('Error searching places: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error searching places: $e')),
+      );
+      
+      setState(() {
+        _isSearching = false;
+      });
+    }
+  }
+  
+  Future<void> _selectSearchResult(Map<String, dynamic> result) async {
+    setState(() {
+      _showSearchResults = false;
+      _isSearching = true;
+    });
+    
+    try {
+      final placeId = result['placeId'];
+      final location = await _mapsService.getPlaceDetails(placeId);
+      
+      if (location != null) {
+        setState(() {
+          _selectedLocation = location;
+          _searchController.text = location.address ?? 'Selected Location';
+        });
+      }
+    } catch (e) {
+      print('Error getting place details: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error selecting location: $e')),
+      );
+    } finally {
+      setState(() {
+        _isSearching = false;
+      });
+    }
+  }
+  
+  Future<void> _onLocationSelected(Location location) async {
+    setState(() {
+      _selectedLocation = location;
+    });
   }
   
   @override
@@ -45,19 +125,71 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
       ),
       body: Column(
         children: [
-          Expanded(
-            child: PlendyMapWidget(
-              initialLocation: widget.initialLocation,
-              showUserLocation: true,
-              allowSelection: true,
-              onLocationSelected: (location) {
-                setState(() {
-                  _selectedLocation = location;
-                });
-              },
+          // Search bar
+          Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: Card(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                child: TextField(
+                  controller: _searchController,
+                  decoration: InputDecoration(
+                    hintText: 'Search for a place',
+                    border: InputBorder.none,
+                    prefixIcon: Icon(Icons.search),
+                    suffixIcon: _isSearching 
+                      ? SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : _searchController.text.isNotEmpty
+                        ? IconButton(
+                            icon: Icon(Icons.clear),
+                            onPressed: () {
+                              setState(() {
+                                _searchController.clear();
+                                _searchResults = [];
+                                _showSearchResults = false;
+                              });
+                            },
+                          )
+                        : null,
+                  ),
+                  onChanged: _searchPlaces,
+                ),
+              ),
             ),
           ),
           
+          // Search results
+          if (_showSearchResults)
+            Container(
+              constraints: BoxConstraints(maxHeight: 200),
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: _searchResults.length,
+                itemBuilder: (context, index) {
+                  final result = _searchResults[index];
+                  return ListTile(
+                    title: Text(result['description'] ?? 'Unknown Place'),
+                    onTap: () => _selectSearchResult(result),
+                  );
+                },
+              ),
+            ),
+          
+          // Map takes remaining space
+          Expanded(
+            child: GoogleMapsWidget(
+              initialLocation: widget.initialLocation,
+              showUserLocation: true,
+              allowSelection: true,
+              onLocationSelected: _onLocationSelected,
+            ),
+          ),
+          
+          // Information about selected location
           if (_selectedLocation != null)
             Container(
               padding: EdgeInsets.all(16),
@@ -74,7 +206,7 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
                     ),
                   ),
                   SizedBox(height: 8),
-                  Text(_selectedLocation!.address ?? 'Location Selected'),
+                  Text(_selectedLocation!.address ?? 'New Location'),
                   SizedBox(height: 8),
                   Text(
                     'Coordinates: ${_selectedLocation!.latitude.toStringAsFixed(6)}, ${_selectedLocation!.longitude.toStringAsFixed(6)}',
