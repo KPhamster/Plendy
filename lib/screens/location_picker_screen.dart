@@ -8,7 +8,7 @@ class LocationPickerScreen extends StatefulWidget {
   final Location? initialLocation;
   final Function(Location) onLocationSelected;
   final String title;
-  
+
   const LocationPickerScreen({
     Key? key,
     this.initialLocation,
@@ -22,25 +22,26 @@ class LocationPickerScreen extends StatefulWidget {
 
 class _LocationPickerScreenState extends State<LocationPickerScreen> {
   final GoogleMapsService _mapsService = GoogleMapsService();
-  final GlobalKey<State<GoogleMapsWidget>> _mapKey = GlobalKey<State<GoogleMapsWidget>>();
+  final GlobalKey<State<GoogleMapsWidget>> _mapKey =
+      GlobalKey<State<GoogleMapsWidget>>();
   Location? _selectedLocation;
   List<Map<String, dynamic>> _searchResults = [];
   bool _showSearchResults = false;
   final TextEditingController _searchController = TextEditingController();
   bool _isSearching = false;
-  
+
   @override
   void initState() {
     super.initState();
     _selectedLocation = widget.initialLocation;
   }
-  
+
   @override
   void dispose() {
     _searchController.dispose();
     super.dispose();
   }
-  
+
   Future<void> _searchPlaces(String query) async {
     if (query.isEmpty) {
       setState(() {
@@ -49,14 +50,14 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
       });
       return;
     }
-    
+
     setState(() {
       _isSearching = true;
     });
-    
+
     try {
       final results = await _mapsService.searchPlaces(query);
-      
+
       setState(() {
         _searchResults = results;
         _showSearchResults = results.isNotEmpty;
@@ -67,36 +68,37 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error searching places: $e')),
       );
-      
+
       setState(() {
         _isSearching = false;
       });
     }
   }
-  
+
   Future<void> _selectSearchResult(Map<String, dynamic> result) async {
     setState(() {
       _showSearchResults = false;
       _isSearching = true;
     });
-    
+
     try {
       final placeId = result['placeId'];
       final location = await _mapsService.getPlaceDetails(placeId);
-      
+
       if (location != null) {
         setState(() {
           _selectedLocation = location;
-          _searchController.text = location.displayName ?? location.address ?? 'Selected Location';
+          _searchController.text =
+              location.displayName ?? location.address ?? 'Selected Location';
         });
-        
+
         // Get reference to the GoogleMapsWidget
         final mapWidget = _mapKey.currentWidget as GoogleMapsWidget?;
         if (mapWidget?.mapController != null) {
           // Animate map to the selected location
           mapWidget!.animateToLocation(location);
         }
-        
+
         // Update parent with selected location
         if (widget.onLocationSelected != null) {
           widget.onLocationSelected!(_selectedLocation!);
@@ -113,20 +115,21 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
       });
     }
   }
-  
+
   Future<void> _onLocationSelected(Location location) async {
     setState(() {
       _selectedLocation = location;
     });
-    
+
     // Update the search box text to reflect the selected location
-    _searchController.text = location.displayName ?? location.address ?? 'Selected Location';
-    
+    _searchController.text =
+        location.displayName ?? location.address ?? 'Selected Location';
+
     // Make sure we have the location centered on the map
     final mapWidget = _mapKey.currentWidget as GoogleMapsWidget?;
     mapWidget?.animateToLocation(location);
   }
-  
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -154,34 +157,34 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
                 child: TextField(
                   controller: _searchController,
                   decoration: InputDecoration(
-                    hintText: 'Search for a place',
+                    hintText: 'Search for a place for better precision',
                     border: InputBorder.none,
                     prefixIcon: Icon(Icons.search),
-                    suffixIcon: _isSearching 
-                      ? SizedBox(
-                          width: 24,
-                          height: 24,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : _searchController.text.isNotEmpty
-                        ? IconButton(
-                            icon: Icon(Icons.clear),
-                            onPressed: () {
-                              setState(() {
-                                _searchController.clear();
-                                _searchResults = [];
-                                _showSearchResults = false;
-                              });
-                            },
+                    suffixIcon: _isSearching
+                        ? SizedBox(
+                            width: 24,
+                            height: 24,
+                            child: CircularProgressIndicator(strokeWidth: 2),
                           )
-                        : null,
+                        : _searchController.text.isNotEmpty
+                            ? IconButton(
+                                icon: Icon(Icons.clear),
+                                onPressed: () {
+                                  setState(() {
+                                    _searchController.clear();
+                                    _searchResults = [];
+                                    _showSearchResults = false;
+                                  });
+                                },
+                              )
+                            : null,
                   ),
                   onChanged: _searchPlaces,
                 ),
               ),
             ),
           ),
-          
+
           // Search results
           if (_showSearchResults)
             Container(
@@ -198,7 +201,7 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
                 },
               ),
             ),
-          
+
           // Map takes remaining space
           Expanded(
             child: GoogleMapsWidget(
@@ -209,7 +212,7 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
               onLocationSelected: _onLocationSelected,
             ),
           ),
-          
+
           // Information about selected location
           if (_selectedLocation != null)
             Container(
@@ -227,7 +230,7 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
                     ),
                   ),
                   SizedBox(height: 12),
-                  
+
                   // Place name - using our new getPlaceName helper
                   Text(
                     _selectedLocation!.getPlaceName(),
@@ -237,20 +240,21 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
                     ),
                   ),
                   SizedBox(height: 8),
-                  
+
                   // Full address
-                  if (_selectedLocation!.address != null) ...[  
+                  if (_selectedLocation!.address != null) ...[
                     Text(
                       _selectedLocation!.address!,
                       style: TextStyle(color: Colors.grey[700]),
                     ),
                     SizedBox(height: 8),
                   ],
-                  
+
                   // Area details if available
                   Row(children: [
-                    if (_selectedLocation!.city != null) ...[  
-                      Icon(Icons.location_city, size: 16, color: Colors.grey[600]),
+                    if (_selectedLocation!.city != null) ...[
+                      Icon(Icons.location_city,
+                          size: 16, color: Colors.grey[600]),
                       SizedBox(width: 4),
                       Text(
                         _selectedLocation!.city!,
@@ -258,14 +262,14 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
                       ),
                       SizedBox(width: 16),
                     ],
-                    if (_selectedLocation!.state != null) ...[  
+                    if (_selectedLocation!.state != null) ...[
                       Text(
                         _selectedLocation!.state!,
                         style: TextStyle(color: Colors.grey[700]),
                       ),
                       SizedBox(width: 8),
                     ],
-                    if (_selectedLocation!.country != null) ...[  
+                    if (_selectedLocation!.country != null) ...[
                       Text(
                         _selectedLocation!.country!,
                         style: TextStyle(color: Colors.grey[700]),
@@ -273,7 +277,7 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
                     ],
                   ]),
                   SizedBox(height: 12),
-                  
+
                   // Coordinates
                   Row(
                     children: [
@@ -292,7 +296,7 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
                     ],
                   ),
                   SizedBox(height: 16),
-                  
+
                   // Confirm button
                   SizedBox(
                     width: double.infinity,
