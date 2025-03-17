@@ -202,20 +202,77 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
                     'Selected Location',
                     style: TextStyle(
                       fontWeight: FontWeight.bold,
+                      fontSize: 18,
+                    ),
+                  ),
+                  SizedBox(height: 12),
+                  
+                  // Place name - using our new getPlaceName helper
+                  Text(
+                    _selectedLocation!.getPlaceName(),
+                    style: TextStyle(
+                      fontWeight: FontWeight.w500,
                       fontSize: 16,
                     ),
                   ),
                   SizedBox(height: 8),
-                  Text(_selectedLocation!.address ?? 'New Location'),
-                  SizedBox(height: 8),
-                  Text(
-                    'Coordinates: ${_selectedLocation!.latitude.toStringAsFixed(6)}, ${_selectedLocation!.longitude.toStringAsFixed(6)}',
-                    style: TextStyle(
-                      color: Colors.grey[600],
-                      fontSize: 12,
+                  
+                  // Full address
+                  if (_selectedLocation!.address != null) ...[  
+                    Text(
+                      _selectedLocation!.address!,
+                      style: TextStyle(color: Colors.grey[700]),
                     ),
+                    SizedBox(height: 8),
+                  ],
+                  
+                  // Area details if available
+                  Row(children: [
+                    if (_selectedLocation!.city != null) ...[  
+                      Icon(Icons.location_city, size: 16, color: Colors.grey[600]),
+                      SizedBox(width: 4),
+                      Text(
+                        _selectedLocation!.city!,
+                        style: TextStyle(color: Colors.grey[700]),
+                      ),
+                      SizedBox(width: 16),
+                    ],
+                    if (_selectedLocation!.state != null) ...[  
+                      Text(
+                        _selectedLocation!.state!,
+                        style: TextStyle(color: Colors.grey[700]),
+                      ),
+                      SizedBox(width: 8),
+                    ],
+                    if (_selectedLocation!.country != null) ...[  
+                      Text(
+                        _selectedLocation!.country!,
+                        style: TextStyle(color: Colors.grey[700]),
+                      ),
+                    ],
+                  ]),
+                  SizedBox(height: 12),
+                  
+                  // Coordinates
+                  Row(
+                    children: [
+                      Icon(Icons.gps_fixed, size: 16, color: Colors.grey[600]),
+                      SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          '${_selectedLocation!.latitude.toStringAsFixed(6)}, ${_selectedLocation!.longitude.toStringAsFixed(6)}',
+                          style: TextStyle(
+                            color: Colors.grey[600],
+                            fontFamily: 'monospace',
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                   SizedBox(height: 16),
+                  
+                  // Confirm button
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton(

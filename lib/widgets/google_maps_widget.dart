@@ -176,10 +176,8 @@ class _GoogleMapsWidgetState extends State<GoogleMapsWidget> {
   }
   
   String _getLocationTitle(Location location) {
-    if (location.address == null) return 'Selected Location';
-    
-    final addressParts = location.address!.split(',');
-    return addressParts.first.trim();
+    // Use the new helper method for consistent place name display
+    return location.getPlaceName();
   }
   
   Future<void> _onMapCreated(GoogleMapController controller) async {
@@ -195,44 +193,36 @@ class _GoogleMapsWidgetState extends State<GoogleMapsWidget> {
     });
     
     try {
-      // Try to find if the user tapped on an established place
-      final placeDetails = await _mapsService.findPlaceDetails(
-        position.latitude, 
-        position.longitude
-      );
+      // Get place details for the tapped location
+      final location = await _mapsService.getAddressFromLatLng(position);
       
-      if (placeDetails != null) {
-        // An established place was found
-        final location = Location(
-          latitude: placeDetails['latitude'] as double,
-          longitude: placeDetails['longitude'] as double,
-          address: placeDetails['address'] as String?,
-        );
-        
-        setState(() {
-          _selectedLocation = location;
-        });
-        
-        if (widget.onLocationSelected != null) {
-          widget.onLocationSelected!(_selectedLocation!);
-        }
-      } else {
-        // No established place was found, create a new location
-        final location = Location(
-          latitude: position.latitude,
-          longitude: position.longitude,
-        );
-        
-        setState(() {
-          _selectedLocation = location;
-        });
-        
-        if (widget.onLocationSelected != null) {
-          widget.onLocationSelected!(_selectedLocation!);
-        }
+      // Update the selected location
+      setState(() {
+        _selectedLocation = location;
+      });
+      
+      // Notify parent if callback provided
+      if (widget.onLocationSelected != null) {
+        widget.onLocationSelected!(_selectedLocation!);
       }
     } catch (e) {
       print('Error handling map tap: $e');
+      
+      // Even in case of error, create a basic location
+      final location = Location(
+        latitude: position.latitude,
+        longitude: position.longitude,
+        displayName: 'Selected Location',
+      );
+      
+      setState(() {
+        _selectedLocation = location;
+      });
+      
+      // Notify parent if callback provided
+      if (widget.onLocationSelected != null) {
+        widget.onLocationSelected!(_selectedLocation!);
+      }
     } finally {
       setState(() {
         _isLoading = false;

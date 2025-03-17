@@ -141,7 +141,7 @@ class GoogleMapsService {
   }
   
   /// Get place details by placeId
-  Future<Location?> getPlaceDetails(String placeId) async {
+  Future<Location> getPlaceDetails(String placeId) async {
     try {
       // Call Google Places Details API
       final response = await _dio.get(
@@ -158,6 +158,18 @@ class GoogleMapsService {
       
       if (response.statusCode == 200) {
         final data = response.data;
+        
+        // Debug data received from Places API
+        print('📍 PLACES API RESPONSE: $data');
+        
+        // Extract place name - the displayName should contain the actual business name
+        String? placeName;
+        if (data['displayName'] != null && data['displayName']['text'] != null) {
+          placeName = data['displayName']['text'];
+          print('📍 FOUND BUSINESS NAME: $placeName');
+        } else {
+          print('📍 NO DISPLAY NAME FOUND IN RESPONSE');
+        }
         
         // Extract coordinates
         final location = data['location'];
@@ -191,19 +203,150 @@ class GoogleMapsService {
           state: state,
           country: country,
           zipCode: zipCode,
+          displayName: placeName,
         );
       }
       
-      return null;
+      print('📍 NO VALID RESPONSE FROM PLACES API');
+      // If we couldn't get any valid place information, return a minimal location with coordinates
+      return Location(
+        latitude: 0.0, 
+        longitude: 0.0,
+        address: 'Unknown location',
+        displayName: 'Unknown Location',
+      );
     } catch (e) {
       print('Error getting place details: $e');
-      return null;
+      
+      // Even in case of error, return a basic location with coordinates
+      return Location(
+        latitude: 0.0, 
+        longitude: 0.0,
+        address: 'Unknown location',
+        displayName: 'Unknown Location',
+      );
     }
   }
   
   /// Find place details using Google Places API via coordinates
   Future<Map<String, dynamic>?> findPlaceDetails(double latitude, double longitude) async {
     try {
+      // Try using the Places API first (better business info)
+      try {
+        print('📍 Looking up place at coordinates using Places API v1');
+        
+        // First try to get a Place ID using reverse geocoding
+        final geocodeUrl = Uri.parse(
+          'https://maps.googleapis.com/maps/api/geocode/json?latlng=$latitude,$longitude&key=$apiKey'
+        );
+        
+        final geocodeResponse = await http.get(geocodeUrl);
+        
+        if (geocodeResponse.statusCode == 200) {
+          final geocodeData = json.decode(geocodeResponse.body);
+          print('📍 Geocoding response: $geocodeData');
+          
+          if (geocodeData['status'] == 'OK' && geocodeData['results'] != null && geocodeData['results'].isNotEmpty) {
+            // Find result with establishment type
+            Map<String, dynamic>? estResult;
+            String? placeId;
+            
+            for (var result in geocodeData['results']) {
+              final types = result['types'] as List? ?? [];
+              if (types.contains('establishment') || 
+                  types.contains('point_of_interest') ||
+                  types.contains('restaurant') ||
+                  types.contains('store')) {
+                
+                estResult = result;
+                placeId = result['place_id'];
+                print('📍 Found establishment with Place ID: $placeId');
+                break;
+              }
+            }
+            
+            // If found a Place ID for an establishment, get details from Places API v1
+            if (placeId != null) {
+              try {
+                final location = await getPlaceDetails(placeId);
+                if (location.displayName != null) {
+                  print('📍 Successfully retrieved establishment name: ${location.displayName}');
+                  return {
+                    'placeId': placeId,
+                    'name': location.displayName!,
+                    'address': location.address ?? '',
+                    'latitude': latitude,
+                    'longitude': longitude,
+                    'types': estResult!['types'] as List? ?? []
+                  };
+                }
+              } catch (e) {
+                print('📍 Error getting details from Place ID: $e');
+                // Continue with regular geocoding as fallback
+              }
+            }
+            
+            // Fallback to regular geocoding if Places API didn't work
+            Map<String, dynamic>? placeResult;
+            
+            // If we already found an establishment, use that
+            if (estResult != null) {
+              placeResult = estResult;
+            } else {
+              // Otherwise look through all results
+              for (var result in geocodeData['results']) {
+                final types = result['types'] as List? ?? [];
+                if (types.contains('establishment') || 
+                    types.contains('point_of_interest') ||
+                    types.contains('restaurant') ||
+                    types.contains('store')) {
+                  
+                  placeResult = result;
+                  break;
+                }
+              }
+              
+              // If no establishment found, use the first result
+              placeResult ??= geocodeData['results'][0];
+            }
+            
+            // Try to extract business name or a meaningful place name
+            String placeName = "Unknown Place";
+            
+            // First check for name in the result (rare for geocoding)
+            if (placeResult != null) {
+              if (placeResult['name'] != null) {
+                placeName = placeResult['name'] as String;
+                print('📍 REVERSE GEOCODING - Found name: $placeName');
+              } else if (placeResult['formatted_address'] != null) {
+                // Get first part of address (often contains business name)
+                final address = placeResult['formatted_address'] as String;
+                if (address.contains(',')) {
+                  placeName = address.split(',')[0].trim();
+                } else {
+                  placeName = address;
+                }
+                print('📍 REVERSE GEOCODING - Using address part: $placeName');
+              } else {
+                print('📍 REVERSE GEOCODING - No name or address found');
+              }
+              
+              return {
+                'placeId': placeResult['place_id'] ?? '',
+                'name': placeName,
+                'address': placeResult['formatted_address'] ?? '',
+                'latitude': latitude,
+                'longitude': longitude,
+                'types': placeResult['types'] as List? ?? []
+              };
+            }
+          }
+        }
+      } catch (e) {
+        print('📍 Error in Places API lookup: $e, falling back to geocoding');
+      }
+      
+      // Fallback to basic geocoding if Places API didn't work
       final url = Uri.parse(
         'https://maps.googleapis.com/maps/api/geocode/json?latlng=$latitude,$longitude&key=$apiKey'
       );
@@ -234,21 +377,61 @@ class GoogleMapsService {
           // If no establishment found, use the first result
           placeResult ??= results[0];
           
-          return {
-            'placeId': placeResult?['place_id'] ?? '',
-            'name': placeResult != null ? _extractName(placeResult) : 'Unknown Place',
-            'address': placeResult?['formatted_address'] ?? '',
-            'latitude': latitude,
-            'longitude': longitude,
-            'types': placeResult?['types'] as List? ?? []
-          };
+          // Try to extract business name or a meaningful place name
+          String placeName = "Unknown Place";
+          
+          // Check if placeResult is not null before accessing its properties
+          if (placeResult != null) {
+            // First check for business name in the result (most specific)
+            if (placeResult['name'] != null) {
+              placeName = placeResult['name'] as String;
+              print('📍 REVERSE GEOCODING FALLBACK - Found name: $placeName');
+            } else if (placeResult['formatted_address'] != null) {
+              // Get first part of address (often contains business name)
+              final address = placeResult['formatted_address'] as String;
+              if (address.contains(',')) {
+                placeName = address.split(',')[0].trim();
+              } else {
+                placeName = address;
+              }
+              print('📍 REVERSE GEOCODING FALLBACK - Using address part: $placeName');
+            } else {
+              print('📍 REVERSE GEOCODING FALLBACK - No name or address found');
+            }
+            
+            return {
+              'placeId': placeResult['place_id'] ?? '',
+              'name': placeName,
+              'address': placeResult['formatted_address'] ?? '',
+              'latitude': latitude,
+              'longitude': longitude,
+              'types': placeResult['types'] as List? ?? []
+            };
+          }
         }
       }
       
-      return null;
+      // If we couldn't get any valid place information, return a minimal result with coordinates
+      return {
+        'placeId': '',
+        'name': 'Selected Location',
+        'address': 'Location at ${latitude.toStringAsFixed(6)}, ${longitude.toStringAsFixed(6)}',
+        'latitude': latitude,
+        'longitude': longitude,
+        'types': []
+      };
     } catch (e) {
       print('Error finding place details: $e');
-      return null;
+      
+      // Even in case of error, return minimal coordinates to avoid null issues
+      return {
+        'placeId': '',
+        'name': 'Selected Location',
+        'address': 'Location at ${latitude.toStringAsFixed(6)}, ${longitude.toStringAsFixed(6)}',
+        'latitude': latitude,
+        'longitude': longitude,
+        'types': []
+      };
     }
   }
   
@@ -310,10 +493,27 @@ class GoogleMapsService {
         }
       }
       
-      return null;
+      // If we couldn't get any valid place information, return a minimal result with coordinates
+      return {
+        'placeId': '',
+        'name': 'Selected Location',
+        'address': 'Location at ${latitude.toStringAsFixed(6)}, ${longitude.toStringAsFixed(6)}',
+        'latitude': latitude,
+        'longitude': longitude,
+        'types': []
+      };
     } catch (e) {
       print('Error finding place at coordinates: $e');
-      return null;
+      
+      // Even in case of error, return minimal coordinates to avoid null issues
+      return {
+        'placeId': '',
+        'name': 'Selected Location',
+        'address': 'Location at ${latitude.toStringAsFixed(6)}, ${longitude.toStringAsFixed(6)}',
+        'latitude': latitude,
+        'longitude': longitude,
+        'types': []
+      };
     }
   }
   
@@ -367,7 +567,7 @@ class GoogleMapsService {
   }
   
   /// Get place details from geocoding service
-  Future<Location?> getAddressFromLatLng(LatLng position) async {
+  Future<Location> getAddressFromLatLng(LatLng position) async {
     try {
       final placeDetails = await findPlaceDetails(
         position.latitude,
@@ -376,16 +576,30 @@ class GoogleMapsService {
       
       if (placeDetails != null) {
         return Location(
-          latitude: placeDetails['latitude'],
-          longitude: placeDetails['longitude'],
-          address: placeDetails['address'],
+          latitude: placeDetails['latitude'] as double,
+          longitude: placeDetails['longitude'] as double,
+          address: placeDetails['address'] as String?,
+          displayName: placeDetails['name'] as String?,
         );
       }
       
-      return null;
+      // If we couldn't get details, return a basic location
+      return Location(
+        latitude: position.latitude,
+        longitude: position.longitude,
+        address: 'Location at ${position.latitude.toStringAsFixed(6)}, ${position.longitude.toStringAsFixed(6)}',
+        displayName: 'Selected Location',
+      );
     } catch (e) {
       print('Error getting address: $e');
-      return null;
+      
+      // Even in case of error, return a basic location to avoid null issues
+      return Location(
+        latitude: position.latitude,
+        longitude: position.longitude,
+        address: 'Location at ${position.latitude.toStringAsFixed(6)}, ${position.longitude.toStringAsFixed(6)}',
+        displayName: 'Selected Location',
+      );
     }
   }
   
