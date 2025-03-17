@@ -375,75 +375,43 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
                                   SizedBox(height: 16),
 
                                   // Location selection with preview
-                                  Column(
-                                    children: [
-                                      GestureDetector(
-                                        onTap: _isSelectingLocation
-                                            ? null
-                                            : _showLocationPicker,
-                                        child: Container(
-                                          decoration: BoxDecoration(
-                                            border:
-                                                Border.all(color: Colors.grey),
-                                            borderRadius:
-                                                BorderRadius.circular(4),
-                                          ),
-                                          padding: EdgeInsets.symmetric(
-                                              horizontal: 12, vertical: 16),
-                                          child: Row(
-                                            children: [
-                                              Icon(Icons.location_on,
-                                                  color: Colors.grey[600]),
-                                              SizedBox(width: 12),
-                                              Expanded(
-                                                child: _selectedLocation != null
-                                                    ? Text(_selectedLocation!
-                                                            .address ??
-                                                        'Location selected')
-                                                    : Text(
-                                                        _isSelectingLocation
-                                                            ? 'Selecting location...'
-                                                            : 'Select location',
-                                                        style: TextStyle(
-                                                            color: Colors
-                                                                .grey[600]),
-                                                      ),
-                                              ),
-                                              Icon(Icons.arrow_drop_down,
-                                                  color: Colors.grey[600]),
-                                            ],
-                                          ),
-                                        ),
+                                  GestureDetector(
+                                    onTap: _isSelectingLocation
+                                        ? null
+                                        : _showLocationPicker,
+                                    child: Container(
+                                      decoration: BoxDecoration(
+                                        border:
+                                            Border.all(color: Colors.grey),
+                                        borderRadius:
+                                            BorderRadius.circular(4),
                                       ),
-
-                                      // Show a map preview if location is selected
-                                      if (_selectedLocation != null)
-                                        Padding(
-                                          padding:
-                                              const EdgeInsets.only(top: 8.0),
-                                          child: Container(
-                                            height: 120,
-                                            decoration: BoxDecoration(
-                                              border: Border.all(
-                                                  color: Colors.grey[300]!),
-                                              borderRadius:
-                                                  BorderRadius.circular(4),
-                                              image: DecorationImage(
-                                                image: NetworkImage(
-                                                  _mapsService.getStaticMapUrl(
-                                                    _selectedLocation!.latitude,
-                                                    _selectedLocation!
-                                                        .longitude,
-                                                    width: 400,
-                                                    height: 200,
+                                      padding: EdgeInsets.symmetric(
+                                          horizontal: 12, vertical: 16),
+                                      child: Row(
+                                        children: [
+                                          Icon(Icons.location_on,
+                                              color: Colors.grey[600]),
+                                          SizedBox(width: 12),
+                                          Expanded(
+                                            child: _selectedLocation != null
+                                                ? Text(_selectedLocation!
+                                                        .address ??
+                                                    'Location selected')
+                                                : Text(
+                                                    _isSelectingLocation
+                                                        ? 'Selecting location...'
+                                                        : 'Select location',
+                                                    style: TextStyle(
+                                                        color: Colors
+                                                            .grey[600]),
                                                   ),
-                                                ),
-                                                fit: BoxFit.cover,
-                                              ),
-                                            ),
                                           ),
-                                        ),
-                                    ],
+                                          Icon(Icons.arrow_drop_down,
+                                              color: Colors.grey[600]),
+                                        ],
+                                      ),
+                                    ),
                                   ),
                                   SizedBox(height: 16),
 
