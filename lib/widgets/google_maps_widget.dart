@@ -14,6 +14,14 @@ class GoogleMapsWidget extends StatefulWidget {
   final Function(Location)? onLocationSelected;
   final Map<String, Marker>? additionalMarkers;
   
+  // Accessing the controller
+  GoogleMapController? get mapController => _GoogleMapsWidgetState._instance?._mapController;
+  
+  // Animation helper method
+  void animateToLocation(Location location) {
+    _GoogleMapsWidgetState._instance?._animateToLocation(location);
+  }
+  
   const GoogleMapsWidget({
     Key? key,
     this.initialLocation,
@@ -30,6 +38,9 @@ class GoogleMapsWidget extends StatefulWidget {
 }
 
 class _GoogleMapsWidgetState extends State<GoogleMapsWidget> {
+  // Static instance reference for access
+  static _GoogleMapsWidgetState? _instance;
+  
   final GoogleMapsService _mapsService = GoogleMapsService();
   final Completer<GoogleMapController> _controllerCompleter = Completer<GoogleMapController>();
   GoogleMapController? _mapController;
@@ -46,11 +57,15 @@ class _GoogleMapsWidgetState extends State<GoogleMapsWidget> {
   @override
   void initState() {
     super.initState();
+    _instance = this;
     _initMap();
   }
 
   @override
   void dispose() {
+    if (_instance == this) {
+      _instance = null;
+    }
     _mapController?.dispose();
     super.dispose();
   }
@@ -183,6 +198,11 @@ class _GoogleMapsWidgetState extends State<GoogleMapsWidget> {
   Future<void> _onMapCreated(GoogleMapController controller) async {
     _mapController = controller;
     _controllerCompleter.complete(controller);
+    
+    // If there's a selected location, ensure the map is properly positioned
+    if (_selectedLocation != null) {
+      _animateToLocation(_selectedLocation!);
+    }
   }
   
   Future<void> _onMapTapped(LatLng position) async {
@@ -193,8 +213,11 @@ class _GoogleMapsWidgetState extends State<GoogleMapsWidget> {
     });
     
     try {
-      // Get place details for the tapped location
-      final location = await _mapsService.getAddressFromLatLng(position);
+      // Instead of using the exact tapped coordinates, try to find a POI at or near that location
+      print('📍 Map tapped at coordinates: ${position.latitude}, ${position.longitude}');
+      
+      // Use the findPlaceNearPosition method which will search for POIs
+      final location = await _mapsService.findPlaceNearPosition(position);
       
       // Update the selected location
       setState(() {
@@ -232,14 +255,33 @@ class _GoogleMapsWidgetState extends State<GoogleMapsWidget> {
     }
   }
   
+  /// Animates the map camera to focus on the given location
   Future<void> _animateToLocation(Location location) async {
-    final controller = await _controllerCompleter.future;
-    controller.animateCamera(
-      CameraUpdate.newLatLngZoom(
-        LatLng(location.latitude, location.longitude),
-        widget.initialZoom,
-      ),
-    );
+    if (_mapController == null) {
+      // If map controller isn't ready yet, wait for it
+      final controller = await _controllerCompleter.future;
+      await controller.animateCamera(
+        CameraUpdate.newLatLngZoom(
+          LatLng(location.latitude, location.longitude),
+          widget.initialZoom,
+        ),
+      );
+    } else {
+      // Otherwise use existing controller directly
+      await _mapController!.animateCamera(
+        CameraUpdate.newLatLngZoom(
+          LatLng(location.latitude, location.longitude),
+          widget.initialZoom,
+        ),
+      );
+    }
+    
+    // Update selected location and markers
+    setState(() {
+      _selectedLocation = location;
+    });
+    
+    _updateMarkers();
   }
   
   @override
