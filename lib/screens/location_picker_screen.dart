@@ -22,6 +22,7 @@ class LocationPickerScreen extends StatefulWidget {
 
 class _LocationPickerScreenState extends State<LocationPickerScreen> {
   final GoogleMapsService _mapsService = GoogleMapsService();
+  final GlobalKey<State<GoogleMapsWidget>> _mapKey = GlobalKey<State<GoogleMapsWidget>>();
   Location? _selectedLocation;
   List<Map<String, dynamic>> _searchResults = [];
   bool _showSearchResults = false;
@@ -86,8 +87,20 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
       if (location != null) {
         setState(() {
           _selectedLocation = location;
-          _searchController.text = location.address ?? 'Selected Location';
+          _searchController.text = location.displayName ?? location.address ?? 'Selected Location';
         });
+        
+        // Get reference to the GoogleMapsWidget
+        final mapWidget = _mapKey.currentWidget as GoogleMapsWidget?;
+        if (mapWidget?.mapController != null) {
+          // Animate map to the selected location
+          mapWidget!.animateToLocation(location);
+        }
+        
+        // Update parent with selected location
+        if (widget.onLocationSelected != null) {
+          widget.onLocationSelected!(_selectedLocation!);
+        }
       }
     } catch (e) {
       print('Error getting place details: $e');
@@ -105,6 +118,13 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
     setState(() {
       _selectedLocation = location;
     });
+    
+    // Update the search box text to reflect the selected location
+    _searchController.text = location.displayName ?? location.address ?? 'Selected Location';
+    
+    // Make sure we have the location centered on the map
+    final mapWidget = _mapKey.currentWidget as GoogleMapsWidget?;
+    mapWidget?.animateToLocation(location);
   }
   
   @override
@@ -182,6 +202,7 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
           // Map takes remaining space
           Expanded(
             child: GoogleMapsWidget(
+              key: _mapKey,
               initialLocation: widget.initialLocation,
               showUserLocation: true,
               allowSelection: true,
