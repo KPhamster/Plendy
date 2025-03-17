@@ -62,6 +62,7 @@ class Location {
   final String? state;
   final String? country;
   final String? zipCode;
+  final String? displayName; // Business or place display name
 
   Location({
     required this.latitude,
@@ -71,6 +72,7 @@ class Location {
     this.state,
     this.country,
     this.zipCode,
+    this.displayName,
   });
 
   factory Location.fromMap(Map<String, dynamic> map) {
@@ -82,6 +84,7 @@ class Location {
       state: map['state'],
       country: map['country'],
       zipCode: map['zipCode'],
+      displayName: map['displayName'] ?? map['name'],
     );
   }
 
@@ -94,7 +97,36 @@ class Location {
       'state': state,
       'country': country,
       'zipCode': zipCode,
+      'displayName': displayName,
     };
+  }
+  
+  /// Get the human-friendly place name to display
+  String getPlaceName() {
+    // First try to use the display name (usually a business name like "Costco")
+    if (displayName != null && displayName!.isNotEmpty) {
+      return displayName!;
+    }
+    
+    // If no display name, try using the first part of the address
+    if (address != null && address!.isNotEmpty) {
+      final parts = address!.split(',');
+      return parts[0].trim();
+    }
+    
+    // Fallback for locations that don't have either
+    return 'Selected Location';
+  }
+
+  /// Get a formatted representation of the area (city, state, country)
+  String? getFormattedArea() {
+    List<String> parts = [];
+    
+    if (city != null && city!.isNotEmpty) parts.add(city!);
+    if (state != null && state!.isNotEmpty) parts.add(state!);
+    if (country != null && country!.isNotEmpty && parts.isEmpty) parts.add(country!);
+    
+    return parts.isNotEmpty ? parts.join(', ') : null;
   }
 }
 
