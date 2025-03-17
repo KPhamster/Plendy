@@ -1,55 +1,73 @@
-import 'package:flutter/foundation.dart';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:http/http.dart' as http;
 import 'package:dio/dio.dart';
-import 'dart:io';
-import '../models/experience.dart';
+import 'dart:convert';
 import '../config/api_secrets.dart';
+import '../models/experience.dart';
 
-class MapService {
-  static final MapService _instance = MapService._internal();
+/// Service class for Google Maps functionality
+class GoogleMapsService {
+  static final GoogleMapsService _instance = GoogleMapsService._internal();
   
-  factory MapService() {
+  factory GoogleMapsService() {
     return _instance;
   }
   
-  MapService._internal();
+  GoogleMapsService._internal();
   
+  // For more advanced API requests
   final Dio _dio = Dio();
   
-  // Get the API key securely from ApiSecrets
+  // Get the API key securely
   static String get apiKey => ApiSecrets.googleMapsApiKey;
   
-  // Get current location after checking/requesting permissions
-  Future<Position?> getCurrentLocation() async {
+  /// Check and request location permissions
+  Future<LocationPermission> checkAndRequestLocationPermission() async {
+    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      return Future.error('Location services are disabled.');
+    }
+
     LocationPermission permission = await Geolocator.checkPermission();
-    
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
       if (permission == LocationPermission.denied) {
-        return null;
+        return Future.error('Location permissions are denied');
       }
     }
     
     if (permission == LocationPermission.deniedForever) {
-      return null;
+      return Future.error(
+        'Location permissions are permanently denied, we cannot request permissions.');
     }
     
-    if (permission == LocationPermission.whileInUse || 
-        permission == LocationPermission.always) {
-      try {
-        return await Geolocator.getCurrentPosition();
-      } catch (e) {
-        print('Error getting current location: $e');
-        return null;
-      }
-    }
-    
-    return null;
+    return permission;
   }
   
-  // Search for places using Google Places API
+  /// Get current user location
+  Future<Position> getCurrentLocation() async {
+    await checkAndRequestLocationPermission();
+    return await Geolocator.getCurrentPosition();
+  }
+  
+  /// Convert Location model to LatLng for Google Maps
+  LatLng locationToLatLng(Location location) {
+    return LatLng(location.latitude, location.longitude);
+  }
+  
+  /// Convert LatLng to Location model
+  Location latLngToLocation(LatLng latLng, {String? address}) {
+    return Location(
+      latitude: latLng.latitude,
+      longitude: latLng.longitude,
+      address: address,
+    );
+  }
+  
+  /// Search for places using Google Places API
   Future<List<Map<String, dynamic>>> searchPlaces(String query) async {
     if (query.isEmpty) {
       return [];
@@ -57,7 +75,13 @@ class MapService {
     
     try {
       // Get location for better results
-      Position? position = await getCurrentLocation();
+      Position? position;
+      try {
+        position = await getCurrentLocation();
+      } catch (e) {
+        // Continue without position if we can't get it
+        print('Unable to get current position: $e');
+      }
       
       // Prepare request body
       Map<String, dynamic> requestBody = {"input": query};
@@ -98,8 +122,8 @@ class MapService {
             if (suggestion['placePrediction'] != null) {
               final placePrediction = suggestion['placePrediction'];
               results.add({
-                'placeId': placePrediction['placeId'],
-                'description': placePrediction['text']['text'],
+                'placeId': placePrediction['placeId'] ?? '',
+                'description': placePrediction['text']?['text'] ?? '',
                 'place': placePrediction['place']
               });
             }
@@ -116,7 +140,7 @@ class MapService {
     }
   }
   
-  // Get place details by placeId
+  /// Get place details by placeId
   Future<Location?> getPlaceDetails(String placeId) async {
     try {
       // Call Google Places Details API
@@ -137,8 +161,8 @@ class MapService {
         
         // Extract coordinates
         final location = data['location'];
-        final lat = location['latitude'];
-        final lng = location['longitude'];
+        final lat = location?['latitude'] ?? 0.0;
+        final lng = location?['longitude'] ?? 0.0;
         
         // Extract address components
         String? address = data['formattedAddress'];
@@ -146,7 +170,7 @@ class MapService {
         
         if (data['addressComponents'] != null) {
           for (var component in data['addressComponents']) {
-            List<dynamic> types = component['types'];
+            List<dynamic> types = component['types'] ?? [];
             if (types.contains('locality')) {
               city = component['longText'];
             } else if (types.contains('administrative_area_level_1')) {
@@ -177,66 +201,81 @@ class MapService {
     }
   }
   
-  // Get static map image URL for a location
-  String getStaticMapImageUrl(double latitude, double longitude, {int zoom = 15, int width = 600, int height = 300}) {
-    return 'https://maps.googleapis.com/maps/api/staticmap?center=$latitude,$longitude&zoom=$zoom&size=${width}x$height&markers=color:red%7C$latitude,$longitude&key=$apiKey';
-  }
-  
-  // Generate directions URL
-  String getDirectionsUrl(double destLat, double destLng, {double? originLat, double? originLng}) {
-    if (originLat != null && originLng != null) {
-      return 'https://www.google.com/maps/dir/?api=1&origin=$originLat,$originLng&destination=$destLat,$destLng';
-    } else {
-      return 'https://www.google.com/maps/dir/?api=1&destination=$destLat,$destLng';
+  /// Find place details using Google Places API via coordinates
+  Future<Map<String, dynamic>?> findPlaceDetails(double latitude, double longitude) async {
+    try {
+      final url = Uri.parse(
+        'https://maps.googleapis.com/maps/api/geocode/json?latlng=$latitude,$longitude&key=$apiKey'
+      );
+      
+      final response = await http.get(url);
+      
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        
+        if (data['status'] == 'OK' && data['results'] != null && data['results'].isNotEmpty) {
+          final results = data['results'] as List;
+          
+          // Look for establishment or point of interest results
+          Map<String, dynamic>? placeResult;
+          
+          for (var result in results) {
+            final types = result['types'] as List? ?? [];
+            if (types.contains('establishment') || 
+                types.contains('point_of_interest') ||
+                types.contains('restaurant') ||
+                types.contains('store')) {
+              
+              placeResult = result;
+              break;
+            }
+          }
+          
+          // If no establishment found, use the first result
+          placeResult ??= results[0];
+          
+          return {
+            'placeId': placeResult?['place_id'] ?? '',
+            'name': placeResult != null ? _extractName(placeResult) : 'Unknown Place',
+            'address': placeResult?['formatted_address'] ?? '',
+            'latitude': latitude,
+            'longitude': longitude,
+            'types': placeResult?['types'] as List? ?? []
+          };
+        }
+      }
+      
+      return null;
+    } catch (e) {
+      print('Error finding place details: $e');
+      return null;
     }
   }
   
-  // Generate static map URL for a location (legacy method name for compatibility)
-  String getStaticMapUrl(double latitude, double longitude, {int zoom = 15, int width = 600, int height = 300}) {
-    return getStaticMapImageUrl(latitude, longitude, zoom: zoom, width: width, height: height);
-  }
-  
-  // Get directions URL between two coordinates (legacy method signature for compatibility)
-  String getDirectionsUrlFromCoordinates(double startLat, double startLng, double endLat, double endLng) {
-    return getDirectionsUrl(endLat, endLng, originLat: startLat, originLng: startLng);
-  }
-  
-  // Find place directly at the tapped coordinates
+  /// More detailed place search at coordinates
   Future<Map<String, dynamic>?> findPlaceAtCoordinates(double latitude, double longitude) async {
-    print('API REQUEST: Searching for place at coordinates: $latitude, $longitude');
-    // Debug the API key (first 8 chars only for security)
-    print('API REQUEST: Using API key starting with: ${apiKey.substring(0, 8)}...');
-    
     try {
-      // Try using reverse geocoding first - this is more reliable
-      print('API REQUEST: Using reverse geocoding API');
-      
+      // Try using reverse geocoding
       final geocodeResponse = await _dio.get(
         'https://maps.googleapis.com/maps/api/geocode/json',
         queryParameters: {
           'latlng': '$latitude,$longitude',
-          'key': apiKey
+          'key': apiKey,
+          'radius': '50' // Increase search radius to 50 meters
         }
       );
-      
-      print('GEOCODE RESPONSE: Status: ${geocodeResponse.data?['status'] ?? 'Unknown'}');
-      print('GEOCODE RESPONSE: Full data: ${geocodeResponse.data}');
       
       if (geocodeResponse.statusCode == 200 && 
           geocodeResponse.data?['status'] == 'OK' &&
           geocodeResponse.data?['results'] != null) {
         
-        // Get the results array safely with null checks
         final List<dynamic> geocodeResults = (geocodeResponse.data?['results'] as List?) ?? [];
-        print('GEOCODE RESPONSE: Found ${geocodeResults.length} results');
         
         // Look for results with establishment or point_of_interest types
         Map<String, dynamic>? placeResult;
         
         if (geocodeResults.isNotEmpty) {
           for (var result in geocodeResults) {
-            print('GEOCODE RESULT: Types: ${result['types']}');
-            
             List<dynamic> types = result['types'] as List? ?? [];
             if (types.contains('establishment') || 
                 types.contains('point_of_interest') ||
@@ -246,15 +285,13 @@ class MapService {
                 types.contains('cafe')) {
               
               placeResult = result;
-              print('GEOCODE RESPONSE: Found establishment: ${result?['formatted_address'] ?? 'No address available'}');
               break;
             }
           }
           
-          // If we didn't find an establishment, use the most specific result (usually the first one)
+          // If we didn't find an establishment, use the most specific result
           if (placeResult == null && geocodeResults.isNotEmpty) {
             placeResult = geocodeResults[0];
-            print('GEOCODE RESPONSE: Using most specific result: ${placeResult?['formatted_address'] ?? 'No address available'}');
           }
         }
         
@@ -269,32 +306,49 @@ class MapService {
             'types': placeResult['types'] as List? ?? []
           };
           
-          print('GEOCODE RESPONSE: Final result: $result');
           return result;
         }
-      } else {
-        print('GEOCODE RESPONSE: No results or error status: ${geocodeResponse.data['status']}');
       }
       
       return null;
     } catch (e) {
-      print('API ERROR: Error finding place at coordinates: $e');
+      print('Error finding place at coordinates: $e');
       return null;
     }
   }
   
-  // Helper method to extract a place name from geocoding result
+  /// Helper to extract a meaningful name from geocoding result
+  String _extractName(Map<String, dynamic> result) {
+    // First try to get the name of the establishment
+    if (result['address_components'] != null && 
+        (result['address_components'] as List).isNotEmpty) {
+      return result['address_components'][0]['long_name'] as String? ?? 'Unknown Place';
+    }
+    
+    // Fallback to first part of the address
+    if (result['formatted_address'] != null) {
+      final address = result['formatted_address'] as String;
+      if (address.contains(',')) {
+        return address.split(',')[0].trim();
+      }
+      return address;
+    }
+    
+    return 'Unknown Place';
+  }
+  
+  /// Helper method to extract a place name from geocoding result
   String _extractPlaceName(Map<String, dynamic> geocodeResult) {
     // First check if there's a name in the result (rare for geocoding)
     if (geocodeResult.containsKey('name') && geocodeResult['name'] != null) {
       return geocodeResult['name'] as String;
     }
     
-    // Try to get the most specific component (first component is usually the place name)
+    // Try to get the most specific component
     if (geocodeResult['address_components'] != null && 
         (geocodeResult['address_components'] as List).isNotEmpty) {
       
-      // For establishments, the first component is usually the most specific (name of place)
+      // First component is usually the most specific (name of place)
       return geocodeResult['address_components'][0]['long_name'] as String;
     }
     
@@ -310,5 +364,52 @@ class MapService {
     
     // Fallback
     return 'Selected Place';
+  }
+  
+  /// Get place details from geocoding service
+  Future<Location?> getAddressFromLatLng(LatLng position) async {
+    try {
+      final placeDetails = await findPlaceDetails(
+        position.latitude,
+        position.longitude
+      );
+      
+      if (placeDetails != null) {
+        return Location(
+          latitude: placeDetails['latitude'],
+          longitude: placeDetails['longitude'],
+          address: placeDetails['address'],
+        );
+      }
+      
+      return null;
+    } catch (e) {
+      print('Error getting address: $e');
+      return null;
+    }
+  }
+  
+  /// Generate a static map image URL
+  String getStaticMapUrl(double latitude, double longitude, {int zoom = 14, int width = 600, int height = 300}) {
+    return 'https://maps.googleapis.com/maps/api/staticmap?center=$latitude,$longitude&zoom=$zoom&size=${width}x$height&markers=color:red%7C$latitude,$longitude&key=$apiKey';
+  }
+  
+  /// Alias for static map URL
+  String getStaticMapImageUrl(double latitude, double longitude, {int zoom = 15, int width = 600, int height = 300}) {
+    return getStaticMapUrl(latitude, longitude, zoom: zoom, width: width, height: height);
+  }
+  
+  /// Generate directions URL
+  String getDirectionsUrl(double destLat, double destLng, {double? originLat, double? originLng}) {
+    if (originLat != null && originLng != null) {
+      return 'https://www.google.com/maps/dir/?api=1&origin=$originLat,$originLng&destination=$destLat,$destLng';
+    } else {
+      return 'https://www.google.com/maps/dir/?api=1&destination=$destLat,$destLng';
+    }
+  }
+  
+  /// Get directions URL between two coordinates (legacy method signature for compatibility)
+  String getDirectionsUrlFromCoordinates(double startLat, double startLng, double endLat, double endLng) {
+    return getDirectionsUrl(endLat, endLng, originLat: startLat, originLng: startLng);
   }
 }
