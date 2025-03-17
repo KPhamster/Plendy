@@ -125,10 +125,13 @@ class _GoogleMapsWidgetState extends State<GoogleMapsWidget> {
   }
   
   void _setInitialCameraPosition() {
+    // Default zoom level - if we have a selected location, use a higher zoom
+    double zoomLevel = _selectedLocation != null ? 16.0 : widget.initialZoom;
+    
     if (_selectedLocation != null) {
       _initialCameraPosition = CameraPosition(
         target: LatLng(_selectedLocation!.latitude, _selectedLocation!.longitude),
-        zoom: widget.initialZoom,
+        zoom: zoomLevel,
       );
     } else if (_userPosition != null) {
       _initialCameraPosition = CameraPosition(
@@ -139,7 +142,7 @@ class _GoogleMapsWidgetState extends State<GoogleMapsWidget> {
       // Default position (San Francisco)
       _initialCameraPosition = CameraPosition(
         target: LatLng(37.7749, -122.4194),
-        zoom: widget.initialZoom,
+        zoom: 12.0, // More reasonable default zoom for a city view
       );
     }
   }
@@ -213,20 +216,44 @@ class _GoogleMapsWidgetState extends State<GoogleMapsWidget> {
     });
     
     try {
+      // Get current zoom level before making any changes
+      double currentZoom = widget.initialZoom;
+      if (_mapController != null) {
+        try {
+          currentZoom = await _mapController!.getZoomLevel();
+        } catch (e) {
+          print('Error getting zoom: $e');
+        }
+      }
+      
       // Instead of using the exact tapped coordinates, try to find a POI at or near that location
       print('📍 Map tapped at coordinates: ${position.latitude}, ${position.longitude}');
       
       // Use the findPlaceNearPosition method which will search for POIs
       final location = await _mapsService.findPlaceNearPosition(position);
       
-      // Update the selected location
+      // Update the selected location and markers, but don't change zoom!
       setState(() {
         _selectedLocation = location;
+        _isLoading = false;
       });
       
       // Notify parent if callback provided
       if (widget.onLocationSelected != null) {
         widget.onLocationSelected!(_selectedLocation!);
+      }
+      
+      // Just update markers without changing camera position
+      _updateMarkers();
+      
+      // If we found a business/POI different from the tap location, center on it but preserve zoom
+      if (location.latitude != position.latitude || location.longitude != position.longitude) {
+        await _mapController?.animateCamera(
+          CameraUpdate.newLatLngZoom(
+            LatLng(location.latitude, location.longitude),
+            currentZoom, // Maintain current zoom!
+          ),
+        );
       }
     } catch (e) {
       print('Error handling map tap: $e');
@@ -240,40 +267,58 @@ class _GoogleMapsWidgetState extends State<GoogleMapsWidget> {
       
       setState(() {
         _selectedLocation = location;
+        _isLoading = false;
       });
       
       // Notify parent if callback provided
       if (widget.onLocationSelected != null) {
         widget.onLocationSelected!(_selectedLocation!);
       }
-    } finally {
-      setState(() {
-        _isLoading = false;
-      });
       
+      // Update markers
       _updateMarkers();
     }
   }
   
   /// Animates the map camera to focus on the given location
   Future<void> _animateToLocation(Location location) async {
-    if (_mapController == null) {
-      // If map controller isn't ready yet, wait for it
-      final controller = await _controllerCompleter.future;
-      await controller.animateCamera(
-        CameraUpdate.newLatLngZoom(
-          LatLng(location.latitude, location.longitude),
-          widget.initialZoom,
-        ),
-      );
-    } else {
-      // Otherwise use existing controller directly
-      await _mapController!.animateCamera(
-        CameraUpdate.newLatLngZoom(
-          LatLng(location.latitude, location.longitude),
-          widget.initialZoom,
-        ),
-      );
+    // Get current zoom level if possible, otherwise use the initial zoom
+    double currentZoom = widget.initialZoom;
+    if (_mapController != null) {
+      try {
+        // Get current camera position to maintain zoom level
+        final cameraPosition = await _mapController!.getVisibleRegion();
+        // Calculate approximate zoom from visible region
+        // This helps maintain the current zoom level instead of resetting
+        currentZoom = await _mapController!.getZoomLevel();
+        print('📍 Current zoom level: $currentZoom');
+      } catch (e) {
+        print('Error getting current zoom: $e');
+        // Fall back to initial zoom if we can't get current zoom
+      }
+    }
+    
+    try {
+      if (_mapController == null) {
+        // If map controller isn't ready yet, wait for it
+        final controller = await _controllerCompleter.future;
+        await controller.animateCamera(
+          CameraUpdate.newLatLngZoom(
+            LatLng(location.latitude, location.longitude),
+            currentZoom,
+          ),
+        );
+      } else {
+        // Otherwise use existing controller directly
+        await _mapController!.animateCamera(
+          CameraUpdate.newLatLngZoom(
+            LatLng(location.latitude, location.longitude),
+            currentZoom,
+          ),
+        );
+      }
+    } catch (e) {
+      print('Error animating camera: $e');
     }
     
     // Update selected location and markers
