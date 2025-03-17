@@ -232,8 +232,7 @@ class GoogleMapsService {
   /// Find a place near the tapped position - this improves POI selection
   Future<Location> findPlaceNearPosition(LatLng position) async {
     try {
-      print(
-          '📍 Searching for POIs near ${position.latitude}, ${position.longitude}');
+      print('📍 API SEARCH: Looking for POIs near ${position.latitude}, ${position.longitude}');
 
       // First try using the Places API to find nearby places (more accurate for POIs)
       try {
@@ -245,19 +244,27 @@ class GoogleMapsService {
               "restaurant",
               "cafe",
               "store",
-              "establishment"
-            ], // Types to search for
+              "establishment",
+              "point_of_interest",
+              "food",
+              "shop",
+              "business",
+              "bar",
+              "lodging",
+              "gym",
+              "spa",
+              "attraction"
+            ], // Extended types to search for
             "locationRestriction": {
               "circle": {
                 "center": {
                   "latitude": position.latitude,
                   "longitude": position.longitude
                 },
-                "radius": 50.0 // 50 meters radius to find the closest POI
+                "radius": 100.0 // 100 meters radius to find the closest POI (increased from 50m)
               }
             },
-            "rankPreference":
-                "DISTANCE" // Prioritize places closest to the tapped point
+            "rankPreference": "DISTANCE" // Prioritize places closest to the tapped point
           },
           options: Options(
             headers: {
@@ -269,7 +276,7 @@ class GoogleMapsService {
           ),
         );
 
-        print('📍 Places API response: ${nearbyResponse.data}');
+        print('📍 API RESPONSE: Places API nearby search response: ${nearbyResponse.data}');
 
         // Check if we found any places nearby
         if (nearbyResponse.statusCode == 200 &&
@@ -284,13 +291,16 @@ class GoogleMapsService {
           if (place['displayName'] != null &&
               place['displayName']['text'] != null) {
             placeName = place['displayName']['text'];
-            print('📍 Found nearby POI: $placeName');
+            print('📍 API SUCCESS: Found nearby POI: $placeName');
           }
 
           String? address = place['formattedAddress'];
           double lat = place['location']?['latitude'] ?? position.latitude;
           double lng = place['location']?['longitude'] ?? position.longitude;
 
+          print('📍 API COORDINATES: POI is at $lat, $lng');
+
+          // Create a location with the POI's coordinates (not the tapped coordinates)
           return Location(
             latitude: lat,
             longitude: lng,
@@ -298,27 +308,35 @@ class GoogleMapsService {
             displayName: placeName,
           );
         } else {
-          print('📍 No nearby places found, falling back to geocoding');
+          print('📍 API FALLBACK: No nearby places found, falling back to geocoding');
         }
       } catch (e) {
-        print('📍 Error searching for nearby places: $e');
+        print('📍 API ERROR: Error searching for nearby places: $e');
         // Continue with geocoding as fallback
       }
 
       // If Places API didn't find anything, fall back to geocoding
+      print('📍 GEOCODING FALLBACK: Trying geocoding API instead');
       final placeDetails =
           await findPlaceDetails(position.latitude, position.longitude);
 
       if (placeDetails != null) {
+        // IMPORTANT: Extract the coordinates from the geocoding result (not the original)
+        double lat = placeDetails['latitude'] as double;
+        double lng = placeDetails['longitude'] as double;
+        
+        print('📍 GEOCODING RESULT: Found place at $lat, $lng');
+        
         return Location(
-          latitude: placeDetails['latitude'] as double,
-          longitude: placeDetails['longitude'] as double,
+          latitude: lat, // Use geocoded coordinates, not original tap
+          longitude: lng, // Use geocoded coordinates, not original tap
           address: placeDetails['address'] as String?,
           displayName: placeDetails['name'] as String?,
         );
       }
 
-      // Last resort - return a basic location with the coordinates
+      // Last resort - return a basic location with the original coordinates
+      print('📍 FALLBACK: Using original tap coordinates (no POI found)');
       return Location(
         latitude: position.latitude,
         longitude: position.longitude,
@@ -389,8 +407,9 @@ class GoogleMapsService {
                     'placeId': placeId,
                     'name': location.displayName!,
                     'address': location.address ?? '',
-                    'latitude': latitude,
-                    'longitude': longitude,
+                    // IMPORTANT: Use the location coordinates from the Places API
+                    'latitude': location.latitude,
+                    'longitude': location.longitude,
                     'types': estResult!['types'] as List? ?? []
                   };
                 }
@@ -444,12 +463,17 @@ class GoogleMapsService {
                 print('📍 REVERSE GEOCODING - No name or address found');
               }
 
+              // IMPORTANT: Get the actual coordinates from the geocoding result
+              final location = placeResult['geometry']?['location'];
+              final lat = location?['lat'] ?? latitude;
+              final lng = location?['lng'] ?? longitude;
+
               return {
                 'placeId': placeResult['place_id'] ?? '',
                 'name': placeName,
                 'address': placeResult['formatted_address'] ?? '',
-                'latitude': latitude,
-                'longitude': longitude,
+                'latitude': lat,
+                'longitude': lng,
                 'types': placeResult['types'] as List? ?? []
               };
             }
@@ -513,12 +537,17 @@ class GoogleMapsService {
               print('📍 REVERSE GEOCODING FALLBACK - No name or address found');
             }
 
+            // IMPORTANT: Get the geocoded coordinates, not the original
+            final location = placeResult['geometry']?['location'];
+            final lat = location?['lat'] ?? latitude;
+            final lng = location?['lng'] ?? longitude;
+
             return {
               'placeId': placeResult['place_id'] ?? '',
               'name': placeName,
               'address': placeResult['formatted_address'] ?? '',
-              'latitude': latitude,
-              'longitude': longitude,
+              'latitude': lat,
+              'longitude': lng,
               'types': placeResult['types'] as List? ?? []
             };
           }
@@ -594,15 +623,18 @@ class GoogleMapsService {
         }
 
         if (placeResult != null) {
+          // IMPORTANT: Get the actual POI coordinates
+          final location = placeResult['geometry']?['location'];
+          final lat = location?['lat'] ?? latitude;
+          final lng = location?['lng'] ?? longitude;
+          
           // Create a clean result object
           final result = {
             'placeId': placeResult['place_id'] ?? '',
             'name': _extractPlaceName(placeResult),
             'address': placeResult['formatted_address'] ?? '',
-            'latitude':
-                placeResult['geometry']?['location']?['lat'] ?? latitude,
-            'longitude':
-                placeResult['geometry']?['location']?['lng'] ?? longitude,
+            'latitude': lat,
+            'longitude': lng,
             'types': placeResult['types'] as List? ?? []
           };
 
@@ -693,8 +725,8 @@ class GoogleMapsService {
 
       if (placeDetails != null) {
         return Location(
-          latitude: placeDetails['latitude'] as double,
-          longitude: placeDetails['longitude'] as double,
+          latitude: placeDetails['latitude'] as double, // Use POI coordinates
+          longitude: placeDetails['longitude'] as double, // Use POI coordinates
           address: placeDetails['address'] as String?,
           displayName: placeDetails['name'] as String?,
         );

@@ -154,6 +154,9 @@ class _GoogleMapsWidgetState extends State<GoogleMapsWidget> {
     if (_selectedLocation != null) {
       final markerId = MarkerId('selected_location');
       
+      // Debug: Log the marker coordinates we're setting
+      print('📍 MARKER COORDINATES: ${_selectedLocation!.latitude}, ${_selectedLocation!.longitude}');
+      
       if (_selectedLocation!.address != null) {
         // This is an established place
         _markers[markerId] = Marker(
@@ -216,26 +219,20 @@ class _GoogleMapsWidgetState extends State<GoogleMapsWidget> {
     });
     
     try {
-      // Get current zoom level before making any changes
-      double currentZoom = widget.initialZoom;
-      if (_mapController != null) {
-        try {
-          currentZoom = await _mapController!.getZoomLevel();
-        } catch (e) {
-          print('Error getting zoom: $e');
-        }
-      }
-      
-      // Instead of using the exact tapped coordinates, try to find a POI at or near that location
-      print('📍 Map tapped at coordinates: ${position.latitude}, ${position.longitude}');
+      // Log the tapped coordinates
+      print('📍 MAP TAPPED: ${position.latitude}, ${position.longitude}');
       
       // Use the findPlaceNearPosition method which will search for POIs
       final location = await _mapsService.findPlaceNearPosition(position);
       
-      // Update the selected location and markers, but don't change zoom!
+      // Debug: Log the POI coordinates returned by the API
+      print('📍 POI COORDINATES FOUND: ${location.latitude}, ${location.longitude}');
+      print('📍 POI NAME: ${location.displayName}');
+      print('📍 POI ADDRESS: ${location.address}');
+      
+      // Update the selected location (using the POI coordinates)
       setState(() {
-        _selectedLocation = location;
-        _isLoading = false;
+        _selectedLocation = location; 
       });
       
       // Notify parent if callback provided
@@ -243,16 +240,14 @@ class _GoogleMapsWidgetState extends State<GoogleMapsWidget> {
         widget.onLocationSelected!(_selectedLocation!);
       }
       
-      // Just update markers without changing camera position
+      // Ensure the marker is updated
       _updateMarkers();
       
-      // If we found a business/POI different from the tap location, center on it but preserve zoom
-      if (location.latitude != position.latitude || location.longitude != position.longitude) {
-        await _mapController?.animateCamera(
-          CameraUpdate.newLatLngZoom(
-            LatLng(location.latitude, location.longitude),
-            currentZoom, // Maintain current zoom!
-          ),
+      // Force map to center on the POI coordinates
+      if (_mapController != null) {
+        print('📍 ANIMATING TO POI COORDINATES: ${location.latitude}, ${location.longitude}');
+        await _mapController!.animateCamera(
+          CameraUpdate.newLatLng(LatLng(location.latitude, location.longitude))
         );
       }
     } catch (e) {
@@ -267,7 +262,6 @@ class _GoogleMapsWidgetState extends State<GoogleMapsWidget> {
       
       setState(() {
         _selectedLocation = location;
-        _isLoading = false;
       });
       
       // Notify parent if callback provided
@@ -277,6 +271,10 @@ class _GoogleMapsWidgetState extends State<GoogleMapsWidget> {
       
       // Update markers
       _updateMarkers();
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
     }
   }
   
