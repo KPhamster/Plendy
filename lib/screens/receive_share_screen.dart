@@ -365,7 +365,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
                                             Border.all(color: _locationEnabled ? Colors.grey : Colors.grey.shade300),
                                         borderRadius:
                                             BorderRadius.circular(4),
-                                        color: _locationEnabled ? Colors.transparent : Colors.grey.shade100,
+                                        color: Colors.transparent,
                                       ),
                                       padding: EdgeInsets.symmetric(
                                           horizontal: 12, vertical: 12),
