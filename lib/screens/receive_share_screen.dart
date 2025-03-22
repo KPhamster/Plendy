@@ -14,6 +14,45 @@ import '../services/experience_service.dart';
 import '../services/google_maps_service.dart';
 import 'location_picker_screen.dart';
 
+/// Data class to hold the state of each experience card
+class ExperienceCardData {
+  // Form controllers
+  final TextEditingController titleController = TextEditingController();
+  final TextEditingController yelpUrlController = TextEditingController();
+  final TextEditingController websiteUrlController = TextEditingController();
+  final TextEditingController searchController = TextEditingController();
+
+  // Focus nodes
+  final FocusNode titleFocusNode = FocusNode();
+
+  // Experience type selection
+  ExperienceType selectedType = ExperienceType.restaurant;
+
+  // Location selection
+  Location? selectedLocation;
+  bool isSelectingLocation = false;
+  bool locationEnabled = true;
+  List<Map<String, dynamic>> searchResults = [];
+
+  // State variable for card
+  bool isExpanded = true;
+
+  // Unique identifier for this card
+  final String id = DateTime.now().millisecondsSinceEpoch.toString();
+
+  // Constructor can set initial values if needed
+  ExperienceCardData();
+
+  // Dispose resources
+  void dispose() {
+    titleController.dispose();
+    yelpUrlController.dispose();
+    websiteUrlController.dispose();
+    searchController.dispose();
+    titleFocusNode.dispose();
+  }
+}
+
 class ReceiveShareScreen extends StatefulWidget {
   final List<SharedMediaFile> sharedFiles;
   final VoidCallback onCancel;
@@ -33,44 +72,47 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
   final ExperienceService _experienceService = ExperienceService();
   final GoogleMapsService _mapsService = GoogleMapsService();
 
-  // Form controllers
-  final _titleController = TextEditingController();
-  final _yelpUrlController = TextEditingController();
-  final _websiteUrlController = TextEditingController();
-  final _searchController = TextEditingController();
-
-  // Focus nodes
-  final _titleFocusNode = FocusNode();
+  // Experience card data structure
+  List<ExperienceCardData> _experienceCards = [];
 
   // Form validation key
   final _formKey = GlobalKey<FormState>();
-
-  // Experience type selection
-  ExperienceType _selectedType = ExperienceType.restaurant;
-
-  // Location selection
-  Location? _selectedLocation;
-  bool _isSelectingLocation = false;
-  bool _locationEnabled = true; // New state variable for location toggle
-  List<Map<String, dynamic>> _searchResults = [];
-
-  // Use MapService instead of direct API keys
-  final Dio _dio = Dio();
-
-  // State variables for experience card
-  bool _isExperienceCardExpanded = true;
 
   // Loading state
   bool _isSaving = false;
 
   @override
+  void initState() {
+    super.initState();
+    // Add first experience card
+    _addExperienceCard();
+  }
+  
+  @override
   void dispose() {
-    _titleController.dispose();
-    _yelpUrlController.dispose();
-    _websiteUrlController.dispose();
-    _searchController.dispose();
-    _titleFocusNode.dispose();
+    // Dispose all controllers for all experience cards
+    for (var card in _experienceCards) {
+      card.dispose();
+    }
     super.dispose();
+  }
+
+  // Add a new experience card
+  void _addExperienceCard() {
+    setState(() {
+      _experienceCards.add(ExperienceCardData());
+    });
+  }
+
+  // Remove an experience card
+  void _removeExperienceCard(ExperienceCardData card) {
+    setState(() {
+      _experienceCards.remove(card);
+      // If all cards are removed, add a new one
+      if (_experienceCards.isEmpty) {
+        _addExperienceCard();
+      }
+    });
   }
 
   // Handle experience save along with shared content
@@ -81,12 +123,16 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
       );
       return;
     }
-
-    if (_locationEnabled && _selectedLocation == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Please select a location')),
-      );
-      return;
+    
+    // Check for required locations in all cards
+    for (int i = 0; i < _experienceCards.length; i++) {
+      final card = _experienceCards[i];
+      if (card.locationEnabled && card.selectedLocation == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Please select a location for experience ${i+1}')),
+        );
+        return;
+      }
     }
 
     setState(() {
@@ -94,51 +140,49 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
     });
 
     try {
-      // Create the experience object
       final now = DateTime.now();
+      
+      // Save each experience
+      for (final card in _experienceCards) {
+        // Create a default empty location if location is disabled
+        final Location defaultLocation = Location(
+          latitude: 0.0,
+          longitude: 0.0,
+          address: 'No location specified',
+        );
 
-      // Create a default empty location if location is disabled
-      final Location defaultLocation = Location(
-        latitude: 0.0,
-        longitude: 0.0,
-        address: 'No location specified',
-      );
+        final newExperience = Experience(
+          id: '', // ID will be assigned by Firestore
+          name: card.titleController.text,
+          description: 'Created from shared content',
+          location: card.locationEnabled
+              ? card.selectedLocation!
+              : defaultLocation, // Use default when disabled
+          type: card.selectedType,
+          yelpUrl: card.yelpUrlController.text.isNotEmpty ? card.yelpUrlController.text : null,
+          website: card.websiteUrlController.text.isNotEmpty ? card.websiteUrlController.text : null,
+          createdAt: now,
+          updatedAt: now,
+        );
 
-      final newExperience = Experience(
-        id: '', // ID will be assigned by Firestore
-        name: _titleController.text,
-        description: 'Created from shared content',
-        location: _locationEnabled
-            ? _selectedLocation!
-            : defaultLocation, // Use default when disabled
-        type: _selectedType,
-        yelpUrl:
-            _yelpUrlController.text.isNotEmpty ? _yelpUrlController.text : null,
-        website: _websiteUrlController.text.isNotEmpty
-            ? _websiteUrlController.text
-            : null,
-        createdAt: now,
-        updatedAt: now,
-      );
-
-      // Save the experience to Firestore
-      final experienceId =
-          await _experienceService.createExperience(newExperience);
+        // Save the experience to Firestore
+        await _experienceService.createExperience(newExperience);
+      }
 
       // TODO: Add code to save the shared media files appropriately
       // For example, if they're images, upload them as photos for the experience
       // If they're links, associate them with the experience
 
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Experience created successfully')),
+        SnackBar(content: Text('Experiences created successfully')),
       );
 
       // Return to the main screen
       widget.onCancel();
     } catch (e) {
-      print('Error saving experience: $e');
+      print('Error saving experiences: $e');
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error creating experience: $e')),
+        SnackBar(content: Text('Error creating experiences: $e')),
       );
       setState(() {
         _isSaving = false;
@@ -146,24 +190,24 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
     }
   }
 
-  // Use GoogleMapsService for places search
-  Future<void> _searchPlaces(String query) async {
+  // Use GoogleMapsService for places search for a specific card
+  Future<void> _searchPlaces(String query, ExperienceCardData card) async {
     if (query.isEmpty) {
       setState(() {
-        _searchResults = [];
+        card.searchResults = [];
       });
       return;
     }
 
     setState(() {
-      _isSelectingLocation = true;
+      card.isSelectingLocation = true;
     });
 
     try {
       final results = await _mapsService.searchPlaces(query);
 
       setState(() {
-        _searchResults = results;
+        card.searchResults = results;
       });
     } catch (e) {
       print('Error searching places: $e');
@@ -172,23 +216,23 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
       );
     } finally {
       setState(() {
-        _isSelectingLocation = false;
+        card.isSelectingLocation = false;
       });
     }
   }
 
-  // Get place details using GoogleMapsService
-  Future<void> _selectPlace(String placeId) async {
+  // Get place details using GoogleMapsService for a specific card
+  Future<void> _selectPlace(String placeId, ExperienceCardData card) async {
     setState(() {
-      _isSelectingLocation = true;
+      card.isSelectingLocation = true;
     });
 
     try {
       final location = await _mapsService.getPlaceDetails(placeId);
 
       setState(() {
-        _selectedLocation = location;
-        _searchController.text = location.address ?? '';
+        card.selectedLocation = location;
+        card.searchController.text = location.address ?? '';
       });
     } catch (e) {
       print('Error getting place details: $e');
@@ -197,13 +241,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
       );
     } finally {
       setState(() {
-        _isSelectingLocation = false;
+        card.isSelectingLocation = false;
       });
     }
   }
 
-  // Use the LocationPickerScreen instead of a dialog
-  Future<void> _showLocationPicker() async {
+  // Use the LocationPickerScreen for a specific experience card
+  Future<void> _showLocationPicker(ExperienceCardData card) async {
     // Unfocus all fields before showing the location picker
     FocusScope.of(context).unfocus();
 
@@ -211,7 +255,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
       context,
       MaterialPageRoute(
         builder: (context) => LocationPickerScreen(
-          initialLocation: _selectedLocation,
+          initialLocation: card.selectedLocation,
           onLocationSelected: (location) {
             // This is just a placeholder during the picker's lifetime
             // The actual result is returned via Navigator.pop
@@ -225,14 +269,14 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
       FocusScope.of(context).unfocus();
 
       setState(() {
-        _selectedLocation = result;
-        _searchController.text = result.address ?? 'Location selected';
+        card.selectedLocation = result;
+        card.searchController.text = result.address ?? 'Location selected';
 
         // If title is empty, set it to the place name
-        if (_titleController.text.isEmpty) {
-          _titleController.text = result.getPlaceName();
+        if (card.titleController.text.isEmpty) {
+          card.titleController.text = result.getPlaceName();
           // Position cursor at beginning so start of text is visible
-          _titleController.selection = TextSelection.fromPosition(
+          card.titleController.selection = TextSelection.fromPosition(
             const TextPosition(offset: 0),
           );
         }
@@ -244,20 +288,20 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
   }
 
   // Build collapsible experience card
-  Widget _buildExperienceCard() {
+  Widget _buildExperienceCard(ExperienceCardData card, {bool isLast = false}) {
     return Card(
       margin: EdgeInsets.only(bottom: 16),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       elevation: 2,
       child: Column(
         children: [
-          // Header row with expand/collapse functionality
+          // Header row with expand/collapse and delete functionality
           InkWell(
             onTap: () {
               setState(() {
-                _isExperienceCardExpanded = !_isExperienceCardExpanded;
+                card.isExpanded = !card.isExpanded;
                 // Unfocus any active fields when collapsing
-                if (!_isExperienceCardExpanded) {
+                if (!card.isExpanded) {
                   FocusScope.of(context).unfocus();
                 }
               });
@@ -267,7 +311,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
               child: Row(
                 children: [
                   Icon(
-                    _isExperienceCardExpanded
+                    card.isExpanded
                         ? Icons.keyboard_arrow_up
                         : Icons.keyboard_arrow_down,
                     color: Colors.blue,
@@ -275,8 +319,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
                   SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      _titleController.text.isNotEmpty
-                          ? _titleController.text
+                      card.titleController.text.isNotEmpty
+                          ? card.titleController.text
                           : "New Experience",
                       style: TextStyle(
                         fontWeight: FontWeight.bold,
@@ -286,13 +330,20 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
                       maxLines: 1,
                     ),
                   ),
+                  // Only show delete button if there's more than one card
+                  if (_experienceCards.length > 1)
+                    IconButton(
+                      icon: Icon(Icons.delete_outline, color: Colors.red[400]),
+                      onPressed: () => _removeExperienceCard(card),
+                      tooltip: 'Remove experience',
+                    ),
                 ],
               ),
             ),
           ),
 
           // Expandable content
-          if (_isExperienceCardExpanded)
+          if (card.isExpanded)
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
               child: Column(
@@ -317,13 +368,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
 
                   // Location selection with preview
                   GestureDetector(
-                    onTap: (_isSelectingLocation || !_locationEnabled)
+                    onTap: (card.isSelectingLocation || !card.locationEnabled)
                         ? null
-                        : _showLocationPicker,
+                        : () => _showLocationPicker(card),
                     child: Container(
                       decoration: BoxDecoration(
                         border: Border.all(
-                            color: _locationEnabled
+                            color: card.locationEnabled
                                 ? Colors.grey
                                 : Colors.grey.shade300),
                         borderRadius: BorderRadius.circular(4),
@@ -334,12 +385,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
                       child: Row(
                         children: [
                           Icon(Icons.location_on,
-                              color: _locationEnabled
+                              color: card.locationEnabled
                                   ? Colors.grey[600]
                                   : Colors.grey[400]),
                           SizedBox(width: 12),
                           Expanded(
-                            child: _selectedLocation != null
+                            child: card.selectedLocation != null
                                 ? Column(
                                     crossAxisAlignment:
                                         CrossAxisAlignment.start,
@@ -347,21 +398,21 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
                                     children: [
                                       // Place name in bold
                                       Text(
-                                        _selectedLocation!.getPlaceName(),
+                                        card.selectedLocation!.getPlaceName(),
                                         style: TextStyle(
                                           fontWeight: FontWeight.bold,
-                                          color: _locationEnabled
+                                          color: card.locationEnabled
                                               ? Colors.black
                                               : Colors.grey[500],
                                         ),
                                       ),
                                       // Address
                                       Text(
-                                        _selectedLocation!.address ??
+                                        card.selectedLocation!.address ??
                                             'No address',
                                         style: TextStyle(
                                           fontSize: 12,
-                                          color: _locationEnabled
+                                          color: card.locationEnabled
                                               ? Colors.black87
                                               : Colors.grey[500],
                                         ),
@@ -369,11 +420,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
                                     ],
                                   )
                                 : Text(
-                                    _isSelectingLocation
+                                    card.isSelectingLocation
                                         ? 'Selecting location...'
                                         : 'Select location',
                                     style: TextStyle(
-                                        color: _locationEnabled
+                                        color: card.locationEnabled
                                             ? Colors.grey[600]
                                             : Colors.grey[400]),
                                   ),
@@ -382,10 +433,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
                           Transform.scale(
                             scale: 0.8,
                             child: Switch(
-                              value: _locationEnabled,
+                              value: card.locationEnabled,
                               onChanged: (value) {
                                 setState(() {
-                                  _locationEnabled = value;
+                                  card.locationEnabled = value;
                                 });
                               },
                               activeColor: Colors.blue,
@@ -401,19 +452,19 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
 
                   // Experience title
                   TextFormField(
-                    controller: _titleController,
-                    focusNode: _titleFocusNode,
+                    controller: card.titleController,
+                    focusNode: card.titleFocusNode,
                     decoration: InputDecoration(
                       labelText: 'Experience Title',
                       hintText: 'Enter title',
                       border: OutlineInputBorder(),
                       prefixIcon: Icon(Icons.title),
-                      suffixIcon: _titleController.text.isNotEmpty
+                      suffixIcon: card.titleController.text.isNotEmpty
                           ? IconButton(
                               icon: Icon(Icons.clear, size: 18),
                               onPressed: () {
                                 setState(() {
-                                  _titleController.clear();
+                                  card.titleController.clear();
                                 });
                               },
                             )
@@ -435,7 +486,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
 
                   // Experience type selection
                   DropdownButtonFormField<ExperienceType>(
-                    value: _selectedType,
+                    value: card.selectedType,
                     decoration: InputDecoration(
                       labelText: 'Experience Type',
                       border: OutlineInputBorder(),
@@ -450,7 +501,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
                     onChanged: (value) {
                       if (value != null) {
                         setState(() {
-                          _selectedType = value;
+                          card.selectedType = value;
                         });
                       }
                     },
@@ -459,7 +510,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
 
                   // Yelp URL
                   TextFormField(
-                    controller: _yelpUrlController,
+                    controller: card.yelpUrlController,
                     decoration: InputDecoration(
                       labelText: 'Yelp URL (optional)',
                       hintText: 'https://yelp.com/...',
@@ -480,7 +531,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
 
                   // Official website
                   TextFormField(
-                    controller: _websiteUrlController,
+                    controller: card.websiteUrlController,
                     decoration: InputDecoration(
                       labelText: 'Official Website (optional)',
                       hintText: 'https://...',
@@ -630,8 +681,23 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
                                   ),
                                   SizedBox(height: 16),
 
-                                  // Collapsible Experience Card
-                                  _buildExperienceCard(),
+                                  // List of experience cards
+                                  for (int i = 0; i < _experienceCards.length; i++)
+                                    _buildExperienceCard(_experienceCards[i], isLast: i == _experienceCards.length - 1),
+                                  
+                                  // Add another experience button
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 4.0, bottom: 16.0),
+                                    child: OutlinedButton.icon(
+                                      icon: Icon(Icons.add),
+                                      label: Text('Add Another Experience'),
+                                      onPressed: _addExperienceCard,
+                                      style: OutlinedButton.styleFrom(
+                                        foregroundColor: Colors.blue,
+                                        padding: EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                                      ),
+                                    ),
+                                  ),
                                 ],
                               ),
                             ),
