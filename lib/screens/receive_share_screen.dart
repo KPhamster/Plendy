@@ -48,6 +48,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
   // Location selection
   Location? _selectedLocation;
   bool _isSelectingLocation = false;
+  bool _locationEnabled = true; // New state variable for location toggle
   List<Map<String, dynamic>> _searchResults = [];
 
   // Use MapService instead of direct API keys
@@ -74,7 +75,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
       return;
     }
 
-    if (_selectedLocation == null) {
+    if (_locationEnabled && _selectedLocation == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Please select a location')),
       );
@@ -88,11 +89,19 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
     try {
       // Create the experience object
       final now = DateTime.now();
+      
+      // Create a default empty location if location is disabled
+      final Location defaultLocation = Location(
+        latitude: 0.0,
+        longitude: 0.0,
+        address: 'No location specified',
+      );
+      
       final newExperience = Experience(
         id: '', // ID will be assigned by Firestore
         name: _titleController.text,
         description: 'Created from shared content',
-        location: _selectedLocation!,
+        location: _locationEnabled ? _selectedLocation! : defaultLocation, // Use default when disabled
         type: _selectedType,
         yelpUrl:
             _yelpUrlController.text.isNotEmpty ? _yelpUrlController.text : null,
@@ -329,41 +338,70 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
                                   ),
                                   SizedBox(height: 16),
 
+                                  // Button to choose saved experience
+                                  Align(
+                                    alignment: Alignment.centerRight,
+                                    child: OutlinedButton.icon(
+                                      icon: Icon(Icons.bookmark_outline),
+                                      label: Text('Choose a saved experience'),
+                                      onPressed: null, // No functionality yet
+                                      style: OutlinedButton.styleFrom(
+                                        foregroundColor: Colors.blue,
+                                        padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                        visualDensity: VisualDensity.compact,
+                                      ),
+                                    ),
+                                  ),
+                                  SizedBox(height: 12),
+
                                   // Location selection with preview (moved to top)
                                   GestureDetector(
-                                    onTap: _isSelectingLocation
+                                    onTap: (_isSelectingLocation || !_locationEnabled)
                                         ? null
                                         : _showLocationPicker,
                                     child: Container(
                                       decoration: BoxDecoration(
                                         border:
-                                            Border.all(color: Colors.grey),
+                                            Border.all(color: _locationEnabled ? Colors.grey : Colors.grey.shade300),
                                         borderRadius:
                                             BorderRadius.circular(4),
+                                        color: _locationEnabled ? Colors.transparent : Colors.grey.shade100,
                                       ),
                                       padding: EdgeInsets.symmetric(
-                                          horizontal: 12, vertical: 16),
+                                          horizontal: 12, vertical: 8),
                                       child: Row(
                                         children: [
                                           Icon(Icons.location_on,
-                                              color: Colors.grey[600]),
+                                              color: _locationEnabled ? Colors.grey[600] : Colors.grey[400]),
                                           SizedBox(width: 12),
                                           Expanded(
                                             child: _selectedLocation != null
                                                 ? Text(_selectedLocation!
                                                         .address ??
-                                                    'Location selected')
+                                                    'Location selected',
+                                                   style: TextStyle(color: _locationEnabled ? Colors.black : Colors.grey[500]))
                                                 : Text(
                                                     _isSelectingLocation
                                                         ? 'Selecting location...'
                                                         : 'Select location',
                                                     style: TextStyle(
-                                                        color: Colors
-                                                            .grey[600]),
+                                                        color: _locationEnabled ? Colors.grey[600] : Colors.grey[400]),
                                                   ),
                                           ),
-                                          Icon(Icons.arrow_drop_down,
-                                              color: Colors.grey[600]),
+                                          // Toggle switch inside the location field
+                                          Transform.scale(
+                                            scale: 0.8,
+                                            child: Switch(
+                                              value: _locationEnabled, 
+                                              onChanged: (value) {
+                                                setState(() {
+                                                  _locationEnabled = value;
+                                                });
+                                              },
+                                              activeColor: Colors.blue,
+                                              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                            ),
+                                          ),
                                         ],
                                       ),
                                     ),
