@@ -24,7 +24,8 @@ class ReceiveShareScreen extends StatefulWidget {
     required this.onCancel,
   });
 
-  @override  _ReceiveShareScreenState createState() => _ReceiveShareScreenState();
+  @override
+  _ReceiveShareScreenState createState() => _ReceiveShareScreenState();
 }
 
 class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
@@ -37,7 +38,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
   final _yelpUrlController = TextEditingController();
   final _websiteUrlController = TextEditingController();
   final _searchController = TextEditingController();
-  
+
   // Focus nodes
   final _titleFocusNode = FocusNode();
 
@@ -58,7 +59,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
 
   // State variables for experience card
   bool _isExperienceCardExpanded = true;
-  
+
   // Loading state
   bool _isSaving = false;
 
@@ -95,19 +96,21 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
     try {
       // Create the experience object
       final now = DateTime.now();
-      
+
       // Create a default empty location if location is disabled
       final Location defaultLocation = Location(
         latitude: 0.0,
         longitude: 0.0,
         address: 'No location specified',
       );
-      
+
       final newExperience = Experience(
         id: '', // ID will be assigned by Firestore
         name: _titleController.text,
         description: 'Created from shared content',
-        location: _locationEnabled ? _selectedLocation! : defaultLocation, // Use default when disabled
+        location: _locationEnabled
+            ? _selectedLocation!
+            : defaultLocation, // Use default when disabled
         type: _selectedType,
         yelpUrl:
             _yelpUrlController.text.isNotEmpty ? _yelpUrlController.text : null,
@@ -187,7 +190,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
         _selectedLocation = location;
         _searchController.text = location.address ?? '';
       });
-        } catch (e) {
+    } catch (e) {
       print('Error getting place details: $e');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error selecting location')),
@@ -203,16 +206,16 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
   Future<void> _showLocationPicker() async {
     // Unfocus all fields before showing the location picker
     FocusScope.of(context).unfocus();
-    
+
     final Location? result = await Navigator.push(
       context,
       MaterialPageRoute(
         builder: (context) => LocationPickerScreen(
           initialLocation: _selectedLocation,
           onLocationSelected: (location) {
-          // This is just a placeholder during the picker's lifetime
-          // The actual result is returned via Navigator.pop
-        },
+            // This is just a placeholder during the picker's lifetime
+            // The actual result is returned via Navigator.pop
+          },
         ),
       ),
     );
@@ -220,11 +223,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
     if (result != null) {
       // Immediately unfocus after return - outside of setState to ensure it happens right away
       FocusScope.of(context).unfocus();
-      
+
       setState(() {
         _selectedLocation = result;
         _searchController.text = result.address ?? 'Location selected';
-        
+
         // If title is empty, set it to the place name
         if (_titleController.text.isEmpty) {
           _titleController.text = result.getPlaceName();
@@ -234,7 +237,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
           );
         }
       });
-      
+
       // Unfocus again after state update to ensure keyboard is dismissed
       Future.microtask(() => FocusScope.of(context).unfocus());
     }
@@ -263,39 +266,31 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               child: Row(
                 children: [
-                  Icon(_isExperienceCardExpanded 
-                      ? Icons.keyboard_arrow_up 
-                      : Icons.keyboard_arrow_down,
+                  Icon(
+                    _isExperienceCardExpanded
+                        ? Icons.keyboard_arrow_up
+                        : Icons.keyboard_arrow_down,
                     color: Colors.blue,
                   ),
                   SizedBox(width: 8),
-                  Text(
-                    "1) " + (_titleController.text.isNotEmpty 
-                      ? _titleController.text 
-                      : "New Experience"),
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 16,
+                  Expanded(
+                    child: Text(
+                      _titleController.text.isNotEmpty
+                          ? _titleController.text
+                          : "New Experience",
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 1,
                     ),
                   ),
-                  Spacer(),
-                  if (!_isExperienceCardExpanded && _selectedLocation != null)
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.location_on, size: 16, color: Colors.grey[600]),
-                        SizedBox(width: 4),
-                        Text(
-                          _selectedLocation!.getPlaceName(),
-                          style: TextStyle(color: Colors.grey[700], fontSize: 14),
-                        ),
-                      ],
-                    ),
                 ],
               ),
             ),
           ),
-          
+
           // Expandable content
           if (_isExperienceCardExpanded)
             Padding(
@@ -312,13 +307,14 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
                       onPressed: null, // No functionality yet
                       style: OutlinedButton.styleFrom(
                         foregroundColor: Colors.blue,
-                        padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        padding:
+                            EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                         visualDensity: VisualDensity.compact,
                       ),
                     ),
                   ),
                   SizedBox(height: 12),
-                  
+
                   // Location selection with preview
                   GestureDetector(
                     onTap: (_isSelectingLocation || !_locationEnabled)
@@ -326,20 +322,27 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
                         : _showLocationPicker,
                     child: Container(
                       decoration: BoxDecoration(
-                        border: Border.all(color: _locationEnabled ? Colors.grey : Colors.grey.shade300),
+                        border: Border.all(
+                            color: _locationEnabled
+                                ? Colors.grey
+                                : Colors.grey.shade300),
                         borderRadius: BorderRadius.circular(4),
                         color: Colors.transparent,
                       ),
-                      padding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                      padding:
+                          EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                       child: Row(
                         children: [
                           Icon(Icons.location_on,
-                              color: _locationEnabled ? Colors.grey[600] : Colors.grey[400]),
+                              color: _locationEnabled
+                                  ? Colors.grey[600]
+                                  : Colors.grey[400]),
                           SizedBox(width: 12),
                           Expanded(
                             child: _selectedLocation != null
                                 ? Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     mainAxisSize: MainAxisSize.min,
                                     children: [
                                       // Place name in bold
@@ -347,15 +350,20 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
                                         _selectedLocation!.getPlaceName(),
                                         style: TextStyle(
                                           fontWeight: FontWeight.bold,
-                                          color: _locationEnabled ? Colors.black : Colors.grey[500],
+                                          color: _locationEnabled
+                                              ? Colors.black
+                                              : Colors.grey[500],
                                         ),
                                       ),
                                       // Address
                                       Text(
-                                        _selectedLocation!.address ?? 'No address',
+                                        _selectedLocation!.address ??
+                                            'No address',
                                         style: TextStyle(
                                           fontSize: 12,
-                                          color: _locationEnabled ? Colors.black87 : Colors.grey[500],
+                                          color: _locationEnabled
+                                              ? Colors.black87
+                                              : Colors.grey[500],
                                         ),
                                       ),
                                     ],
@@ -365,21 +373,24 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
                                         ? 'Selecting location...'
                                         : 'Select location',
                                     style: TextStyle(
-                                        color: _locationEnabled ? Colors.grey[600] : Colors.grey[400]),
+                                        color: _locationEnabled
+                                            ? Colors.grey[600]
+                                            : Colors.grey[400]),
                                   ),
                           ),
                           // Toggle switch inside the location field
                           Transform.scale(
                             scale: 0.8,
                             child: Switch(
-                              value: _locationEnabled, 
+                              value: _locationEnabled,
                               onChanged: (value) {
                                 setState(() {
                                   _locationEnabled = value;
                                 });
                               },
                               activeColor: Colors.blue,
-                              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              materialTapTargetSize:
+                                  MaterialTapTargetSize.shrinkWrap,
                             ),
                           ),
                         ],
@@ -398,15 +409,15 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
                       border: OutlineInputBorder(),
                       prefixIcon: Icon(Icons.title),
                       suffixIcon: _titleController.text.isNotEmpty
-                        ? IconButton(
-                            icon: Icon(Icons.clear, size: 18),
-                            onPressed: () {
-                              setState(() {
-                                _titleController.clear();
-                              });
-                            },
-                          )
-                        : null,
+                          ? IconButton(
+                              icon: Icon(Icons.clear, size: 18),
+                              onPressed: () {
+                                setState(() {
+                                  _titleController.clear();
+                                });
+                              },
+                            )
+                          : null,
                     ),
                     validator: (value) {
                       if (value == null || value.isEmpty) {
@@ -611,7 +622,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(
-                                    'Associate with Experience',
+                                    'Save to Experiences',
                                     style: TextStyle(
                                       fontSize: 18,
                                       fontWeight: FontWeight.bold,
@@ -619,7 +630,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
                                   ),
                                   SizedBox(height: 16),
 
-                                          // Collapsible Experience Card
+                                  // Collapsible Experience Card
                                   _buildExperienceCard(),
                                 ],
                               ),
@@ -981,7 +992,8 @@ class InstagramReelEmbed extends StatefulWidget {
   final String url;
   final VoidCallback onOpen;
 
-  const InstagramReelEmbed({super.key, required this.url, required this.onOpen});
+  const InstagramReelEmbed(
+      {super.key, required this.url, required this.onOpen});
 
   @override
   _InstagramReelEmbedState createState() => _InstagramReelEmbedState();
@@ -1104,11 +1116,11 @@ class _InstagramReelEmbedState extends State<InstagramReelEmbed> {
                   setState(() {
                     isLoading = false;
                   });
-                  
+
                   // Auto-simulate a tap in the center of the embed after loading
                   Future.delayed(Duration(milliseconds: 500), () {
                     _simulateEmbedTap();
-                    
+
                     // Try again after a longer delay in case the first attempt doesn't work
                     Future.delayed(Duration(seconds: 2), () {
                       if (mounted) {
