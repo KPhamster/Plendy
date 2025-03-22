@@ -38,6 +38,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
   final _yelpUrlController = TextEditingController();
   final _websiteUrlController = TextEditingController();
   final _searchController = TextEditingController();
+  
+  // Focus nodes
+  final _titleFocusNode = FocusNode();
 
   // Form validation key
   final _formKey = GlobalKey<FormState>();
@@ -63,6 +66,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
     _yelpUrlController.dispose();
     _websiteUrlController.dispose();
     _searchController.dispose();
+    _titleFocusNode.dispose();
     super.dispose();
   }
 
@@ -195,21 +199,38 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
 
   // Use the LocationPickerScreen instead of a dialog
   Future<void> _showLocationPicker() async {
+    // Unfocus all fields before showing the location picker
+    FocusScope.of(context).unfocus();
+    
     final Location? result = await Navigator.push(
       context,
       MaterialPageRoute(
         builder: (context) => LocationPickerScreen(
           initialLocation: _selectedLocation,
-          onLocationSelected: (location) => location,
+          onLocationSelected: (location) {
+          // This is just a placeholder during the picker's lifetime
+          // The actual result is returned via Navigator.pop
+        },
         ),
       ),
     );
 
     if (result != null) {
+      // Immediately unfocus after return - outside of setState to ensure it happens right away
+      FocusScope.of(context).unfocus();
+      
       setState(() {
         _selectedLocation = result;
         _searchController.text = result.address ?? 'Location selected';
+        
+        // If title is empty, set it to the place name
+        if (_titleController.text.isEmpty) {
+          _titleController.text = result.getPlaceName();
+        }
       });
+      
+      // Unfocus again after state update to ensure keyboard is dismissed
+      Future.microtask(() => FocusScope.of(context).unfocus());
     }
   }
 
@@ -338,7 +359,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
                                   ),
                                   SizedBox(height: 16),
 
-                                  // Button to choose saved experience
+                                          // Button to choose saved experience
                                   Align(
                                     alignment: Alignment.centerRight,
                                     child: OutlinedButton.icon(
@@ -353,7 +374,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
                                     ),
                                   ),
                                   SizedBox(height: 12),
-
+                                  
                                   // Location selection with preview (moved to top)
                                   GestureDetector(
                                     onTap: (_isSelectingLocation || !_locationEnabled)
@@ -429,6 +450,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
                                   // Experience title
                                   TextFormField(
                                     controller: _titleController,
+                                    focusNode: _titleFocusNode,
                                     decoration: InputDecoration(
                                       labelText: 'Experience Title',
                                       hintText: 'Enter title',
