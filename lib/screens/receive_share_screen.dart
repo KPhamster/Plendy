@@ -829,6 +829,70 @@ class _InstagramReelEmbedState extends State<InstagramReelEmbed> {
     _initWebViewController();
   }
 
+  // Method to simulate a tap in the embed container
+  void _simulateEmbedTap() {
+    // Calculate center of content window
+    controller.runJavaScript('''
+      (function() {
+        try {
+          // First approach: Using a simulated click on known elements
+          // Find any clickable elements in the Instagram embed
+          var embedContainer = document.querySelector('.instagram-media');
+          if (embedContainer) {
+            console.log('Found Instagram embed container');
+            
+            // Try to find the top level <a> tag which is usually clickable
+            var mainLink = document.querySelector('.instagram-media div a');
+            if (mainLink) {
+              console.log('Found main Instagram link, simulating click');
+              mainLink.click();
+              return;
+            }
+            
+            // Try to find any Instagram link
+            var anyLink = document.querySelector('a[href*="instagram.com"]');
+            if (anyLink) {
+              console.log('Found Instagram link, simulating click');
+              anyLink.click();
+              return;
+            }
+            
+            // If no specific element found, click in the center of the embed
+            var rect = embedContainer.getBoundingClientRect();
+            var centerX = rect.left + rect.width / 2;
+            var centerY = rect.top + rect.height / 2;
+            
+            console.log('Simulating click at center:', centerX, centerY);
+            
+            // Create and dispatch click event
+            var clickEvent = new MouseEvent('click', {
+              view: window,
+              bubbles: true,
+              cancelable: true,
+              clientX: centerX,
+              clientY: centerY
+            });
+            
+            embedContainer.dispatchEvent(clickEvent);
+            return;
+          }
+          
+          // Second approach: Try to find a media player or embed
+          var player = document.querySelector('iframe[src*="instagram.com"]');
+          if (player) {
+            console.log('Found Instagram iframe, simulating click');
+            player.click();
+            return;
+          }
+          
+          console.log('Instagram embed container not found');
+        } catch (e) {
+          console.error('Error in auto-click script:', e);
+        }
+      })();
+    ''');
+  }
+
   void _initWebViewController() {
     controller = WebViewController();
 
@@ -870,6 +934,18 @@ class _InstagramReelEmbedState extends State<InstagramReelEmbed> {
                 if (mounted) {
                   setState(() {
                     isLoading = false;
+                  });
+                  
+                  // Auto-simulate a tap in the center of the embed after loading
+                  Future.delayed(Duration(milliseconds: 500), () {
+                    _simulateEmbedTap();
+                    
+                    // Try again after a longer delay in case the first attempt doesn't work
+                    Future.delayed(Duration(seconds: 2), () {
+                      if (mounted) {
+                        _simulateEmbedTap();
+                      }
+                    });
                   });
                 }
               });
