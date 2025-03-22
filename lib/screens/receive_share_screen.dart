@@ -242,15 +242,14 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
                             Center(child: Text('No shared content received'))
                           else
                             ListView.builder(
-                              padding: EdgeInsets.symmetric(vertical: 16),
+                              padding: EdgeInsets.zero,
                               shrinkWrap: true,
                               physics: NeverScrollableScrollPhysics(),
                               itemCount: widget.sharedFiles.length,
                               itemBuilder: (context, index) {
                                 final file = widget.sharedFiles[index];
                                 return Card(
-                                  margin: EdgeInsets.symmetric(
-                                      horizontal: 16, vertical: 8),
+                                  margin: EdgeInsets.only(bottom: 8),
                                   child: Column(
                                     crossAxisAlignment:
                                         CrossAxisAlignment.start,
