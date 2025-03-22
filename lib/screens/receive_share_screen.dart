@@ -456,12 +456,26 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
                                       hintText: 'Enter title',
                                       border: OutlineInputBorder(),
                                       prefixIcon: Icon(Icons.title),
+                                      suffixIcon: _titleController.text.isNotEmpty
+                                        ? IconButton(
+                                            icon: Icon(Icons.clear, size: 18),
+                                            onPressed: () {
+                                              setState(() {
+                                                _titleController.clear();
+                                              });
+                                            },
+                                          )
+                                        : null,
                                     ),
                                     validator: (value) {
                                       if (value == null || value.isEmpty) {
                                         return 'Please enter a title';
                                       }
                                       return null;
+                                    },
+                                    onChanged: (value) {
+                                      // Trigger a rebuild to show/hide the clear button
+                                      setState(() {});
                                     },
                                   ),
                                   SizedBox(height: 16),
