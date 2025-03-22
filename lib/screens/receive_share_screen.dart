@@ -24,8 +24,7 @@ class ReceiveShareScreen extends StatefulWidget {
     required this.onCancel,
   });
 
-  @override
-  _ReceiveShareScreenState createState() => _ReceiveShareScreenState();
+  @override  _ReceiveShareScreenState createState() => _ReceiveShareScreenState();
 }
 
 class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
@@ -57,6 +56,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
   // Use MapService instead of direct API keys
   final Dio _dio = Dio();
 
+  // State variables for experience card
+  bool _isExperienceCardExpanded = true;
+  
   // Loading state
   bool _isSaving = false;
 
@@ -238,6 +240,260 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
     }
   }
 
+  // Build collapsible experience card
+  Widget _buildExperienceCard() {
+    return Card(
+      margin: EdgeInsets.only(bottom: 16),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      elevation: 2,
+      child: Column(
+        children: [
+          // Header row with expand/collapse functionality
+          InkWell(
+            onTap: () {
+              setState(() {
+                _isExperienceCardExpanded = !_isExperienceCardExpanded;
+                // Unfocus any active fields when collapsing
+                if (!_isExperienceCardExpanded) {
+                  FocusScope.of(context).unfocus();
+                }
+              });
+            },
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Row(
+                children: [
+                  Icon(_isExperienceCardExpanded 
+                      ? Icons.keyboard_arrow_up 
+                      : Icons.keyboard_arrow_down,
+                    color: Colors.blue,
+                  ),
+                  SizedBox(width: 8),
+                  Text(
+                    "1) " + (_titleController.text.isNotEmpty 
+                      ? _titleController.text 
+                      : "New Experience"),
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                    ),
+                  ),
+                  Spacer(),
+                  if (!_isExperienceCardExpanded && _selectedLocation != null)
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.location_on, size: 16, color: Colors.grey[600]),
+                        SizedBox(width: 4),
+                        Text(
+                          _selectedLocation!.getPlaceName(),
+                          style: TextStyle(color: Colors.grey[700], fontSize: 14),
+                        ),
+                      ],
+                    ),
+                ],
+              ),
+            ),
+          ),
+          
+          // Expandable content
+          if (_isExperienceCardExpanded)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Button to choose saved experience
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: OutlinedButton.icon(
+                      icon: Icon(Icons.bookmark_outline),
+                      label: Text('Choose a saved experience'),
+                      onPressed: null, // No functionality yet
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.blue,
+                        padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        visualDensity: VisualDensity.compact,
+                      ),
+                    ),
+                  ),
+                  SizedBox(height: 12),
+                  
+                  // Location selection with preview
+                  GestureDetector(
+                    onTap: (_isSelectingLocation || !_locationEnabled)
+                        ? null
+                        : _showLocationPicker,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        border: Border.all(color: _locationEnabled ? Colors.grey : Colors.grey.shade300),
+                        borderRadius: BorderRadius.circular(4),
+                        color: Colors.transparent,
+                      ),
+                      padding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                      child: Row(
+                        children: [
+                          Icon(Icons.location_on,
+                              color: _locationEnabled ? Colors.grey[600] : Colors.grey[400]),
+                          SizedBox(width: 12),
+                          Expanded(
+                            child: _selectedLocation != null
+                                ? Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      // Place name in bold
+                                      Text(
+                                        _selectedLocation!.getPlaceName(),
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          color: _locationEnabled ? Colors.black : Colors.grey[500],
+                                        ),
+                                      ),
+                                      // Address
+                                      Text(
+                                        _selectedLocation!.address ?? 'No address',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: _locationEnabled ? Colors.black87 : Colors.grey[500],
+                                        ),
+                                      ),
+                                    ],
+                                  )
+                                : Text(
+                                    _isSelectingLocation
+                                        ? 'Selecting location...'
+                                        : 'Select location',
+                                    style: TextStyle(
+                                        color: _locationEnabled ? Colors.grey[600] : Colors.grey[400]),
+                                  ),
+                          ),
+                          // Toggle switch inside the location field
+                          Transform.scale(
+                            scale: 0.8,
+                            child: Switch(
+                              value: _locationEnabled, 
+                              onChanged: (value) {
+                                setState(() {
+                                  _locationEnabled = value;
+                                });
+                              },
+                              activeColor: Colors.blue,
+                              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  SizedBox(height: 16),
+
+                  // Experience title
+                  TextFormField(
+                    controller: _titleController,
+                    focusNode: _titleFocusNode,
+                    decoration: InputDecoration(
+                      labelText: 'Experience Title',
+                      hintText: 'Enter title',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.title),
+                      suffixIcon: _titleController.text.isNotEmpty
+                        ? IconButton(
+                            icon: Icon(Icons.clear, size: 18),
+                            onPressed: () {
+                              setState(() {
+                                _titleController.clear();
+                              });
+                            },
+                          )
+                        : null,
+                    ),
+                    validator: (value) {
+                      if (value == null || value.isEmpty) {
+                        return 'Please enter a title';
+                      }
+                      return null;
+                    },
+                    onChanged: (value) {
+                      // Trigger a rebuild to show/hide the clear button
+                      // and update the card title when collapsed
+                      setState(() {});
+                    },
+                  ),
+                  SizedBox(height: 16),
+
+                  // Experience type selection
+                  DropdownButtonFormField<ExperienceType>(
+                    value: _selectedType,
+                    decoration: InputDecoration(
+                      labelText: 'Experience Type',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.category),
+                    ),
+                    items: ExperienceType.values.map((type) {
+                      return DropdownMenuItem(
+                        value: type,
+                        child: Text(type.displayName),
+                      );
+                    }).toList(),
+                    onChanged: (value) {
+                      if (value != null) {
+                        setState(() {
+                          _selectedType = value;
+                        });
+                      }
+                    },
+                  ),
+                  SizedBox(height: 16),
+
+                  // Yelp URL
+                  TextFormField(
+                    controller: _yelpUrlController,
+                    decoration: InputDecoration(
+                      labelText: 'Yelp URL (optional)',
+                      hintText: 'https://yelp.com/...',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.restaurant_menu),
+                    ),
+                    keyboardType: TextInputType.url,
+                    validator: (value) {
+                      if (value != null && value.isNotEmpty) {
+                        if (!_isValidUrl(value)) {
+                          return 'Please enter a valid URL';
+                        }
+                      }
+                      return null;
+                    },
+                  ),
+                  SizedBox(height: 16),
+
+                  // Official website
+                  TextFormField(
+                    controller: _websiteUrlController,
+                    decoration: InputDecoration(
+                      labelText: 'Official Website (optional)',
+                      hintText: 'https://...',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.language),
+                    ),
+                    keyboardType: TextInputType.url,
+                    validator: (value) {
+                      if (value != null && value.isNotEmpty) {
+                        if (!_isValidUrl(value)) {
+                          return 'Please enter a valid URL';
+                        }
+                      }
+                      return null;
+                    },
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -363,191 +619,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
                                   ),
                                   SizedBox(height: 16),
 
-                                          // Button to choose saved experience
-                                  Align(
-                                    alignment: Alignment.centerRight,
-                                    child: OutlinedButton.icon(
-                                      icon: Icon(Icons.bookmark_outline),
-                                      label: Text('Choose a saved experience'),
-                                      onPressed: null, // No functionality yet
-                                      style: OutlinedButton.styleFrom(
-                                        foregroundColor: Colors.blue,
-                                        padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                                        visualDensity: VisualDensity.compact,
-                                      ),
-                                    ),
-                                  ),
-                                  SizedBox(height: 12),
-                                  
-                                  // Location selection with preview (moved to top)
-                                  GestureDetector(
-                                    onTap: (_isSelectingLocation || !_locationEnabled)
-                                        ? null
-                                        : _showLocationPicker,
-                                    child: Container(
-                                      decoration: BoxDecoration(
-                                        border:
-                                            Border.all(color: _locationEnabled ? Colors.grey : Colors.grey.shade300),
-                                        borderRadius:
-                                            BorderRadius.circular(4),
-                                        color: Colors.transparent,
-                                      ),
-                                      padding: EdgeInsets.symmetric(
-                                          horizontal: 12, vertical: 12),
-                                      child: Row(
-                                        children: [
-                                          Icon(Icons.location_on,
-                                              color: _locationEnabled ? Colors.grey[600] : Colors.grey[400]),
-                                          SizedBox(width: 12),
-                                          Expanded(
-                                            child: _selectedLocation != null
-                                                ? Column(
-                                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                                    mainAxisSize: MainAxisSize.min,
-                                                    children: [
-                                                      // Place name in bold
-                                                      Text(
-                                                        _selectedLocation!.getPlaceName(),
-                                                        style: TextStyle(
-                                                          fontWeight: FontWeight.bold,
-                                                          color: _locationEnabled ? Colors.black : Colors.grey[500],
-                                                        ),
-                                                      ),
-                                                      // Address
-                                                      Text(
-                                                        _selectedLocation!.address ?? 'No address',
-                                                        style: TextStyle(
-                                                          fontSize: 12,
-                                                          color: _locationEnabled ? Colors.black87 : Colors.grey[500],
-                                                        ),
-                                                      ),
-                                                    ],
-                                                  )
-                                                : Text(
-                                                    _isSelectingLocation
-                                                        ? 'Selecting location...'
-                                                        : 'Select location',
-                                                    style: TextStyle(
-                                                        color: _locationEnabled ? Colors.grey[600] : Colors.grey[400]),
-                                                  ),
-                                          ),
-                                          // Toggle switch inside the location field
-                                          Transform.scale(
-                                            scale: 0.8,
-                                            child: Switch(
-                                              value: _locationEnabled, 
-                                              onChanged: (value) {
-                                                setState(() {
-                                                  _locationEnabled = value;
-                                                });
-                                              },
-                                              activeColor: Colors.blue,
-                                              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                                  SizedBox(height: 16),
-
-                                  // Experience title
-                                  TextFormField(
-                                    controller: _titleController,
-                                    focusNode: _titleFocusNode,
-                                    decoration: InputDecoration(
-                                      labelText: 'Experience Title',
-                                      hintText: 'Enter title',
-                                      border: OutlineInputBorder(),
-                                      prefixIcon: Icon(Icons.title),
-                                      suffixIcon: _titleController.text.isNotEmpty
-                                        ? IconButton(
-                                            icon: Icon(Icons.clear, size: 18),
-                                            onPressed: () {
-                                              setState(() {
-                                                _titleController.clear();
-                                              });
-                                            },
-                                          )
-                                        : null,
-                                    ),
-                                    validator: (value) {
-                                      if (value == null || value.isEmpty) {
-                                        return 'Please enter a title';
-                                      }
-                                      return null;
-                                    },
-                                    onChanged: (value) {
-                                      // Trigger a rebuild to show/hide the clear button
-                                      setState(() {});
-                                    },
-                                  ),
-                                  SizedBox(height: 16),
-
-                                  // Experience type selection
-                                  DropdownButtonFormField<ExperienceType>(
-                                    value: _selectedType,
-                                    decoration: InputDecoration(
-                                      labelText: 'Experience Type',
-                                      border: OutlineInputBorder(),
-                                      prefixIcon: Icon(Icons.category),
-                                    ),
-                                    items: ExperienceType.values.map((type) {
-                                      return DropdownMenuItem(
-                                        value: type,
-                                        child: Text(type.displayName),
-                                      );
-                                    }).toList(),
-                                    onChanged: (value) {
-                                      if (value != null) {
-                                        setState(() {
-                                          _selectedType = value;
-                                        });
-                                      }
-                                    },
-                                  ),
-                                  SizedBox(height: 16),
-
-                                  // Yelp URL
-                                  TextFormField(
-                                    controller: _yelpUrlController,
-                                    decoration: InputDecoration(
-                                      labelText: 'Yelp URL (optional)',
-                                      hintText: 'https://yelp.com/...',
-                                      border: OutlineInputBorder(),
-                                      prefixIcon: Icon(Icons.restaurant_menu),
-                                    ),
-                                    keyboardType: TextInputType.url,
-                                    validator: (value) {
-                                      if (value != null && value.isNotEmpty) {
-                                        if (!_isValidUrl(value)) {
-                                          return 'Please enter a valid URL';
-                                        }
-                                      }
-                                      return null;
-                                    },
-                                  ),
-                                  SizedBox(height: 16),
-
-                                  // Official website
-                                  TextFormField(
-                                    controller: _websiteUrlController,
-                                    decoration: InputDecoration(
-                                      labelText: 'Official Website (optional)',
-                                      hintText: 'https://...',
-                                      border: OutlineInputBorder(),
-                                      prefixIcon: Icon(Icons.language),
-                                    ),
-                                    keyboardType: TextInputType.url,
-                                    validator: (value) {
-                                      if (value != null && value.isNotEmpty) {
-                                        if (!_isValidUrl(value)) {
-                                          return 'Please enter a valid URL';
-                                        }
-                                      }
-                                      return null;
-                                    },
-                                  ),
+                                          // Collapsible Experience Card
+                                  _buildExperienceCard(),
                                 ],
                               ),
                             ),
