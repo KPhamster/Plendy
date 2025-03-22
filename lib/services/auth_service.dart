@@ -28,7 +28,7 @@ class AuthService {
       
       return credential;
     } catch (e) {
-      throw e;
+      rethrow;
     }
   }
 
@@ -40,7 +40,7 @@ class AuthService {
         password: password,
       );
     } catch (e) {
-      throw e;
+      rethrow;
     }
   }
 
@@ -70,7 +70,7 @@ class AuthService {
       
       return userCredential;
     } catch (e) {
-      throw e;
+      rethrow;
     }
   }
 
@@ -82,7 +82,7 @@ class AuthService {
         _googleSignIn.signOut(),
       ]);
     } catch (e) {
-      throw e;
+      rethrow;
     }
   }
 } 

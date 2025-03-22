@@ -23,7 +23,7 @@ class GoogleMapsWidget extends StatefulWidget {
   }
   
   const GoogleMapsWidget({
-    Key? key,
+    super.key,
     this.initialLocation,
     this.initialZoom = 14.0,
     this.showUserLocation = true,
@@ -31,7 +31,7 @@ class GoogleMapsWidget extends StatefulWidget {
     this.showControls = true,
     this.onLocationSelected,
     this.additionalMarkers,
-  }) : super(key: key);
+  });
 
   @override
   _GoogleMapsWidgetState createState() => _GoogleMapsWidgetState();
@@ -52,7 +52,7 @@ class _GoogleMapsWidgetState extends State<GoogleMapsWidget> {
   bool _isLoading = true;
   
   // Markers
-  Map<MarkerId, Marker> _markers = {};
+  final Map<MarkerId, Marker> _markers = {};
   
   @override
   void initState() {
@@ -112,12 +112,10 @@ class _GoogleMapsWidgetState extends State<GoogleMapsWidget> {
         _userPosition = position;
         
         // If no location is selected yet, use user location
-        if (_selectedLocation == null) {
-          _selectedLocation = Location(
+        _selectedLocation ??= Location(
             latitude: position.latitude,
             longitude: position.longitude,
           );
-        }
       });
     } catch (e) {
       print('Error getting current location: $e');

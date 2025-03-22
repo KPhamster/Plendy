@@ -10,11 +10,11 @@ class LocationPickerScreen extends StatefulWidget {
   final String title;
 
   const LocationPickerScreen({
-    Key? key,
+    super.key,
     this.initialLocation,
     required this.onLocationSelected,
     this.title = 'Select Location',
-  }) : super(key: key);
+  });
 
   @override
   _LocationPickerScreenState createState() => _LocationPickerScreenState();
@@ -85,24 +85,22 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
       final placeId = result['placeId'];
       final location = await _mapsService.getPlaceDetails(placeId);
 
-      if (location != null) {
-        setState(() {
-          _selectedLocation = location;
-          _searchController.text =
-              location.displayName ?? location.address ?? 'Selected Location';
-        });
+      setState(() {
+        _selectedLocation = location;
+        _searchController.text =
+            location.displayName ?? location.address ?? 'Selected Location';
+      });
 
-        // Get reference to the GoogleMapsWidget
-        final mapWidget = _mapKey.currentWidget as GoogleMapsWidget?;
-        if (mapWidget?.mapController != null) {
-          // Animate map to the selected location
-          mapWidget!.animateToLocation(location);
-        }
+      // Get reference to the GoogleMapsWidget
+      final mapWidget = _mapKey.currentWidget as GoogleMapsWidget?;
+      if (mapWidget?.mapController != null) {
+        // Animate map to the selected location
+        mapWidget!.animateToLocation(location);
+      }
 
-        // Update parent with selected location
-        if (widget.onLocationSelected != null) {
-          widget.onLocationSelected!(_selectedLocation!);
-        }
+      // Update parent with selected location
+      if (widget.onLocationSelected != null) {
+        widget.onLocationSelected!(_selectedLocation!);
       }
     } catch (e) {
       print('Error getting place details: $e');
@@ -157,7 +155,7 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
                 child: TextField(
                   controller: _searchController,
                   decoration: InputDecoration(
-                    hintText: 'Search for a place for better precision',
+                    hintText: 'Search for a place',
                     border: InputBorder.none,
                     prefixIcon: Icon(Icons.search),
                     suffixIcon: _isSearching

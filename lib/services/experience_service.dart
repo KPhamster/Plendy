@@ -106,7 +106,7 @@ class ExperienceService {
     final snapshot = await _experiencesCollection
         .orderBy('name')
         .startAt([queryLower])
-        .endAt([queryLower + '\uf8ff'])
+        .endAt(['$queryLower\uf8ff'])
         .limit(limit)
         .get();
     

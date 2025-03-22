@@ -6,6 +6,8 @@ import '../services/auth_service.dart';
 import '../services/user_service.dart';
 
 class EditProfileScreen extends StatefulWidget {
+  const EditProfileScreen({super.key});
+
   @override
   _EditProfileScreenState createState() => _EditProfileScreenState();
 }

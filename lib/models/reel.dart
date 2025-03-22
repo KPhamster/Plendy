@@ -92,7 +92,7 @@ class Reel {
     Duration? duration,
   }) {
     return Reel(
-      id: this.id,
+      id: id,
       experienceId: experienceId ?? this.experienceId,
       userId: userId ?? this.userId,
       userName: userName ?? this.userName,
@@ -103,7 +103,7 @@ class Reel {
       viewCount: viewCount ?? this.viewCount,
       likeCount: likeCount ?? this.likeCount,
       likedByUserIds: likedByUserIds ?? this.likedByUserIds,
-      createdAt: this.createdAt,
+      createdAt: createdAt,
       duration: duration ?? this.duration,
     );
   }
