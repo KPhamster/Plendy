@@ -226,6 +226,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
         // If title is empty, set it to the place name
         if (_titleController.text.isEmpty) {
           _titleController.text = result.getPlaceName();
+          // Position cursor at beginning so start of text is visible
+          _titleController.selection = TextSelection.fromPosition(
+            const TextPosition(offset: 0),
+          );
         }
       });
       
