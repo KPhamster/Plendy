@@ -9,6 +9,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:dio/dio.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../models/experience.dart';
 import '../services/experience_service.dart';
 import '../services/google_maps_service.dart';
@@ -516,6 +517,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
                       hintText: 'https://yelp.com/...',
                       border: OutlineInputBorder(),
                       prefixIcon: Icon(Icons.restaurant_menu),
+                      suffixIcon: IconButton(
+                        icon: FaIcon(FontAwesomeIcons.yelp, color: Colors.red),
+                        tooltip: 'Open in Yelp',
+                        onPressed: () => _openYelpUrl(card.yelpUrlController.text),
+                      ),
                     ),
                     keyboardType: TextInputType.url,
                     validator: (value) {
@@ -745,6 +751,71 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
     final Uri url = Uri.parse(urlString);
     if (!await launchUrl(url, mode: LaunchMode.externalApplication)) {
       throw Exception('Could not launch $url');
+    }
+  }
+  
+  /// Opens Yelp URL or Yelp.com if no URL is provided
+  Future<void> _openYelpUrl(String yelpUrl) async {
+    String url = yelpUrl.trim();
+    
+    // If empty, use Yelp.com
+    if (url.isEmpty) {
+      url = 'https://yelp.com';
+    } else if (!url.startsWith('http')) {
+      // Make sure it starts with http:// or https://
+      url = 'https://' + url;
+    }
+    
+    // Check if this is a Yelp URL for potential app deep linking
+    bool isYelpUrl = url.contains('yelp.com');
+    
+    try {
+      // Parse the regular web URL
+      final Uri webUri = Uri.parse(url);
+      
+      // For mobile platforms, try to create a deep link URI
+      if (!kIsWeb && isYelpUrl) {
+        // Extract business ID for deep linking if present in the URL
+        // Typical Yelp URL format: https://www.yelp.com/biz/business-name-location
+        String? yelpAppUrl;
+        
+        if (url.contains('/biz/')) {
+          // Extract the business part from URL
+          final bizPath = url.split('/biz/')[1].split('?')[0];
+          
+          if (Platform.isIOS) {
+            // iOS deep link format
+            yelpAppUrl = 'yelp:///biz/$bizPath';
+          } else if (Platform.isAndroid) {
+            // Android deep link format
+            yelpAppUrl = 'yelp://biz/$bizPath';
+          }
+        }
+        
+        // Try opening the app URL first if available
+        if (yelpAppUrl != null) {
+          try {
+            final appUri = Uri.parse(yelpAppUrl);
+            final canOpenApp = await canLaunchUrl(appUri);
+            
+            if (canOpenApp) {
+              await launchUrl(appUri, mode: LaunchMode.externalApplication);
+              return; // Exit if app opens successfully
+            }
+          } catch (e) {
+            print('Error opening Yelp app: $e');
+            // Continue to open the web URL as fallback
+          }
+        }
+      }
+      
+      // Open web URL as fallback
+      await launchUrl(webUri, mode: LaunchMode.externalApplication);
+    } catch (e) {
+      print('Error launching URL: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not open Yelp: $e')),
+      );
     }
   }
 
