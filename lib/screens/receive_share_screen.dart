@@ -368,7 +368,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
                                         color: _locationEnabled ? Colors.transparent : Colors.grey.shade100,
                                       ),
                                       padding: EdgeInsets.symmetric(
-                                          horizontal: 12, vertical: 8),
+                                          horizontal: 12, vertical: 12),
                                       child: Row(
                                         children: [
                                           Icon(Icons.location_on,
@@ -376,10 +376,28 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
                                           SizedBox(width: 12),
                                           Expanded(
                                             child: _selectedLocation != null
-                                                ? Text(_selectedLocation!
-                                                        .address ??
-                                                    'Location selected',
-                                                   style: TextStyle(color: _locationEnabled ? Colors.black : Colors.grey[500]))
+                                                ? Column(
+                                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                                    mainAxisSize: MainAxisSize.min,
+                                                    children: [
+                                                      // Place name in bold
+                                                      Text(
+                                                        _selectedLocation!.getPlaceName(),
+                                                        style: TextStyle(
+                                                          fontWeight: FontWeight.bold,
+                                                          color: _locationEnabled ? Colors.black : Colors.grey[500],
+                                                        ),
+                                                      ),
+                                                      // Address
+                                                      Text(
+                                                        _selectedLocation!.address ?? 'No address',
+                                                        style: TextStyle(
+                                                          fontSize: 12,
+                                                          color: _locationEnabled ? Colors.black87 : Colors.grey[500],
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  )
                                                 : Text(
                                                     _isSelectingLocation
                                                         ? 'Selecting location...'
