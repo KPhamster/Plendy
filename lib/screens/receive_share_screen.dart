@@ -19,10 +19,10 @@ class ReceiveShareScreen extends StatefulWidget {
   final VoidCallback onCancel;
 
   const ReceiveShareScreen({
-    Key? key,
+    super.key,
     required this.sharedFiles,
     required this.onCancel,
-  }) : super(key: key);
+  });
 
   @override
   _ReceiveShareScreenState createState() => _ReceiveShareScreenState();
@@ -168,13 +168,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
     try {
       final location = await _mapsService.getPlaceDetails(placeId);
 
-      if (location != null) {
-        setState(() {
-          _selectedLocation = location;
-          _searchController.text = location.address ?? '';
-        });
-      }
-    } catch (e) {
+      setState(() {
+        _selectedLocation = location;
+        _searchController.text = location.address ?? '';
+      });
+        } catch (e) {
       print('Error getting place details: $e');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error selecting location')),
@@ -332,6 +330,47 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
                                   ),
                                   SizedBox(height: 16),
 
+                                  // Location selection with preview (moved to top)
+                                  GestureDetector(
+                                    onTap: _isSelectingLocation
+                                        ? null
+                                        : _showLocationPicker,
+                                    child: Container(
+                                      decoration: BoxDecoration(
+                                        border:
+                                            Border.all(color: Colors.grey),
+                                        borderRadius:
+                                            BorderRadius.circular(4),
+                                      ),
+                                      padding: EdgeInsets.symmetric(
+                                          horizontal: 12, vertical: 16),
+                                      child: Row(
+                                        children: [
+                                          Icon(Icons.location_on,
+                                              color: Colors.grey[600]),
+                                          SizedBox(width: 12),
+                                          Expanded(
+                                            child: _selectedLocation != null
+                                                ? Text(_selectedLocation!
+                                                        .address ??
+                                                    'Location selected')
+                                                : Text(
+                                                    _isSelectingLocation
+                                                        ? 'Selecting location...'
+                                                        : 'Select location',
+                                                    style: TextStyle(
+                                                        color: Colors
+                                                            .grey[600]),
+                                                  ),
+                                          ),
+                                          Icon(Icons.arrow_drop_down,
+                                              color: Colors.grey[600]),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                  SizedBox(height: 16),
+
                                   // Experience title
                                   TextFormField(
                                     controller: _titleController,
@@ -371,47 +410,6 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
                                         });
                                       }
                                     },
-                                  ),
-                                  SizedBox(height: 16),
-
-                                  // Location selection with preview
-                                  GestureDetector(
-                                    onTap: _isSelectingLocation
-                                        ? null
-                                        : _showLocationPicker,
-                                    child: Container(
-                                      decoration: BoxDecoration(
-                                        border:
-                                            Border.all(color: Colors.grey),
-                                        borderRadius:
-                                            BorderRadius.circular(4),
-                                      ),
-                                      padding: EdgeInsets.symmetric(
-                                          horizontal: 12, vertical: 16),
-                                      child: Row(
-                                        children: [
-                                          Icon(Icons.location_on,
-                                              color: Colors.grey[600]),
-                                          SizedBox(width: 12),
-                                          Expanded(
-                                            child: _selectedLocation != null
-                                                ? Text(_selectedLocation!
-                                                        .address ??
-                                                    'Location selected')
-                                                : Text(
-                                                    _isSelectingLocation
-                                                        ? 'Selecting location...'
-                                                        : 'Select location',
-                                                    style: TextStyle(
-                                                        color: Colors
-                                                            .grey[600]),
-                                                  ),
-                                          ),
-                                          Icon(Icons.arrow_drop_down,
-                                              color: Colors.grey[600]),
-                                        ],
-                                      ),
-                                    ),
                                   ),
                                   SizedBox(height: 16),
 
@@ -568,7 +566,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
       return _buildInstagramPreview(url);
     }
 
-    return Container(
+    return SizedBox(
       height: 250,
       width: double.infinity,
       child: AnyLinkPreview(
@@ -724,7 +722,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
 
   Widget _buildImagePreview(SharedMediaFile file) {
     try {
-      return Container(
+      return SizedBox(
         height: 400,
         width: double.infinity,
         child: Image.file(
@@ -815,8 +813,7 @@ class InstagramReelEmbed extends StatefulWidget {
   final String url;
   final VoidCallback onOpen;
 
-  const InstagramReelEmbed({Key? key, required this.url, required this.onOpen})
-      : super(key: key);
+  const InstagramReelEmbed({super.key, required this.url, required this.onOpen});
 
   @override
   _InstagramReelEmbedState createState() => _InstagramReelEmbedState();
@@ -976,12 +973,12 @@ class _InstagramReelEmbedState extends State<InstagramReelEmbed> {
       <body>
         <div class="container">
           <div class="embed-container">
-            <blockquote class="instagram-media" data-instgrm-captioned data-instgrm-permalink="${cleanUrl}" 
+            <blockquote class="instagram-media" data-instgrm-captioned data-instgrm-permalink="$cleanUrl" 
               data-instgrm-version="14" style="background:#FFF; border:0; border-radius:3px; 
               box-shadow:0 0 1px 0 rgba(0,0,0,0.5),0 1px 10px 0 rgba(0,0,0,0.15); 
               margin: 1px; max-width:540px; min-width:326px; padding:0; width:99.375%; width:-webkit-calc(100% - 2px); width:calc(100% - 2px);">
               <div style="padding:16px;">
-                <a href="${cleanUrl}" style="background:#FFFFFF; line-height:0; padding:0 0; text-align:center; text-decoration:none; width:100%;" target="_blank">
+                <a href="$cleanUrl" style="background:#FFFFFF; line-height:0; padding:0 0; text-align:center; text-decoration:none; width:100%;" target="_blank">
                   <div style="display:flex; flex-direction:row; align-items:center;">
                     <div style="background-color:#F4F4F4; border-radius:50%; flex-grow:0; height:40px; margin-right:14px; width:40px;"></div>
                     <div style="display:flex; flex-direction:column; flex-grow:1; justify-content:center;">

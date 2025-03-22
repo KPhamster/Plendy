@@ -275,7 +275,7 @@ class Experience {
     String? priceRange,
   }) {
     return Experience(
-      id: this.id,
+      id: id,
       name: name ?? this.name,
       description: description ?? this.description,
       location: location ?? this.location,
@@ -291,7 +291,7 @@ class Experience {
       imageUrls: imageUrls ?? this.imageUrls,
       reelIds: reelIds ?? this.reelIds,
       followerIds: followerIds ?? this.followerIds,
-      createdAt: this.createdAt,
+      createdAt: createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       website: website ?? this.website,
       phoneNumber: phoneNumber ?? this.phoneNumber,

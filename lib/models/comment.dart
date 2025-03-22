@@ -76,7 +76,7 @@ class Comment {
     DateTime? updatedAt,
   }) {
     return Comment(
-      id: this.id,
+      id: id,
       experienceId: experienceId ?? this.experienceId,
       userId: userId ?? this.userId,
       userName: userName ?? this.userName,
@@ -85,7 +85,7 @@ class Comment {
       parentCommentId: parentCommentId ?? this.parentCommentId,
       likeCount: likeCount ?? this.likeCount,
       likedByUserIds: likedByUserIds ?? this.likedByUserIds,
-      createdAt: this.createdAt,
+      createdAt: createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );
   }

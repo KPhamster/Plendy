@@ -4,6 +4,8 @@ import '../services/auth_service.dart';
 class BookmarksScreen extends StatelessWidget {
   final _authService = AuthService();
 
+  BookmarksScreen({super.key});
+
   @override
   Widget build(BuildContext context) {
     final userEmail = _authService.currentUser?.email ?? 'Guest';

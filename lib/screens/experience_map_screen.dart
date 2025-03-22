@@ -9,9 +9,9 @@ class ExperienceMapScreen extends StatefulWidget {
   final Experience experience;
   
   const ExperienceMapScreen({
-    Key? key,
+    super.key,
     required this.experience,
-  }) : super(key: key);
+  });
 
   @override
   _ExperienceMapScreenState createState() => _ExperienceMapScreenState();
