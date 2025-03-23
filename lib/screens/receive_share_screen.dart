@@ -17,6 +17,7 @@ import '../services/google_maps_service.dart';
 import '../widgets/google_maps_widget.dart';
 import 'location_picker_screen.dart';
 import '../services/sharing_service.dart';
+import 'dart:async';
 
 /// Data class to hold the state of each experience card
 class ExperienceCardData {
@@ -231,6 +232,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     if (_businessDataCache.containsKey(cacheKey)) {
       print(
           '📊 YELP DATA: URL $cacheKey already processed, returning cached data');
+      final cachedData = _businessDataCache[cacheKey];
+      print(
+          '📊 YELP DATA: Cache hit! Data: ${cachedData != null && cachedData.isNotEmpty ? "Has business data" : "Empty map (no results)"}');
       return _businessDataCache[cacheKey];
     }
 
@@ -388,6 +392,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               '📊 YELP DATA: Retrieved location details: ${location.displayName}, ${location.address}');
           print(
               '📊 YELP DATA: Coordinates: ${location.latitude}, ${location.longitude}');
+          print('📊 YELP DATA: Place ID: ${location.placeId}');
 
           if (location.latitude == 0.0 && location.longitude == 0.0) {
             print(
@@ -1469,6 +1474,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   // Detailed preview when we have location data
   Widget _buildYelpDetailedPreview(
       Location location, String businessName, String yelpUrl) {
+    print('🏢 PREVIEW: Building detailed Yelp preview');
+    print('🏢 PREVIEW: Business name: "$businessName"');
+    print(
+        '🏢 PREVIEW: Location - lat: ${location.latitude}, lng: ${location.longitude}');
+    print('🏢 PREVIEW: Address: ${location.address}');
+    print('🏢 PREVIEW: Yelp URL: $yelpUrl');
+
     return Column(
       children: [
         // Preview container
@@ -1483,7 +1495,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Map preview
+              // Business photo instead of map
               Container(
                 height: 180,
                 width: double.infinity,
@@ -1492,13 +1504,42 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                     topLeft: Radius.circular(8),
                     topRight: Radius.circular(8),
                   ),
-                  child: GoogleMapsWidget(
-                    key: ValueKey(location.latitude.toString() +
-                        location.longitude.toString()),
-                    initialLocation: location,
-                    showUserLocation: false,
-                    allowSelection: false,
-                    showControls: false,
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      // Business photo based on location
+                      _getBusinessPhotoWidget(location, businessName),
+
+                      // Yelp branding overlay in top-right corner
+                      Positioned(
+                        top: 8,
+                        right: 8,
+                        child: Container(
+                          padding:
+                              EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: Color(0xFFD32323),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              FaIcon(FontAwesomeIcons.yelp,
+                                  color: Colors.white, size: 12),
+                              SizedBox(width: 4),
+                              Text(
+                                'Yelp',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -1605,9 +1646,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                 icon: Icon(Icons.directions, size: 18),
                 label: Text('Get Directions'),
                 onPressed: () async {
+                  print(
+                      '🧭 DIRECTIONS: Getting directions for ${location.latitude}, ${location.longitude}');
                   final GoogleMapsService mapsService = GoogleMapsService();
                   final url = mapsService.getDirectionsUrl(
                       location.latitude, location.longitude);
+                  print('🧭 DIRECTIONS: Opening URL: $url');
                   await _launchUrl(url);
                 },
                 style: OutlinedButton.styleFrom(
@@ -1621,7 +1665,307 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     );
   }
 
-  // Fallback preview when we don't have location data
+  /// Get a widget displaying a business photo
+  Widget _getBusinessPhotoWidget(Location location, String businessName) {
+    print('🖼️ PHOTO: Getting business photo for "$businessName"');
+    print(
+        '🖼️ PHOTO: Location data - lat: ${location.latitude}, lng: ${location.longitude}');
+    print('🖼️ PHOTO: Place ID: ${location.placeId ?? "null"}');
+
+    // Get the place ID, which should be available in the location object
+    final String? placeId = location.placeId;
+    if (placeId == null || placeId.isEmpty) {
+      print('🖼️ PHOTO: No place ID available, using fallback');
+      return _buildPhotoFallback(businessName);
+    }
+
+    // For diagnostics, check the API key
+    final apiKey = GoogleMapsService.apiKey;
+    print(
+        '🖼️ PHOTO: API key length: ${apiKey.length} chars, starts with: ${apiKey.substring(0, min(5, apiKey.length))}...');
+
+    return FutureBuilder<List<String>>(
+      future: GoogleMapsService().getPlacePhotoReferences(placeId),
+      builder: (context, snapshot) {
+        // If we have photo URLs, display them
+        if (snapshot.hasData &&
+            snapshot.data != null &&
+            snapshot.data!.isNotEmpty) {
+          final List<String> photoUrls = snapshot.data!;
+          print('🖼️ PHOTO: Got ${photoUrls.length} photos from Places API');
+
+          // If we have multiple photos, show a carousel
+          if (photoUrls.length > 1) {
+            return _buildPhotoCarousel(photoUrls, businessName);
+          }
+
+          // Otherwise show a single photo
+          return _buildSinglePhoto(photoUrls.first, businessName);
+        }
+
+        // Check for specific errors
+        if (snapshot.hasError) {
+          print('🖼️ PHOTO ERROR: Error fetching photos: ${snapshot.error}');
+        }
+
+        // While loading or if error occurred, show loading state
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          print('🖼️ PHOTO: Loading photos...');
+          return Center(
+            child: CircularProgressIndicator(
+              color: Color(0xFFD32323),
+            ),
+          );
+        }
+
+        // If we get here, there was an error or no photos available
+        print(
+            '🖼️ PHOTO: No photos available from Places API, using category-based fallback');
+
+        // Use our category-based fallback
+        final String businessSeed = _createPhotoSeed(businessName, location);
+        final String photoUrl =
+            _getBusinessPhotoUrl(businessName, businessSeed);
+
+        return _buildSinglePhoto(photoUrl, businessName);
+      },
+    );
+  }
+
+  // Build a carousel to display multiple photos
+  Widget _buildPhotoCarousel(List<String> photoUrls, String businessName) {
+    return Stack(
+      children: [
+        PageView.builder(
+          itemCount: photoUrls.length,
+          itemBuilder: (context, index) {
+            return _buildSinglePhoto(photoUrls[index], businessName);
+          },
+        ),
+
+        // Photo counter indicator
+        Positioned(
+          right: 8,
+          bottom: 8,
+          child: Container(
+            padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: Colors.black.withOpacity(0.6),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.photo, size: 14, color: Colors.white),
+                SizedBox(width: 4),
+                Text(
+                  '${photoUrls.length}',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // Build a single photo display
+  Widget _buildSinglePhoto(String photoUrl, String businessName) {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        // Background color before image loads
+        Container(color: Color(0xFFEEEEEE)),
+
+        // Image with loading indicator
+        Image.network(
+          photoUrl,
+          fit: BoxFit.cover,
+          loadingBuilder: (context, child, loadingProgress) {
+            if (loadingProgress == null) {
+              print('🖼️ PHOTO: Image loaded successfully!');
+              return child;
+            }
+            print(
+                '🖼️ PHOTO: Loading progress: ${loadingProgress.cumulativeBytesLoaded}/${loadingProgress.expectedTotalBytes ?? 'unknown'}');
+            return Center(
+              child: CircularProgressIndicator(
+                color: Color(0xFFD32323),
+                value: loadingProgress.expectedTotalBytes != null
+                    ? loadingProgress.cumulativeBytesLoaded /
+                        loadingProgress.expectedTotalBytes!
+                    : null,
+              ),
+            );
+          },
+          errorBuilder: (context, error, stackTrace) {
+            print('🖼️ PHOTO ERROR: Failed to load image: $error');
+            return _buildPhotoFallback(businessName);
+          },
+        ),
+
+        // Subtle gradient overlay at the bottom
+        Positioned.fill(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Colors.transparent,
+                  Colors.black.withOpacity(0.3),
+                ],
+                stops: [0.7, 1.0],
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // Generate a seed for consistent photo selection
+  String _createPhotoSeed(String businessName, Location location) {
+    // Create a deterministic but unique value based on business name and location
+    String seed = businessName;
+
+    // Add location info if available (truncated to avoid excessive precision)
+    if (location.latitude != null && location.longitude != null) {
+      // Round to 3 decimal places to create a general area identifier
+      String locationStr =
+          '${location.latitude!.toStringAsFixed(3)}_${location.longitude!.toStringAsFixed(3)}';
+      seed = '$seed-$locationStr';
+    }
+
+    // Generate hash for the seed
+    return seed.hashCode.abs().toString();
+  }
+
+  // Get a photo URL based on business type
+  String _getBusinessPhotoUrl(String businessName, String seed) {
+    final String businessNameLower = businessName.toLowerCase();
+    int seedNumber = int.tryParse(seed) ?? 0;
+
+    // Determine business category
+    String category = 'business';
+
+    if (businessNameLower.contains('restaurant') ||
+        businessNameLower.contains('grill') ||
+        businessNameLower.contains('pizza') ||
+        businessNameLower.contains('kitchen') ||
+        businessNameLower.contains('cafe') ||
+        businessNameLower.contains('coffee')) {
+      category = 'restaurant';
+      print('🔍 CATEGORY: Detected restaurant type business');
+    } else if (businessNameLower.contains('bar') ||
+        businessNameLower.contains('pub') ||
+        businessNameLower.contains('lounge')) {
+      category = 'bar';
+      print('🔍 CATEGORY: Detected bar type business');
+    } else if (businessNameLower.contains('shop') ||
+        businessNameLower.contains('store') ||
+        businessNameLower.contains('market')) {
+      category = 'retail';
+      print('🔍 CATEGORY: Detected retail type business');
+    } else if (businessNameLower.contains('hotel') ||
+        businessNameLower.contains('inn') ||
+        businessNameLower.contains('suites')) {
+      category = 'hotel';
+      print('🔍 CATEGORY: Detected hotel type business');
+    } else {
+      print('🔍 CATEGORY: Using generic business type');
+    }
+
+    // Create URLs for different categories
+    // Using reliable image services with category-specific images
+    Map<String, List<String>> categoryImages = {
+      'restaurant': [
+        'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=800&h=400&fit=crop',
+        'https://images.unsplash.com/photo-1552566626-52f8b828add9?w=800&h=400&fit=crop',
+        'https://images.unsplash.com/photo-1600891964599-f61ba0e24092?w=800&h=400&fit=crop',
+        'https://images.unsplash.com/photo-1466978913421-dad2ebd01d17?w=800&h=400&fit=crop',
+        'https://images.unsplash.com/photo-1592861956120-e524fc739696?w=800&h=400&fit=crop'
+      ],
+      'bar': [
+        'https://images.unsplash.com/photo-1514933651103-005eec06c04b?w=800&h=400&fit=crop',
+        'https://images.unsplash.com/photo-1543007630-9710e4a00a20?w=800&h=400&fit=crop',
+        'https://images.unsplash.com/photo-1470337458703-46ad1756a187?w=800&h=400&fit=crop',
+        'https://images.unsplash.com/photo-1572116469696-31de0f17cc34?w=800&h=400&fit=crop',
+        'https://images.unsplash.com/photo-1575444758702-4a6b9222336e?w=800&h=400&fit=crop'
+      ],
+      'retail': [
+        'https://images.unsplash.com/photo-1441986300917-64674bd600d8?w=800&h=400&fit=crop',
+        'https://images.unsplash.com/photo-1604719312566-8912e9c8a213?w=800&h=400&fit=crop',
+        'https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=800&h=400&fit=crop',
+        'https://images.unsplash.com/photo-1567401893414-76b7b1e5a7a5?w=800&h=400&fit=crop',
+        'https://images.unsplash.com/photo-1534452203293-494d7ddbf7e0?w=800&h=400&fit=crop'
+      ],
+      'hotel': [
+        'https://images.unsplash.com/photo-1582719508461-905c673771fd?w=800&h=400&fit=crop',
+        'https://images.unsplash.com/photo-1566073771259-6a8506099945?w=800&h=400&fit=crop',
+        'https://images.unsplash.com/photo-1445019980597-93fa8acb246c?w=800&h=400&fit=crop',
+        'https://images.unsplash.com/photo-1520250497591-112f2f40a3f4?w=800&h=400&fit=crop',
+        'https://images.unsplash.com/photo-1551882547-ff40c63fe5fa?w=800&h=400&fit=crop'
+      ],
+      'business': [
+        'https://images.unsplash.com/photo-1497366754035-f200968a6e72?w=800&h=400&fit=crop',
+        'https://images.unsplash.com/photo-1497215842964-222b430dc094?w=800&h=400&fit=crop',
+        'https://images.unsplash.com/photo-1504328345606-18bbc8c9d7d8?w=800&h=400&fit=crop',
+        'https://images.unsplash.com/photo-1497366811353-6870744d04b2?w=800&h=400&fit=crop',
+        'https://images.unsplash.com/photo-1568992687947-868a62a9f521?w=800&h=400&fit=crop'
+      ]
+    };
+
+    // Get the images for the determined category
+    List<String> images =
+        categoryImages[category] ?? categoryImages['business']!;
+
+    // Pick one based on the seed (deterministic selection)
+    int imageIndex = seedNumber % images.length;
+
+    return images[imageIndex];
+  }
+
+  // Fallback when image fails to load
+  Widget _buildPhotoFallback(String businessName) {
+    print('⚠️ FALLBACK: Building fallback photo for "$businessName"');
+    return Container(
+      color: Color(0xFFE8E8E8),
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.business,
+              size: 48,
+              color: Color(0xFFD32323),
+            ),
+            SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16.0),
+              child: Text(
+                businessName,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF333333),
+                ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // Detailed preview when we don't have location data
   Widget _buildYelpFallbackPreview(String url, String businessName) {
     return Column(
       children: [

@@ -7,6 +7,7 @@ import 'package:dio/dio.dart';
 import 'dart:convert';
 import '../config/api_secrets.dart';
 import '../models/experience.dart';
+import 'package:flutter/foundation.dart';
 
 /// Service class for Google Maps functionality
 class GoogleMapsService {
@@ -316,205 +317,98 @@ class GoogleMapsService {
 
   /// Get place details by placeId
   Future<Location> getPlaceDetails(String placeId) async {
-    print("\n🏢 PLACE DETAILS: Getting details for place ID: $placeId");
+    // Default location (used if there's an error)
+    Location defaultLocation = Location(
+      latitude: 0.0,
+      longitude: 0.0,
+      address: 'Location not found',
+      placeId: placeId, // Include the place ID even in the default location
+    );
 
     try {
-      // First try using the new Places API v1
-      try {
-        print("🏢 PLACE DETAILS: Trying method 1 - Places Details API V1");
+      final apiKey = _getApiKey();
+      if (apiKey.isEmpty) {
+        print('Error: No API key available');
+        return defaultLocation;
+      }
 
-        final response = await _dio.get(
-          'https://places.googleapis.com/v1/places/$placeId',
-          options: Options(
-            headers: {
-              'Content-Type': 'application/json',
-              'X-Goog-Api-Key': apiKey,
-              'X-Goog-FieldMask':
-                  'id,displayName,formattedAddress,location,addressComponents'
-            },
-          ),
-        );
+      final url =
+          'https://maps.googleapis.com/maps/api/place/details/json?place_id=$placeId&fields=name,geometry,address_components,formatted_address,vicinity&key=$apiKey';
 
-        if (response.statusCode == 200) {
-          print("🏢 PLACE DETAILS: API V1 returned status code 200");
-          final data = response.data;
+      final response = await _dio.get(url);
 
-          // Debug data received from Places API
-          print('🏢 PLACE DETAILS: Places API V1 response data available');
+      if (response.statusCode == 200) {
+        final data = response.data;
 
-          // Extract place name - the displayName should contain the actual business name
-          String? placeName;
-          if (data['displayName'] != null &&
-              data['displayName']['text'] != null) {
-            placeName = data['displayName']['text'];
-            print('🏢 PLACE DETAILS: Found business name: $placeName');
-          } else {
-            print('🏢 PLACE DETAILS: No display name found in response');
-          }
+        // Log the first part of the response
+        print(
+            'Place Details response: ${data.toString().substring(0, data.toString().length > 100 ? 100 : data.toString().length)}...');
+
+        if (data['status'] == 'OK' && data['result'] != null) {
+          final result = data['result'];
 
           // Extract coordinates
-          final location = data['location'];
-          if (location != null) {
-            final lat = location['latitude'] ?? 0.0;
-            final lng = location['longitude'] ?? 0.0;
-            print('🏢 PLACE DETAILS: Found coordinates: $lat, $lng');
+          if (result['geometry'] != null &&
+              result['geometry']['location'] != null) {
+            final location = result['geometry']['location'];
+            final double lat = location['lat'] ?? 0.0;
+            final double lng = location['lng'] ?? 0.0;
 
             // Extract address components
-            String? address = data['formattedAddress'];
-            print('🏢 PLACE DETAILS: Found address: $address');
-
-            String? city, state, country, zipCode;
-
-            if (data['addressComponents'] != null) {
-              print('🏢 PLACE DETAILS: Address components available');
-              for (var component in data['addressComponents']) {
-                List<dynamic> types = component['types'] ?? [];
-                if (types.contains('locality')) {
-                  city = component['longText'];
-                } else if (types.contains('administrative_area_level_1')) {
-                  state = component['shortText']; // Using short name for state
-                } else if (types.contains('country')) {
-                  country = component['longText'];
-                } else if (types.contains('postal_code')) {
-                  zipCode = component['longText'];
-                }
-              }
-              print(
-                  '🏢 PLACE DETAILS: Extracted components - City: $city, State: $state, Country: $country, Zip: $zipCode');
-            }
-
-            Location locationObj = Location(
-              latitude: lat,
-              longitude: lng,
-              address: address,
-              city: city,
-              state: state,
-              country: country,
-              zipCode: zipCode,
-              displayName: placeName,
-            );
-
-            print(
-                '🏢 PLACE DETAILS: Successfully created location object with API V1');
-            return locationObj;
-          } else {
-            print('🏢 PLACE DETAILS: No location data in response');
-          }
-        } else {
-          print(
-              '🏢 PLACE DETAILS: API V1 returned non-200 status code: ${response.statusCode}');
-        }
-      } catch (e) {
-        print('🏢 PLACE DETAILS: Error with Places API V1: $e');
-        // Continue to fallback method
-      }
-
-      // Fallback to the standard Details API if v1 failed
-      try {
-        print(
-            "🏢 PLACE DETAILS: Trying method 2 - Standard Places Details API");
-
-        final url =
-            'https://maps.googleapis.com/maps/api/place/details/json?place_id=$placeId&fields=name,formatted_address,geometry,address_component&key=$apiKey';
-        print(
-            "🏢 PLACE DETAILS: Request URL: ${url.replaceAll(apiKey, 'API_KEY')}");
-
-        final response = await http.get(Uri.parse(url));
-
-        if (response.statusCode == 200) {
-          print("🏢 PLACE DETAILS: API returned status code 200");
-          final data = jsonDecode(response.body);
-          print("🏢 PLACE DETAILS: Response status: ${data['status']}");
-
-          if (data['status'] != 'OK') {
-            print(
-                "🏢 PLACE DETAILS: API returned non-OK status: ${data['status']}");
-            if (data['error_message'] != null) {
-              print(
-                  "🏢 PLACE DETAILS: Error message: ${data['error_message']}");
-            }
-          }
-
-          if (data['status'] == 'OK' && data['result'] != null) {
-            final result = data['result'];
-            print("🏢 PLACE DETAILS: Successfully got place details");
-
-            // Extract coordinates
-            final lat = result['geometry']?['location']?['lat'] ?? 0.0;
-            final lng = result['geometry']?['location']?['lng'] ?? 0.0;
-            print('🏢 PLACE DETAILS: Found coordinates: $lat, $lng');
-
-            // Extract place name
-            final placeName = result['name'];
-            print('🏢 PLACE DETAILS: Found business name: $placeName');
-
-            // Extract address
-            final address = result['formatted_address'];
-            print('🏢 PLACE DETAILS: Found address: $address');
-
-            // Extract address components
-            String? city, state, country, zipCode;
+            String? formattedAddress = result['formatted_address'];
+            String? vicinity = result['vicinity']; // Simplified address
+            String? city;
+            String? state;
+            String? country;
+            String? zipCode;
 
             if (result['address_components'] != null) {
-              print('🏢 PLACE DETAILS: Address components available');
+              // Process address components
               for (var component in result['address_components']) {
-                List<dynamic> types = component['types'] ?? [];
-                if (types.contains('locality')) {
-                  city = component['long_name'];
-                } else if (types.contains('administrative_area_level_1')) {
-                  state = component['short_name'];
-                } else if (types.contains('country')) {
-                  country = component['long_name'];
-                } else if (types.contains('postal_code')) {
-                  zipCode = component['long_name'];
+                if (component['types'] != null) {
+                  List<dynamic> types = component['types'];
+
+                  if (types.contains('locality')) {
+                    city = component['long_name'];
+                  } else if (types.contains('administrative_area_level_1')) {
+                    state =
+                        component['short_name']; // Using abbreviation for state
+                  } else if (types.contains('country')) {
+                    country = component['long_name'];
+                  } else if (types.contains('postal_code')) {
+                    zipCode = component['long_name'];
+                  }
                 }
               }
-              print(
-                  '🏢 PLACE DETAILS: Extracted components - City: $city, State: $state, Country: $country, Zip: $zipCode');
             }
 
-            Location locationObj = Location(
+            // Get the name of the place
+            String? name = result['name'];
+
+            // Create location object with all available details
+            return Location(
               latitude: lat,
               longitude: lng,
-              address: address,
+              address: formattedAddress ?? vicinity,
               city: city,
               state: state,
               country: country,
               zipCode: zipCode,
-              displayName: placeName,
+              displayName: name,
+              placeId: placeId, // Save the place ID
             );
-
-            print(
-                '🏢 PLACE DETAILS: Successfully created location object with standard API');
-            return locationObj;
           }
         } else {
-          print(
-              '🏢 PLACE DETAILS: API returned non-200 status code: ${response.statusCode}');
+          print('Error in API response: ${data['status']}');
         }
-      } catch (e) {
-        print('🏢 PLACE DETAILS: Error with Places Details API: $e');
+      } else {
+        print('Failed with status code: ${response.statusCode}');
       }
-
-      print('🏢 PLACE DETAILS: No valid response from any Places API');
-      // If we couldn't get any valid place information, return a minimal location with coordinates
-      return Location(
-        latitude: 0.0,
-        longitude: 0.0,
-        address: 'Unknown location',
-        displayName: 'Unknown Location',
-      );
     } catch (e) {
-      print('🏢 PLACE DETAILS ERROR: $e');
-
-      // Even in case of error, return a basic location with coordinates
-      return Location(
-        latitude: 0.0,
-        longitude: 0.0,
-        address: 'Unknown location',
-        displayName: 'Unknown Location',
-      );
+      print('Error getting place details: $e');
     }
+
+    return defaultLocation;
   }
 
   /// Find a place near the tapped position - this improves POI selection
@@ -1075,5 +969,159 @@ class GoogleMapsService {
       double startLat, double startLng, double endLat, double endLng) {
     return getDirectionsUrl(endLat, endLng,
         originLat: startLat, originLng: startLng);
+  }
+
+  // Check if place has photos and return the first photo reference
+  Future<String?> getPlacePhoto(String placeId) async {
+    print('🔍 PHOTOS: Fetching photos for place ID: $placeId');
+
+    try {
+      final apiKey = _getApiKey();
+      print(
+          '🔍 PHOTOS: API key length: ${apiKey.length}, starts with: ${apiKey.substring(0, min(5, apiKey.length))}...');
+
+      if (apiKey.isEmpty) {
+        print('🔍 PHOTOS: No API key available');
+        return null;
+      }
+
+      // First, get place details to retrieve photo references
+      final url =
+          'https://maps.googleapis.com/maps/api/place/details/json?place_id=$placeId&fields=photos&key=$apiKey';
+
+      print(
+          '🔍 PHOTOS: Sending request to: ${url.replaceAll(apiKey, "API_KEY")}');
+      final response = await _dio.get(url);
+
+      if (response.statusCode == 200) {
+        final data = response.data;
+        final dataString = data.toString();
+        print(
+            '🔍 PHOTOS: Got response: ${dataString.substring(0, dataString.length > 200 ? 200 : dataString.length)}...');
+
+        // Check specifically for API key issues
+        if (data['status'] == 'REQUEST_DENIED') {
+          print(
+              '🔍 PHOTOS ERROR: API request denied. Error message: ${data['error_message']}');
+          return null;
+        }
+
+        if (data['status'] == 'OK') {
+          // Check if place has photos
+          if (data['result'] != null &&
+              data['result']['photos'] != null &&
+              data['result']['photos'].isNotEmpty) {
+            // Get the first photo reference
+            final photoReference =
+                data['result']['photos'][0]['photo_reference'].toString();
+            print(
+                '🔍 PHOTOS: Found photo reference: ${photoReference.substring(0, photoReference.length > 30 ? 30 : photoReference.length)}...');
+
+            // Construct the photo URL
+            final photoUrl =
+                'https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&maxheight=400&photo_reference=$photoReference&key=$apiKey';
+            print('🔍 PHOTOS: Photo URL constructed successfully');
+
+            return photoUrl;
+          } else {
+            print('🔍 PHOTOS: No photos available for this place');
+          }
+        } else {
+          print('🔍 PHOTOS: Error in API response: ${data['status']}');
+        }
+      } else {
+        print('🔍 PHOTOS: Failed with status code: ${response.statusCode}');
+      }
+    } catch (e, stack) {
+      print('🔍 PHOTOS ERROR: $e');
+      print('🔍 PHOTOS ERROR STACK: $stack');
+    }
+
+    return null;
+  }
+
+  // Retrieve multiple photo references for a place (up to limit)
+  Future<List<String>> getPlacePhotoReferences(String placeId,
+      {int limit = 5}) async {
+    print('🔍 PHOTOS: Fetching multiple photos for place ID: $placeId');
+
+    try {
+      final apiKey = _getApiKey();
+      print(
+          '🔍 PHOTOS: API key length: ${apiKey.length}, starts with: ${apiKey.substring(0, min(5, apiKey.length))}...');
+
+      if (apiKey.isEmpty) {
+        print('🔍 PHOTOS: No API key available');
+        return [];
+      }
+
+      // Get place details with photos field
+      final url =
+          'https://maps.googleapis.com/maps/api/place/details/json?place_id=$placeId&fields=photos&key=$apiKey';
+      print('🔍 PHOTOS: Request URL: ${url.replaceAll(apiKey, "API_KEY")}');
+
+      final response = await _dio.get(url);
+
+      if (response.statusCode == 200) {
+        final data = response.data;
+
+        // Debug output for the response
+        final responseStr = data.toString();
+        print(
+            '🔍 PHOTOS: Response: ${responseStr.substring(0, min(200, responseStr.length))}...');
+
+        // Check specifically for API key issues
+        if (data['status'] == 'REQUEST_DENIED') {
+          print(
+              '🔍 PHOTOS ERROR: API request denied. Error message: ${data['error_message']}');
+          return [];
+        }
+
+        if (data['status'] == 'OK' &&
+            data['result'] != null &&
+            data['result']['photos'] != null) {
+          // Extract photo references
+          List<String> photoUrls = [];
+          final photos = data['result']['photos'];
+
+          print('🔍 PHOTOS: Found ${photos.length} photos for this place');
+
+          // Get up to limit photos
+          final int photoCount = photos.length as int;
+          final int count = photoCount < limit ? photoCount : limit;
+
+          for (var i = 0; i < count; i++) {
+            final photoReference = photos[i]['photo_reference'];
+            if (photoReference != null) {
+              final photoUrl =
+                  'https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&maxheight=400&photo_reference=$photoReference&key=$apiKey';
+              photoUrls.add(photoUrl);
+              print('🔍 PHOTOS: Added photo URL #${i + 1}');
+            }
+          }
+
+          print(
+              '🔍 PHOTOS: Successfully retrieved ${photoUrls.length} photo URLs');
+          return photoUrls;
+        } else {
+          print(
+              '🔍 PHOTOS: No photos found in API response. Status: ${data['status']}');
+        }
+      } else {
+        print(
+            '🔍 PHOTOS: API request failed with status code: ${response.statusCode}');
+      }
+    } catch (e, stack) {
+      print('🔍 PHOTOS ERROR: $e');
+      print('🔍 PHOTOS ERROR STACK: $stack');
+    }
+
+    return [];
+  }
+
+  // Retrieve API key for Google Maps API
+  String _getApiKey() {
+    // Use the same API key that's used elsewhere in the service
+    return apiKey;
   }
 }

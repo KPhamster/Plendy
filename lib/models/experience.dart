@@ -63,6 +63,7 @@ class Location {
   final String? country;
   final String? zipCode;
   final String? displayName; // Business or place display name
+  final String? placeId; // Google Places API place ID
 
   Location({
     required this.latitude,
@@ -73,6 +74,7 @@ class Location {
     this.country,
     this.zipCode,
     this.displayName,
+    this.placeId,
   });
 
   factory Location.fromMap(Map<String, dynamic> map) {
@@ -85,6 +87,7 @@ class Location {
       country: map['country'],
       zipCode: map['zipCode'],
       displayName: map['displayName'] ?? map['name'],
+      placeId: map['placeId'],
     );
   }
 
@@ -98,22 +101,23 @@ class Location {
       'country': country,
       'zipCode': zipCode,
       'displayName': displayName,
+      'placeId': placeId,
     };
   }
-  
+
   /// Get the human-friendly place name to display
   String getPlaceName() {
     // First try to use the display name (usually a business name like "Costco")
     if (displayName != null && displayName!.isNotEmpty) {
       return displayName!;
     }
-    
+
     // If no display name, try using the first part of the address
     if (address != null && address!.isNotEmpty) {
       final parts = address!.split(',');
       return parts[0].trim();
     }
-    
+
     // Fallback for locations that don't have either
     return 'Selected Location';
   }
@@ -121,11 +125,12 @@ class Location {
   /// Get a formatted representation of the area (city, state, country)
   String? getFormattedArea() {
     List<String> parts = [];
-    
+
     if (city != null && city!.isNotEmpty) parts.add(city!);
     if (state != null && state!.isNotEmpty) parts.add(state!);
-    if (country != null && country!.isNotEmpty && parts.isEmpty) parts.add(country!);
-    
+    if (country != null && country!.isNotEmpty && parts.isEmpty)
+      parts.add(country!);
+
     return parts.isNotEmpty ? parts.join(', ') : null;
   }
 }
@@ -137,34 +142,34 @@ class Experience {
   final String description;
   final Location location;
   final ExperienceType type;
-  
+
   // External ratings and links
   final String? yelpUrl;
   final double? yelpRating;
   final int? yelpReviewCount;
-  
+
   final String? googleUrl;
   final double? googleRating;
   final int? googleReviewCount;
-  
+
   // Plendy app specific data
   final double plendyRating;
   final int plendyReviewCount;
   final List<String> imageUrls;
-  final List<String> reelIds;  // IDs of Reel objects
-  final List<String> followerIds;  // IDs of users following this experience
-  
+  final List<String> reelIds; // IDs of Reel objects
+  final List<String> followerIds; // IDs of users following this experience
+
   // Timestamps
   final DateTime createdAt;
   final DateTime updatedAt;
-  
+
   // Additional fields
   final String? website;
   final String? phoneNumber;
   final Map<String, dynamic>? openingHours; // Format depends on implementation
   final List<String>? tags;
   final String? priceRange; // e.g. "$", "$$", "$$$", "$$$$"
-  
+
   Experience({
     required this.id,
     required this.name,
@@ -194,7 +199,7 @@ class Experience {
   /// Creates an Experience from a Firestore document
   factory Experience.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
-    
+
     return Experience(
       id: doc.id,
       name: data['name'] ?? '',
@@ -300,24 +305,26 @@ class Experience {
       priceRange: priceRange ?? this.priceRange,
     );
   }
-  
+
   /// Helper method to parse experience type from string
   static ExperienceType _parseExperienceType(dynamic value) {
     if (value == null) return ExperienceType.other;
-    
+
     if (value is String) {
       return ExperienceTypeExtension.fromString(value);
-    } else if (value is int && value >= 0 && value < ExperienceType.values.length) {
+    } else if (value is int &&
+        value >= 0 &&
+        value < ExperienceType.values.length) {
       return ExperienceType.values[value];
     }
-    
+
     return ExperienceType.other;
   }
-  
+
   /// Helper method to parse rating values
   static double _parseRating(dynamic value) {
     if (value == null) return 0.0;
-    
+
     if (value is int) {
       return value.toDouble();
     } else if (value is double) {
@@ -325,31 +332,31 @@ class Experience {
     } else if (value is String) {
       return double.tryParse(value) ?? 0.0;
     }
-    
+
     return 0.0;
   }
-  
+
   /// Helper method to parse string lists
   static List<String> _parseStringList(dynamic value) {
     if (value == null) return [];
-    
+
     if (value is List) {
       return value.map((item) => item.toString()).toList();
     }
-    
+
     return [];
   }
-  
+
   /// Helper method to parse timestamps
   static DateTime _parseTimestamp(dynamic value) {
     if (value == null) return DateTime.now();
-    
+
     if (value is Timestamp) {
       return value.toDate();
     } else if (value is DateTime) {
       return value;
     }
-    
+
     return DateTime.now();
   }
 }
