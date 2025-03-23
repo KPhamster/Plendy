@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../widgets/google_maps_widget.dart';
 import '../models/experience.dart';
 import '../services/google_maps_service.dart';
@@ -128,6 +129,23 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
     mapWidget?.animateToLocation(location);
   }
 
+  // Open Google Maps with directions to the selected location
+  Future<void> _openDirectionsInGoogleMaps() async {
+    if (_selectedLocation == null) return;
+
+    final url = _mapsService.getDirectionsUrl(
+        _selectedLocation!.latitude, _selectedLocation!.longitude);
+
+    try {
+      await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+    } catch (e) {
+      print('Error launching Google Maps: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not open Google Maps')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -202,12 +220,34 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
 
           // Map takes remaining space
           Expanded(
-            child: GoogleMapsWidget(
-              key: _mapKey,
-              initialLocation: widget.initialLocation,
-              showUserLocation: true,
-              allowSelection: true,
-              onLocationSelected: _onLocationSelected,
+            child: Stack(
+              children: [
+                GoogleMapsWidget(
+                  key: _mapKey,
+                  initialLocation: widget.initialLocation,
+                  showUserLocation: true,
+                  allowSelection: true,
+                  onLocationSelected: _onLocationSelected,
+                ),
+
+                // Directions button - only visible when a location is selected
+                if (_selectedLocation != null)
+                  Positioned(
+                    right: 7,
+                    bottom: 100,
+                    child: FloatingActionButton(
+                      heroTag: 'directionsButton',
+                      mini: true,
+                      backgroundColor: Colors.white,
+                      child: Icon(
+                        Icons.directions,
+                        color: Colors.blue,
+                      ),
+                      onPressed: _openDirectionsInGoogleMaps,
+                      tooltip: 'Get directions to this location',
+                    ),
+                  ),
+              ],
             ),
           ),
 
@@ -223,8 +263,9 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
                   Text(
                     'Selected Location',
                     style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 18,
+                      fontWeight: FontWeight.normal,
+                      fontSize: 14,
+                      color: Colors.grey[800],
                     ),
                   ),
                   SizedBox(height: 12),
