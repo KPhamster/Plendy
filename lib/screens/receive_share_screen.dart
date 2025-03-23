@@ -81,8 +81,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   // Experience card data structure
   List<ExperienceCardData> _experienceCards = [];
 
-  // Track filled business data to avoid duplicates
-  Map<String, bool> _businessDataFilled = {};
+  // Track filled business data to avoid duplicates but also cache results
+  Map<String, Map<String, dynamic>> _businessDataCache = {};
 
   // Form validation key
   final _formKey = GlobalKey<FormState>();
@@ -222,65 +222,112 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
   /// Extract business data from a Yelp URL and look it up in Google Places API
   Future<Map<String, dynamic>?> _getBusinessFromYelpUrl(String yelpUrl) async {
+    print("\n📊 YELP DATA: Starting business lookup for URL: $yelpUrl");
+
     // Create a cache key for this URL
     final cacheKey = yelpUrl.trim();
 
-    // If we're already processed this URL and filled in the form, don't do it again
-    if (_businessDataFilled.containsKey(cacheKey)) {
-      print('DEBUG: URL $cacheKey already processed');
-      return null;
+    // Check if we've already processed and cached this URL
+    if (_businessDataCache.containsKey(cacheKey)) {
+      print(
+          '📊 YELP DATA: URL $cacheKey already processed, returning cached data');
+      return _businessDataCache[cacheKey];
     }
 
     String url = yelpUrl.trim();
 
     // Make sure it's a properly formatted URL
     if (url.isEmpty) {
+      print('📊 YELP DATA: Empty URL, aborting');
       return null;
     } else if (!url.startsWith('http')) {
       url = 'https://' + url;
+      print('📊 YELP DATA: Added https:// to URL: $url');
     }
 
     // Check if this is a Yelp URL
     bool isYelpUrl = url.contains('yelp.com') || url.contains('yelp.to');
     if (!isYelpUrl) {
+      print('📊 YELP DATA: Not a Yelp URL, aborting');
       return null;
     }
 
-    print('DEBUG: Processing Yelp URL: $url');
+    print('📊 YELP DATA: Processing Yelp URL: $url');
 
     try {
-      // Extract business name from URL
+      // Extract business info from URL and share context
       String businessName = "";
+      String businessCity = "";
+      String businessType = "";
+      String fullSearchText = "";
 
-      if (url.contains('/biz/')) {
+      // 1. First try to extract from the message text if it's a "Check out X on Yelp" format
+      if (widget.sharedFiles.isNotEmpty) {
+        print('📊 YELP DATA: Examining shared text for business info');
+        for (final file in widget.sharedFiles) {
+          if (file.type == SharedMediaType.text) {
+            final text = file.path;
+            print(
+                '📊 YELP DATA: Shared text: ${text.length > 50 ? text.substring(0, 50) + "..." : text}');
+
+            // "Check out X on Yelp!" format
+            if (text.contains('Check out') && text.contains('!')) {
+              fullSearchText = text.split('Check out ')[1].split('!')[0].trim();
+              businessName = fullSearchText;
+              print(
+                  '📊 YELP DATA: Extracted business name from share text: $businessName');
+
+              // Try to extract city name if present (common format: "Business Name - City")
+              if (businessName.contains('-')) {
+                final parts = businessName.split('-');
+                if (parts.length >= 2) {
+                  businessName = parts[0].trim();
+                  businessCity = parts[1].trim();
+                  print('📊 YELP DATA: Extracted city: $businessCity');
+                }
+              }
+              break;
+            }
+          }
+        }
+      }
+
+      // 2. If we couldn't get it from the share text, try the URL
+      if (businessName.isEmpty && url.contains('/biz/')) {
         // Extract the business part from URL
         // Format: https://www.yelp.com/biz/business-name-location
         final bizPath = url.split('/biz/')[1].split('?')[0];
 
+        print('📊 YELP DATA: Extracting from biz URL path: $bizPath');
+
         // Convert hyphenated business name to spaces
         businessName = bizPath.split('-').join(' ');
 
-        // If there's a location suffix at the end (like "restaurant-city"), remove it
+        // If there's a location suffix at the end (like "restaurant-city"), try to extract it
         if (businessName.contains('/')) {
-          businessName = businessName.split('/')[0];
+          final parts = businessName.split('/');
+          businessName = parts[0];
+
+          // Remaining parts might have city or business type info
+          if (parts.length > 1) {
+            // The last part is often a city
+            businessCity = parts[parts.length - 1];
+            print('📊 YELP DATA: Extracted city from URL path: $businessCity');
+          }
         }
 
-        print('DEBUG: Extracted business name from URL path: $businessName');
-      } else if (url.contains('yelp.to/')) {
-        // For shortened URLs, try to use any available context
-        if (widget.sharedFiles.isNotEmpty) {
-          for (final file in widget.sharedFiles) {
-            if (file.type == SharedMediaType.text &&
-                file.path.contains('Check out') &&
-                file.path.contains(url)) {
-              // Extract business name from the shared text
-              final text = file.path;
-              if (text.contains('Check out') && text.contains('!')) {
-                businessName = text.split('Check out ')[1].split('!')[0].trim();
-                print(
-                    'DEBUG: Extracted business name from share text: $businessName');
-              }
-            }
+        print(
+            '📊 YELP DATA: Extracted business name from URL path: $businessName');
+
+        // Try to extract business type from hyphenated biz name (common pattern)
+        final nameParts = businessName.split(' ');
+        if (nameParts.length > 1) {
+          // Last word might be business type (e.g., "restaurant", "cafe", etc.)
+          final lastWord = nameParts[nameParts.length - 1].toLowerCase();
+          if (['restaurant', 'cafe', 'bar', 'grill', 'bakery', 'coffee']
+              .contains(lastWord)) {
+            businessType = lastWord;
+            print('📊 YELP DATA: Extracted business type: $businessType');
           }
         }
       }
@@ -288,42 +335,92 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // If we couldn't extract a business name, use a generic one
       if (businessName.isEmpty) {
         businessName = "Shared Business";
-        print('DEBUG: Using generic business name');
+        print('📊 YELP DATA: Using generic business name');
       }
 
-      print('DEBUG: Searching for business: $businessName');
+      // Create search strategies in order of most to least specific
+      List<String> searchQueries = [];
 
-      // Using Google Places API to search for this business
-      final results = await _mapsService.searchPlaces(businessName);
-      print('DEBUG: Got ${results.length} search results from Google Places');
+      // Strategy 1: Complete share text if available
+      if (fullSearchText.isNotEmpty) {
+        searchQueries.add(fullSearchText);
+      }
 
-      if (results.isNotEmpty) {
-        // Get details of the first result
-        final placeId = results[0]['placeId'];
-        print('DEBUG: Getting details for place ID: $placeId');
+      // Strategy 2: Business name + city if both available
+      if (businessName.isNotEmpty && businessCity.isNotEmpty) {
+        searchQueries.add('$businessName $businessCity');
+      }
 
-        final location = await _mapsService.getPlaceDetails(placeId);
+      // Strategy 3: Business name + business type if both available
+      if (businessName.isNotEmpty && businessType.isNotEmpty) {
+        searchQueries.add('$businessName $businessType');
+      }
+
+      // Strategy 4: Just business name
+      if (businessName.isNotEmpty) {
+        searchQueries.add(businessName);
+      }
+
+      // Deduplicate search queries
+      searchQueries = searchQueries.toSet().toList();
+
+      print('📊 YELP DATA: Search strategies (in order): $searchQueries');
+
+      // Try each search query until we get results
+      for (final query in searchQueries) {
+        print('📊 YELP DATA: Trying Google Places with query: "$query"');
+
+        // Using Google Places API to search for this business
+        final results = await _mapsService.searchPlaces(query);
         print(
-            'DEBUG: Retrieved location details: ${location.displayName}, ${location.address}');
+            '📊 YELP DATA: Got ${results.length} search results from Google Places for query "$query"');
 
-        // Mark this URL as processed
-        _businessDataFilled[cacheKey] = true;
+        if (results.isNotEmpty) {
+          print(
+              '📊 YELP DATA: Results found! First result: ${results[0]['description']}');
 
-        // Autofill the form data
-        _fillFormWithBusinessData(location, businessName, url);
+          // Get details of the first result
+          final placeId = results[0]['placeId'];
+          print('📊 YELP DATA: Getting details for place ID: $placeId');
 
-        return {
-          'location': location,
-          'businessName': businessName,
-          'yelpUrl': url,
-        };
-      } else {
-        print('DEBUG: No place results found for: $businessName');
+          final location = await _mapsService.getPlaceDetails(placeId);
+          print(
+              '📊 YELP DATA: Retrieved location details: ${location.displayName}, ${location.address}');
+          print(
+              '📊 YELP DATA: Coordinates: ${location.latitude}, ${location.longitude}');
+
+          if (location.latitude == 0.0 && location.longitude == 0.0) {
+            print(
+                '📊 YELP DATA: WARNING - Zero coordinates returned, likely invalid location');
+            continue; // Try the next search strategy
+          }
+
+          // Create the result data
+          Map<String, dynamic> resultData = {
+            'location': location,
+            'businessName': businessName,
+            'yelpUrl': url,
+          };
+
+          // Cache the result data
+          _businessDataCache[cacheKey] = resultData;
+
+          // Autofill the form data
+          _fillFormWithBusinessData(location, businessName, url);
+
+          print('📊 YELP DATA: Successfully found and processed business data');
+
+          return resultData;
+        }
       }
 
+      print(
+          '📊 YELP DATA: No results found after trying all search strategies');
+      // Store empty map instead of null to prevent repeated processing
+      _businessDataCache[cacheKey] = {};
       return null;
     } catch (e) {
-      print('Error extracting business from Yelp URL: $e');
+      print('📊 YELP DATA ERROR: Error extracting business from Yelp URL: $e');
       return null;
     }
   }
@@ -332,13 +429,6 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   void _fillFormWithBusinessData(
       Location location, String businessName, String yelpUrl) {
     final String businessKey = '${location.latitude},${location.longitude}';
-
-    if (_businessDataFilled.containsKey(businessKey)) {
-      return; // Already processed this business
-    }
-
-    // Mark as filled
-    _businessDataFilled[businessKey] = true;
 
     // Update UI
     setState(() {
@@ -1262,229 +1352,357 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     // Create a stable key for the FutureBuilder to prevent unnecessary rebuilds
     final String urlKey = url.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '_');
 
+    // Try to extract business name from URL for fallback display
+    String fallbackBusinessName = _extractBusinessNameFromYelpUrl(url);
+
+    print("🔍 YELP PREVIEW: Starting preview generation for URL: $url");
+    print(
+        "🔍 YELP PREVIEW: Extracted fallback business name: $fallbackBusinessName");
+
     return FutureBuilder<Map<String, dynamic>?>(
       key: ValueKey('yelp_preview_$urlKey'),
       future: _getBusinessFromYelpUrl(url),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return SizedBox(
-            height: 250,
-            width: double.infinity,
-            child: Center(
-              child: Column(
+          print("🔍 YELP PREVIEW: Loading state - waiting for data");
+          return _buildYelpLoadingPreview();
+        }
+
+        // If we have data, build the complete preview
+        if (snapshot.data != null) {
+          final data = snapshot.data!;
+          final location = data['location'] as Location;
+          final businessName = data['businessName'] as String;
+          final yelpUrl = data['yelpUrl'] as String;
+
+          print("🔍 YELP PREVIEW: Success! Building detailed preview");
+          print("🔍 YELP PREVIEW: Business name: $businessName");
+          print(
+              "🔍 YELP PREVIEW: Location data: lat=${location.latitude}, lng=${location.longitude}");
+          print("🔍 YELP PREVIEW: Address: ${location.address}");
+
+          return _buildYelpDetailedPreview(location, businessName, yelpUrl);
+        }
+
+        // If snapshot has error, log it
+        if (snapshot.hasError) {
+          print("🔍 YELP PREVIEW ERROR: ${snapshot.error}");
+          print("🔍 YELP PREVIEW: Using fallback preview due to error");
+        } else {
+          print("🔍 YELP PREVIEW: No data received, using fallback preview");
+        }
+
+        // If we have an error or no data, build a fallback preview
+        return _buildYelpFallbackPreview(url, fallbackBusinessName);
+      },
+    );
+  }
+
+  // Extract a readable business name from a Yelp URL
+  String _extractBusinessNameFromYelpUrl(String url) {
+    try {
+      String businessName = "Yelp Business";
+
+      // For standard Yelp URLs with business name in the path
+      if (url.contains('/biz/')) {
+        // Extract the business part from URL (e.g., https://www.yelp.com/biz/business-name-location)
+        final bizPath = url.split('/biz/')[1].split('?')[0];
+
+        // Convert hyphenated business name to spaces and capitalize words
+        businessName = bizPath
+            .split('-')
+            .map((word) => word.isNotEmpty
+                ? word[0].toUpperCase() + word.substring(1)
+                : '')
+            .join(' ');
+
+        // If there's a location suffix at the end (like "restaurant-city"), remove it
+        if (businessName.contains('/')) {
+          businessName = businessName.split('/')[0];
+        }
+      }
+      // For short URLs, use the code as part of the name
+      else if (url.contains('yelp.to/')) {
+        final shortCode =
+            url.split('yelp.to/').last.split('?')[0].split('/')[0];
+        if (shortCode.isNotEmpty) {
+          businessName = "Yelp Business ($shortCode)";
+        }
+      }
+
+      return businessName;
+    } catch (e) {
+      return "Yelp Business";
+    }
+  }
+
+  // Loading state for Yelp preview
+  Widget _buildYelpLoadingPreview() {
+    return SizedBox(
+      height: 250,
+      width: double.infinity,
+      child: Card(
+        elevation: 2,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              CircularProgressIndicator(color: Color(0xFFD32323)),
+              SizedBox(height: 16),
+              Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  CircularProgressIndicator(color: Color(0xFFD32323)),
-                  SizedBox(height: 8),
+                  FaIcon(FontAwesomeIcons.yelp,
+                      color: Color(0xFFD32323), size: 18),
+                  SizedBox(width: 8),
                   Text('Loading business information...'),
                 ],
               ),
-            ),
-          );
-        }
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 
-        if (snapshot.hasError || snapshot.data == null) {
-          // Fallback to regular Yelp link preview
-          print('DEBUG: Using fallback Yelp preview due to error or no data');
-          return SizedBox(
-            height: 250,
-            width: double.infinity,
-            child: AnyLinkPreview(
-              link: url,
-              displayDirection: UIDirection.uiDirectionVertical,
-              cache: Duration(hours: 1),
-              backgroundColor: Colors.white,
-              errorWidget: Container(
-                color: Colors.grey[200],
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    FaIcon(FontAwesomeIcons.yelp, size: 50, color: Colors.red),
-                    SizedBox(height: 8),
-                    Text(
-                      'Yelp: ' + url.split('/').last.replaceAll('-', ' '),
-                      textAlign: TextAlign.center,
-                      maxLines: 3,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: Colors.red[700],
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
+  // Detailed preview when we have location data
+  Widget _buildYelpDetailedPreview(
+      Location location, String businessName, String yelpUrl) {
+    return Column(
+      children: [
+        // Preview container
+        Container(
+          height: 280,
+          width: double.infinity,
+          decoration: BoxDecoration(
+            border: Border.all(color: Colors.grey[300]!),
+            borderRadius: BorderRadius.circular(8),
+            color: Colors.white,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Map preview
+              Container(
+                height: 180,
+                width: double.infinity,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.only(
+                    topLeft: Radius.circular(8),
+                    topRight: Radius.circular(8),
+                  ),
+                  child: GoogleMapsWidget(
+                    key: ValueKey(location.latitude.toString() +
+                        location.longitude.toString()),
+                    initialLocation: location,
+                    showUserLocation: false,
+                    allowSelection: false,
+                    showControls: false,
+                  ),
                 ),
               ),
-              onTap: () => _launchUrl(url),
-            ),
-          );
-        }
 
-        final data = snapshot.data!;
-        final location = data['location'] as Location;
-        final businessName = data['businessName'] as String;
-        final yelpUrl = data['yelpUrl'] as String;
-
-        // Custom Yelp + Google Places preview with buttons outside container
-        return Column(
-          children: [
-            // Preview container - no buttons inside anymore
-            Container(
-              height: 280, // Reduced height since buttons are now outside
-              width: double.infinity,
-              decoration: BoxDecoration(
-                border: Border.all(color: Colors.grey[300]!),
-                borderRadius: BorderRadius.circular(8),
-                color: Colors.white,
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Map preview
-                  Container(
-                    height: 180,
-                    width: double.infinity,
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.only(
-                        topLeft: Radius.circular(8),
-                        topRight: Radius.circular(8),
-                      ),
-                      child: Container(
-                        height: 180,
-                        width: double.infinity,
-                        color: Colors.grey[200],
-                        child: location != null
-                            ? GoogleMapsWidget(
-                                key: ValueKey(location.latitude.toString() +
-                                    location.longitude.toString()),
-                                initialLocation: location,
-                                showUserLocation: false,
-                                allowSelection: false,
-                                showControls: false,
-                              )
-                            : Center(child: Text('Location unavailable')),
-                      ),
-                    ),
-                  ),
-
-                  // Business details
-                  Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.all(12.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+              // Business details
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.all(12.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Yelp logo and business name
+                      Row(
                         children: [
-                          // Yelp logo and business name
-                          Row(
-                            children: [
-                              FaIcon(FontAwesomeIcons.yelp,
-                                  color: Colors.red, size: 18),
-                              SizedBox(width: 8),
-                              Expanded(
-                                child: Text(
-                                  location.displayName ?? businessName,
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 18,
-                                  ),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
+                          FaIcon(FontAwesomeIcons.yelp,
+                              color: Colors.red, size: 18),
+                          SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              location.displayName ?? businessName,
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 18,
                               ),
-                            ],
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ),
-                          SizedBox(height: 8),
-
-                          // Address
-                          if (location.address != null) ...[
-                            Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Icon(Icons.location_on,
-                                    size: 16, color: Colors.grey[600]),
-                                SizedBox(width: 6),
-                                Expanded(
-                                  child: Text(
-                                    location.address!,
-                                    style: TextStyle(
-                                      fontSize: 14,
-                                      color: Colors.grey[800],
-                                    ),
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            SizedBox(height: 8),
-                          ],
-
-                          // City, State
-                          if (location.city != null ||
-                              location.state != null) ...[
-                            Row(
-                              children: [
-                                Icon(Icons.location_city,
-                                    size: 16, color: Colors.grey[600]),
-                                SizedBox(width: 6),
-                                Text(
-                                  [
-                                    location.city,
-                                    location.state,
-                                  ].where((e) => e != null).join(', '),
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    color: Colors.grey[700],
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
                         ],
                       ),
-                    ),
+                      SizedBox(height: 8),
+
+                      // Address
+                      if (location.address != null) ...[
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Icon(Icons.location_on,
+                                size: 16, color: Colors.grey[600]),
+                            SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                location.address!,
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  color: Colors.grey[800],
+                                ),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                        SizedBox(height: 8),
+                      ],
+
+                      // City, State
+                      if (location.city != null || location.state != null) ...[
+                        Row(
+                          children: [
+                            Icon(Icons.location_city,
+                                size: 16, color: Colors.grey[600]),
+                            SizedBox(width: 6),
+                            Text(
+                              [
+                                location.city,
+                                location.state,
+                              ].where((e) => e != null).join(', '),
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: Colors.grey[700],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ],
                   ),
-                ],
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        // Buttons below the container
+        SizedBox(height: 8),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                icon:
+                    FaIcon(FontAwesomeIcons.yelp, size: 16, color: Colors.red),
+                label: Text('View on Yelp'),
+                onPressed: () => _openYelpUrl(yelpUrl),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.red,
+                ),
               ),
             ),
-
-            // Buttons are now outside the container, similar to Instagram implementation
-            SizedBox(height: 8),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    icon: FaIcon(FontAwesomeIcons.yelp,
-                        size: 16, color: Colors.red),
-                    label: Text('View on Yelp'),
-                    onPressed: () => _openYelpUrl(yelpUrl),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.red,
-                    ),
-                  ),
+            SizedBox(width: 8),
+            Expanded(
+              child: OutlinedButton.icon(
+                icon: Icon(Icons.directions, size: 18),
+                label: Text('Get Directions'),
+                onPressed: () async {
+                  final GoogleMapsService mapsService = GoogleMapsService();
+                  final url = mapsService.getDirectionsUrl(
+                      location.latitude, location.longitude);
+                  await _launchUrl(url);
+                },
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.blue,
                 ),
-                SizedBox(width: 8),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    icon: Icon(Icons.directions, size: 18),
-                    label: Text('Get Directions'),
-                    onPressed: () async {
-                      final GoogleMapsService mapsService = GoogleMapsService();
-                      final url = mapsService.getDirectionsUrl(
-                          location.latitude, location.longitude);
-
-                      await _launchUrl(url);
-                    },
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.blue,
-                    ),
-                  ),
-                ),
-              ],
+              ),
             ),
           ],
-        );
-      },
+        ),
+      ],
+    );
+  }
+
+  // Fallback preview when we don't have location data
+  Widget _buildYelpFallbackPreview(String url, String businessName) {
+    return Column(
+      children: [
+        // Fallback container with Yelp styling
+        Container(
+          height: 260,
+          width: double.infinity,
+          decoration: BoxDecoration(
+            border: Border.all(color: Colors.grey[300]!),
+            borderRadius: BorderRadius.circular(8),
+            color: Colors.white,
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              // Yelp Logo
+              Container(
+                width: 80,
+                height: 80,
+                decoration: BoxDecoration(
+                  color: Color(0xFFD32323),
+                  shape: BoxShape.circle,
+                ),
+                child: Center(
+                  child: FaIcon(FontAwesomeIcons.yelp,
+                      size: 40, color: Colors.white),
+                ),
+              ),
+              SizedBox(height: 16),
+
+              // Business Name
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24.0),
+                child: Text(
+                  businessName,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              SizedBox(height: 8),
+
+              // Yelp URL
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 32.0),
+                child: Text(
+                  url.length > 30 ? '${url.substring(0, 30)}...' : url,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Colors.grey[600],
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+              SizedBox(height: 24),
+
+              // Small helper text
+              Text(
+                'Tap to view this business on Yelp',
+                style: TextStyle(
+                  color: Colors.grey[700],
+                  fontSize: 14,
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        // Action button below the container
+        SizedBox(height: 8),
+        OutlinedButton.icon(
+          icon: FaIcon(FontAwesomeIcons.yelp, size: 16, color: Colors.red),
+          label: Text('View on Yelp'),
+          onPressed: () => _openYelpUrl(url),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: Colors.red,
+          ),
+        ),
+      ],
     );
   }
 
