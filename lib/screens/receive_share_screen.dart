@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'dart:math';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 import 'dart:io';
 import 'dart:convert';
@@ -13,6 +14,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../models/experience.dart';
 import '../services/experience_service.dart';
 import '../services/google_maps_service.dart';
+import '../widgets/google_maps_widget.dart';
 import 'location_picker_screen.dart';
 
 /// Data class to hold the state of each experience card
@@ -75,18 +77,84 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
 
   // Experience card data structure
   List<ExperienceCardData> _experienceCards = [];
+  
+  // Track filled business data to avoid duplicates
+  Map<String, bool> _businessDataFilled = {};
 
   // Form validation key
   final _formKey = GlobalKey<FormState>();
 
   // Loading state
   bool _isSaving = false;
+  
+  // Snackbar controller to manage notifications
+  ScaffoldFeatureController<SnackBar, SnackBarClosedReason>? _activeSnackBar;
+  
+  // Method to show snackbar only if not already showing
+  void _showSnackBar(BuildContext context, String message) {
+    // Hide any existing snackbar first
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    
+    // Show new snackbar
+    _activeSnackBar = ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
 
   @override
   void initState() {
     super.initState();
     // Add first experience card
     _addExperienceCard();
+    
+    // Automatically process any Yelp URLs in the shared content
+    _processSharedYelpContent();
+  }
+  
+  // Process shared content to extract Yelp URLs
+  void _processSharedYelpContent() {
+    print('DEBUG: Processing shared Yelp content');
+    if (widget.sharedFiles.isEmpty) return;
+    
+    // Look for Yelp URLs in shared files
+    for (final file in widget.sharedFiles) {
+      if (file.type == SharedMediaType.text) {
+        String text = file.path;
+        print('DEBUG: Checking shared text: ${text.substring(0, min(100, text.length))}...');
+        
+        // Handle direct URL shares
+        if (_isValidUrl(text) && (text.contains('yelp.com/biz') || text.contains('yelp.to/'))) {
+          print('DEBUG: Found direct Yelp URL: $text');
+          _getBusinessFromYelpUrl(text);
+          return;
+        }
+        
+        // Handle "Check out X on Yelp" message format
+        if (text.contains('Check out') && text.contains('yelp.to/')) {
+          // Extract URL using regex to get the Yelp link
+          final RegExp urlRegex = RegExp(r'https?://yelp.to/[^\s]+');
+          final match = urlRegex.firstMatch(text);
+          if (match != null) {
+            final extractedUrl = match.group(0);
+            print('DEBUG: Extracted Yelp URL from share text: $extractedUrl');
+            if (extractedUrl != null) {
+              _getBusinessFromYelpUrl(extractedUrl);
+              return;
+            }
+          }
+        } else if (text.contains('\n')) {
+          // Check for multi-line text with URL on separate line
+          final lines = text.split('\n');
+          for (final line in lines) {
+            if (_isValidUrl(line) && (line.contains('yelp.com/biz') || line.contains('yelp.to/'))) {
+              print('DEBUG: Found Yelp URL in multi-line text: $line');
+              _getBusinessFromYelpUrl(line);
+              return;
+            }
+          }
+        }
+      }
+    }
   }
   
   @override
@@ -112,6 +180,143 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
       // If all cards are removed, add a new one
       if (_experienceCards.isEmpty) {
         _addExperienceCard();
+      }
+    });
+  }
+  
+  /// Extract business data from a Yelp URL and look it up in Google Places API
+  Future<Map<String, dynamic>?> _getBusinessFromYelpUrl(String yelpUrl) async {
+    // Create a cache key for this URL
+    final cacheKey = yelpUrl.trim();
+    
+    // If we're already processed this URL and filled in the form, don't do it again
+    if (_businessDataFilled.containsKey(cacheKey)) {
+      print('DEBUG: URL $cacheKey already processed');
+      return null;
+    }
+    
+    String url = yelpUrl.trim();
+    
+    // Make sure it's a properly formatted URL
+    if (url.isEmpty) {
+      return null;
+    } else if (!url.startsWith('http')) {
+      url = 'https://' + url;
+    }
+    
+    // Check if this is a Yelp URL
+    bool isYelpUrl = url.contains('yelp.com') || url.contains('yelp.to');
+    if (!isYelpUrl) {
+      return null;
+    }
+    
+    print('DEBUG: Processing Yelp URL: $url');
+    
+    try {
+      // Extract business name from URL
+      String businessName = "";
+      
+      if (url.contains('/biz/')) {
+        // Extract the business part from URL
+        // Format: https://www.yelp.com/biz/business-name-location
+        final bizPath = url.split('/biz/')[1].split('?')[0];
+        
+        // Convert hyphenated business name to spaces
+        businessName = bizPath.split('-').join(' ');
+        
+        // If there's a location suffix at the end (like "restaurant-city"), remove it
+        if (businessName.contains('/')) {
+          businessName = businessName.split('/')[0];
+        }
+        
+        print('DEBUG: Extracted business name from URL path: $businessName');
+      } else if (url.contains('yelp.to/')) {
+        // For shortened URLs, try to use any available context
+        if (widget.sharedFiles.isNotEmpty) {
+          for (final file in widget.sharedFiles) {
+            if (file.type == SharedMediaType.text && 
+                file.path.contains('Check out') && 
+                file.path.contains(url)) {
+              // Extract business name from the shared text
+              final text = file.path;
+              if (text.contains('Check out') && text.contains('!')) {
+                businessName = text.split('Check out ')[1].split('!')[0].trim();
+                print('DEBUG: Extracted business name from share text: $businessName');
+              }
+            }
+          }
+        }
+      }
+      
+      // If we couldn't extract a business name, use a generic one
+      if (businessName.isEmpty) {
+        businessName = "Shared Business";
+        print('DEBUG: Using generic business name');
+      }
+      
+      print('DEBUG: Searching for business: $businessName');
+      
+      // Using Google Places API to search for this business
+      final results = await _mapsService.searchPlaces(businessName);
+      print('DEBUG: Got ${results.length} search results from Google Places');
+      
+      if (results.isNotEmpty) {
+        // Get details of the first result
+        final placeId = results[0]['placeId'];
+        print('DEBUG: Getting details for place ID: $placeId');
+        
+        final location = await _mapsService.getPlaceDetails(placeId);
+        print('DEBUG: Retrieved location details: ${location.displayName}, ${location.address}');
+        
+        // Mark this URL as processed
+        _businessDataFilled[cacheKey] = true;
+        
+        // Autofill the form data
+        _fillFormWithBusinessData(location, businessName, url);
+        
+        return {
+          'location': location,
+          'businessName': businessName,
+          'yelpUrl': url,
+        };
+      } else {
+        print('DEBUG: No place results found for: $businessName');
+      }
+      
+      return null;
+    } catch (e) {
+      print('Error extracting business from Yelp URL: $e');
+      return null;
+    }
+  }
+  
+  // Helper method to fill the form with business data
+  void _fillFormWithBusinessData(Location location, String businessName, String yelpUrl) {
+    final String businessKey = '${location.latitude},${location.longitude}';
+    
+    if (_businessDataFilled.containsKey(businessKey)) {
+      return; // Already processed this business
+    }
+    
+    // Mark as filled
+    _businessDataFilled[businessKey] = true;
+    
+    // Update UI
+    setState(() {
+      for (var card in _experienceCards) {
+        // Set data in the card
+        print('DEBUG: Setting card data - title: ${location.displayName ?? businessName}');
+        card.titleController.text = location.displayName ?? businessName;
+        card.selectedLocation = location;
+        card.yelpUrlController.text = yelpUrl;
+        card.searchController.text = location.address ?? '';
+      }
+    });
+    
+    // Show a success message
+    Future.delayed(Duration(milliseconds: 500), () {
+      if (mounted) {
+        _showSnackBar(context, 'Business details auto-filled from Yelp');
       }
     });
   }
@@ -820,11 +1025,37 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
   }
 
   bool _isValidUrl(String text) {
-    // Simple URL validation
+    // More permissive URL validation
     try {
+      // First try with standard URL validation
       final uri = Uri.parse(text);
-      return uri.hasScheme && uri.hasAuthority;
+      if (uri.hasScheme && uri.hasAuthority) {
+        return true;
+      }
+      
+      // Fallback for URLs without scheme
+      if (text.contains('/') && (text.contains('.com') || text.contains('.to') || 
+          text.contains('.org') || text.contains('.net') || text.contains('.io'))) {
+        return true;
+      }
+      
+      // Try with an added https:// prefix
+      if (!text.startsWith('http')) {
+        final uri = Uri.parse('https://' + text);
+        return uri.hasScheme && uri.hasAuthority;
+      }
+      
+      return false;
     } catch (e) {
+      // Check if it looks like a URL but just needs a scheme
+      if (text.contains('.') && !text.contains(' ')) {
+        try {
+          final uri = Uri.parse('https://' + text);
+          return uri.hasScheme && uri.hasAuthority;
+        } catch (_) {
+          return false;
+        }
+      }
       return false;
     }
   }
@@ -861,8 +1092,50 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
   Widget _buildTextPreview(SharedMediaFile file) {
     // Check if it's a URL
     if (_isValidUrl(file.path)) {
+      // Enhanced Yelp detection
+      if (file.path.toLowerCase().contains('yelp.to/') || 
+          file.path.toLowerCase().contains('yelp.com/biz/')) {
+        print('DEBUG: Building Yelp preview for URL: ${file.path}');
+        return _buildYelpPreview(file.path);
+      }
       return _buildUrlPreview(file.path);
     } else {
+      // Special case for text content that contains both a message and URL
+      // Format: "Check out Yuk Dae Jang - Irvine!\nhttps://yelp.to/R_mzCnQBf8"
+      if (file.path.contains('\n') && file.path.contains('http')) {
+        final lines = file.path.split('\n');
+        for (final line in lines) {
+          if (line.trim().startsWith('http')) {
+            print('DEBUG: Extracted URL from text: ${line.trim()}');
+            // Enhanced Yelp detection to include both yelp.com and yelp.to URLs
+            if (line.toLowerCase().contains('yelp.to/') || 
+                line.toLowerCase().contains('yelp.com/biz/')) {
+              return _buildYelpPreview(line.trim());
+            }
+            return _buildUrlPreview(line.trim());
+          }
+        }
+      } else if (file.path.contains('Check out') && file.path.contains('yelp.to/')) {
+        // Generic match for Yelp shares with business name and short URL
+        print('DEBUG: Found match for shared Yelp content');
+        // Extract URL using regex to get the Yelp link
+        final RegExp urlRegex = RegExp(r'https?://yelp.to/[^\s]+');
+        final match = urlRegex.firstMatch(file.path);
+        if (match != null) {
+          final extractedUrl = match.group(0);
+          print('DEBUG: Extracted Yelp URL using regex: $extractedUrl');
+          return _buildYelpPreview(extractedUrl!);
+        }
+      } else if (file.path.contains('yelp.to/') || file.path.contains('yelp.com/biz/')) {
+        // Extract URL using regex
+        final RegExp urlRegex = RegExp(r'https?://[^\s]+');
+        final match = urlRegex.firstMatch(file.path);
+        if (match != null) {
+          final extractedUrl = match.group(0);
+          print('DEBUG: Extracted Yelp URL using regex: $extractedUrl');
+          return _buildYelpPreview(extractedUrl!);
+        }
+      }
       // Regular text
       return Container(
         width: double.infinity,
@@ -877,6 +1150,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
   }
 
   Widget _buildUrlPreview(String url) {
+    // Special handling for Yelp URLs
+    if (url.contains('yelp.com/biz') || url.contains('yelp.to/')) {
+      return _buildYelpPreview(url);
+    }
+    
     // Special handling for Instagram URLs
     if (url.contains('instagram.com')) {
       return _buildInstagramPreview(url);
@@ -909,6 +1187,235 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen> {
         ),
         onTap: () => _launchUrl(url),
       ),
+    );
+  }
+  
+  /// Build a preview widget for a Yelp URL
+  Widget _buildYelpPreview(String url) {
+    // Create a stable key for the FutureBuilder to prevent unnecessary rebuilds
+    final String urlKey = url.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '_');
+    
+    return FutureBuilder<Map<String, dynamic>?>(
+      key: ValueKey('yelp_preview_$urlKey'),
+      future: _getBusinessFromYelpUrl(url),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return SizedBox(
+            height: 250,
+            width: double.infinity,
+            child: Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  CircularProgressIndicator(color: Color(0xFFD32323)),
+                  SizedBox(height: 8),
+                  Text('Loading business information...'),
+                ],
+              ),
+            ),
+          );
+        }
+        
+        if (snapshot.hasError || snapshot.data == null) {
+          // Fallback to regular Yelp link preview
+          print('DEBUG: Using fallback Yelp preview due to error or no data');
+          return SizedBox(
+            height: 250,
+            width: double.infinity,
+            child: AnyLinkPreview(
+              link: url,
+              displayDirection: UIDirection.uiDirectionVertical,
+              cache: Duration(hours: 1),
+              backgroundColor: Colors.white,
+              errorWidget: Container(
+                color: Colors.grey[200],
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    FaIcon(FontAwesomeIcons.yelp, size: 50, color: Colors.red),
+                    SizedBox(height: 8),
+                    Text(
+                      'Yelp: ' + url.split('/').last.replaceAll('-', ' '),
+                      textAlign: TextAlign.center,
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Colors.red[700],
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              onTap: () => _launchUrl(url),
+            ),
+          );
+        }
+        
+        final data = snapshot.data!;
+        final location = data['location'] as Location;
+        final businessName = data['businessName'] as String;
+        final yelpUrl = data['yelpUrl'] as String;
+        
+        // Custom Yelp + Google Places preview
+        return Container(
+          height: 350,
+          width: double.infinity,
+          decoration: BoxDecoration(
+            border: Border.all(color: Colors.grey[300]!),
+            borderRadius: BorderRadius.circular(8),
+            color: Colors.white,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Map preview
+              Container(
+                height: 180,
+                width: double.infinity,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.only(
+                    topLeft: Radius.circular(8),
+                    topRight: Radius.circular(8),
+                  ),
+                  child: Container(
+                    height: 180,
+                    width: double.infinity,
+                    color: Colors.grey[200],
+                    child: location != null ? 
+                      GoogleMapsWidget(
+                        key: ValueKey(location.latitude.toString() + location.longitude.toString()),
+                        initialLocation: location,
+                        showUserLocation: false,
+                        allowSelection: false,
+                        showControls: false,
+                      ) : 
+                      Center(child: Text('Location unavailable')),
+                  ),
+                ),
+              ),
+              
+              // Business details
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.all(12.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Yelp logo and business name
+                      Row(
+                        children: [
+                          FaIcon(FontAwesomeIcons.yelp, color: Colors.red, size: 18),
+                          SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              location.displayName ?? businessName,
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 18,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                      SizedBox(height: 8),
+                      
+                      // Address
+                      if (location.address != null) ...[  
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Icon(Icons.location_on, size: 16, color: Colors.grey[600]),
+                            SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                location.address!,
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  color: Colors.grey[800],
+                                ),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                        SizedBox(height: 8),
+                      ],
+                      
+                      // City, State
+                      if (location.city != null || location.state != null) ...[  
+                        Row(
+                          children: [
+                            Icon(Icons.location_city, size: 16, color: Colors.grey[600]),
+                            SizedBox(width: 6),
+                            Text(
+                              [
+                                location.city,
+                                location.state,
+                              ].where((e) => e != null).join(', '),
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: Colors.grey[700],
+                              ),
+                            ),
+                          ],
+                        ),
+                        SizedBox(height: 8),
+                      ],
+                      
+                      Spacer(),
+                      
+                      // Action buttons
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          // Button to view on Yelp
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              icon: FaIcon(FontAwesomeIcons.yelp, size: 16, color: Colors.red),
+                              label: Text('View on Yelp'),
+                              onPressed: () => _openYelpUrl(yelpUrl),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: Colors.red,
+                                padding: EdgeInsets.symmetric(vertical: 10),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      SizedBox(height: 8),
+                      // Button to get directions
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          icon: Icon(Icons.directions, size: 18),
+                          label: Text('Get Directions'),
+                          onPressed: () async {
+                            final GoogleMapsService mapsService = GoogleMapsService();
+                            final url = mapsService.getDirectionsUrl(
+                              location.latitude, 
+                              location.longitude
+                            );
+                            
+                            await _launchUrl(url);
+                          },
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.blue,
+                            padding: EdgeInsets.symmetric(vertical: 10),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 
