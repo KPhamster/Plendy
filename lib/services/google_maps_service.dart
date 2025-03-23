@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
@@ -72,142 +73,430 @@ class GoogleMapsService {
       return [];
     }
 
+    print("\n🔎 PLACES SEARCH: Starting search for query: '$query'");
+    print(
+        "🔎 PLACES SEARCH: API key length: ${apiKey.length} chars, starts with: ${apiKey.substring(0, min(5, apiKey.length))}...");
+
     try {
       // Get location for better results
       Position? position;
       try {
         position = await getCurrentLocation();
+        print(
+            "🔎 PLACES SEARCH: Got user location: ${position.latitude}, ${position.longitude}");
       } catch (e) {
         // Continue without position if we can't get it
-        print('Unable to get current position: $e');
+        print("🔎 PLACES SEARCH: Unable to get current position: $e");
       }
 
-      // Prepare request body
-      Map<String, dynamic> requestBody = {"input": query};
+      // First try the newer Places API for better results
+      try {
+        print("🔎 PLACES SEARCH: Trying method 1 - Places Autocomplete API V1");
 
-      // Add location bias if we have position
-      if (position != null) {
-        requestBody["locationBias"] = {
-          "circle": {
-            "center": {
-              "latitude": position.latitude,
-              "longitude": position.longitude
-            },
-            "radius": 50000.0 // 50km radius
+        // Prepare request body
+        Map<String, dynamic> requestBody = {
+          "input": query,
+          "locationBias": {
+            "circle": {
+              "center": {
+                "latitude": position?.latitude ??
+                    33.6846, // Fallback to Southern California
+                "longitude":
+                    position?.longitude ?? -117.8265 // as a default location
+              },
+              "radius": 50000.0 // 50km radius
+            }
           }
         };
+
+        print("🔎 PLACES SEARCH: Request body: ${jsonEncode(requestBody)}");
+
+        // Call Google Places Autocomplete API
+        final response = await _dio.post(
+          'https://places.googleapis.com/v1/places:autocomplete',
+          data: requestBody,
+          options: Options(
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Goog-Api-Key': apiKey,
+              'X-Goog-FieldMask':
+                  'suggestions.placePrediction.place,suggestions.placePrediction.placeId,suggestions.placePrediction.text'
+            },
+          ),
+        );
+
+        if (response.statusCode == 200) {
+          print("🔎 PLACES SEARCH: API returned status code 200");
+          final data = response.data;
+          print(
+              "🔎 PLACES SEARCH: Response data: ${jsonEncode(data).substring(0, min(200, jsonEncode(data).length))}...");
+
+          List<Map<String, dynamic>> results = [];
+
+          if (data['suggestions'] != null) {
+            final suggestions = data['suggestions'] as List;
+            print("🔎 PLACES SEARCH: Found ${suggestions.length} suggestions");
+
+            for (var suggestion in suggestions) {
+              if (suggestion['placePrediction'] != null) {
+                final placePrediction = suggestion['placePrediction'];
+                results.add({
+                  'placeId': placePrediction['placeId'] ?? '',
+                  'description': placePrediction['text']?['text'] ?? '',
+                  'place': placePrediction['place']
+                });
+              }
+            }
+          }
+
+          if (results.isNotEmpty) {
+            print(
+                "🔎 PLACES SEARCH: Found ${results.length} results using Places Autocomplete API");
+            for (int i = 0; i < min(3, results.length); i++) {
+              print(
+                  "🔎 PLACES SEARCH: Result ${i + 1}: '${results[i]['description']}' (${results[i]['placeId']})");
+            }
+            return results;
+          } else {
+            print(
+                "🔎 PLACES SEARCH: No results from Places Autocomplete API despite 200 status");
+          }
+        } else {
+          print(
+              "🔎 PLACES SEARCH: API returned non-200 status code: ${response.statusCode}");
+        }
+      } catch (e) {
+        print("🔎 PLACES SEARCH: Error with Places Autocomplete API: $e");
+        // Continue to fallback method
       }
 
-      // Call Google Places Autocomplete API
-      final response = await _dio.post(
-        'https://places.googleapis.com/v1/places:autocomplete',
-        data: requestBody,
-        options: Options(
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Goog-Api-Key': apiKey,
-            'X-Goog-FieldMask':
-                'suggestions.placePrediction.place,suggestions.placePrediction.placeId,suggestions.placePrediction.text'
-          },
-        ),
-      );
+      // Fallback to the standard Places API Text Search if the first approach failed
+      try {
+        print("🔎 PLACES SEARCH: Trying method 2 - Places Text Search API");
 
-      if (response.statusCode == 200) {
-        final data = response.data;
-        List<Map<String, dynamic>> results = [];
+        final String encodedQuery = Uri.encodeComponent(query);
+        final url = 'https://maps.googleapis.com/maps/api/place/textsearch/json'
+            '?query=$encodedQuery'
+            '&key=$apiKey';
 
-        if (data['suggestions'] != null) {
-          for (var suggestion in data['suggestions']) {
-            if (suggestion['placePrediction'] != null) {
-              final placePrediction = suggestion['placePrediction'];
+        print(
+            "🔎 PLACES SEARCH: Request URL: ${url.replaceAll(apiKey, 'API_KEY')}");
+
+        final response = await http.get(Uri.parse(url));
+
+        if (response.statusCode == 200) {
+          print("🔎 PLACES SEARCH: API returned status code 200");
+          final data = jsonDecode(response.body);
+          print("🔎 PLACES SEARCH: Response status: ${data['status']}");
+
+          if (data['status'] != 'OK') {
+            print(
+                "🔎 PLACES SEARCH: API returned non-OK status: ${data['status']}");
+            if (data['error_message'] != null) {
+              print(
+                  "🔎 PLACES SEARCH: Error message: ${data['error_message']}");
+            }
+          }
+
+          List<Map<String, dynamic>> results = [];
+
+          if (data['results'] != null) {
+            final places = data['results'] as List;
+            print("🔎 PLACES SEARCH: Found ${places.length} places");
+
+            for (var place in places) {
               results.add({
-                'placeId': placePrediction['placeId'] ?? '',
-                'description': placePrediction['text']?['text'] ?? '',
-                'place': placePrediction['place']
+                'placeId': place['place_id'] ?? '',
+                'description': place['name'] ?? '',
+                // Add additional fields if needed
               });
             }
           }
-        }
 
-        return results;
+          if (results.isNotEmpty) {
+            print(
+                "🔎 PLACES SEARCH: Found ${results.length} results using Places Text Search API");
+            for (int i = 0; i < min(3, results.length); i++) {
+              print(
+                  "🔎 PLACES SEARCH: Result ${i + 1}: '${results[i]['description']}' (${results[i]['placeId']})");
+            }
+            return results;
+          } else {
+            print(
+                "🔎 PLACES SEARCH: No results from Places Text Search API despite 200 status");
+          }
+        } else {
+          print(
+              "🔎 PLACES SEARCH: API returned non-200 status code: ${response.statusCode}");
+        }
+      } catch (e) {
+        print("🔎 PLACES SEARCH: Error with Places Text Search API: $e");
+        // Continue to next fallback
       }
 
+      // Last attempt: Try using Nearby Search which can sometimes find businesses better
+      if (position != null) {
+        try {
+          print("🔎 PLACES SEARCH: Trying method 3 - Places Nearby Search API");
+
+          final url =
+              'https://maps.googleapis.com/maps/api/place/nearbysearch/json'
+              '?location=${position.latitude},${position.longitude}'
+              '&radius=50000'
+              '&keyword=${Uri.encodeComponent(query)}'
+              '&key=$apiKey';
+
+          print(
+              "🔎 PLACES SEARCH: Request URL: ${url.replaceAll(apiKey, 'API_KEY')}");
+
+          final response = await http.get(Uri.parse(url));
+
+          if (response.statusCode == 200) {
+            print("🔎 PLACES SEARCH: API returned status code 200");
+            final data = jsonDecode(response.body);
+            print("🔎 PLACES SEARCH: Response status: ${data['status']}");
+
+            if (data['status'] != 'OK') {
+              print(
+                  "🔎 PLACES SEARCH: API returned non-OK status: ${data['status']}");
+              if (data['error_message'] != null) {
+                print(
+                    "🔎 PLACES SEARCH: Error message: ${data['error_message']}");
+              }
+            }
+
+            List<Map<String, dynamic>> results = [];
+
+            if (data['results'] != null) {
+              final places = data['results'] as List;
+              print("🔎 PLACES SEARCH: Found ${places.length} nearby places");
+
+              for (var place in places) {
+                results.add({
+                  'placeId': place['place_id'] ?? '',
+                  'description': place['name'] ?? '',
+                  // Add additional fields if needed
+                });
+              }
+            }
+
+            if (results.isNotEmpty) {
+              print(
+                  "🔎 PLACES SEARCH: Found ${results.length} results using Places Nearby Search API");
+              for (int i = 0; i < min(3, results.length); i++) {
+                print(
+                    "🔎 PLACES SEARCH: Result ${i + 1}: '${results[i]['description']}' (${results[i]['placeId']})");
+              }
+              return results;
+            } else {
+              print(
+                  "🔎 PLACES SEARCH: No results from Places Nearby Search API despite 200 status");
+            }
+          } else {
+            print(
+                "🔎 PLACES SEARCH: API returned non-200 status code: ${response.statusCode}");
+          }
+        } catch (e) {
+          print("🔎 PLACES SEARCH: Error with Places Nearby Search API: $e");
+        }
+      } else {
+        print(
+            "🔎 PLACES SEARCH: Skipping Nearby Search API because position is null");
+      }
+
+      // If we got here, all search methods failed
+      print(
+          "🔎 PLACES SEARCH: All Places API search methods failed for query: $query");
       return [];
     } catch (e) {
-      print('Error searching places: $e');
+      print("🔎 PLACES SEARCH ERROR: $e");
       return [];
     }
   }
 
   /// Get place details by placeId
   Future<Location> getPlaceDetails(String placeId) async {
+    print("\n🏢 PLACE DETAILS: Getting details for place ID: $placeId");
+
     try {
-      // Call Google Places Details API
-      final response = await _dio.get(
-        'https://places.googleapis.com/v1/places/$placeId',
-        options: Options(
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Goog-Api-Key': apiKey,
-            'X-Goog-FieldMask':
-                'id,displayName,formattedAddress,location,addressComponents'
-          },
-        ),
-      );
+      // First try using the new Places API v1
+      try {
+        print("🏢 PLACE DETAILS: Trying method 1 - Places Details API V1");
 
-      if (response.statusCode == 200) {
-        final data = response.data;
-
-        // Debug data received from Places API
-        print('📍 PLACES API RESPONSE: $data');
-
-        // Extract place name - the displayName should contain the actual business name
-        String? placeName;
-        if (data['displayName'] != null &&
-            data['displayName']['text'] != null) {
-          placeName = data['displayName']['text'];
-          print('📍 FOUND BUSINESS NAME: $placeName');
-        } else {
-          print('📍 NO DISPLAY NAME FOUND IN RESPONSE');
-        }
-
-        // Extract coordinates
-        final location = data['location'];
-        final lat = location?['latitude'] ?? 0.0;
-        final lng = location?['longitude'] ?? 0.0;
-
-        // Extract address components
-        String? address = data['formattedAddress'];
-        String? city, state, country, zipCode;
-
-        if (data['addressComponents'] != null) {
-          for (var component in data['addressComponents']) {
-            List<dynamic> types = component['types'] ?? [];
-            if (types.contains('locality')) {
-              city = component['longText'];
-            } else if (types.contains('administrative_area_level_1')) {
-              state = component['shortText']; // Using short name for state
-            } else if (types.contains('country')) {
-              country = component['longText'];
-            } else if (types.contains('postal_code')) {
-              zipCode = component['longText'];
-            }
-          }
-        }
-
-        return Location(
-          latitude: lat,
-          longitude: lng,
-          address: address,
-          city: city,
-          state: state,
-          country: country,
-          zipCode: zipCode,
-          displayName: placeName,
+        final response = await _dio.get(
+          'https://places.googleapis.com/v1/places/$placeId',
+          options: Options(
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Goog-Api-Key': apiKey,
+              'X-Goog-FieldMask':
+                  'id,displayName,formattedAddress,location,addressComponents'
+            },
+          ),
         );
+
+        if (response.statusCode == 200) {
+          print("🏢 PLACE DETAILS: API V1 returned status code 200");
+          final data = response.data;
+
+          // Debug data received from Places API
+          print('🏢 PLACE DETAILS: Places API V1 response data available');
+
+          // Extract place name - the displayName should contain the actual business name
+          String? placeName;
+          if (data['displayName'] != null &&
+              data['displayName']['text'] != null) {
+            placeName = data['displayName']['text'];
+            print('🏢 PLACE DETAILS: Found business name: $placeName');
+          } else {
+            print('🏢 PLACE DETAILS: No display name found in response');
+          }
+
+          // Extract coordinates
+          final location = data['location'];
+          if (location != null) {
+            final lat = location['latitude'] ?? 0.0;
+            final lng = location['longitude'] ?? 0.0;
+            print('🏢 PLACE DETAILS: Found coordinates: $lat, $lng');
+
+            // Extract address components
+            String? address = data['formattedAddress'];
+            print('🏢 PLACE DETAILS: Found address: $address');
+
+            String? city, state, country, zipCode;
+
+            if (data['addressComponents'] != null) {
+              print('🏢 PLACE DETAILS: Address components available');
+              for (var component in data['addressComponents']) {
+                List<dynamic> types = component['types'] ?? [];
+                if (types.contains('locality')) {
+                  city = component['longText'];
+                } else if (types.contains('administrative_area_level_1')) {
+                  state = component['shortText']; // Using short name for state
+                } else if (types.contains('country')) {
+                  country = component['longText'];
+                } else if (types.contains('postal_code')) {
+                  zipCode = component['longText'];
+                }
+              }
+              print(
+                  '🏢 PLACE DETAILS: Extracted components - City: $city, State: $state, Country: $country, Zip: $zipCode');
+            }
+
+            Location locationObj = Location(
+              latitude: lat,
+              longitude: lng,
+              address: address,
+              city: city,
+              state: state,
+              country: country,
+              zipCode: zipCode,
+              displayName: placeName,
+            );
+
+            print(
+                '🏢 PLACE DETAILS: Successfully created location object with API V1');
+            return locationObj;
+          } else {
+            print('🏢 PLACE DETAILS: No location data in response');
+          }
+        } else {
+          print(
+              '🏢 PLACE DETAILS: API V1 returned non-200 status code: ${response.statusCode}');
+        }
+      } catch (e) {
+        print('🏢 PLACE DETAILS: Error with Places API V1: $e');
+        // Continue to fallback method
       }
 
-      print('📍 NO VALID RESPONSE FROM PLACES API');
+      // Fallback to the standard Details API if v1 failed
+      try {
+        print(
+            "🏢 PLACE DETAILS: Trying method 2 - Standard Places Details API");
+
+        final url =
+            'https://maps.googleapis.com/maps/api/place/details/json?place_id=$placeId&fields=name,formatted_address,geometry,address_component&key=$apiKey';
+        print(
+            "🏢 PLACE DETAILS: Request URL: ${url.replaceAll(apiKey, 'API_KEY')}");
+
+        final response = await http.get(Uri.parse(url));
+
+        if (response.statusCode == 200) {
+          print("🏢 PLACE DETAILS: API returned status code 200");
+          final data = jsonDecode(response.body);
+          print("🏢 PLACE DETAILS: Response status: ${data['status']}");
+
+          if (data['status'] != 'OK') {
+            print(
+                "🏢 PLACE DETAILS: API returned non-OK status: ${data['status']}");
+            if (data['error_message'] != null) {
+              print(
+                  "🏢 PLACE DETAILS: Error message: ${data['error_message']}");
+            }
+          }
+
+          if (data['status'] == 'OK' && data['result'] != null) {
+            final result = data['result'];
+            print("🏢 PLACE DETAILS: Successfully got place details");
+
+            // Extract coordinates
+            final lat = result['geometry']?['location']?['lat'] ?? 0.0;
+            final lng = result['geometry']?['location']?['lng'] ?? 0.0;
+            print('🏢 PLACE DETAILS: Found coordinates: $lat, $lng');
+
+            // Extract place name
+            final placeName = result['name'];
+            print('🏢 PLACE DETAILS: Found business name: $placeName');
+
+            // Extract address
+            final address = result['formatted_address'];
+            print('🏢 PLACE DETAILS: Found address: $address');
+
+            // Extract address components
+            String? city, state, country, zipCode;
+
+            if (result['address_components'] != null) {
+              print('🏢 PLACE DETAILS: Address components available');
+              for (var component in result['address_components']) {
+                List<dynamic> types = component['types'] ?? [];
+                if (types.contains('locality')) {
+                  city = component['long_name'];
+                } else if (types.contains('administrative_area_level_1')) {
+                  state = component['short_name'];
+                } else if (types.contains('country')) {
+                  country = component['long_name'];
+                } else if (types.contains('postal_code')) {
+                  zipCode = component['long_name'];
+                }
+              }
+              print(
+                  '🏢 PLACE DETAILS: Extracted components - City: $city, State: $state, Country: $country, Zip: $zipCode');
+            }
+
+            Location locationObj = Location(
+              latitude: lat,
+              longitude: lng,
+              address: address,
+              city: city,
+              state: state,
+              country: country,
+              zipCode: zipCode,
+              displayName: placeName,
+            );
+
+            print(
+                '🏢 PLACE DETAILS: Successfully created location object with standard API');
+            return locationObj;
+          }
+        } else {
+          print(
+              '🏢 PLACE DETAILS: API returned non-200 status code: ${response.statusCode}');
+        }
+      } catch (e) {
+        print('🏢 PLACE DETAILS: Error with Places Details API: $e');
+      }
+
+      print('🏢 PLACE DETAILS: No valid response from any Places API');
       // If we couldn't get any valid place information, return a minimal location with coordinates
       return Location(
         latitude: 0.0,
@@ -216,7 +505,7 @@ class GoogleMapsService {
         displayName: 'Unknown Location',
       );
     } catch (e) {
-      print('Error getting place details: $e');
+      print('🏢 PLACE DETAILS ERROR: $e');
 
       // Even in case of error, return a basic location with coordinates
       return Location(
@@ -231,7 +520,8 @@ class GoogleMapsService {
   /// Find a place near the tapped position - this improves POI selection
   Future<Location> findPlaceNearPosition(LatLng position) async {
     try {
-      print('📍 API SEARCH: Looking for POIs near ${position.latitude}, ${position.longitude}');
+      print(
+          '📍 API SEARCH: Looking for POIs near ${position.latitude}, ${position.longitude}');
 
       // First try using the Places API to find nearby places (more accurate for POIs)
       try {
@@ -260,10 +550,12 @@ class GoogleMapsService {
                   "latitude": position.latitude,
                   "longitude": position.longitude
                 },
-                "radius": 100.0 // 100 meters radius to find the closest POI (increased from 50m)
+                "radius":
+                    100.0 // 100 meters radius to find the closest POI (increased from 50m)
               }
             },
-            "rankPreference": "DISTANCE" // Prioritize places closest to the tapped point
+            "rankPreference":
+                "DISTANCE" // Prioritize places closest to the tapped point
           },
           options: Options(
             headers: {
@@ -275,7 +567,8 @@ class GoogleMapsService {
           ),
         );
 
-        print('📍 API RESPONSE: Places API nearby search response: ${nearbyResponse.data}');
+        print(
+            '📍 API RESPONSE: Places API nearby search response: ${nearbyResponse.data}');
 
         // Check if we found any places nearby
         if (nearbyResponse.statusCode == 200 &&
@@ -307,7 +600,8 @@ class GoogleMapsService {
             displayName: placeName,
           );
         } else {
-          print('📍 API FALLBACK: No nearby places found, falling back to geocoding');
+          print(
+              '📍 API FALLBACK: No nearby places found, falling back to geocoding');
         }
       } catch (e) {
         print('📍 API ERROR: Error searching for nearby places: $e');
@@ -323,9 +617,9 @@ class GoogleMapsService {
         // IMPORTANT: Extract the coordinates from the geocoding result (not the original)
         double lat = placeDetails['latitude'] as double;
         double lng = placeDetails['longitude'] as double;
-        
+
         print('📍 GEOCODING RESULT: Found place at $lat, $lng');
-        
+
         return Location(
           latitude: lat, // Use geocoded coordinates, not original tap
           longitude: lng, // Use geocoded coordinates, not original tap
@@ -626,7 +920,7 @@ class GoogleMapsService {
           final location = placeResult['geometry']?['location'];
           final lat = location?['lat'] ?? latitude;
           final lng = location?['lng'] ?? longitude;
-          
+
           // Create a clean result object
           final result = {
             'placeId': placeResult['place_id'] ?? '',
