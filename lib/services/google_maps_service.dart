@@ -949,9 +949,76 @@ class GoogleMapsService {
 
   /// Alias for static map URL
   String getStaticMapImageUrl(double latitude, double longitude,
-      {int zoom = 15, int width = 600, int height = 300}) {
-    return getStaticMapUrl(latitude, longitude,
-        zoom: zoom, width: width, height: height);
+      {int zoom = 14, int width = 600, int height = 300}) {
+    final apiKey = _getApiKey();
+
+    // Debug the domain
+    final baseUrl = 'https://maps.googleapis.com/maps/api/staticmap';
+    print('🗺️ MAP DEBUG: Using base URL: $baseUrl');
+
+    return '$baseUrl?'
+        'center=$latitude,$longitude'
+        '&zoom=$zoom'
+        '&size=${width}x$height'
+        '&markers=color:red%7C$latitude,$longitude'
+        '&key=$apiKey';
+  }
+
+  /// Get place image from Google Places API using place ID
+  Future<String?> getPlaceImageUrl(String placeId,
+      {int maxWidth = 600, int maxHeight = 300}) async {
+    print('🔍 PLACE IMAGE: Fetching image for place ID: $placeId');
+
+    try {
+      final apiKey = _getApiKey();
+      print('🔍 PLACE IMAGE: Using Places API (new) to get image');
+
+      // First get the place details to get photo references
+      final url =
+          'https://places.googleapis.com/v1/places/$placeId?fields=photos&key=$apiKey';
+      print(
+          '🔍 PLACE IMAGE: Request URL: ${url.replaceAll(apiKey, "API_KEY_HIDDEN")}');
+
+      final response = await _dio.get(
+        url,
+        options: Options(
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Goog-Api-Key': apiKey,
+            'X-Goog-FieldMask': 'photos'
+          },
+        ),
+      );
+
+      if (response.statusCode == 200) {
+        final data = response.data;
+
+        // Check if place has photos
+        if (data['photos'] != null && data['photos'].isNotEmpty) {
+          // Get the first photo reference
+          final photoName = data['photos'][0]['name'];
+          print('🔍 PLACE IMAGE: Found photo reference: $photoName');
+
+          // Construct the photo URL
+          final photoUrl =
+              'https://places.googleapis.com/v1/$photoName/media?maxWidthPx=$maxWidth&maxHeightPx=$maxHeight&key=$apiKey';
+          print('🔍 PLACE IMAGE: Photo URL constructed successfully');
+
+          return photoUrl;
+        } else {
+          print('🔍 PLACE IMAGE: No photos available for this place');
+        }
+      } else {
+        print(
+            '🔍 PLACE IMAGE: Failed with status code: ${response.statusCode}');
+      }
+    } catch (e, stack) {
+      print('🔍 PLACE IMAGE ERROR: $e');
+      print('🔍 PLACE IMAGE ERROR STACK: $stack');
+    }
+
+    // Fallback to static map if no place photos available
+    return null;
   }
 
   /// Generate directions URL
@@ -1123,5 +1190,96 @@ class GoogleMapsService {
   String _getApiKey() {
     // Use the same API key that's used elsewhere in the service
     return apiKey;
+  }
+
+  /// Search for places near the given coordinates
+  Future<List<Map<String, dynamic>>> searchNearbyPlaces(
+      double latitude, double longitude,
+      [int radius = 50]) async {
+    final apiKey = _getApiKey();
+    print(
+        "🔍 NEARBY SEARCH: Searching near lat=$latitude, lng=$longitude within ${radius}m radius");
+    print("🔍 NEARBY SEARCH: Using API key: ${_maskApiKey(apiKey)}");
+
+    final url = 'https://maps.googleapis.com/maps/api/place/nearbysearch/json'
+        '?location=$latitude,$longitude'
+        '&radius=$radius'
+        '&key=$apiKey';
+
+    try {
+      final response = await http.get(Uri.parse(url));
+      print(
+          "🔍 NEARBY SEARCH: API response status code: ${response.statusCode}");
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+
+        if (data['status'] == 'OK' && data['results'] != null) {
+          print(
+              "🔍 NEARBY SEARCH: Found ${data['results'].length} nearby places");
+
+          // Transform and return the results
+          List<Map<String, dynamic>> places = [];
+          for (var place in data['results']) {
+            Map<String, dynamic> placeData = {
+              'placeId': place['place_id'],
+              'name': place['name'],
+              'vicinity': place['vicinity'],
+              'latitude': place['geometry']?['location']?['lat'],
+              'longitude': place['geometry']?['location']?['lng'],
+            };
+            places.add(placeData);
+          }
+
+          return places;
+        } else {
+          print(
+              "🔍 NEARBY SEARCH ERROR: API returned status: ${data['status']}");
+          return [];
+        }
+      } else {
+        print(
+            "🔍 NEARBY SEARCH ERROR: Failed with status code: ${response.statusCode}");
+        return [];
+      }
+    } catch (e) {
+      print("🔍 NEARBY SEARCH ERROR: Exception during API call: $e");
+      return [];
+    }
+  }
+
+  // Helper to mask the API key for logging
+  String _maskApiKey(String key) {
+    if (key.length <= 8) return "***";
+    return "${key.substring(0, 4)}...${key.substring(key.length - 4)}";
+  }
+
+  // Get the address from coordinates using reverse geocoding
+  Future<String?> getAddressFromCoordinates(
+      double latitude, double longitude) async {
+    final apiKey = _getApiKey();
+    final url =
+        'https://maps.googleapis.com/maps/api/geocode/json?latlng=$latitude,$longitude&key=$apiKey';
+
+    try {
+      final response = await http.get(Uri.parse(url));
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+
+        if (data['status'] == 'OK' &&
+            data['results'] != null &&
+            data['results'].isNotEmpty) {
+          // Get the first result (most specific)
+          final result = data['results'][0];
+          return result['formatted_address'] as String?;
+        }
+      }
+
+      return null;
+    } catch (e) {
+      print('ERROR: Failed to get address from coordinates: $e');
+      return null;
+    }
   }
 }

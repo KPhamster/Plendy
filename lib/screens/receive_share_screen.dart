@@ -18,6 +18,7 @@ import '../widgets/google_maps_widget.dart';
 import 'location_picker_screen.dart';
 import '../services/sharing_service.dart';
 import 'dart:async';
+import 'package:http/http.dart' as http;
 
 /// Data class to hold the state of each experience card
 class ExperienceCardData {
@@ -26,6 +27,11 @@ class ExperienceCardData {
   final TextEditingController yelpUrlController = TextEditingController();
   final TextEditingController websiteUrlController = TextEditingController();
   final TextEditingController searchController = TextEditingController();
+  final TextEditingController locationController = TextEditingController();
+  final TextEditingController categoryController = TextEditingController();
+
+  // Form key
+  final formKey = GlobalKey<FormState>();
 
   // Focus nodes
   final FocusNode titleFocusNode = FocusNode();
@@ -35,6 +41,7 @@ class ExperienceCardData {
 
   // Location selection
   Location? selectedLocation;
+  Location? location;
   bool isSelectingLocation = false;
   bool locationEnabled = true;
   List<Map<String, dynamic>> searchResults = [];
@@ -54,6 +61,8 @@ class ExperienceCardData {
     yelpUrlController.dispose();
     websiteUrlController.dispose();
     searchController.dispose();
+    locationController.dispose();
+    categoryController.dispose();
     titleFocusNode.dispose();
   }
 }
@@ -117,7 +126,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     _addExperienceCard();
 
     // Automatically process any Yelp URLs in the shared content
-    _processSharedYelpContent();
+    _processSharedContent();
 
     // Ensure the intent is reset when screen is shown
     ReceiveSharingIntent.instance.reset();
@@ -157,27 +166,26 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     );
   }
 
-  // Process shared content to extract Yelp URLs
-  void _processSharedYelpContent() {
-    print('DEBUG: Processing shared Yelp content');
+  // Process shared content to extract Yelp URLs or Map URLs
+  void _processSharedContent() {
+    print('DEBUG: Processing shared content');
     if (widget.sharedFiles.isEmpty) return;
 
-    // Look for Yelp URLs in shared files
+    // Look for Yelp URLs or Map URLs in shared files
     for (final file in widget.sharedFiles) {
       if (file.type == SharedMediaType.text) {
         String text = file.path;
         print(
             'DEBUG: Checking shared text: ${text.substring(0, min(100, text.length))}...');
 
-        // Handle direct URL shares
-        if (_isValidUrl(text) &&
-            (text.contains('yelp.com/biz') || text.contains('yelp.to/'))) {
-          print('DEBUG: Found direct Yelp URL: $text');
-          _getBusinessFromYelpUrl(text);
+        // Check if this is a special URL (Yelp or Maps)
+        if (_isTextSpecialContent(text)) {
+          print('DEBUG: Found special content URL: $text');
+          _processSpecialUrl(text);
           return;
         }
 
-        // Handle "Check out X on Yelp" message format
+        // Check for "Check out X on Yelp" message format
         if (text.contains('Check out') && text.contains('yelp.to/')) {
           // Extract URL using regex to get the Yelp link
           final RegExp urlRegex = RegExp(r'https?://yelp.to/[^\s]+');
@@ -194,15 +202,44 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           // Check for multi-line text with URL on separate line
           final lines = text.split('\n');
           for (final line in lines) {
-            if (_isValidUrl(line) &&
-                (line.contains('yelp.com/biz') || line.contains('yelp.to/'))) {
-              print('DEBUG: Found Yelp URL in multi-line text: $line');
-              _getBusinessFromYelpUrl(line);
+            if (_isTextSpecialContent(line)) {
+              print('DEBUG: Found special URL in multi-line text: $line');
+              _processSpecialUrl(line);
               return;
             }
           }
         }
       }
+    }
+  }
+
+  // Check if the shared content is from Yelp or Google Maps
+  bool _isSpecialContent() {
+    if (widget.sharedFiles.isEmpty) return false;
+
+    for (final file in widget.sharedFiles) {
+      if (file.type == SharedMediaType.text) {
+        String text = file.path;
+        if (_isValidUrl(text)) {
+          return text.contains('yelp.com/biz') ||
+              text.contains('yelp.to/') ||
+              text.contains('google.com/maps') ||
+              text.contains('maps.app.goo.gl') ||
+              text.contains('goo.gl/maps');
+        }
+      }
+    }
+    return false;
+  }
+
+  // Process special URL
+  void _processSpecialUrl(String url) {
+    if (url.contains('yelp.com/biz') || url.contains('yelp.to/')) {
+      _getBusinessFromYelpUrl(url);
+    } else if (url.contains('google.com/maps') ||
+        url.contains('maps.app.goo.gl') ||
+        url.contains('goo.gl/maps')) {
+      _getLocationFromMapsUrl(url);
     }
   }
 
@@ -922,7 +959,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         ),
         actions: [
           // Add button - hidden for Yelp content
-          if (!_isYelpContent())
+          if (!_isSpecialContent())
             IconButton(
               icon: Icon(Icons.add),
               onPressed: _addExperienceCard,
@@ -1051,7 +1088,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                             i == _experienceCards.length - 1),
 
                                   // Add another experience button - hidden for Yelp content
-                                  if (!_isYelpContent())
+                                  if (!_isSpecialContent())
                                     Padding(
                                       padding: const EdgeInsets.only(
                                           top: 4.0, bottom: 16.0),
@@ -1316,6 +1353,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     // Special handling for Yelp URLs
     if (url.contains('yelp.com/biz') || url.contains('yelp.to/')) {
       return _buildYelpPreview(url);
+    }
+
+    // Special handling for Google Maps URLs
+    if (url.contains('google.com/maps') ||
+        url.contains('maps.app.goo.gl') ||
+        url.contains('goo.gl/maps')) {
+      return _buildMapsPreview(url);
     }
 
     // Special handling for Instagram URLs
@@ -2259,33 +2303,1091 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     );
   }
 
-  // Check if the current shared content is from Yelp
-  bool _isYelpContent() {
-    if (widget.sharedFiles.isEmpty) return false;
+  /// Extract location data from a Google Maps URL
+  Future<Map<String, dynamic>?> _getLocationFromMapsUrl(String url) async {
+    print('🗺️ MAPS: Starting to extract location from Maps URL: $url');
 
-    // Check each shared file
-    for (final file in widget.sharedFiles) {
-      if (file.type == SharedMediaType.text) {
-        String text = file.path;
-        // Check if it's a Yelp URL
-        if (_isValidUrl(text) &&
-            (text.contains('yelp.com/biz') || text.contains('yelp.to/'))) {
-          return true;
+    try {
+      final Uri uri = Uri.parse(url);
+      String? locationName;
+      double? latitude;
+      double? longitude;
+      String? placeId;
+      String? addressText;
+
+      // Extract query parameters
+      final queryParams = uri.queryParameters;
+
+      // Try to extract place_id
+      if (queryParams.containsKey('place_id')) {
+        placeId = queryParams['place_id'];
+        print('🗺️ MAPS: Found place_id in URL: $placeId');
+      }
+
+      // Try to extract coordinates from query parameter
+      if (queryParams.containsKey('q')) {
+        final query = queryParams['q']!;
+        print('🗺️ MAPS: Found query parameter: $query');
+
+        // Check if query contains coordinates
+        if (_containsOnlyCoordinates(query)) {
+          print('🗺️ MAPS: Query appears to be coordinates');
+          final parts = query.split(',');
+          if (parts.length == 2) {
+            try {
+              latitude = double.parse(parts[0]);
+              longitude = double.parse(parts[1]);
+              print('🗺️ MAPS: Extracted coordinates: $latitude, $longitude');
+            } catch (e) {
+              print('🗺️ MAPS ERROR: Failed to parse coordinates: $e');
+            }
+          }
+        } else {
+          // If not coordinates, use as place name
+          locationName = query;
+          print('🗺️ MAPS: Using query as place name: $locationName');
         }
-        // Check for "Check out X on Yelp" format
-        if (text.contains('Check out') && text.contains('yelp.to/')) {
-          return true;
-        }
-        // Check for multi-line text with Yelp URL
-        for (final line in text.split('\n')) {
-          if (_isValidUrl(line) &&
-              (line.contains('yelp.com/biz') || line.contains('yelp.to/'))) {
-            return true;
+      }
+
+      // Try to extract coordinates from @param
+      if (latitude == null && queryParams.containsKey('@')) {
+        final atParam = queryParams['@']!;
+        print('🗺️ MAPS: Found @ parameter: $atParam');
+
+        // Extract latitude and longitude from the @ parameter
+        // Format is usually like: 37.7749,-122.4194,14z (lat,lng,zoom)
+        final coordsPattern = RegExp(r'(-?\d+\.\d+),(-?\d+\.\d+)');
+        final match = coordsPattern.firstMatch(atParam);
+
+        if (match != null && match.groupCount >= 2) {
+          try {
+            latitude = double.parse(match.group(1)!);
+            longitude = double.parse(match.group(2)!);
+            print(
+                '🗺️ MAPS: Extracted coordinates from @ param: $latitude, $longitude');
+          } catch (e) {
+            print(
+                '🗺️ MAPS ERROR: Failed to parse coordinates from @ param: $e');
           }
         }
       }
+
+      // Try to extract coordinates from direct path segments
+      // For URLs like: maps.google.com/?ll=37.7749,-122.4194
+      if (latitude == null && queryParams.containsKey('ll')) {
+        final ll = queryParams['ll']!;
+        print('🗺️ MAPS: Found ll parameter: $ll');
+
+        final parts = ll.split(',');
+        if (parts.length == 2) {
+          try {
+            latitude = double.parse(parts[0]);
+            longitude = double.parse(parts[1]);
+            print(
+                '🗺️ MAPS: Extracted coordinates from ll param: $latitude, $longitude');
+          } catch (e) {
+            print(
+                '🗺️ MAPS ERROR: Failed to parse coordinates from ll param: $e');
+          }
+        }
+      }
+
+      // For shortened URLs or URLs without clear parameters, try to extract coordinates from the path
+      if ((latitude == null || locationName == null) &&
+          (url.contains('goo.gl') || url.contains('maps.app.goo.gl'))) {
+        // For shortened URLs, we need to follow redirects
+        print('🗺️ MAPS: Shortened URL detected, following redirects...');
+
+        // Improved handling of shortened URLs
+        try {
+          // Use Dio for better redirect handling
+          final dio = Dio();
+          dio.options.followRedirects = true;
+          dio.options.maxRedirects = 5;
+
+          final response = await dio.get(url,
+              options: Options(
+                followRedirects: true,
+                validateStatus: (status) => status! < 500,
+              ));
+
+          if (response.statusCode == 200) {
+            // Successfully resolved URL, now parse it
+            final resolvedUrl = response.realUri.toString();
+            print('🗺️ MAPS: Following URL after redirects: $resolvedUrl');
+
+            // Check if this is a place URL (contains "/place/" in path)
+            bool isPlaceUrl = resolvedUrl.contains('/place/');
+            if (isPlaceUrl) {
+              print('🗺️ MAPS: Detected place URL pattern');
+
+              // Extract place name from the URL path for places
+              // Format: /maps/place/PLACE_NAME/data=...
+              RegExp placeNameRegex = RegExp(r'/place/([^/]+)/');
+              Match? placeMatch = placeNameRegex.firstMatch(resolvedUrl);
+
+              if (placeMatch != null && placeMatch.groupCount >= 1) {
+                String encodedPlaceName = placeMatch.group(1)!;
+                // Decode URL-encoded place name
+                locationName =
+                    Uri.decodeComponent(encodedPlaceName.replaceAll('+', ' '));
+                print(
+                    '🗺️ MAPS: Extracted place name from URL path: $locationName');
+
+                // Extract place ID if present in the URL
+                RegExp placeIdRegex = RegExp(r'!1s([a-zA-Z0-9:_-]+)');
+                Match? placeIdMatch = placeIdRegex.firstMatch(resolvedUrl);
+
+                if (placeIdMatch != null && placeIdMatch.groupCount >= 1) {
+                  placeId = placeIdMatch.group(1);
+                  print(
+                      '🗺️ MAPS: Extracted place ID from resolved URL: $placeId');
+                }
+
+                // Also look for CID and FID values which can be useful for finding places
+                RegExp cidRegex = RegExp(r'cid=(\d+)');
+                Match? cidMatch = cidRegex.firstMatch(resolvedUrl);
+
+                if (cidMatch != null && cidMatch.groupCount >= 1) {
+                  String cid = cidMatch.group(1)!;
+                  print('🗺️ MAPS: Found CID in resolved URL: $cid');
+
+                  // Store CID in place ID if we don't have one yet
+                  if (placeId == null || placeId.isEmpty) {
+                    placeId = 'cid:$cid';
+                  }
+                }
+
+                // Check for FID (another ID format in some Google Maps URLs)
+                RegExp fidRegex = RegExp(r'ftid=([a-zA-Z0-9-]+)');
+                Match? fidMatch = fidRegex.firstMatch(resolvedUrl);
+
+                if (fidMatch != null && fidMatch.groupCount >= 1) {
+                  String fid = fidMatch.group(1)!;
+                  print('🗺️ MAPS: Found FID in resolved URL: $fid');
+
+                  // Store FID in place ID if we don't have one yet
+                  if (placeId == null || placeId.isEmpty) {
+                    placeId = 'ftid:$fid';
+                  }
+                }
+              }
+            }
+
+            // Check if resolved URL contains coordinates in standard format
+            final coordsRegex = RegExp(r'@(-?\d+\.\d+),(-?\d+\.\d+)');
+            final match = coordsRegex.firstMatch(resolvedUrl);
+
+            if (match != null && match.groupCount >= 2) {
+              latitude = double.parse(match.group(1)!);
+              longitude = double.parse(match.group(2)!);
+              print(
+                  '🗺️ MAPS: Extracted coordinates from resolved URL: $latitude, $longitude');
+            } else {
+              // Try to extract from query parameters
+              final uri = Uri.parse(resolvedUrl);
+
+              // Check for data parameter that might contain coordinates
+              String? dataParam = uri.path.contains('data=')
+                  ? uri.path.substring(uri.path.indexOf('data='))
+                  : uri.queryParameters['data'];
+
+              if (dataParam != null) {
+                print('🗺️ MAPS: Found data parameter: $dataParam');
+
+                // Try to extract place ID from data parameter
+                RegExp dataPlaceIdRegex = RegExp(r'!1s([a-zA-Z0-9:_-]+)');
+                Match? dataPlaceIdMatch =
+                    dataPlaceIdRegex.firstMatch(dataParam);
+
+                if (dataPlaceIdMatch != null &&
+                    dataPlaceIdMatch.groupCount >= 1) {
+                  placeId = dataPlaceIdMatch.group(1);
+                  print(
+                      '🗺️ MAPS: Extracted place ID from data parameter: $placeId');
+                }
+              }
+
+              if (uri.queryParameters.containsKey('q')) {
+                final query = uri.queryParameters['q']!;
+                print(
+                    '🗺️ MAPS: Found query parameter in resolved URL: $query');
+
+                if (_containsOnlyCoordinates(query)) {
+                  final parts = query.split(',');
+                  if (parts.length == 2) {
+                    latitude = double.parse(parts[0]);
+                    longitude = double.parse(parts[1]);
+                    print(
+                        '🗺️ MAPS: Extracted coordinates from query: $latitude, $longitude');
+                  }
+                } else if (locationName == null) {
+                  // Query might be a place name
+                  locationName = query;
+                }
+              }
+            }
+          } else {
+            print(
+                '🗺️ MAPS ERROR: Failed to follow redirect, status code: ${response.statusCode}');
+          }
+        } catch (e) {
+          print('🗺️ MAPS ERROR: Failed to follow redirect: $e');
+        }
+      }
+
+      // If we have a place ID but missing coordinates or name, get place details
+      if (placeId != null &&
+          (latitude == null || longitude == null || locationName == null)) {
+        print('🗺️ MAPS: Have place ID, fetching place details: $placeId');
+
+        // Check if we need to use search by name instead of place ID
+        if (placeId.startsWith('0x') ||
+            placeId.startsWith('cid:') ||
+            placeId.startsWith('ftid:')) {
+          print('🗺️ MAPS: Using name search instead of non-standard place ID');
+
+          // Skip to the search by name approach
+          if (locationName != null) {
+            String searchName = locationName;
+            // Extract just the business name to improve search results
+            if (locationName.contains(',')) {
+              searchName = locationName.substring(0, locationName.indexOf(','));
+            }
+
+            print('🗺️ MAPS: Searching for location by name: "$searchName"');
+            try {
+              final GoogleMapsService mapsService = GoogleMapsService();
+              final results = await mapsService.searchPlaces(searchName);
+
+              if (results.isNotEmpty) {
+                final placeResult = results.first;
+
+                // Update with found data
+                latitude = placeResult['latitude'] as double?;
+                longitude = placeResult['longitude'] as double?;
+                String? standardPlaceId = placeResult['placeId'] as String?;
+
+                // Use address if we don't have one yet
+                if (addressText == null) {
+                  addressText = placeResult['address'] as String?;
+                }
+
+                print('🗺️ MAPS: Found place by name search');
+                print('🗺️ MAPS: Updated coordinates: $latitude, $longitude');
+                print(
+                    '🗺️ MAPS: Standard place ID: ${standardPlaceId ?? "Not found"}');
+                print('🗺️ MAPS: Address: ${addressText ?? "Not available"}');
+
+                // If we have a standard place ID now, try to get more details
+                if (standardPlaceId != null && standardPlaceId.isNotEmpty) {
+                  try {
+                    print(
+                        '🗺️ MAPS: Getting more details with standard place ID: $standardPlaceId');
+                    final placeDetails =
+                        await mapsService.getPlaceDetails(standardPlaceId);
+
+                    if (placeDetails != null) {
+                      // Keep the original placeId for reference but use standard one internally
+                      placeId = standardPlaceId;
+
+                      // Update with more detailed information
+                      latitude = placeDetails.latitude;
+                      longitude = placeDetails.longitude;
+                      addressText = placeDetails.address;
+
+                      print('🗺️ MAPS: Got detailed place info');
+                      print(
+                          '🗺️ MAPS: Updated coordinates: $latitude, $longitude');
+                      print(
+                          '🗺️ MAPS: Updated address: ${addressText ?? "Not available"}');
+                    }
+                  } catch (e) {
+                    print(
+                        '🗺️ MAPS ERROR: Failed to get detailed place info: $e');
+                    // Continue with the data we have from search
+                  }
+                }
+              } else {
+                print(
+                    '🗺️ MAPS: No search results found for name: "$searchName"');
+              }
+            } catch (e) {
+              print('🗺️ MAPS ERROR: Failed to search by name: $e');
+            }
+          } else {
+            print('🗺️ MAPS ERROR: No location name available for search');
+          }
+        } else {
+          // This is a standard place ID, proceed with normal place details lookup
+          try {
+            final GoogleMapsService mapsService = GoogleMapsService();
+            final placeDetails = await mapsService.getPlaceDetails(placeId);
+
+            if (placeDetails != null) {
+              // Extract coordinate geometry from place details
+              if (latitude == null || longitude == null) {
+                // Use direct property access for Location object
+                latitude = placeDetails.latitude;
+                longitude = placeDetails.longitude;
+                print(
+                    '🗺️ MAPS: Got coordinates from place details: $latitude, $longitude');
+              }
+
+              // Extract name if not already set
+              if (locationName == null) {
+                locationName = placeDetails.displayName;
+                print(
+                    '🗺️ MAPS: Got place name from place details: $locationName');
+              }
+
+              // Extract formatted address
+              if (addressText == null) {
+                addressText = placeDetails.address;
+                print('🗺️ MAPS: Got address from place details: $addressText');
+              }
+            }
+          } catch (e) {
+            print('🗺️ MAPS ERROR: Failed to get place details: $e');
+          }
+        }
+      }
+
+      // If we have a place ID that needs conversion, try finding the place by name
+      if (placeId == 'SEARCH_BY_NAME' && locationName != null) {
+        print(
+            '🗺️ MAPS: Place ID needs conversion, searching by name: $locationName');
+        try {
+          final GoogleMapsService mapsService = GoogleMapsService();
+
+          // Extract just the business name to improve search results
+          String searchName = locationName;
+          if (locationName.contains(',')) {
+            searchName = locationName.substring(0, locationName.indexOf(','));
+          }
+
+          print('🗺️ MAPS: Searching for location with query: "$searchName"');
+          final results = await mapsService.searchPlaces(searchName);
+
+          if (results.isNotEmpty) {
+            // Get the first result which is likely the most relevant
+            final placeResult = results.first;
+
+            // Update with found data
+            latitude = placeResult['latitude'] as double?;
+            longitude = placeResult['longitude'] as double?;
+            placeId = placeResult['placeId'] as String?;
+
+            // Use address if we don't have one yet
+            if (addressText == null) {
+              addressText = placeResult['address'] as String?;
+            }
+
+            print('🗺️ MAPS: Found place by name search');
+            print('🗺️ MAPS: Updated place ID: $placeId');
+            print('🗺️ MAPS: Coordinates: $latitude, $longitude');
+            print('🗺️ MAPS: Address: ${addressText ?? 'Not available'}');
+
+            // If we've got a valid place ID, try to get more detailed information
+            if (placeId != null &&
+                placeId.isNotEmpty &&
+                !placeId.startsWith('0x')) {
+              print(
+                  '🗺️ MAPS: Getting more details with standard place ID: $placeId');
+              try {
+                final placeDetails = await mapsService.getPlaceDetails(placeId);
+                if (placeDetails != null) {
+                  // Update with more detailed information
+                  if (latitude == null || longitude == null) {
+                    latitude = placeDetails.latitude;
+                    longitude = placeDetails.longitude;
+                  }
+
+                  if (addressText == null) {
+                    addressText = placeDetails.address;
+                  }
+
+                  print(
+                      '🗺️ MAPS: Successfully retrieved detailed place information');
+                }
+              } catch (e) {
+                print(
+                    '🗺️ MAPS ERROR: Unable to get detailed place information: $e');
+                // Continue with what we already have
+              }
+            }
+          } else {
+            print('🗺️ MAPS: No search results found for query: "$searchName"');
+          }
+        } catch (e) {
+          print('🗺️ MAPS ERROR: Failed to search by name: $e');
+        }
+      }
+
+      // If we have coordinates but no name, try reverse geocoding
+      if (latitude != null && longitude != null && locationName == null) {
+        print(
+            '🗺️ MAPS: Have coordinates but no name, attempting reverse geocoding');
+
+        // Use Google Maps Service to get location details
+        try {
+          final GoogleMapsService mapsService = GoogleMapsService();
+          final results =
+              await mapsService.searchNearbyPlaces(latitude, longitude);
+
+          if (results.isNotEmpty) {
+            final placeResult = results.first;
+            locationName = placeResult['name'] as String?;
+            placeId = placeResult['placeId'] as String?;
+            addressText = placeResult['vicinity'] as String?;
+
+            print('🗺️ MAPS: Reverse geocoding successful');
+            print('🗺️ MAPS: Found place: ${locationName ?? 'Unknown'}');
+            print('🗺️ MAPS: Place ID: ${placeId ?? 'Not available'}');
+            print('🗺️ MAPS: Address: ${addressText ?? 'Not available'}');
+          }
+        } catch (e) {
+          print('🗺️ MAPS ERROR: Reverse geocoding failed: $e');
+        }
+      }
+
+      // If we have a location name but no coordinates, search for the place
+      if (locationName != null &&
+          (latitude == null || longitude == null) &&
+          (placeId == null ||
+              (!placeId.startsWith('0x') &&
+                  !placeId.startsWith('cid:') &&
+                  !placeId.startsWith('ftid:')))) {
+        print(
+            '🗺️ MAPS: Have name but no coordinates, searching for place: $locationName');
+
+        try {
+          final GoogleMapsService mapsService = GoogleMapsService();
+
+          // Extract just the business name to improve search results
+          String searchName = locationName;
+          if (locationName.contains(',')) {
+            searchName = locationName.substring(0, locationName.indexOf(','));
+          }
+
+          print('🗺️ MAPS: Searching with query: "$searchName"');
+          final results = await mapsService.searchPlaces(searchName);
+
+          if (results.isNotEmpty) {
+            final placeResult = results.first;
+
+            latitude = placeResult['latitude'] as double?;
+            longitude = placeResult['longitude'] as double?;
+
+            if (placeId == null) {
+              placeId = placeResult['placeId'] as String?;
+            }
+
+            // Use address if we don't have one yet
+            if (addressText == null) {
+              addressText = placeResult['address'] as String?;
+            }
+
+            print('🗺️ MAPS: Place search successful');
+            print('🗺️ MAPS: Coordinates: $latitude, $longitude');
+            print('🗺️ MAPS: Place ID: ${placeId ?? 'Not available'}');
+            print('🗺️ MAPS: Address: ${addressText ?? 'Not available'}');
+          }
+        } catch (e) {
+          print('🗺️ MAPS ERROR: Place search failed: $e');
+        }
+      }
+
+      // If we still don't have enough information but have a location name,
+      // we'll create a minimal result with just the name
+      if ((latitude == null || longitude == null) && locationName != null) {
+        print('🗺️ MAPS: Creating minimal result with just location name');
+        // Create a basic location with just the name
+        final location = Location(
+          placeId: placeId,
+          latitude: latitude ?? 0.0,
+          longitude: longitude ?? 0.0,
+          address: addressText,
+          displayName: locationName,
+        );
+
+        return {
+          'location': location,
+          'placeName': locationName,
+          'mapsUrl': url,
+        };
+      }
+
+      // If we still don't have enough information, return null
+      if (latitude == null || longitude == null) {
+        print(
+            '🗺️ MAPS ERROR: Could not extract sufficient location data from URL');
+        return null;
+      }
+
+      // Create a location object with the data we've collected
+      final location = Location(
+        placeId: placeId,
+        latitude: latitude,
+        longitude: longitude,
+        address: addressText,
+        displayName: locationName ?? 'Shared Location',
+      );
+
+      print('🗺️ MAPS: Successfully created location object');
+      print('🗺️ MAPS: Location name: ${location.displayName}');
+      print(
+          '🗺️ MAPS: Coordinates: ${location.latitude}, ${location.longitude}');
+      print('🗺️ MAPS: Address: ${location.address ?? 'Not available'}');
+      print('🗺️ MAPS: Place ID: ${location.placeId ?? 'Not available'}');
+
+      return {
+        'location': location,
+        'placeName': locationName ?? 'Shared Location',
+        'mapsUrl': url,
+      };
+    } catch (e) {
+      print('🗺️ MAPS ERROR: Error processing Maps URL: $e');
+      print(e.toString());
+      return null;
     }
-    return false;
+  }
+
+  // Fill the form fields with the location data from Maps
+  void _fillFormWithMapData(
+      Location location, String placeName, String mapsUrl) {
+    // Only autofill if we have a first experience card
+    if (_experienceCards.isEmpty) return;
+
+    // Get the first experience
+    final experienceCard = _experienceCards.first;
+    final formController = experienceCard.formKey.currentState;
+
+    if (formController != null) {
+      // Set location
+      experienceCard.location = location;
+
+      // Update the form fields
+      experienceCard.locationController.text = placeName;
+
+      // Check if we have a category to autofill
+      if (experienceCard.categoryController.text.isEmpty) {
+        // Default to "Attraction" or other appropriate category
+        experienceCard.categoryController.text =
+            ExperienceType.attraction.displayName;
+      }
+    }
+  }
+
+  /// Build a preview widget for a Google Maps URL
+  Widget _buildMapsPreview(String url) {
+    // Create a stable key for the FutureBuilder to prevent unnecessary rebuilds
+    final String urlKey = url.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '_');
+
+    // Try to extract location name from URL for fallback display
+    String fallbackPlaceName = _extractLocationNameFromMapsUrl(url);
+
+    print("🗺️ MAPS PREVIEW: Starting preview generation for URL: $url");
+    print(
+        "🗺️ MAPS PREVIEW: Extracted fallback place name: $fallbackPlaceName");
+
+    // Get or create the future - prevents reloading when the experience card is expanded/collapsed
+    if (!_yelpPreviewFutures.containsKey(url)) {
+      print("🗺️ MAPS PREVIEW: Creating new future for URL: $url");
+      _yelpPreviewFutures[url] = _getLocationFromMapsUrl(url);
+    } else {
+      print("🗺️ MAPS PREVIEW: Using cached future for URL: $url");
+    }
+
+    return FutureBuilder<Map<String, dynamic>?>(
+      key: ValueKey('maps_preview_$urlKey'),
+      future: _yelpPreviewFutures[url],
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          print("🗺️ MAPS PREVIEW: Loading state - waiting for data");
+          return _buildMapsLoadingPreview();
+        }
+
+        // If we have data, build the complete preview
+        if (snapshot.data != null) {
+          final data = snapshot.data!;
+          final location = data['location'] as Location;
+          final placeName = data['placeName'] as String;
+          final mapsUrl = data['mapsUrl'] as String;
+
+          print("🗺️ MAPS PREVIEW: Success! Building detailed preview");
+          print("🗺️ MAPS PREVIEW: Place name: $placeName");
+          print(
+              "🗺️ MAPS PREVIEW: Location data: lat=${location.latitude}, lng=${location.longitude}");
+          print("🗺️ MAPS PREVIEW: Address: ${location.address}");
+
+          return _buildMapsDetailedPreview(location, placeName, mapsUrl);
+        }
+
+        // If snapshot has error, log it
+        if (snapshot.hasError) {
+          print("🗺️ MAPS PREVIEW ERROR: ${snapshot.error}");
+          print("🗺️ MAPS PREVIEW: Using fallback preview due to error");
+        } else {
+          print("🗺️ MAPS PREVIEW: No data received, using fallback preview");
+        }
+
+        // If we have an error or no data, build a fallback preview
+        return _buildMapsFallbackPreview(url, fallbackPlaceName);
+      },
+    );
+  }
+
+  // Extract a location name from a Google Maps URL
+  String _extractLocationNameFromMapsUrl(String url) {
+    try {
+      String locationName = "Shared Location";
+
+      // Try to extract a place name from query parameter
+      final Uri uri = Uri.parse(url);
+      final queryParams = uri.queryParameters;
+
+      if (queryParams.containsKey('q')) {
+        final query = queryParams['q']!;
+        if (query.isNotEmpty && !_containsOnlyCoordinates(query)) {
+          locationName = query;
+        }
+      }
+
+      return locationName;
+    } catch (e) {
+      return "Shared Location";
+    }
+  }
+
+  // Check if a string contains only coordinates
+  bool _containsOnlyCoordinates(String text) {
+    // Pattern for latitude,longitude format
+    RegExp coordPattern = RegExp(r'^-?\d+\.\d+,-?\d+\.\d+$');
+    return coordPattern.hasMatch(text);
+  }
+
+  // Loading state for Maps preview
+  Widget _buildMapsLoadingPreview() {
+    return Card(
+      margin: EdgeInsets.zero,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      child: Container(
+        height: 350,
+        width: double.infinity,
+        decoration: BoxDecoration(
+          color: Colors.grey[200],
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            CircularProgressIndicator(color: Colors.blue),
+            SizedBox(height: 16),
+            Text(
+              'Loading location details...',
+              style: TextStyle(
+                fontSize: 16,
+                color: Colors.grey[700],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // Detailed preview when we have location data for Maps
+  Widget _buildMapsDetailedPreview(
+      Location location, String placeName, String mapsUrl) {
+    print('🗺️ PREVIEW: Building detailed Maps preview');
+    print('🗺️ PREVIEW: Place name: "$placeName"');
+    print(
+        '🗺️ PREVIEW: Location - lat: ${location.latitude}, lng: ${location.longitude}');
+    print('🗺️ PREVIEW: Address: ${location.address}');
+    print('🗺️ PREVIEW: Maps URL: $mapsUrl');
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Preview container with tap functionality
+        InkWell(
+          onTap: () => _launchUrl(mapsUrl),
+          borderRadius: BorderRadius.circular(8),
+          child: Container(
+            width: double.infinity,
+            decoration: BoxDecoration(
+              border: Border.all(color: Colors.grey[300]!),
+              borderRadius: BorderRadius.circular(8),
+              color: Colors.white,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Location photo/map instead of business photo
+                Container(
+                  height: 180,
+                  width: double.infinity,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.only(
+                      topLeft: Radius.circular(8),
+                      topRight: Radius.circular(8),
+                    ),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        // Static map image based on location
+                        _getLocationMapImage(location),
+
+                        // Google Maps branding overlay in top-right corner
+                        Positioned(
+                          top: 8,
+                          right: 8,
+                          child: Container(
+                            padding: EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(4),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.2),
+                                  blurRadius: 4,
+                                  offset: Offset(0, 2),
+                                ),
+                              ],
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.place, color: Colors.red, size: 16),
+                                SizedBox(width: 4),
+                                Text(
+                                  'Google Maps',
+                                  style: TextStyle(
+                                    color: Colors.black87,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+
+                // Location details
+                Padding(
+                  padding: const EdgeInsets.all(12.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Google Maps logo and place name
+                      Row(
+                        children: [
+                          Icon(Icons.place, color: Colors.red, size: 18),
+                          SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              location.displayName ?? placeName,
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 18,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                      SizedBox(height: 8),
+
+                      // Address
+                      if (location.address != null) ...[
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Icon(Icons.location_on,
+                                size: 16, color: Colors.grey[600]),
+                            SizedBox(width: 6),
+                            Expanded(
+                              child: InkWell(
+                                onTap: () async {
+                                  print(
+                                      '🧭 ADDRESS: Opening map for ${location.latitude}, ${location.longitude}');
+                                  // Open map to show location with higher zoom level
+                                  if (location.placeId != null &&
+                                      location.placeId!.isNotEmpty) {
+                                    // Use the Google Maps search API with place_id format
+                                    final placeUrl =
+                                        'https://www.google.com/maps/search/?api=1&query=${location.displayName ?? placeName}&query_place_id=${location.placeId}';
+                                    print(
+                                        '🧭 ADDRESS: Opening URL with placeId: $placeUrl');
+                                    await _launchUrl(placeUrl);
+                                  } else {
+                                    // Fallback to coordinate-based URL with zoom parameter
+                                    final zoom = 18;
+                                    final url =
+                                        'https://www.google.com/maps/search/?api=1&query=${location.latitude},${location.longitude}';
+                                    print(
+                                        '🧭 ADDRESS: Opening URL with coordinates: $url');
+                                    await _launchUrl(url);
+                                  }
+                                },
+                                child: Text(
+                                  location.address!,
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    color: Colors.grey[800],
+                                    decoration: TextDecoration.underline,
+                                  ),
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        SizedBox(height: 8),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+
+        // Buttons below the container
+        SizedBox(height: 4),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                icon: Icon(Icons.directions, size: 18),
+                label: Text('Get Directions'),
+                onPressed: () async {
+                  print(
+                      '🧭 DIRECTIONS: Getting directions for ${location.latitude}, ${location.longitude}');
+                  final GoogleMapsService mapsService = GoogleMapsService();
+                  final url = mapsService.getDirectionsUrl(
+                      location.latitude, location.longitude);
+                  print('🧭 DIRECTIONS: Opening URL: $url');
+                  await _launchUrl(url);
+                },
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.blue,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  // Widget to display a static map image
+  Widget _getLocationMapImage(Location location) {
+    print(
+        '🗺️ MAP: Getting map image for coordinates: ${location.latitude}, ${location.longitude}');
+
+    // Check if we have a placeId to use Google Places API
+    if (location.placeId != null && location.placeId!.isNotEmpty) {
+      print('🗺️ MAP: Using Places API with placeId: ${location.placeId}');
+
+      return FutureBuilder<String?>(
+        future: GoogleMapsService().getPlaceImageUrl(location.placeId!),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return Container(
+              color: Colors.grey[200],
+              child: Center(
+                child: CircularProgressIndicator(),
+              ),
+            );
+          }
+
+          if (snapshot.hasData && snapshot.data != null) {
+            final imageUrl = snapshot.data!;
+            print('🗺️ MAP: Places API returned image URL: $imageUrl');
+
+            return Image.network(
+              imageUrl,
+              fit: BoxFit.cover,
+              errorBuilder: (context, error, stackTrace) {
+                print('🗺️ MAP ERROR: Could not load place image: $error');
+                // Fall back to static map on error
+                return _getStaticMapImage(location);
+              },
+              loadingBuilder: (context, child, loadingProgress) {
+                if (loadingProgress == null) return child;
+                return Container(
+                  color: Colors.grey[200],
+                  child: Center(
+                    child: CircularProgressIndicator(
+                      value: loadingProgress.expectedTotalBytes != null
+                          ? loadingProgress.cumulativeBytesLoaded /
+                              loadingProgress.expectedTotalBytes!
+                          : null,
+                    ),
+                  ),
+                );
+              },
+            );
+          } else {
+            // Fall back to static map if no place image
+            print('🗺️ MAP: No place image found, using static map fallback');
+            return _getStaticMapImage(location);
+          }
+        },
+      );
+    } else {
+      // Fall back to static map if no placeId
+      print('🗺️ MAP: No placeId available, using static map');
+      return _getStaticMapImage(location);
+    }
+  }
+
+  // Helper to get a static map image (fallback)
+  Widget _getStaticMapImage(Location location) {
+    // Get API key
+    final apiKey = GoogleMapsService.apiKey;
+
+    // Fix: Manually construct the URL to avoid any domain typos
+    final mapUrl = 'https://maps.googleapis.com/maps/api/staticmap'
+        '?center=${location.latitude},${location.longitude}'
+        '&zoom=15'
+        '&size=600x300'
+        '&markers=color:red%7C${location.latitude},${location.longitude}'
+        '&key=$apiKey';
+
+    // Debug: Print the full map URL
+    print(
+        '🗺️ MAP DEBUG: Using map URL: ${mapUrl.replaceAll(apiKey, "API_KEY_HIDDEN")}');
+
+    return Image.network(
+      mapUrl,
+      fit: BoxFit.cover,
+      errorBuilder: (context, error, stackTrace) {
+        print('🗺️ MAP ERROR: Could not load map image: $error');
+        return Container(
+          color: Colors.grey[300],
+          child: Center(
+            child: Icon(Icons.map, size: 64, color: Colors.blue),
+          ),
+        );
+      },
+      loadingBuilder: (context, child, loadingProgress) {
+        if (loadingProgress == null) return child;
+        return Container(
+          color: Colors.grey[200],
+          child: Center(
+            child: CircularProgressIndicator(
+              value: loadingProgress.expectedTotalBytes != null
+                  ? loadingProgress.cumulativeBytesLoaded /
+                      loadingProgress.expectedTotalBytes!
+                  : null,
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  // Fallback preview when we don't have location data
+  Widget _buildMapsFallbackPreview(String url, String placeName) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Fallback container with Maps styling
+        InkWell(
+          onTap: () => _launchUrl(url),
+          borderRadius: BorderRadius.circular(8),
+          child: Container(
+            width: double.infinity,
+            decoration: BoxDecoration(
+              border: Border.all(color: Colors.grey[300]!),
+              borderRadius: BorderRadius.circular(8),
+              color: Colors.white,
+            ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                // Google Maps Logo
+                Container(
+                  width: 80,
+                  height: 80,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.grey[300]!),
+                  ),
+                  child: Center(
+                    child: Icon(Icons.map, size: 40, color: Colors.blue),
+                  ),
+                ),
+                SizedBox(height: 16),
+
+                // Place Name
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24.0),
+                  child: Text(
+                    placeName,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                SizedBox(height: 8),
+
+                // Maps URL
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 32.0),
+                  child: Text(
+                    url.length > 30 ? '${url.substring(0, 30)}...' : url,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Colors.grey[600],
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+                SizedBox(height: 24),
+
+                // Small helper text
+                Text(
+                  'Tap to view this location on Google Maps',
+                  style: TextStyle(
+                    color: Colors.grey[700],
+                    fontSize: 14,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+
+        // No action button needed
+        SizedBox(height: 8),
+      ],
+    );
+  }
+
+  // Check if a particular text is special content
+  bool _isTextSpecialContent(String text) {
+    if (!_isValidUrl(text)) return false;
+
+    return text.contains('yelp.com/biz') ||
+        text.contains('yelp.to/') ||
+        text.contains('google.com/maps') ||
+        text.contains('maps.app.goo.gl') ||
+        text.contains('goo.gl/maps');
   }
 }
 
@@ -2676,4 +3778,29 @@ class _InstagramReelEmbedState extends State<InstagramReelEmbed> {
       ],
     );
   }
+}
+
+/// Converts a Google Maps place ID format to the standard format expected by Places API
+String _convertToStandardPlaceId(String originalPlaceId) {
+  // Google Maps URLs use a hexadecimal format like: 0x80dcd7dae0047c6b:0x6a02064e16dc90be
+  // Places API expects a format like: ChIJ...
+
+  if (originalPlaceId.startsWith('0x') && originalPlaceId.contains(':0x')) {
+    print(
+        '🗺️ MAPS: Converting from Google Maps hex format to standard place ID format');
+
+    // If this is a hex encoded place ID, use a different approach
+    // Instead of direct conversion, we'll use the Text Search API to find the place by name
+    // as conversion algorithms between these formats are proprietary to Google
+    return originalPlaceId; // Return original ID, we'll handle it specially above
+  }
+
+  // For CID or FID values, also use search by name approach
+  if (originalPlaceId.startsWith('cid:') ||
+      originalPlaceId.startsWith('ftid:')) {
+    print('🗺️ MAPS: Using CID/FID identifier, will search by name instead');
+    return originalPlaceId; // Return original ID, we'll handle it specially above
+  }
+
+  return originalPlaceId;
 }
