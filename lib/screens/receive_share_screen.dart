@@ -923,11 +923,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           },
         ),
         actions: [
-          IconButton(
-            icon: Icon(Icons.add),
-            onPressed: _addExperienceCard,
-            tooltip: 'Add another experience',
-          ),
+          // Add button - hidden for Yelp content
+          if (!_isYelpContent())
+            IconButton(
+              icon: Icon(Icons.add),
+              onPressed: _addExperienceCard,
+              tooltip: 'Add another experience',
+            ),
         ],
       ),
       body: SafeArea(
@@ -1050,21 +1052,22 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                         isLast:
                                             i == _experienceCards.length - 1),
 
-                                  // Add another experience button
-                                  Padding(
-                                    padding: const EdgeInsets.only(
-                                        top: 4.0, bottom: 16.0),
-                                    child: OutlinedButton.icon(
-                                      icon: Icon(Icons.add),
-                                      label: Text('Add Another Experience'),
-                                      onPressed: _addExperienceCard,
-                                      style: OutlinedButton.styleFrom(
-                                        foregroundColor: Colors.blue,
-                                        padding: EdgeInsets.symmetric(
-                                            vertical: 12, horizontal: 16),
+                                  // Add another experience button - hidden for Yelp content
+                                  if (!_isYelpContent())
+                                    Padding(
+                                      padding: const EdgeInsets.only(
+                                          top: 4.0, bottom: 16.0),
+                                      child: OutlinedButton.icon(
+                                        icon: Icon(Icons.add),
+                                        label: Text('Add Another Experience'),
+                                        onPressed: _addExperienceCard,
+                                        style: OutlinedButton.styleFrom(
+                                          foregroundColor: Colors.blue,
+                                          padding: EdgeInsets.symmetric(
+                                              vertical: 12, horizontal: 16),
+                                        ),
                                       ),
                                     ),
-                                  ),
                                 ],
                               ),
                             ),
@@ -1587,19 +1590,22 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                 onTap: () async {
                                   print(
                                       '🧭 ADDRESS: Opening map for ${location.latitude}, ${location.longitude}');
-                                  // Open map to show location without directions
-                                  final url =
-                                      'https://www.google.com/maps/search/?api=1&query=${location.latitude},${location.longitude}';
+                                  // Open map to show location with higher zoom level
                                   if (location.placeId != null &&
                                       location.placeId!.isNotEmpty) {
-                                    // If we have a placeId, use that for a more precise location
+                                    // Use the Google Maps search API with place_id format
                                     final placeUrl =
-                                        'https://www.google.com/maps/search/?api=1&query=${location.latitude},${location.longitude}&query_place_id=${location.placeId}';
+                                        'https://www.google.com/maps/search/?api=1&query=${location.displayName ?? businessName}&query_place_id=${location.placeId}';
                                     print(
                                         '🧭 ADDRESS: Opening URL with placeId: $placeUrl');
                                     await _launchUrl(placeUrl);
                                   } else {
-                                    print('🧭 ADDRESS: Opening URL: $url');
+                                    // Fallback to coordinate-based URL with zoom parameter
+                                    final zoom = 18;
+                                    final url =
+                                        'https://www.google.com/maps/search/?api=1&query=${location.latitude},${location.longitude}';
+                                    print(
+                                        '🧭 ADDRESS: Opening URL with coordinates: $url');
                                     await _launchUrl(url);
                                   }
                                 },
@@ -2245,6 +2251,35 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         ),
       ),
     );
+  }
+
+  // Check if the current shared content is from Yelp
+  bool _isYelpContent() {
+    if (widget.sharedFiles.isEmpty) return false;
+
+    // Check each shared file
+    for (final file in widget.sharedFiles) {
+      if (file.type == SharedMediaType.text) {
+        String text = file.path;
+        // Check if it's a Yelp URL
+        if (_isValidUrl(text) &&
+            (text.contains('yelp.com/biz') || text.contains('yelp.to/'))) {
+          return true;
+        }
+        // Check for "Check out X on Yelp" format
+        if (text.contains('Check out') && text.contains('yelp.to/')) {
+          return true;
+        }
+        // Check for multi-line text with Yelp URL
+        for (final line in text.split('\n')) {
+          if (_isValidUrl(line) &&
+              (line.contains('yelp.com/biz') || line.contains('yelp.to/'))) {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
   }
 }
 
