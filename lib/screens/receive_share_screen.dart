@@ -3194,6 +3194,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   Widget _getLocationMapImage(Location location) {
     print(
         '🗺️ MAP: Getting map image for coordinates: ${location.latitude}, ${location.longitude}');
+    print(
+        '🗺️ MAP: Location display name: ${location.displayName ?? "Not available"}');
 
     // Check if we have a placeId to use Google Places API
     if (location.placeId != null && location.placeId!.isNotEmpty) {
@@ -3213,7 +3215,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
           if (snapshot.hasData && snapshot.data != null) {
             final imageUrl = snapshot.data!;
-            print('🗺️ MAP: Places API returned image URL: $imageUrl');
+            print(
+                '🗺️ MAP: Places API returned image URL for specific location: $imageUrl');
 
             return Image.network(
               imageUrl,
