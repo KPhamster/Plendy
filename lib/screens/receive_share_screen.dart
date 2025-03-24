@@ -94,6 +94,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   // Snackbar controller to manage notifications
   ScaffoldFeatureController<SnackBar, SnackBarClosedReason>? _activeSnackBar;
 
+  // Add a map to cache futures for Yelp preview data
+  final Map<String, Future<Map<String, dynamic>?>> _yelpPreviewFutures = {};
+
   // Method to show snackbar only if not already showing
   void _showSnackBar(BuildContext context, String message) {
     // Hide any existing snackbar first
@@ -448,12 +451,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
     });
 
-    // Show a success message
-    Future.delayed(Duration(milliseconds: 500), () {
-      if (mounted) {
-        _showSnackBar(context, 'Business details auto-filled from Yelp');
-      }
-    });
+    // Success message removed
   }
 
   // Handle experience save along with shared content
@@ -1367,9 +1365,17 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     print(
         "🔍 YELP PREVIEW: Extracted fallback business name: $fallbackBusinessName");
 
+    // Get or create the future - this is the key change
+    if (!_yelpPreviewFutures.containsKey(url)) {
+      print("🔍 YELP PREVIEW: Creating new future for URL: $url");
+      _yelpPreviewFutures[url] = _getBusinessFromYelpUrl(url);
+    } else {
+      print("🔍 YELP PREVIEW: Using cached future for URL: $url");
+    }
+
     return FutureBuilder<Map<String, dynamic>?>(
       key: ValueKey('yelp_preview_$urlKey'),
-      future: _getBusinessFromYelpUrl(url),
+      future: _yelpPreviewFutures[url],
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           print("🔍 YELP PREVIEW: Loading state - waiting for data");
