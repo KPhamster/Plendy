@@ -491,6 +491,31 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     // Success message removed
   }
 
+  // Helper method to fill the form with Google Maps data
+  void _fillFormWithGoogleMapsData(
+      Location location, String placeName, String websiteUrl) {
+    final String locationKey = '${location.latitude},${location.longitude}';
+
+    // Update UI
+    setState(() {
+      for (var card in _experienceCards) {
+        // Set data in the card
+        print(
+            '🗺️ MAPS: Setting card data - title: ${location.displayName ?? placeName}');
+        card.titleController.text = location.displayName ?? placeName;
+        card.selectedLocation = location;
+        card.websiteUrlController.text =
+            websiteUrl; // Set official website if available
+        card.searchController.text = location.address ?? '';
+      }
+    });
+
+    // Show success message (optional)
+    // ScaffoldMessenger.of(context).showSnackBar(
+    //   SnackBar(content: Text('Location data filled automatically')),
+    // );
+  }
+
   // Handle experience save along with shared content
   Future<void> _saveExperience() async {
     if (!_formKey.currentState!.validate()) {
@@ -2314,6 +2339,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       double? longitude;
       String? placeId;
       String? addressText;
+      String? websiteUrl = '';
 
       // Extract query parameters
       final queryParams = uri.queryParameters;
@@ -2322,7 +2348,58 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       if (queryParams.containsKey('place_id')) {
         placeId = queryParams['place_id'];
         print('🗺️ MAPS: Found place_id in URL: $placeId');
+
+        // Get place details using Google Places API
+        if (placeId != null && placeId.isNotEmpty) {
+          print('🗺️ MAPS: Getting place details for place_id: $placeId');
+          final location = await GoogleMapsService().getPlaceDetails(placeId);
+
+          // Get additional place details including website URL
+          try {
+            // Make API call to get website URL
+            final apiKey = GoogleMapsService.apiKey;
+            final detailsUrl =
+                'https://maps.googleapis.com/maps/api/place/details/json?place_id=$placeId&fields=name,formatted_address,website&key=$apiKey';
+
+            final dio = Dio();
+            final response = await dio.get(detailsUrl);
+
+            if (response.statusCode == 200) {
+              final data = response.data;
+              if (data['status'] == 'OK' && data['result'] != null) {
+                final result = data['result'];
+
+                // Get website if available
+                websiteUrl = result['website'];
+                print('🗺️ MAPS: Found website URL: $websiteUrl');
+
+                // Fill form with the data
+                _fillFormWithGoogleMapsData(
+                    location, location.displayName ?? '', websiteUrl ?? '');
+
+                return {
+                  'location': location,
+                  'name': location.displayName,
+                  'website': websiteUrl,
+                };
+              }
+            }
+          } catch (e) {
+            print('🗺️ MAPS ERROR: Failed to get additional place details: $e');
+          }
+
+          // Even if we couldn't get the website, still fill the form with location data
+          _fillFormWithGoogleMapsData(
+              location, location.displayName ?? '', websiteUrl ?? '');
+
+          return {
+            'location': location,
+            'name': location.displayName,
+          };
+        }
       }
+
+      // Continue with the rest of the existing implementation...
 
       // Try to extract coordinates from query parameter
       if (queryParams.containsKey('q')) {
@@ -2841,10 +2918,46 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       print('🗺️ MAPS: Address: ${location.address ?? 'Not available'}');
       print('🗺️ MAPS: Place ID: ${location.placeId ?? 'Not available'}');
 
+      // Get website URL if we have a place ID
+      String? mapWebsiteUrl = '';
+      if (placeId != null &&
+          placeId.isNotEmpty &&
+          !placeId.startsWith('0x') &&
+          !placeId.startsWith('cid:') &&
+          !placeId.startsWith('ftid:')) {
+        try {
+          // Make API call to get website URL
+          final apiKey = GoogleMapsService.apiKey;
+          final detailsUrl =
+              'https://maps.googleapis.com/maps/api/place/details/json?place_id=$placeId&fields=name,formatted_address,website&key=$apiKey';
+
+          final dio = Dio();
+          final response = await dio.get(detailsUrl);
+
+          if (response.statusCode == 200) {
+            final data = response.data;
+            if (data['status'] == 'OK' && data['result'] != null) {
+              final result = data['result'];
+
+              // Get website if available
+              mapWebsiteUrl = result['website'] ?? '';
+              print('🗺️ MAPS: Found website URL: $mapWebsiteUrl');
+            }
+          }
+        } catch (e) {
+          print('🗺️ MAPS ERROR: Failed to get website URL: $e');
+        }
+      }
+
+      // Fill the form with the data from Google Maps
+      _fillFormWithGoogleMapsData(
+          location, locationName ?? 'Shared Location', mapWebsiteUrl ?? '');
+
       return {
         'location': location,
         'placeName': locationName ?? 'Shared Location',
         'mapsUrl': url,
+        'website': mapWebsiteUrl,
       };
     } catch (e) {
       print('🗺️ MAPS ERROR: Error processing Maps URL: $e');
@@ -2914,14 +3027,17 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           final location = data['location'] as Location;
           final placeName = data['placeName'] as String;
           final mapsUrl = data['mapsUrl'] as String;
+          final website = data['website'] as String? ?? '';
 
           print("🗺️ MAPS PREVIEW: Success! Building detailed preview");
           print("🗺️ MAPS PREVIEW: Place name: $placeName");
           print(
               "🗺️ MAPS PREVIEW: Location data: lat=${location.latitude}, lng=${location.longitude}");
           print("🗺️ MAPS PREVIEW: Address: ${location.address}");
+          print("🗺️ MAPS PREVIEW: Website URL: $website");
 
-          return _buildMapsDetailedPreview(location, placeName, mapsUrl);
+          return _buildMapsDetailedPreview(location, placeName, mapsUrl,
+              websiteUrl: website);
         }
 
         // If snapshot has error, log it
@@ -2999,13 +3115,15 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
   // Detailed preview when we have location data for Maps
   Widget _buildMapsDetailedPreview(
-      Location location, String placeName, String mapsUrl) {
+      Location location, String placeName, String mapsUrl,
+      {String? websiteUrl}) {
     print('🗺️ PREVIEW: Building detailed Maps preview');
     print('🗺️ PREVIEW: Place name: "$placeName"');
     print(
         '🗺️ PREVIEW: Location - lat: ${location.latitude}, lng: ${location.longitude}');
     print('🗺️ PREVIEW: Address: ${location.address}');
     print('🗺️ PREVIEW: Maps URL: $mapsUrl');
+    print('🗺️ PREVIEW: Website URL: ${websiteUrl ?? "Not available"}');
 
     return Column(
       mainAxisSize: MainAxisSize.min,
