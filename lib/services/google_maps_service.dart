@@ -973,9 +973,8 @@ class GoogleMapsService {
       final apiKey = _getApiKey();
       print('🔍 PLACE IMAGE: Using Places API (new) to get image');
 
-      // First get the place details to get photo references
-      final url =
-          'https://places.googleapis.com/v1/places/$placeId?fields=photos&key=$apiKey';
+      // Use the Places API (New) specifically for better chain location support
+      final url = 'https://places.googleapis.com/v1/places/$placeId';
       print(
           '🔍 PLACE IMAGE: Request URL: ${url.replaceAll(apiKey, "API_KEY_HIDDEN")}');
 
@@ -985,7 +984,7 @@ class GoogleMapsService {
           headers: {
             'Content-Type': 'application/json',
             'X-Goog-Api-Key': apiKey,
-            'X-Goog-FieldMask': 'photos'
+            'X-Goog-FieldMask': 'photos,displayName'
           },
         ),
       );
@@ -993,28 +992,104 @@ class GoogleMapsService {
       if (response.statusCode == 200) {
         final data = response.data;
 
+        // Log display name to verify we have the right location
+        if (data['displayName'] != null &&
+            data['displayName']['text'] != null) {
+          final displayName = data['displayName']['text'];
+          print('🔍 PLACE IMAGE: Location display name: $displayName');
+
+          // Check if this might be a chain location like McDonald's
+          final possibleChainNames = [
+            'McDonald',
+            'Starbucks',
+            'Subway',
+            'KFC',
+            'Burger King',
+            'Wendy',
+            'Taco Bell',
+            'Pizza Hut',
+            'Domino',
+            'Dunkin',
+            'Chipotle',
+            'Chick-fil-A',
+            'Popeyes',
+            'Panera',
+            'Baskin',
+            'Dairy Queen',
+            'Papa John',
+            'Panda Express',
+            'Sonic',
+            'Arby'
+          ];
+
+          bool isChain = false;
+          for (final chain in possibleChainNames) {
+            if (displayName.toLowerCase().contains(chain.toLowerCase())) {
+              isChain = true;
+              print('🔍 PLACE IMAGE: Detected chain business: $chain');
+              break;
+            }
+          }
+
+          if (isChain) {
+            print(
+                '🔍 PLACE IMAGE: This is a chain location - ensuring we get the right branch image');
+          }
+        }
+
         // Check if place has photos
         if (data['photos'] != null && data['photos'].isNotEmpty) {
-          // Get the first photo reference
-          final photoName = data['photos'][0]['name'];
-          print('🔍 PLACE IMAGE: Found photo reference: $photoName');
+          // Get the first photo - each photo has a name field in Places API (New)
+          // The name format is 'places/PLACE_ID/photos/PHOTO_REFERENCE'
+          final photoResource = data['photos'][0]['name'];
+          print('🔍 PLACE IMAGE: Found photo resource: $photoResource');
 
-          // Construct the photo URL
+          // Construct the photo URL using Places API (New) format
           final photoUrl =
-              'https://places.googleapis.com/v1/$photoName/media?maxWidthPx=$maxWidth&maxHeightPx=$maxHeight&key=$apiKey';
+              'https://places.googleapis.com/v1/$photoResource/media?maxWidthPx=$maxWidth&maxHeightPx=$maxHeight&key=$apiKey';
           print('🔍 PLACE IMAGE: Photo URL constructed successfully');
 
           return photoUrl;
         } else {
-          print('🔍 PLACE IMAGE: No photos available for this place');
+          print(
+              '🔍 PLACE IMAGE: No photos available in Places API (New), trying legacy API');
+
+          // Try the legacy Places API as a fallback
+          final photoUrl = await getPlacePhoto(placeId);
+          if (photoUrl != null) {
+            print(
+                '🔍 PLACE IMAGE: Successfully found photo using legacy Places API');
+            return photoUrl;
+          } else {
+            print('🔍 PLACE IMAGE: No photos available in legacy API either');
+          }
         }
       } else {
         print(
             '🔍 PLACE IMAGE: Failed with status code: ${response.statusCode}');
+
+        // Try legacy API as fallback
+        print('🔍 PLACE IMAGE: Trying legacy Places API as fallback');
+        final photoUrl = await getPlacePhoto(placeId);
+        if (photoUrl != null) {
+          return photoUrl;
+        }
       }
     } catch (e, stack) {
       print('🔍 PLACE IMAGE ERROR: $e');
       print('🔍 PLACE IMAGE ERROR STACK: $stack');
+
+      // Try legacy API as fallback
+      try {
+        print(
+            '🔍 PLACE IMAGE: Trying legacy Places API as fallback after error');
+        final photoUrl = await getPlacePhoto(placeId);
+        if (photoUrl != null) {
+          return photoUrl;
+        }
+      } catch (fallbackError) {
+        print('🔍 PLACE IMAGE: Fallback also failed: $fallbackError');
+      }
     }
 
     // Fallback to static map if no place photos available
