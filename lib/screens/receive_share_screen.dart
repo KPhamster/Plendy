@@ -1587,12 +1587,21 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                 onTap: () async {
                                   print(
                                       '🧭 ADDRESS: Opening map for ${location.latitude}, ${location.longitude}');
-                                  final GoogleMapsService mapsService =
-                                      GoogleMapsService();
-                                  final url = mapsService.getDirectionsUrl(
-                                      location.latitude, location.longitude);
-                                  print('🧭 ADDRESS: Opening URL: $url');
-                                  await _launchUrl(url);
+                                  // Open map to show location without directions
+                                  final url =
+                                      'https://www.google.com/maps/search/?api=1&query=${location.latitude},${location.longitude}';
+                                  if (location.placeId != null &&
+                                      location.placeId!.isNotEmpty) {
+                                    // If we have a placeId, use that for a more precise location
+                                    final placeUrl =
+                                        'https://www.google.com/maps/search/?api=1&query=${location.latitude},${location.longitude}&query_place_id=${location.placeId}';
+                                    print(
+                                        '🧭 ADDRESS: Opening URL with placeId: $placeUrl');
+                                    await _launchUrl(placeUrl);
+                                  } else {
+                                    print('🧭 ADDRESS: Opening URL: $url');
+                                    await _launchUrl(url);
+                                  }
                                 },
                                 child: Text(
                                   location.address!,
