@@ -1323,7 +1323,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     }
 
     return SizedBox(
-      height: 250,
+      height: 220,
       width: double.infinity,
       child: AnyLinkPreview(
         link: url,
@@ -1482,71 +1482,73 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     print('🏢 PREVIEW: Yelp URL: $yelpUrl');
 
     return Column(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        // Preview container
-        Container(
-          height: 280,
-          width: double.infinity,
-          decoration: BoxDecoration(
-            border: Border.all(color: Colors.grey[300]!),
-            borderRadius: BorderRadius.circular(8),
-            color: Colors.white,
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Business photo instead of map
-              Container(
-                height: 180,
-                width: double.infinity,
-                child: ClipRRect(
-                  borderRadius: BorderRadius.only(
-                    topLeft: Radius.circular(8),
-                    topRight: Radius.circular(8),
-                  ),
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      // Business photo based on location
-                      _getBusinessPhotoWidget(location, businessName),
+        // Preview container with tap functionality
+        InkWell(
+          onTap: () => _openYelpUrl(yelpUrl),
+          borderRadius: BorderRadius.circular(8),
+          child: Container(
+            width: double.infinity,
+            decoration: BoxDecoration(
+              border: Border.all(color: Colors.grey[300]!),
+              borderRadius: BorderRadius.circular(8),
+              color: Colors.white,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Business photo instead of map
+                Container(
+                  height: 180,
+                  width: double.infinity,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.only(
+                      topLeft: Radius.circular(8),
+                      topRight: Radius.circular(8),
+                    ),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        // Business photo based on location
+                        _getBusinessPhotoWidget(location, businessName),
 
-                      // Yelp branding overlay in top-right corner
-                      Positioned(
-                        top: 8,
-                        right: 8,
-                        child: Container(
-                          padding:
-                              EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: Color(0xFFD32323),
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              FaIcon(FontAwesomeIcons.yelp,
-                                  color: Colors.white, size: 12),
-                              SizedBox(width: 4),
-                              Text(
-                                'Yelp',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 12,
+                        // Yelp branding overlay in top-right corner
+                        Positioned(
+                          top: 8,
+                          right: 8,
+                          child: Container(
+                            padding: EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Color(0xFFD32323),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                FaIcon(FontAwesomeIcons.yelp,
+                                    color: Colors.white, size: 12),
+                                SizedBox(width: 4),
+                                Text(
+                                  'Yelp',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 12,
+                                  ),
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
-              ),
 
-              // Business details
-              Expanded(
-                child: Padding(
+                // Business details
+                Padding(
                   padding: const EdgeInsets.all(12.0),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -1619,13 +1621,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                     ],
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
 
         // Buttons below the container
-        SizedBox(height: 8),
+        SizedBox(height: 4),
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
@@ -1968,71 +1970,75 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   // Detailed preview when we don't have location data
   Widget _buildYelpFallbackPreview(String url, String businessName) {
     return Column(
+      mainAxisSize: MainAxisSize.min,
       children: [
         // Fallback container with Yelp styling
-        Container(
-          height: 260,
-          width: double.infinity,
-          decoration: BoxDecoration(
-            border: Border.all(color: Colors.grey[300]!),
-            borderRadius: BorderRadius.circular(8),
-            color: Colors.white,
-          ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              // Yelp Logo
-              Container(
-                width: 80,
-                height: 80,
-                decoration: BoxDecoration(
-                  color: Color(0xFFD32323),
-                  shape: BoxShape.circle,
-                ),
-                child: Center(
-                  child: FaIcon(FontAwesomeIcons.yelp,
-                      size: 40, color: Colors.white),
-                ),
-              ),
-              SizedBox(height: 16),
-
-              // Business Name
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 24.0),
-                child: Text(
-                  businessName,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
+        InkWell(
+          onTap: () => _openYelpUrl(url),
+          borderRadius: BorderRadius.circular(8),
+          child: Container(
+            width: double.infinity,
+            decoration: BoxDecoration(
+              border: Border.all(color: Colors.grey[300]!),
+              borderRadius: BorderRadius.circular(8),
+              color: Colors.white,
+            ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                // Yelp Logo
+                Container(
+                  width: 80,
+                  height: 80,
+                  decoration: BoxDecoration(
+                    color: Color(0xFFD32323),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Center(
+                    child: FaIcon(FontAwesomeIcons.yelp,
+                        size: 40, color: Colors.white),
                   ),
                 ),
-              ),
-              SizedBox(height: 8),
+                SizedBox(height: 16),
 
-              // Yelp URL
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 32.0),
-                child: Text(
-                  url.length > 30 ? '${url.substring(0, 30)}...' : url,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: Colors.grey[600],
-                    fontSize: 12,
+                // Business Name
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24.0),
+                  child: Text(
+                    businessName,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ),
-              ),
-              SizedBox(height: 24),
+                SizedBox(height: 8),
 
-              // Small helper text
-              Text(
-                'Tap to view this business on Yelp',
-                style: TextStyle(
-                  color: Colors.grey[700],
-                  fontSize: 14,
+                // Yelp URL
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 32.0),
+                  child: Text(
+                    url.length > 30 ? '${url.substring(0, 30)}...' : url,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Colors.grey[600],
+                      fontSize: 12,
+                    ),
+                  ),
                 ),
-              ),
-            ],
+                SizedBox(height: 24),
+
+                // Small helper text
+                Text(
+                  'Tap to view this business on Yelp',
+                  style: TextStyle(
+                    color: Colors.grey[700],
+                    fontSize: 14,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
 
@@ -2063,7 +2069,6 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       return InkWell(
         onTap: () => _launchUrl(url),
         child: Container(
-          height: 280,
           width: double.infinity,
           color: Colors.white,
           child: Column(
@@ -2177,7 +2182,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   Widget _buildImagePreview(SharedMediaFile file) {
     try {
       return SizedBox(
-        height: 400,
+        height: 350,
         width: double.infinity,
         child: Image.file(
           File(file.path),
@@ -2198,7 +2203,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
   Widget _buildVideoPreview(SharedMediaFile file) {
     return Container(
-      height: 400,
+      height: 350,
       width: double.infinity,
       color: Colors.black87,
       child: Center(
@@ -2242,7 +2247,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     }
 
     return Container(
-      height: 400,
+      height: 350,
       width: double.infinity,
       color: Colors.grey[200],
       child: Center(
@@ -2579,6 +2584,7 @@ class _InstagramReelEmbedState extends State<InstagramReelEmbed> {
     final double containerHeight = isExpanded ? 1200 : 400;
 
     return Column(
+      mainAxisSize: MainAxisSize.min,
       children: [
         GestureDetector(
           onTap: () {
