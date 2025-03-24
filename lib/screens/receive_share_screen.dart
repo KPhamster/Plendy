@@ -1597,27 +1597,6 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                         ),
                         SizedBox(height: 8),
                       ],
-
-                      // City, State
-                      if (location.city != null || location.state != null) ...[
-                        Row(
-                          children: [
-                            Icon(Icons.location_city,
-                                size: 16, color: Colors.grey[600]),
-                            SizedBox(width: 6),
-                            Text(
-                              [
-                                location.city,
-                                location.state,
-                              ].where((e) => e != null).join(', '),
-                              style: TextStyle(
-                                fontSize: 14,
-                                color: Colors.grey[700],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
                     ],
                   ),
                 ),
@@ -1631,18 +1610,6 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Expanded(
-              child: OutlinedButton.icon(
-                icon:
-                    FaIcon(FontAwesomeIcons.yelp, size: 16, color: Colors.red),
-                label: Text('View on Yelp'),
-                onPressed: () => _openYelpUrl(yelpUrl),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: Colors.red,
-                ),
-              ),
-            ),
-            SizedBox(width: 8),
             Expanded(
               child: OutlinedButton.icon(
                 icon: Icon(Icons.directions, size: 18),
@@ -2042,16 +2009,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           ),
         ),
 
-        // Action button below the container
+        // Action button below the container - removed
         SizedBox(height: 8),
-        OutlinedButton.icon(
-          icon: FaIcon(FontAwesomeIcons.yelp, size: 16, color: Colors.red),
-          label: Text('View on Yelp'),
-          onPressed: () => _openYelpUrl(url),
-          style: OutlinedButton.styleFrom(
-            foregroundColor: Colors.red,
-          ),
-        ),
       ],
     );
   }
