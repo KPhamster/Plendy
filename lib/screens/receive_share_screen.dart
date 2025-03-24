@@ -1583,14 +1583,27 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                 size: 16, color: Colors.grey[600]),
                             SizedBox(width: 6),
                             Expanded(
-                              child: Text(
-                                location.address!,
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  color: Colors.grey[800],
+                              child: InkWell(
+                                onTap: () async {
+                                  print(
+                                      '🧭 ADDRESS: Opening map for ${location.latitude}, ${location.longitude}');
+                                  final GoogleMapsService mapsService =
+                                      GoogleMapsService();
+                                  final url = mapsService.getDirectionsUrl(
+                                      location.latitude, location.longitude);
+                                  print('🧭 ADDRESS: Opening URL: $url');
+                                  await _launchUrl(url);
+                                },
+                                child: Text(
+                                  location.address!,
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    color: Colors.grey[800],
+                                    decoration: TextDecoration.underline,
+                                  ),
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
                                 ),
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
                               ),
                             ),
                           ],
