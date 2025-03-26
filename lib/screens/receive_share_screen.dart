@@ -2356,30 +2356,75 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
           // Get additional place details including website URL
           try {
-            // Make API call to get website URL
+            // Make API call to get website URL and photos
             final apiKey = GoogleMapsService.apiKey;
             final detailsUrl =
-                'https://maps.googleapis.com/maps/api/place/details/json?place_id=$placeId&fields=name,formatted_address,website&key=$apiKey';
+                'https://places.googleapis.com/v1/places/$placeId?fields=name,formattedAddress,website,photos&key=$apiKey';
 
             final dio = Dio();
-            final response = await dio.get(detailsUrl);
+            final response = await dio.get(detailsUrl,
+                options: Options(
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'X-Goog-Api-Key': apiKey,
+                    'X-Goog-FieldMask': 'name,formattedAddress,website,photos'
+                  },
+                ));
 
             if (response.statusCode == 200) {
               final data = response.data;
-              if (data['status'] == 'OK' && data['result'] != null) {
-                final result = data['result'];
-
+              if (data != null) {
                 // Get website if available
-                websiteUrl = result['website'];
+                websiteUrl = data['website'];
                 print('🗺️ MAPS: Found website URL: $websiteUrl');
 
-                // Fill form with the data
-                _fillFormWithGoogleMapsData(
-                    location, location.displayName ?? '', websiteUrl ?? '');
+                // Check if this is a chain location
+                final displayName = data['name']?['text'] ?? '';
+                final possibleChainNames = [
+                  'McDonald',
+                  'Starbucks',
+                  'Subway',
+                  'KFC',
+                  'Burger King',
+                  'Wendy',
+                  'Taco Bell',
+                  'Pizza Hut',
+                  'Domino',
+                  'Dunkin',
+                  'Chipotle',
+                  'Chick-fil-A',
+                  'Popeyes',
+                  'Panera',
+                  'Baskin',
+                  'Dairy Queen',
+                  'Papa John',
+                  'Panda Express',
+                  'Sonic',
+                  'Arby'
+                ];
+
+                bool isChain = false;
+                for (final chain in possibleChainNames) {
+                  if (displayName.toLowerCase().contains(chain.toLowerCase())) {
+                    isChain = true;
+                    print('🗺️ MAPS: Detected chain business: $chain');
+                    break;
+                  }
+                }
+
+                if (isChain) {
+                  print(
+                      '🗺️ MAPS: This is a chain location - ensuring we get the right branch photo');
+                }
+
+                // Fill the form with the data from Google Maps
+                _fillFormWithGoogleMapsData(location,
+                    locationName ?? 'Shared Location', websiteUrl ?? '');
 
                 return {
                   'location': location,
-                  'name': location.displayName,
+                  'placeName': locationName ?? 'Shared Location',
+                  'mapsUrl': url,
                   'website': websiteUrl,
                 };
               }
@@ -2395,6 +2440,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           return {
             'location': location,
             'name': location.displayName,
+            'website': websiteUrl,
           };
         }
       }
@@ -2481,11 +2527,20 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           final dio = Dio();
           dio.options.followRedirects = true;
           dio.options.maxRedirects = 5;
+          dio.options.validateStatus = (status) => status! < 500;
 
+          // Add headers to mimic a browser request
           final response = await dio.get(url,
               options: Options(
                 followRedirects: true,
                 validateStatus: (status) => status! < 500,
+                headers: {
+                  'User-Agent':
+                      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                  'Accept':
+                      'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                  'Accept-Language': 'en-US,en;q=0.5',
+                },
               ));
 
           if (response.statusCode == 200) {
@@ -2902,34 +2957,19 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         return null;
       }
 
-      // Create a location object with the data we've collected
-      final location = Location(
-        placeId: placeId,
-        latitude: latitude,
-        longitude: longitude,
-        address: addressText,
-        displayName: locationName ?? 'Shared Location',
-      );
-
-      print('🗺️ MAPS: Successfully created location object');
-      print('🗺️ MAPS: Location name: ${location.displayName}');
-      print(
-          '🗺️ MAPS: Coordinates: ${location.latitude}, ${location.longitude}');
-      print('🗺️ MAPS: Address: ${location.address ?? 'Not available'}');
-      print('🗺️ MAPS: Place ID: ${location.placeId ?? 'Not available'}');
-
       // Get website URL if we have a place ID
       String? mapWebsiteUrl = '';
+      String? photoUrl = '';
       if (placeId != null &&
           placeId.isNotEmpty &&
           !placeId.startsWith('0x') &&
           !placeId.startsWith('cid:') &&
           !placeId.startsWith('ftid:')) {
         try {
-          // Make API call to get website URL
+          // Make API call to get website URL and photos
           final apiKey = GoogleMapsService.apiKey;
           final detailsUrl =
-              'https://maps.googleapis.com/maps/api/place/details/json?place_id=$placeId&fields=name,formatted_address,website&key=$apiKey';
+              'https://maps.googleapis.com/maps/api/place/details/json?place_id=$placeId&fields=name,formatted_address,website,photos&key=$apiKey';
 
           final dio = Dio();
           final response = await dio.get(detailsUrl);
@@ -2942,16 +2982,52 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               // Get website if available
               mapWebsiteUrl = result['website'] ?? '';
               print('🗺️ MAPS: Found website URL: $mapWebsiteUrl');
+
+              // Get photo if available
+              if (result['photos'] != null &&
+                  (result['photos'] as List).isNotEmpty) {
+                // First try to find a primary/main photo
+                String? photoReference;
+                for (var photo in result['photos']) {
+                  if (photo['is_primary'] == true || photo['is_main'] == true) {
+                    photoReference = photo['photo_reference'];
+                    print('🗺️ MAPS: Found primary photo');
+                    break;
+                  }
+                }
+
+                // If no primary photo found, use the first (most recent) photo
+                if (photoReference == null) {
+                  photoReference = result['photos'][0]['photo_reference'];
+                  print('🗺️ MAPS: Using most recent photo');
+                }
+
+                photoUrl =
+                    'https://maps.googleapis.com/maps/api/place/photo?photo_reference=$photoReference&maxwidth=800&key=$apiKey';
+              }
             }
           }
         } catch (e) {
-          print('🗺️ MAPS ERROR: Failed to get website URL: $e');
+          print('🗺️ MAPS ERROR: Failed to get place details: $e');
         }
       }
 
-      // Fill the form with the data from Google Maps
-      _fillFormWithGoogleMapsData(
-          location, locationName ?? 'Shared Location', mapWebsiteUrl ?? '');
+      // Create a location object with the data we've collected
+      final location = Location(
+        placeId: placeId,
+        latitude: latitude,
+        longitude: longitude,
+        address: addressText,
+        displayName: locationName ?? 'Shared Location',
+        photoUrl: photoUrl,
+      );
+
+      print('🗺️ MAPS: Successfully created location object');
+      print('🗺️ MAPS: Location name: ${location.displayName}');
+      print(
+          '🗺️ MAPS: Coordinates: ${location.latitude}, ${location.longitude}');
+      print('🗺️ MAPS: Address: ${location.address ?? 'Not available'}');
+      print('🗺️ MAPS: Place ID: ${location.placeId ?? 'Not available'}');
 
       return {
         'location': location,
@@ -3142,7 +3218,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Location photo/map instead of business photo
+                // Photo or map preview
                 Container(
                   height: 180,
                   width: double.infinity,
@@ -3154,41 +3230,30 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                     child: Stack(
                       fit: StackFit.expand,
                       children: [
-                        // Static map image based on location
-                        _getLocationMapImage(location),
-
-                        // Google Maps branding overlay in top-right corner
-                        Positioned(
-                          top: 8,
-                          right: 8,
-                          child: Container(
-                            padding: EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 4),
+                        // Use actual photo if available, otherwise fall back to static map
+                        if (location.photoUrl != null)
+                          Image.network(
+                            location.photoUrl!,
+                            fit: BoxFit.cover,
+                            errorBuilder: (context, error, stackTrace) {
+                              print('Error loading photo: $error');
+                              return _getLocationMapImage(location);
+                            },
+                          )
+                        else
+                          _getLocationMapImage(location),
+                        // Gradient overlay
+                        Positioned.fill(
+                          child: DecoratedBox(
                             decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(4),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withOpacity(0.2),
-                                  blurRadius: 4,
-                                  offset: Offset(0, 2),
-                                ),
-                              ],
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(Icons.place, color: Colors.red, size: 16),
-                                SizedBox(width: 4),
-                                Text(
-                                  'Google Maps',
-                                  style: TextStyle(
-                                    color: Colors.black87,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 12,
-                                  ),
-                                ),
-                              ],
+                              gradient: LinearGradient(
+                                begin: Alignment.topCenter,
+                                end: Alignment.bottomCenter,
+                                colors: [
+                                  Colors.transparent,
+                                  Colors.black.withOpacity(0.3),
+                                ],
+                              ),
                             ),
                           ),
                         ),
