@@ -2681,11 +2681,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
           // Skip to the search by name approach
           if (locationName != null) {
+            // Use the full location name including address for accurate search
             String searchName = locationName;
-            // Extract just the business name to improve search results
-            if (locationName.contains(',')) {
-              searchName = locationName.substring(0, locationName.indexOf(','));
-            }
 
             print('🗺️ MAPS: Searching for location by name: "$searchName"');
             try {
@@ -2693,7 +2690,36 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               final results = await mapsService.searchPlaces(searchName);
 
               if (results.isNotEmpty) {
-                final placeResult = results.first;
+                // Try to find exact match based on the address if we have multiple results
+                Map<String, dynamic>? exactMatch;
+
+                // Extract address part from full location name (after the first comma)
+                String? addressPart;
+                if (locationName.contains(',')) {
+                  addressPart = locationName
+                      .substring(locationName.indexOf(',') + 1)
+                      .trim();
+                  print('🗺️ MAPS: Looking for address match: "$addressPart"');
+                }
+
+                // If we have an address part, look for an exact match
+                if (addressPart != null && results.length > 1) {
+                  for (var place in results) {
+                    String? placeAddress = place['address'] as String?;
+                    if (placeAddress != null) {
+                      // Check if this address matches the address part from our location name
+                      if (placeAddress.contains(addressPart)) {
+                        exactMatch = place;
+                        print(
+                            '🗺️ MAPS: Found exact address match: $placeAddress');
+                        break;
+                      }
+                    }
+                  }
+                }
+
+                // Use the exact match if found, otherwise use the first result
+                final placeResult = exactMatch ?? results.first;
 
                 // Update with found data
                 latitude = placeResult['latitude'] as double?;
@@ -2792,18 +2818,41 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         try {
           final GoogleMapsService mapsService = GoogleMapsService();
 
-          // Extract just the business name to improve search results
+          // Use the full name and address for accurate search
           String searchName = locationName;
-          if (locationName.contains(',')) {
-            searchName = locationName.substring(0, locationName.indexOf(','));
-          }
 
           print('🗺️ MAPS: Searching for location with query: "$searchName"');
           final results = await mapsService.searchPlaces(searchName);
 
           if (results.isNotEmpty) {
-            // Get the first result which is likely the most relevant
-            final placeResult = results.first;
+            // Try to find exact match based on the address if we have multiple results
+            Map<String, dynamic>? exactMatch;
+
+            // Extract address part from full location name (after the first comma)
+            String? addressPart;
+            if (locationName.contains(',')) {
+              addressPart =
+                  locationName.substring(locationName.indexOf(',') + 1).trim();
+              print('🗺️ MAPS: Looking for address match: "$addressPart"');
+            }
+
+            // If we have an address part, look for an exact match
+            if (addressPart != null && results.length > 1) {
+              for (var place in results) {
+                String? placeAddress = place['address'] as String?;
+                if (placeAddress != null) {
+                  // Check if this address matches the address part from our location name
+                  if (placeAddress.contains(addressPart)) {
+                    exactMatch = place;
+                    print('🗺️ MAPS: Found exact address match: $placeAddress');
+                    break;
+                  }
+                }
+              }
+            }
+
+            // Use the exact match if found, otherwise use the first result
+            final placeResult = exactMatch ?? results.first;
 
             // Update with found data
             latitude = placeResult['latitude'] as double?;
