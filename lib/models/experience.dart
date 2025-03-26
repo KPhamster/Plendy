@@ -64,6 +64,7 @@ class Location {
   final String? zipCode;
   final String? displayName; // Business or place display name
   final String? placeId; // Google Places API place ID
+  final String? photoUrl; // URL to the place's photo
 
   Location({
     required this.latitude,
@@ -75,6 +76,7 @@ class Location {
     this.zipCode,
     this.displayName,
     this.placeId,
+    this.photoUrl,
   });
 
   factory Location.fromMap(Map<String, dynamic> map) {
@@ -88,6 +90,7 @@ class Location {
       zipCode: map['zipCode'],
       displayName: map['displayName'] ?? map['name'],
       placeId: map['placeId'],
+      photoUrl: map['photoUrl'],
     );
   }
 
@@ -102,6 +105,7 @@ class Location {
       'zipCode': zipCode,
       'displayName': displayName,
       'placeId': placeId,
+      'photoUrl': photoUrl,
     };
   }
 
