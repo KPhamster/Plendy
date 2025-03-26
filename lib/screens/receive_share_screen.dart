@@ -2521,150 +2521,274 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         // For shortened URLs, we need to follow redirects
         print('🗺️ MAPS: Shortened URL detected, following redirects...');
 
-        // Improved handling of shortened URLs
-        try {
-          // Use Dio for better redirect handling
-          final dio = Dio();
-          dio.options.followRedirects = true;
-          dio.options.maxRedirects = 5;
-          dio.options.validateStatus = (status) => status! < 500;
+        // Improved handling of shortened URLs with retry logic
+        bool success = false;
+        int retryCount = 0;
+        const int maxRetries = 3;
 
-          // Add headers to mimic a browser request
-          final response = await dio.get(url,
+        while (!success && retryCount < maxRetries) {
+          try {
+            // Use Dio for better redirect handling
+            final dio = Dio();
+            dio.options.followRedirects = true;
+            dio.options.maxRedirects = 5;
+            dio.options.validateStatus = (status) => status! < 500;
+            dio.options.connectTimeout = const Duration(seconds: 10);
+            dio.options.receiveTimeout = const Duration(seconds: 10);
+
+            // Enhanced headers to better mimic a real browser
+            final response = await dio.get(
+              url,
               options: Options(
                 followRedirects: true,
                 validateStatus: (status) => status! < 500,
                 headers: {
                   'User-Agent':
-                      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                   'Accept':
-                      'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                  'Accept-Language': 'en-US,en;q=0.5',
+                      'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+                  'Accept-Language': 'en-US,en;q=0.9',
+                  'Accept-Encoding': 'gzip, deflate, br',
+                  'Connection': 'keep-alive',
+                  'Cache-Control': 'max-age=0',
+                  'Referer': 'https://www.google.com/',
+                  'Sec-Ch-Ua': '"Not_A Brand";v="8", "Chromium";v="120"',
+                  'Sec-Ch-Ua-Mobile': '?0',
+                  'Sec-Ch-Ua-Platform': '"Windows"',
+                  'Sec-Fetch-Dest': 'document',
+                  'Sec-Fetch-Mode': 'navigate',
+                  'Sec-Fetch-Site': 'cross-site',
+                  'Upgrade-Insecure-Requests': '1',
                 },
-              ));
+              ),
+            );
 
-          if (response.statusCode == 200) {
-            // Successfully resolved URL, now parse it
-            final resolvedUrl = response.realUri.toString();
-            print('🗺️ MAPS: Following URL after redirects: $resolvedUrl');
+            // Check if we got a successful response
+            if (response.statusCode == 200) {
+              success = true;
+              // Successfully resolved URL, now parse it
+              final resolvedUrl = response.realUri.toString();
+              print('🗺️ MAPS: Following URL after redirects: $resolvedUrl');
 
-            // Check if this is a place URL (contains "/place/" in path)
-            bool isPlaceUrl = resolvedUrl.contains('/place/');
-            if (isPlaceUrl) {
-              print('🗺️ MAPS: Detected place URL pattern');
-
-              // Extract place name from the URL path for places
-              // Format: /maps/place/PLACE_NAME/data=...
-              RegExp placeNameRegex = RegExp(r'/place/([^/]+)/');
-              Match? placeMatch = placeNameRegex.firstMatch(resolvedUrl);
-
-              if (placeMatch != null && placeMatch.groupCount >= 1) {
-                String encodedPlaceName = placeMatch.group(1)!;
-                // Decode URL-encoded place name
-                locationName =
-                    Uri.decodeComponent(encodedPlaceName.replaceAll('+', ' '));
+              // Use a direct second request if needed for better results
+              if (!resolvedUrl.contains('/maps/place/') &&
+                  !resolvedUrl.contains('@')) {
                 print(
-                    '🗺️ MAPS: Extracted place name from URL path: $locationName');
-
-                // Extract place ID if present in the URL
-                RegExp placeIdRegex = RegExp(r'!1s([a-zA-Z0-9:_-]+)');
-                Match? placeIdMatch = placeIdRegex.firstMatch(resolvedUrl);
-
-                if (placeIdMatch != null && placeIdMatch.groupCount >= 1) {
-                  placeId = placeIdMatch.group(1);
-                  print(
-                      '🗺️ MAPS: Extracted place ID from resolved URL: $placeId');
-                }
-
-                // Also look for CID and FID values which can be useful for finding places
-                RegExp cidRegex = RegExp(r'cid=(\d+)');
-                Match? cidMatch = cidRegex.firstMatch(resolvedUrl);
-
-                if (cidMatch != null && cidMatch.groupCount >= 1) {
-                  String cid = cidMatch.group(1)!;
-                  print('🗺️ MAPS: Found CID in resolved URL: $cid');
-
-                  // Store CID in place ID if we don't have one yet
-                  if (placeId == null || placeId.isEmpty) {
-                    placeId = 'cid:$cid';
-                  }
-                }
-
-                // Check for FID (another ID format in some Google Maps URLs)
-                RegExp fidRegex = RegExp(r'ftid=([a-zA-Z0-9-]+)');
-                Match? fidMatch = fidRegex.firstMatch(resolvedUrl);
-
-                if (fidMatch != null && fidMatch.groupCount >= 1) {
-                  String fid = fidMatch.group(1)!;
-                  print('🗺️ MAPS: Found FID in resolved URL: $fid');
-
-                  // Store FID in place ID if we don't have one yet
-                  if (placeId == null || placeId.isEmpty) {
-                    placeId = 'ftid:$fid';
-                  }
-                }
-              }
-            }
-
-            // Check if resolved URL contains coordinates in standard format
-            final coordsRegex = RegExp(r'@(-?\d+\.\d+),(-?\d+\.\d+)');
-            final match = coordsRegex.firstMatch(resolvedUrl);
-
-            if (match != null && match.groupCount >= 2) {
-              latitude = double.parse(match.group(1)!);
-              longitude = double.parse(match.group(2)!);
-              print(
-                  '🗺️ MAPS: Extracted coordinates from resolved URL: $latitude, $longitude');
-            } else {
-              // Try to extract from query parameters
-              final uri = Uri.parse(resolvedUrl);
-
-              // Check for data parameter that might contain coordinates
-              String? dataParam = uri.path.contains('data=')
-                  ? uri.path.substring(uri.path.indexOf('data='))
-                  : uri.queryParameters['data'];
-
-              if (dataParam != null) {
-                print('🗺️ MAPS: Found data parameter: $dataParam');
-
-                // Try to extract place ID from data parameter
-                RegExp dataPlaceIdRegex = RegExp(r'!1s([a-zA-Z0-9:_-]+)');
-                Match? dataPlaceIdMatch =
-                    dataPlaceIdRegex.firstMatch(dataParam);
-
-                if (dataPlaceIdMatch != null &&
-                    dataPlaceIdMatch.groupCount >= 1) {
-                  placeId = dataPlaceIdMatch.group(1);
-                  print(
-                      '🗺️ MAPS: Extracted place ID from data parameter: $placeId');
-                }
-              }
-
-              if (uri.queryParameters.containsKey('q')) {
-                final query = uri.queryParameters['q']!;
-                print(
-                    '🗺️ MAPS: Found query parameter in resolved URL: $query');
-
-                if (_containsOnlyCoordinates(query)) {
-                  final parts = query.split(',');
-                  if (parts.length == 2) {
-                    latitude = double.parse(parts[0]);
-                    longitude = double.parse(parts[1]);
+                    '🗺️ MAPS: Resolved URL doesn\'t contain place info, trying secondary approach...');
+                // Make a second request with the resolved URL
+                final secondResponse = await dio.get(
+                  resolvedUrl,
+                  options: Options(
+                    headers: {
+                      'User-Agent':
+                          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                      'Accept':
+                          'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+                      'Accept-Language': 'en-US,en;q=0.9',
+                    },
+                  ),
+                );
+                if (secondResponse.statusCode == 200) {
+                  final html = secondResponse.data.toString();
+                  // Try to extract place data from the HTML
+                  RegExp placeNameRegex =
+                      RegExp(r'<meta property="og:title" content="([^"]+)"');
+                  Match? placeNameMatch = placeNameRegex.firstMatch(html);
+                  if (placeNameMatch != null &&
+                      placeNameMatch.groupCount >= 1) {
+                    locationName = placeNameMatch.group(1)!;
                     print(
-                        '🗺️ MAPS: Extracted coordinates from query: $latitude, $longitude');
+                        '🗺️ MAPS: Extracted place name from HTML: $locationName');
                   }
-                } else if (locationName == null) {
-                  // Query might be a place name
-                  locationName = query;
                 }
               }
+
+              // Check if this is a place URL (contains "/place/" in path)
+              bool isPlaceUrl = resolvedUrl.contains('/place/');
+              if (isPlaceUrl) {
+                print('🗺️ MAPS: Detected place URL pattern');
+
+                // Extract place name from the URL path for places
+                // Format: /maps/place/PLACE_NAME/data=...
+                RegExp placeNameRegex = RegExp(r'/place/([^/]+)/');
+                Match? placeMatch = placeNameRegex.firstMatch(resolvedUrl);
+
+                if (placeMatch != null && placeMatch.groupCount >= 1) {
+                  String encodedPlaceName = placeMatch.group(1)!;
+                  // Decode URL-encoded place name
+                  locationName = Uri.decodeComponent(
+                      encodedPlaceName.replaceAll('+', ' '));
+                  print(
+                      '🗺️ MAPS: Extracted place name from URL path: $locationName');
+
+                  // Extract place ID if present in the URL
+                  RegExp placeIdRegex = RegExp(r'!1s([a-zA-Z0-9:_-]+)');
+                  Match? placeIdMatch = placeIdRegex.firstMatch(resolvedUrl);
+
+                  if (placeIdMatch != null && placeIdMatch.groupCount >= 1) {
+                    placeId = placeIdMatch.group(1);
+                    print(
+                        '🗺️ MAPS: Extracted place ID from resolved URL: $placeId');
+                  }
+
+                  // Also look for CID and FID values which can be useful for finding places
+                  RegExp cidRegex = RegExp(r'cid=(\d+)');
+                  Match? cidMatch = cidRegex.firstMatch(resolvedUrl);
+
+                  if (cidMatch != null && cidMatch.groupCount >= 1) {
+                    String cid = cidMatch.group(1)!;
+                    print('🗺️ MAPS: Found CID in resolved URL: $cid');
+
+                    // Store CID in place ID if we don't have one yet
+                    if (placeId == null || placeId.isEmpty) {
+                      placeId = 'cid:$cid';
+                    }
+                  }
+
+                  // Check for FID (another ID format in some Google Maps URLs)
+                  RegExp fidRegex = RegExp(r'ftid=([a-zA-Z0-9-]+)');
+                  Match? fidMatch = fidRegex.firstMatch(resolvedUrl);
+
+                  if (fidMatch != null && fidMatch.groupCount >= 1) {
+                    String fid = fidMatch.group(1)!;
+                    print('🗺️ MAPS: Found FID in resolved URL: $fid');
+
+                    // Store FID in place ID if we don't have one yet
+                    if (placeId == null || placeId.isEmpty) {
+                      placeId = 'ftid:$fid';
+                    }
+                  }
+                }
+              }
+
+              // Check if resolved URL contains coordinates in standard format
+              final coordsRegex = RegExp(r'@(-?\d+\.\d+),(-?\d+\.\d+)');
+              final match = coordsRegex.firstMatch(resolvedUrl);
+
+              if (match != null && match.groupCount >= 2) {
+                latitude = double.parse(match.group(1)!);
+                longitude = double.parse(match.group(2)!);
+                print(
+                    '🗺️ MAPS: Extracted coordinates from resolved URL: $latitude, $longitude');
+              } else {
+                // Try to extract from query parameters
+                final uri = Uri.parse(resolvedUrl);
+
+                // Check for data parameter that might contain coordinates
+                String? dataParam = uri.path.contains('data=')
+                    ? uri.path.substring(uri.path.indexOf('data='))
+                    : uri.queryParameters['data'];
+
+                if (dataParam != null) {
+                  print('🗺️ MAPS: Found data parameter: $dataParam');
+
+                  // Try to extract place ID from data parameter
+                  RegExp dataPlaceIdRegex = RegExp(r'!1s([a-zA-Z0-9:_-]+)');
+                  Match? dataPlaceIdMatch =
+                      dataPlaceIdRegex.firstMatch(dataParam);
+
+                  if (dataPlaceIdMatch != null &&
+                      dataPlaceIdMatch.groupCount >= 1) {
+                    placeId = dataPlaceIdMatch.group(1);
+                    print(
+                        '🗺️ MAPS: Extracted place ID from data parameter: $placeId');
+                  }
+                }
+
+                if (uri.queryParameters.containsKey('q')) {
+                  final query = uri.queryParameters['q']!;
+                  print(
+                      '🗺️ MAPS: Found query parameter in resolved URL: $query');
+
+                  if (_containsOnlyCoordinates(query)) {
+                    final parts = query.split(',');
+                    if (parts.length == 2) {
+                      latitude = double.parse(parts[0]);
+                      longitude = double.parse(parts[1]);
+                      print(
+                          '🗺️ MAPS: Extracted coordinates from query: $latitude, $longitude');
+                    }
+                  } else if (locationName == null) {
+                    // Query might be a place name
+                    locationName = query;
+                  }
+                }
+              }
+            } else {
+              print(
+                  '🗺️ MAPS ERROR: Failed to follow redirect, status code: ${response.statusCode}');
             }
-          } else {
-            print(
-                '🗺️ MAPS ERROR: Failed to follow redirect, status code: ${response.statusCode}');
+          } catch (e) {
+            print('🗺️ MAPS ERROR: Failed to follow redirect: $e');
           }
-        } catch (e) {
-          print('🗺️ MAPS ERROR: Failed to follow redirect: $e');
+
+          // Increment retry counter if we failed
+          if (!success) {
+            retryCount++;
+            print('🗺️ MAPS: Retry attempt $retryCount of $maxRetries');
+            // Add a small delay before retrying
+            await Future.delayed(Duration(milliseconds: 500 * retryCount));
+          }
+        }
+
+        // If all retries failed, log a final error
+        if (!success) {
+          print('🗺️ MAPS ERROR: All $maxRetries redirect attempts failed');
+
+          // Fallback: Try direct extraction of data from shortened URL
+          print('🗺️ MAPS: Trying fallback method - direct extraction');
+
+          // If we have a shortened URL, we can try to extract the ID part
+          // Most goo.gl/maps URLs use a format where the last part is an identifier
+          try {
+            final uri = Uri.parse(url);
+            final pathSegments = uri.pathSegments;
+
+            if (pathSegments.isNotEmpty) {
+              // Get the last segment which is often the identifier
+              final idPart = pathSegments.last;
+              print('🗺️ MAPS: Extracted ID part from shortened URL: $idPart');
+
+              // If we have a location name from earlier attempts, use it
+              if (locationName != null) {
+                print(
+                    '🗺️ MAPS: Using previously extracted location name: $locationName');
+
+                // Use the place search function as a fallback
+                final GoogleMapsService mapsService = GoogleMapsService();
+                final results = await mapsService.searchPlaces(locationName);
+
+                if (results.isNotEmpty) {
+                  final placeResult = results.first;
+
+                  // Update with found data
+                  latitude = placeResult['latitude'] as double?;
+                  longitude = placeResult['longitude'] as double?;
+                  placeId = placeResult['placeId'] as String?;
+
+                  // Use address if we don't have one yet
+                  if (addressText == null) {
+                    addressText = placeResult['address'] as String?;
+                  }
+
+                  print('🗺️ MAPS: Fallback method successful!');
+                  print('🗺️ MAPS: Updated place ID: $placeId');
+                  print('🗺️ MAPS: Coordinates: $latitude, $longitude');
+                  print('🗺️ MAPS: Address: ${addressText ?? 'Not available'}');
+
+                  // If fallback worked, mark as success
+                  success = true;
+                } else {
+                  print('🗺️ MAPS: Fallback search returned no results');
+                }
+              } else {
+                print(
+                    '🗺️ MAPS: No location name available for fallback search');
+              }
+            }
+          } catch (e) {
+            print('🗺️ MAPS ERROR: Fallback method also failed: $e');
+          }
         }
       }
 
