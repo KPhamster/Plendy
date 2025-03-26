@@ -94,7 +94,7 @@ class GoogleMapsService {
       try {
         print("🔎 PLACES SEARCH: Trying method 1 - Places Autocomplete API V1");
 
-        // Prepare request body
+        // Prepare request body with structured search
         Map<String, dynamic> requestBody = {
           "input": query,
           "locationBias": {
@@ -102,26 +102,40 @@ class GoogleMapsService {
               "center": {
                 "latitude": position?.latitude ??
                     33.6846, // Fallback to Southern California
-                "longitude":
-                    position?.longitude ?? -117.8265 // as a default location
+                "longitude": position?.longitude ?? -117.8265
               },
               "radius": 50000.0 // 50km radius
             }
-          }
+          },
+          "inputType": "textQuery",
+          "fields": [
+            "places.displayName",
+            "places.formattedAddress",
+            "places.location",
+            "places.types",
+            "places.primaryType",
+            "places.primaryTypeDisplayName",
+            "places.nationalPhoneNumber",
+            "places.websiteUri",
+            "places.rating",
+            "places.userRatingCount",
+            "places.regularOpeningHours",
+            "places.priceLevel"
+          ]
         };
 
         print("🔎 PLACES SEARCH: Request body: ${jsonEncode(requestBody)}");
 
         // Call Google Places Autocomplete API
         final response = await _dio.post(
-          'https://places.googleapis.com/v1/places:autocomplete',
+          'https://places.googleapis.com/v1/places:searchText',
           data: requestBody,
           options: Options(
             headers: {
               'Content-Type': 'application/json',
               'X-Goog-Api-Key': apiKey,
               'X-Goog-FieldMask':
-                  'suggestions.placePrediction.place,suggestions.placePrediction.placeId,suggestions.placePrediction.text'
+                  'places.id,places.displayName,places.formattedAddress,places.location,places.types,places.primaryType,places.primaryTypeDisplayName,places.nationalPhoneNumber,places.websiteUri,places.rating,places.userRatingCount,places.regularOpeningHours,places.priceLevel'
             },
           ),
         );
@@ -134,17 +148,50 @@ class GoogleMapsService {
 
           List<Map<String, dynamic>> results = [];
 
-          if (data['suggestions'] != null) {
-            final suggestions = data['suggestions'] as List;
-            print("🔎 PLACES SEARCH: Found ${suggestions.length} suggestions");
+          if (data['places'] != null) {
+            final places = data['places'] as List;
+            print("🔎 PLACES SEARCH: Found ${places.length} places");
 
-            for (var suggestion in suggestions) {
-              if (suggestion['placePrediction'] != null) {
-                final placePrediction = suggestion['placePrediction'];
+            for (var place in places) {
+              // Extract place details with address verification
+              String? placeName = place['displayName']?['text'];
+              String? address = place['formattedAddress'];
+              String? phone = place['nationalPhoneNumber'];
+              String? website = place['websiteUri'];
+              double? rating = place['rating']?.toDouble();
+              int? userRatingCount = place['userRatingCount'];
+              String? primaryType = place['primaryType'];
+              String? primaryTypeDisplayName = place['primaryTypeDisplayName'];
+              List<String>? types = (place['types'] as List?)?.cast<String>();
+              Map<String, dynamic>? openingHours = place['regularOpeningHours'];
+              int? priceLevel = place['priceLevel'];
+
+              // Get location coordinates
+              Map<String, dynamic>? location = place['location'];
+              double? lat = location?['latitude'];
+              double? lng = location?['longitude'];
+
+              // Only add places that have both name and address
+              if (placeName != null &&
+                  address != null &&
+                  lat != null &&
+                  lng != null) {
                 results.add({
-                  'placeId': placePrediction['placeId'] ?? '',
-                  'description': placePrediction['text']?['text'] ?? '',
-                  'place': placePrediction['place']
+                  'placeId': place['id'] ?? '',
+                  'description': placeName,
+                  'address': address,
+                  'phone': phone,
+                  'website': website,
+                  'rating': rating,
+                  'userRatingCount': userRatingCount,
+                  'primaryType': primaryType,
+                  'primaryTypeDisplayName': primaryTypeDisplayName,
+                  'types': types,
+                  'openingHours': openingHours,
+                  'priceLevel': priceLevel,
+                  'latitude': lat,
+                  'longitude': lng,
+                  'place': place
                 });
               }
             }
@@ -152,22 +199,22 @@ class GoogleMapsService {
 
           if (results.isNotEmpty) {
             print(
-                "🔎 PLACES SEARCH: Found ${results.length} results using Places Autocomplete API");
+                "🔎 PLACES SEARCH: Found ${results.length} verified results using Places API");
             for (int i = 0; i < min(3, results.length); i++) {
               print(
-                  "🔎 PLACES SEARCH: Result ${i + 1}: '${results[i]['description']}' (${results[i]['placeId']})");
+                  "🔎 PLACES SEARCH: Result ${i + 1}: '${results[i]['description']}' at '${results[i]['address']}'");
             }
             return results;
           } else {
             print(
-                "🔎 PLACES SEARCH: No results from Places Autocomplete API despite 200 status");
+                "🔎 PLACES SEARCH: No verified results from Places API despite 200 status");
           }
         } else {
           print(
               "🔎 PLACES SEARCH: API returned non-200 status code: ${response.statusCode}");
         }
       } catch (e) {
-        print("🔎 PLACES SEARCH: Error with Places Autocomplete API: $e");
+        print("🔎 PLACES SEARCH: Error with Places API: $e");
         // Continue to fallback method
       }
 
@@ -175,7 +222,73 @@ class GoogleMapsService {
       try {
         print("🔎 PLACES SEARCH: Trying method 2 - Places Text Search API");
 
-        final String encodedQuery = Uri.encodeComponent(query);
+        // If we have a specific address in the query, try to find an exact match first
+        if (query.contains(',')) {
+          final addressQuery =
+              query.split(',')[0].trim(); // Get the first part before the comma
+          final encodedQuery = Uri.encodeComponent(addressQuery);
+          final url =
+              'https://maps.googleapis.com/maps/api/place/textsearch/json'
+              '?query=$encodedQuery'
+              '&key=$apiKey';
+
+          print(
+              "🔎 PLACES SEARCH: Request URL: ${url.replaceAll(apiKey, 'API_KEY')}");
+
+          final response = await http.get(Uri.parse(url));
+
+          if (response.statusCode == 200) {
+            final data = jsonDecode(response.body);
+            print("🔎 PLACES SEARCH: Response status: ${data['status']}");
+
+            if (data['status'] == 'OK' && data['results'] != null) {
+              final places = data['results'] as List;
+              print("🔎 PLACES SEARCH: Found ${places.length} places");
+
+              // Look for an exact address match
+              for (var place in places) {
+                String? name = place['name'];
+                String? address = place['formatted_address'];
+                String? vicinity = place['vicinity'];
+                double? rating = place['rating']?.toDouble();
+                int? userRatingCount = place['user_ratings_total'];
+                List<String>? types = (place['types'] as List?)?.cast<String>();
+                bool? isOpen = place['opening_hours']?['open_now'];
+                int? priceLevel = place['price_level'];
+
+                // Get location coordinates
+                Map<String, dynamic>? geometry = place['geometry'];
+                Map<String, dynamic>? location = geometry?['location'];
+                double? lat = location?['lat'];
+                double? lng = location?['lng'];
+
+                // Check if this is an exact address match
+                if (address != null &&
+                    address.toLowerCase().contains(query.toLowerCase())) {
+                  print("🔎 PLACES SEARCH: Found exact address match!");
+                  return [
+                    {
+                      'placeId': place['place_id'] ?? '',
+                      'description': name,
+                      'address': address,
+                      'rating': rating,
+                      'userRatingCount': userRatingCount,
+                      'types': types,
+                      'isOpen': isOpen,
+                      'priceLevel': priceLevel,
+                      'latitude': lat,
+                      'longitude': lng,
+                      'place': place
+                    }
+                  ];
+                }
+              }
+            }
+          }
+        }
+
+        // If no exact match found or no address in query, proceed with regular search
+        final encodedQuery = Uri.encodeComponent(query);
         final url = 'https://maps.googleapis.com/maps/api/place/textsearch/json'
             '?query=$encodedQuery'
             '&key=$apiKey';
@@ -206,25 +319,55 @@ class GoogleMapsService {
             print("🔎 PLACES SEARCH: Found ${places.length} places");
 
             for (var place in places) {
-              results.add({
-                'placeId': place['place_id'] ?? '',
-                'description': place['name'] ?? '',
-                // Add additional fields if needed
-              });
+              // Verify we have both name and address
+              String? name = place['name'];
+              String? address = place['formatted_address'];
+              String? vicinity = place['vicinity'];
+              double? rating = place['rating']?.toDouble();
+              int? userRatingCount = place['user_ratings_total'];
+              List<String>? types = (place['types'] as List?)?.cast<String>();
+              bool? isOpen = place['opening_hours']?['open_now'];
+              int? priceLevel = place['price_level'];
+
+              // Get location coordinates
+              Map<String, dynamic>? geometry = place['geometry'];
+              Map<String, dynamic>? location = geometry?['location'];
+              double? lat = location?['lat'];
+              double? lng = location?['lng'];
+
+              // Only add places that have both name and address
+              if (name != null &&
+                  (address != null || vicinity != null) &&
+                  lat != null &&
+                  lng != null) {
+                results.add({
+                  'placeId': place['place_id'] ?? '',
+                  'description': name,
+                  'address': address ?? vicinity,
+                  'rating': rating,
+                  'userRatingCount': userRatingCount,
+                  'types': types,
+                  'isOpen': isOpen,
+                  'priceLevel': priceLevel,
+                  'latitude': lat,
+                  'longitude': lng,
+                  'place': place
+                });
+              }
             }
           }
 
           if (results.isNotEmpty) {
             print(
-                "🔎 PLACES SEARCH: Found ${results.length} results using Places Text Search API");
+                "🔎 PLACES SEARCH: Found ${results.length} verified results using Places Text Search API");
             for (int i = 0; i < min(3, results.length); i++) {
               print(
-                  "🔎 PLACES SEARCH: Result ${i + 1}: '${results[i]['description']}' (${results[i]['placeId']})");
+                  "🔎 PLACES SEARCH: Result ${i + 1}: '${results[i]['description']}' at '${results[i]['address']}'");
             }
             return results;
           } else {
             print(
-                "🔎 PLACES SEARCH: No results from Places Text Search API despite 200 status");
+                "🔎 PLACES SEARCH: No verified results from Places Text Search API despite 200 status");
           }
         } else {
           print(
@@ -273,25 +416,54 @@ class GoogleMapsService {
               print("🔎 PLACES SEARCH: Found ${places.length} nearby places");
 
               for (var place in places) {
-                results.add({
-                  'placeId': place['place_id'] ?? '',
-                  'description': place['name'] ?? '',
-                  // Add additional fields if needed
-                });
+                // Verify we have both name and address
+                String? name = place['name'];
+                String? address = place['vicinity'];
+                double? rating = place['rating']?.toDouble();
+                int? userRatingCount = place['user_ratings_total'];
+                List<String>? types = (place['types'] as List?)?.cast<String>();
+                bool? isOpen = place['opening_hours']?['open_now'];
+                int? priceLevel = place['price_level'];
+
+                // Get location coordinates
+                Map<String, dynamic>? geometry = place['geometry'];
+                Map<String, dynamic>? location = geometry?['location'];
+                double? lat = location?['lat'];
+                double? lng = location?['lng'];
+
+                // Only add places that have both name and address
+                if (name != null &&
+                    address != null &&
+                    lat != null &&
+                    lng != null) {
+                  results.add({
+                    'placeId': place['place_id'] ?? '',
+                    'description': name,
+                    'address': address,
+                    'rating': rating,
+                    'userRatingCount': userRatingCount,
+                    'types': types,
+                    'isOpen': isOpen,
+                    'priceLevel': priceLevel,
+                    'latitude': lat,
+                    'longitude': lng,
+                    'place': place
+                  });
+                }
               }
             }
 
             if (results.isNotEmpty) {
               print(
-                  "🔎 PLACES SEARCH: Found ${results.length} results using Places Nearby Search API");
+                  "🔎 PLACES SEARCH: Found ${results.length} verified results using Places Nearby Search API");
               for (int i = 0; i < min(3, results.length); i++) {
                 print(
-                    "🔎 PLACES SEARCH: Result ${i + 1}: '${results[i]['description']}' (${results[i]['placeId']})");
+                    "🔎 PLACES SEARCH: Result ${i + 1}: '${results[i]['description']}' at '${results[i]['address']}'");
               }
               return results;
             } else {
               print(
-                  "🔎 PLACES SEARCH: No results from Places Nearby Search API despite 200 status");
+                  "🔎 PLACES SEARCH: No verified results from Places Nearby Search API despite 200 status");
             }
           } else {
             print(
