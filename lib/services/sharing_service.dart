@@ -17,8 +17,6 @@ class SharingService {
   late StreamSubscription _intentSub;
   BuildContext?
       _lastKnownContext; // Store the last known context for navigation
-  bool _isProcessingShare =
-      false; // Flag to track if we're currently processing a share
 
   ValueListenable<List<SharedMediaFile>?> get sharedFiles =>
       _sharedFilesController;
@@ -27,8 +25,7 @@ class SharingService {
     // Listen to media sharing coming from outside the app while the app is in the memory
     _intentSub = ReceiveSharingIntent.instance.getMediaStream().listen(
         (List<SharedMediaFile> value) {
-      if (value.isNotEmpty && !_isProcessingShare) {
-        _isProcessingShare = true; // Set flag to prevent multiple processing
+      if (value.isNotEmpty) {
         _sharedFilesController.value = List.from(value);
         print("Received shared files: ${value.map((f) => f.toMap())}");
 
@@ -42,7 +39,6 @@ class SharingService {
       }
     }, onError: (err) {
       print("getIntentDataStream error: $err");
-      _isProcessingShare = false; // Reset flag on error
     });
 
     // Note: Initial media is now handled in the MyApp widget for a better flow
@@ -57,7 +53,13 @@ class SharingService {
   void resetSharedItems() {
     _sharedFilesController.value = null;
     ReceiveSharingIntent.instance.reset();
-    _isProcessingShare = false; // Reset the processing flag
+
+    // Force a short delay and then reset again to ensure complete cleanup
+    Future.delayed(Duration(milliseconds: 200), () {
+      ReceiveSharingIntent.instance.reset();
+      print("Secondary share intent reset completed");
+    });
+
     print("Share intent reset completed");
   }
 
