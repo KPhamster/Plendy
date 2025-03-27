@@ -1743,6 +1743,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     print(
         '🖼️ PHOTO: Location data - lat: ${location.latitude}, lng: ${location.longitude}');
     print('🖼️ PHOTO: Place ID: ${location.placeId ?? "null"}');
+    print('🖼️ PHOTO: Address: ${location.address ?? "null"}');
 
     // Get the place ID, which should be available in the location object
     final String? placeId = location.placeId;
@@ -1756,6 +1757,24 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     print(
         '🖼️ PHOTO: API key length: ${apiKey.length} chars, starts with: ${apiKey.substring(0, min(5, apiKey.length))}...');
 
+    // Create a unique photo query using both business name and address
+    // This ensures that chain businesses (like Trader Joe's, Starbucks) get the correct location images
+    String photoQuery = businessName;
+
+    // Include address in the query if available to get photos for the specific chain location
+    if (location.address != null && location.address!.isNotEmpty) {
+      // Extract the street address part (usually the first component before the first comma)
+      String streetAddress = location.address!;
+      if (streetAddress.contains(',')) {
+        streetAddress = streetAddress.substring(0, streetAddress.indexOf(','));
+      }
+
+      // Combine business name with street address for better identification
+      photoQuery = '$businessName, $streetAddress';
+      print('🖼️ PHOTO: Enhanced photo query with address: "$photoQuery"');
+    }
+
+    // First try to get photos by place ID
     return FutureBuilder<List<String>>(
       future: GoogleMapsService().getPlacePhotoReferences(placeId),
       builder: (context, snapshot) {
@@ -1780,7 +1799,89 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           print('🖼️ PHOTO ERROR: Error fetching photos: ${snapshot.error}');
         }
 
-        // While loading or if error occurred, show loading state
+        // If no photos found via place ID, try a search approach
+        if (snapshot.connectionState == ConnectionState.done &&
+            (snapshot.data == null || snapshot.data!.isEmpty)) {
+          print(
+              '🖼️ PHOTO: No photos via place ID, trying search approach with "$photoQuery"');
+
+          // Use GoogleMapsService to search for the place with the enhanced query
+          return FutureBuilder<List<Map<String, dynamic>>>(
+              future: GoogleMapsService().searchPlaces(photoQuery),
+              builder: (context, searchSnapshot) {
+                if (searchSnapshot.connectionState == ConnectionState.waiting) {
+                  return Center(
+                    child: CircularProgressIndicator(
+                      color: Color(0xFFD32323),
+                    ),
+                  );
+                }
+
+                if (searchSnapshot.hasData &&
+                    searchSnapshot.data != null &&
+                    searchSnapshot.data!.isNotEmpty) {
+                  // If we found search results, use the place ID from the first match
+                  final String? foundPlaceId =
+                      searchSnapshot.data!.first['placeId'] as String?;
+
+                  if (foundPlaceId != null && foundPlaceId.isNotEmpty) {
+                    print(
+                        '🖼️ PHOTO: Found place ID via search: $foundPlaceId');
+
+                    // Try to get photos with this specific place ID
+                    return FutureBuilder<List<String>>(
+                        future: GoogleMapsService()
+                            .getPlacePhotoReferences(foundPlaceId),
+                        builder: (context, photoSnapshot) {
+                          if (photoSnapshot.connectionState ==
+                              ConnectionState.waiting) {
+                            return Center(
+                              child: CircularProgressIndicator(
+                                color: Color(0xFFD32323),
+                              ),
+                            );
+                          }
+
+                          if (photoSnapshot.hasData &&
+                              photoSnapshot.data != null &&
+                              photoSnapshot.data!.isNotEmpty) {
+                            final List<String> photoUrls = photoSnapshot.data!;
+                            print(
+                                '🖼️ PHOTO: Got ${photoUrls.length} photos via search approach');
+
+                            // Display photos
+                            if (photoUrls.length > 1) {
+                              return _buildPhotoCarousel(
+                                  photoUrls, businessName);
+                            }
+                            return _buildSinglePhoto(
+                                photoUrls.first, businessName);
+                          }
+
+                          // If no photos found via search either, use fallback
+                          print(
+                              '🖼️ PHOTO: No photos found via search approach either');
+                          final String businessSeed =
+                              _createPhotoSeed(businessName, location);
+                          final String photoUrl =
+                              _getBusinessPhotoUrl(businessName, businessSeed);
+                          return _buildSinglePhoto(photoUrl, businessName);
+                        });
+                  }
+                }
+
+                // If search approach failed, use category-based fallback
+                print(
+                    '🖼️ PHOTO: Search approach failed, using category-based fallback');
+                final String businessSeed =
+                    _createPhotoSeed(businessName, location);
+                final String photoUrl =
+                    _getBusinessPhotoUrl(businessName, businessSeed);
+                return _buildSinglePhoto(photoUrl, businessName);
+              });
+        }
+
+        // While loading, show loading state
         if (snapshot.connectionState == ConnectionState.waiting) {
           print('🖼️ PHOTO: Loading photos...');
           return Center(
@@ -1790,15 +1891,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           );
         }
 
-        // If we get here, there was an error or no photos available
-        print(
-            '🖼️ PHOTO: No photos available from Places API, using category-based fallback');
-
-        // Use our category-based fallback
+        // Default fallback
+        print('🖼️ PHOTO: Using category-based fallback');
         final String businessSeed = _createPhotoSeed(businessName, location);
         final String photoUrl =
             _getBusinessPhotoUrl(businessName, businessSeed);
-
         return _buildSinglePhoto(photoUrl, businessName);
       },
     );
