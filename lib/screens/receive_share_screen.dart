@@ -267,7 +267,43 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     } else if (url.contains('google.com/maps') ||
         url.contains('maps.app.goo.gl') ||
         url.contains('goo.gl/maps')) {
-      _getLocationFromMapsUrl(url);
+      // Use an async function to properly await the result
+      _processGoogleMapsUrl(url);
+    }
+  }
+
+  // Helper method to process Google Maps URLs asynchronously
+  Future<void> _processGoogleMapsUrl(String url) async {
+    try {
+      // Show loading state if desired
+      setState(() {
+        // You could set a loading flag here if needed
+      });
+
+      // Wait for the map data to be retrieved
+      final mapData = await _getLocationFromMapsUrl(url);
+
+      // Verify we got data back
+      if (mapData != null && mapData['location'] != null) {
+        final location = mapData['location'] as Location;
+        final placeName = mapData['placeName'] as String? ?? 'Shared Location';
+        final websiteUrl = mapData['website'] as String? ?? '';
+
+        // Fill the form with the retrieved data
+        _fillFormWithGoogleMapsData(location, placeName, websiteUrl);
+
+        // Show success message
+        _showSnackBar(context, 'Location added from Google Maps');
+      } else {
+        print('🗺️ MAPS ERROR: Failed to extract location data from URL');
+        // Show error message if desired
+        _showSnackBar(
+            context, 'Could not extract location data from the shared URL');
+      }
+    } catch (e) {
+      print('🗺️ MAPS ERROR: Error processing Maps URL: $e');
+      // Show error message
+      _showSnackBar(context, 'Error processing Google Maps URL');
     }
   }
 
