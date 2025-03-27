@@ -154,6 +154,34 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     super.dispose();
   }
 
+  // Register for new shares while this screen is open
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+
+    // Reset intent when screen first loads to clear any stale data
+    ReceiveSharingIntent.instance.reset();
+
+    // Listen for new shares that might come in while screen is already open
+    _sharingService.sharedFiles.addListener(() {
+      final newSharedFiles = _sharingService.sharedFiles.value;
+      if (newSharedFiles != null && newSharedFiles.isNotEmpty && mounted) {
+        // Refresh this screen with the new data
+        setState(() {
+          // Reset current data
+          for (var card in _experienceCards) {
+            card.dispose();
+          }
+          _experienceCards.clear();
+          _addExperienceCard();
+
+          // Process the new content
+          _processSharedContent();
+        });
+      }
+    });
+  }
+
   // WillPopScope wrapper to ensure proper cleanup on back button press
   Widget _wrapWithWillPopScope(Widget child) {
     return WillPopScope(
