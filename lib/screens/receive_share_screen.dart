@@ -1104,20 +1104,16 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                             crossAxisAlignment:
                                                 CrossAxisAlignment.start,
                                             children: [
-                                              Text(
-                                                'Type: ${_getMediaTypeString(file.type)}',
-                                                style: TextStyle(
-                                                    fontWeight:
-                                                        FontWeight.bold),
-                                              ),
-                                              SizedBox(height: 8),
+                                              // Removed display of shared content text per user request
+                                              // if (file.type ==
+                                              //         SharedMediaType.text &&
+                                              //     !_isValidUrl(file.path))
+                                              //   Text('Content: ${file.path}'),
+
+                                              // Keep other file information
                                               if (file.type !=
                                                   SharedMediaType.text)
                                                 Text('Path: ${file.path}'),
-                                              if (file.type ==
-                                                      SharedMediaType.text &&
-                                                  !_isValidUrl(file.path))
-                                                Text('Content: ${file.path}'),
                                               if (file.thumbnail != null) ...[
                                                 SizedBox(height: 8),
                                                 Text(
@@ -1136,12 +1132,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                             crossAxisAlignment:
                                                 CrossAxisAlignment.start,
                                             children: [
-                                              Text(
-                                                'Type: ${_getMediaTypeString(file.type)}',
-                                                style: TextStyle(
-                                                    fontWeight:
-                                                        FontWeight.bold),
-                                              ),
+                                              // Removed the 'Type: Text' label per user request
+                                              // Text(
+                                              //   'Type: ${_getMediaTypeString(file.type)}',
+                                              //   style: TextStyle(
+                                              //       fontWeight:
+                                              //           FontWeight.bold),
+                                              // ),
                                             ],
                                           ),
                                         ),
