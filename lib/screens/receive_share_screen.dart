@@ -117,69 +117,203 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     );
   }
 
+  // Initialize with the files passed to the widget
+  List<SharedMediaFile> _currentSharedFiles = [];
+
+  // Subscription for intent data stream
+  StreamSubscription<List<SharedMediaFile>>? _intentDataStreamSubscription;
+
   @override
   void initState() {
     super.initState();
+    // Initialize with the files passed to the widget
+    _currentSharedFiles = widget.sharedFiles;
+
     // Register observer for app lifecycle events
     WidgetsBinding.instance.addObserver(this);
     // Add first experience card
     _addExperienceCard();
 
-    // Automatically process any Yelp URLs in the shared content
-    _processSharedContent();
+    // Process the initial shared content
+    print(
+        "SHARE DEBUG: initState processing initial widget.sharedFiles (count: ${_currentSharedFiles.length})");
+    _processSharedContent(_currentSharedFiles);
 
-    // Ensure the intent is reset when screen is shown
-    ReceiveSharingIntent.instance.reset();
+    // Setup the stream listener
+    _setupIntentListener();
+
+    // Handle the initial intent (getInitialMedia might be needed if launched cold)
+    ReceiveSharingIntent.instance
+        .getInitialMedia()
+        .then((List<SharedMediaFile>? value) {
+      // <<< ADDED LOGGING >>>
+      print("SHARE DEBUG: getInitialMedia completed.");
+      if (value != null) {
+        print("SHARE DEBUG: getInitialMedia returned ${value.length} files.");
+        if (value.isNotEmpty) {
+          print(
+              "SHARE DEBUG: getInitialMedia first file path: ${value.first.path}");
+        }
+      } else {
+        print("SHARE DEBUG: getInitialMedia returned null.");
+      }
+      // <<< END ADDED LOGGING >>>
+
+      // Check if initial media provides *different* data than the widget constructor
+      // This is important to avoid processing the same initial share twice
+      bool isDifferent = value != null &&
+          value.isNotEmpty &&
+          (_currentSharedFiles.isEmpty || // If widget files were empty
+              value.length !=
+                  _currentSharedFiles.length || // Or different count
+              value.first.path !=
+                  _currentSharedFiles.first.path); // Or different content
+
+      if (isDifferent && mounted) {
+        print(
+            "SHARE DEBUG: getInitialMedia has different content - updating UI");
+        setState(() {
+          _currentSharedFiles = value!;
+          // Reset UI state
+          for (var card in _experienceCards) {
+            card.dispose();
+          }
+          _experienceCards.clear();
+          _businessDataCache.clear();
+          _yelpPreviewFutures.clear();
+          _addExperienceCard();
+          // Process the new content
+          _processSharedContent(_currentSharedFiles);
+        });
+      } else {
+        print("SHARE DEBUG: getInitialMedia - no different content to process");
+      }
+    });
+  }
+
+  // Setup the intent listener in a separate method so we can call it from multiple places
+  void _setupIntentListener() {
+    // Cancel any existing subscription first
+    _intentDataStreamSubscription?.cancel();
+
+    print("SHARE DEBUG: Setting up new intent stream listener");
+
+    // Listen to new intents coming in while the app is running
+    _intentDataStreamSubscription = ReceiveSharingIntent.instance
+        .getMediaStream()
+        .listen((List<SharedMediaFile> value) {
+      // <<< ADDED LOGGING >>>
+      print("SHARE DEBUG: STREAM LISTENER FIRED!");
+      print("SHARE DEBUG: Received ${value.length} files via stream.");
+      if (value.isNotEmpty) {
+        print("SHARE DEBUG: First file path: ${value.first.path}");
+        print("SHARE DEBUG: First file type: ${value.first.type}");
+      }
+      print("SHARE DEBUG: mounted = $mounted");
+      // <<< END ADDED LOGGING >>>
+
+      if (mounted && value.isNotEmpty) {
+        // Ensure there's new data
+        print("SHARE DEBUG: Stream - Updating state with new files.");
+        setState(() {
+          _currentSharedFiles = value; // Update with the latest files
+          // Reset UI state for the new content
+          for (var card in _experienceCards) {
+            card.dispose();
+          }
+          _experienceCards.clear();
+          _businessDataCache.clear(); // Clear cache for new content
+          _yelpPreviewFutures.clear();
+          _addExperienceCard();
+          // Process the new content
+          _processSharedContent(_currentSharedFiles);
+          // Show a notification
+          _showSnackBar(context, "New content received!");
+        });
+
+        // Only reset for Android - iOS needs the intent to persist
+        if (!Platform.isIOS) {
+          // Reset the intent *after* processing
+          ReceiveSharingIntent.instance.reset();
+          print("SHARE DEBUG: Stream - Intent stream processed and reset.");
+        } else {
+          print(
+              "SHARE DEBUG: On iOS - not resetting intent to ensure it persists");
+        }
+      } else {
+        print(
+            "SHARE DEBUG: Stream - Listener fired but not processing (mounted: $mounted, value empty: ${value.isEmpty})");
+      }
+    }, onError: (err) {
+      print("SHARE DEBUG: Error receiving intent stream: $err");
+    });
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
-    // If app resumes from background, reset sharing intent to be ready for new shares
+    print("SHARE DEBUG: App lifecycle state changed to $state");
+
+    // If app resumes from background, re-initialize the intent listener
     if (state == AppLifecycleState.resumed) {
-      _sharingService.resetSharedItems();
+      print("SHARE DEBUG: App resumed - recreating intent listener");
+      _setupIntentListener();
+
+      // Also check for any pending intents
+      ReceiveSharingIntent.instance.getInitialMedia().then((value) {
+        if (value != null && value.isNotEmpty && mounted) {
+          print(
+              "SHARE DEBUG: Found pending intent after resume: ${value.length} files");
+          setState(() {
+            _currentSharedFiles = value;
+            // Reset UI for new content
+            for (var card in _experienceCards) {
+              card.dispose();
+            }
+            _experienceCards.clear();
+            _businessDataCache.clear();
+            _yelpPreviewFutures.clear();
+            _addExperienceCard();
+            _processSharedContent(_currentSharedFiles);
+            _showSnackBar(context, "New content received after resume!");
+          });
+        }
+      });
     }
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    print("SHARE DEBUG: didChangeDependencies called");
+
+    // Ensure the intent listener is setup (in case it was lost)
+    _setupIntentListener();
+  }
+
+  @override
   void dispose() {
+    // Cancel the subscription
+    print("SHARE DEBUG: dispose called - cleaning up resources");
+    if (_intentDataStreamSubscription != null) {
+      _intentDataStreamSubscription!.cancel();
+      print("SHARE DEBUG: Intent stream subscription canceled");
+    }
+
     // Unregister observer
     WidgetsBinding.instance.removeObserver(this);
+
     // Make sure intent is fully reset when screen closes
-    _sharingService.resetSharedItems();
+    if (!Platform.isIOS) {
+      ReceiveSharingIntent.instance.reset();
+      print("SHARE DEBUG: Intent reset in dispose");
+    }
+
     // Dispose all controllers for all experience cards
     for (var card in _experienceCards) {
       card.dispose();
     }
     super.dispose();
-  }
-
-  // Register for new shares while this screen is open
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-
-    // Reset intent when screen first loads to clear any stale data
-    ReceiveSharingIntent.instance.reset();
-
-    // Listen for new shares that might come in while screen is already open
-    _sharingService.sharedFiles.addListener(() {
-      final newSharedFiles = _sharingService.sharedFiles.value;
-      if (newSharedFiles != null && newSharedFiles.isNotEmpty && mounted) {
-        // Refresh this screen with the new data
-        setState(() {
-          // Reset current data
-          for (var card in _experienceCards) {
-            card.dispose();
-          }
-          _experienceCards.clear();
-          _addExperienceCard();
-
-          // Process the new content
-          _processSharedContent();
-        });
-      }
-    });
   }
 
   // WillPopScope wrapper to ensure proper cleanup on back button press
@@ -195,12 +329,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   }
 
   // Process shared content to extract Yelp URLs or Map URLs
-  void _processSharedContent() {
+  void _processSharedContent(List<SharedMediaFile> files) {
     print('DEBUG: Processing shared content');
-    if (widget.sharedFiles.isEmpty) return;
+    if (files.isEmpty) return;
 
     // Look for Yelp URLs or Map URLs in shared files
-    for (final file in widget.sharedFiles) {
+    for (final file in files) {
       if (file.type == SharedMediaType.text) {
         String text = file.path;
         print(
@@ -242,10 +376,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   }
 
   // Check if the shared content is from Yelp or Google Maps
-  bool _isSpecialContent() {
-    if (widget.sharedFiles.isEmpty) return false;
+  bool _isSpecialContent(List<SharedMediaFile> files) {
+    if (files.isEmpty) return false;
 
-    for (final file in widget.sharedFiles) {
+    for (final file in files) {
       if (file.type == SharedMediaType.text) {
         String text = file.path;
         if (_isValidUrl(text)) {
@@ -1037,22 +1171,16 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   Widget build(BuildContext context) {
     return _wrapWithWillPopScope(Scaffold(
       appBar: AppBar(
-        title: Text('New Experience'),
-        leading: IconButton(
-          icon: Icon(Icons.close),
-          onPressed: () {
-            // Cancel button explicitly resets before calling onCancel
-            _sharingService.resetSharedItems();
-            widget.onCancel();
-          },
-        ),
+        title: _isSpecialContent(_currentSharedFiles)
+            ? const Text('Add Restaurant to Experiences')
+            : const Text('Save to Experiences'),
+        automaticallyImplyLeading: false, // Remove back button
         actions: [
           // Add button - hidden for Yelp content
-          if (!_isSpecialContent())
+          if (!_isSpecialContent(_currentSharedFiles))
             IconButton(
               icon: Icon(Icons.add),
               onPressed: _addExperienceCard,
-              tooltip: 'Add another experience',
             ),
         ],
       ),
@@ -1077,16 +1205,16 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           // Display the shared content
-                          if (widget.sharedFiles.isEmpty)
+                          if (_currentSharedFiles.isEmpty)
                             Center(child: Text('No shared content received'))
                           else
                             ListView.builder(
                               padding: EdgeInsets.zero,
                               shrinkWrap: true,
                               physics: NeverScrollableScrollPhysics(),
-                              itemCount: widget.sharedFiles.length,
+                              itemCount: _currentSharedFiles.length,
                               itemBuilder: (context, index) {
-                                final file = widget.sharedFiles[index];
+                                final file = _currentSharedFiles[index];
                                 return Card(
                                   margin: EdgeInsets.only(bottom: 8),
                                   child: Column(
@@ -1174,7 +1302,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                             i == _experienceCards.length - 1),
 
                                   // Add another experience button - hidden for Yelp content
-                                  if (!_isSpecialContent())
+                                  if (!_isSpecialContent(_currentSharedFiles))
                                     Padding(
                                       padding: const EdgeInsets.only(
                                           top: 4.0, bottom: 16.0),
@@ -4320,4 +4448,25 @@ String _convertToStandardPlaceId(String originalPlaceId) {
   }
 
   return originalPlaceId;
+}
+
+/// Extension methods for String
+extension StringExtension on String {
+  String capitalize() {
+    return this.length > 0
+        ? '${this[0].toUpperCase()}${this.substring(1)}'
+        : '';
+  }
+
+  String capitalizeWords() {
+    if (this.length <= 1) return this.toUpperCase();
+
+    final List<String> words = this.split(' ');
+    final List<String> capitalized = words.map((word) {
+      if (word.isEmpty) return word;
+      return word[0].toUpperCase() + (word.length > 1 ? word.substring(1) : '');
+    }).toList();
+
+    return capitalized.join(' ');
+  }
 }

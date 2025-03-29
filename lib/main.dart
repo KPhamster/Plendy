@@ -36,25 +36,46 @@ class _MyAppState extends State<MyApp> {
   void initState() {
     super.initState();
 
+    print("MAIN: App initializing");
+
     // Check for initial shared files when app was closed
     ReceiveSharingIntent.instance
         .getInitialMedia()
-        .then((List<SharedMediaFile> value) {
-      if (value.isNotEmpty) {
+        .then((List<SharedMediaFile>? value) {
+      print("MAIN: Initial media check complete");
+
+      if (value != null && value.isNotEmpty) {
+        print("MAIN: Found initial shared files: ${value.length}");
         setState(() {
           _initialSharedFiles = value;
         });
-        // Tell the library that we've handled the initial intent
-        ReceiveSharingIntent.instance.reset();
-        print("Initial share intent reset completed");
+
+        // Don't reset on first load to ensure we keep the data
+        // ReceiveSharingIntent.instance.reset();
+        print("MAIN: Stored initial share data for display");
+      } else {
+        print("MAIN: No initial shared files found");
       }
     });
 
-    // Listen for app going to foreground to reset sharing capabilities
-    WidgetsBinding.instance.addObserver(AppLifecycleObserver(onResumed: () {
-      // Reset when app comes to foreground to be ready for new shares
-      _sharingService.resetSharedItems();
-    }));
+    // Listen for app going to foreground to reinitialize sharing capabilities
+    WidgetsBinding.instance.addObserver(AppLifecycleObserver(
+      onResumed: () {
+        // Recreate listeners when app comes to foreground
+        print("MAIN: App resumed - recreating sharing service listeners");
+        _sharingService.recreateListeners();
+      },
+      onPaused: () {
+        print("MAIN: App paused");
+      },
+    ));
+  }
+
+  @override
+  void dispose() {
+    // Clean up observers
+    WidgetsBinding.instance.removeObserver(AppLifecycleObserver());
+    super.dispose();
   }
 
   @override
@@ -105,13 +126,18 @@ class _MyAppState extends State<MyApp> {
 // Simple observer for app lifecycle events
 class AppLifecycleObserver extends WidgetsBindingObserver {
   final VoidCallback? onResumed;
+  final VoidCallback? onPaused;
 
-  AppLifecycleObserver({this.onResumed});
+  AppLifecycleObserver({this.onResumed, this.onPaused});
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    print("LIFECYCLE: App state changed to $state");
+
     if (state == AppLifecycleState.resumed && onResumed != null) {
       onResumed!();
+    } else if (state == AppLifecycleState.paused && onPaused != null) {
+      onPaused!();
     }
   }
 }
