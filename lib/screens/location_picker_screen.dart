@@ -466,24 +466,6 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
                     allowSelection: true,
                     onLocationSelected: _onLocationSelected,
                   ),
-
-                  // Directions button - only visible when a location is selected
-                  if (_selectedLocation != null)
-                    Positioned(
-                      right: 7,
-                      bottom: 16,
-                      child: FloatingActionButton(
-                        heroTag: 'directionsButton',
-                        mini: true,
-                        backgroundColor: Colors.white,
-                        child: Icon(
-                          Icons.directions,
-                          color: Colors.blue,
-                        ),
-                        onPressed: _openDirectionsInGoogleMaps,
-                        tooltip: 'Get directions to this location',
-                      ),
-                    ),
                 ],
               ),
             ),
@@ -493,84 +475,99 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
               Container(
                 padding: EdgeInsets.all(16),
                 color: Colors.white,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
+                child: Stack(
                   children: [
-                    Text(
-                      'Selected Location',
-                      style: TextStyle(
-                        fontWeight: FontWeight.normal,
-                        fontSize: 14,
-                        color: Colors.grey[800],
-                      ),
-                    ),
-                    SizedBox(height: 12),
-
-                    // Place name
-                    Text(
-                      _selectedLocation!.getPlaceName(),
-                      style: TextStyle(
-                        fontWeight: FontWeight.w500,
-                        fontSize: 16,
-                      ),
-                    ),
-                    SizedBox(height: 8),
-
-                    // Full address
-                    if (_selectedLocation!.address != null) ...[
-                      Text(
-                        _selectedLocation!.address!,
-                        style: TextStyle(color: Colors.grey[700]),
-                      ),
-                      SizedBox(height: 8),
-                    ],
-
-                    // Area details if available
-                    Row(children: [
-                      if (_selectedLocation!.city != null) ...[
-                        Icon(Icons.location_city,
-                            size: 16, color: Colors.grey[600]),
-                        SizedBox(width: 4),
-                        Text(
-                          _selectedLocation!.city!,
-                          style: TextStyle(color: Colors.grey[700]),
-                        ),
-                        SizedBox(width: 16),
-                      ],
-                      if (_selectedLocation!.state != null) ...[
-                        Text(
-                          _selectedLocation!.state!,
-                          style: TextStyle(color: Colors.grey[700]),
-                        ),
-                        SizedBox(width: 8),
-                      ],
-                      if (_selectedLocation!.country != null) ...[
-                        Text(
-                          _selectedLocation!.country!,
-                          style: TextStyle(color: Colors.grey[700]),
-                        ),
-                      ],
-                    ]),
-                    SizedBox(height: 12),
-
-                    // Coordinates
-                    Row(
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(Icons.gps_fixed,
-                            size: 16, color: Colors.grey[600]),
-                        SizedBox(width: 4),
-                        Expanded(
-                          child: Text(
-                            '${_selectedLocation!.latitude.toStringAsFixed(6)}, ${_selectedLocation!.longitude.toStringAsFixed(6)}',
-                            style: TextStyle(
-                              color: Colors.grey[600],
-                              fontFamily: 'monospace',
-                              fontSize: 12,
-                            ),
+                        Text(
+                          'Selected Location',
+                          style: TextStyle(
+                            fontWeight: FontWeight.normal,
+                            fontSize: 14,
+                            color: Colors.grey[800],
                           ),
                         ),
+                        SizedBox(height: 12),
+
+                        // Place name
+                        Text(
+                          _selectedLocation!.getPlaceName(),
+                          style: TextStyle(
+                            fontWeight: FontWeight.w500,
+                            fontSize: 16,
+                          ),
+                        ),
+                        SizedBox(height: 8),
+
+                        // Full address
+                        if (_selectedLocation!.address != null) ...[
+                          Text(
+                            _selectedLocation!.address!,
+                            style: TextStyle(color: Colors.grey[700]),
+                          ),
+                          SizedBox(height: 8),
+                        ],
+
+                        // Area details if available
+                        Row(children: [
+                          if (_selectedLocation!.city != null) ...[
+                            Icon(Icons.location_city,
+                                size: 16, color: Colors.grey[600]),
+                            SizedBox(width: 4),
+                            Text(
+                              _selectedLocation!.city!,
+                              style: TextStyle(color: Colors.grey[700]),
+                            ),
+                            SizedBox(width: 16),
+                          ],
+                          if (_selectedLocation!.state != null) ...[
+                            Text(
+                              _selectedLocation!.state!,
+                              style: TextStyle(color: Colors.grey[700]),
+                            ),
+                            SizedBox(width: 8),
+                          ],
+                          if (_selectedLocation!.country != null) ...[
+                            Text(
+                              _selectedLocation!.country!,
+                              style: TextStyle(color: Colors.grey[700]),
+                            ),
+                          ],
+                        ]),
+                        SizedBox(height: 12),
+
+                        // Coordinates
+                        Row(
+                          children: [
+                            Icon(Icons.gps_fixed,
+                                size: 16, color: Colors.grey[600]),
+                            SizedBox(width: 4),
+                            Expanded(
+                              child: Text(
+                                '${_selectedLocation!.latitude.toStringAsFixed(6)}, ${_selectedLocation!.longitude.toStringAsFixed(6)}',
+                                style: TextStyle(
+                                  color: Colors.grey[600],
+                                  fontFamily: 'monospace',
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
                       ],
+                    ),
+
+                    // Get Directions button positioned at top-right
+                    Positioned(
+                      top: -8,
+                      right: -8,
+                      child: IconButton(
+                        onPressed: _openDirectionsInGoogleMaps,
+                        icon: Icon(Icons.directions, color: Colors.blue),
+                        tooltip: 'Get Directions',
+                      ),
                     ),
                   ],
                 ),
