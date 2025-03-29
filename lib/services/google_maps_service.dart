@@ -1442,16 +1442,33 @@ class GoogleMapsService {
   /// Search for places near the given coordinates
   Future<List<Map<String, dynamic>>> searchNearbyPlaces(
       double latitude, double longitude,
-      [int radius = 50]) async {
+      [int radius = 50, String query = '']) async {
     final apiKey = _getApiKey();
     print(
         "🔍 NEARBY SEARCH: Searching near lat=$latitude, lng=$longitude within ${radius}m radius");
+    if (query.isNotEmpty) {
+      print("🔍 NEARBY SEARCH: With query: '$query'");
+    }
     print("🔍 NEARBY SEARCH: Using API key: ${_maskApiKey(apiKey)}");
 
-    final url = 'https://maps.googleapis.com/maps/api/place/nearbysearch/json'
+    // Build the URL, adding the query if provided
+    String url = 'https://maps.googleapis.com/maps/api/place/nearbysearch/json'
         '?location=$latitude,$longitude'
-        '&radius=$radius'
-        '&key=$apiKey';
+        '&radius=$radius';
+
+    // Add keyword or name parameter if query is provided
+    if (query.isNotEmpty) {
+      // If the query looks like a business name, use name parameter for better specificity
+      // Otherwise, use keyword for broader matches
+      if (_isLikelyBusinessName(query)) {
+        url += '&name=${Uri.encodeComponent(query)}';
+      } else {
+        url += '&keyword=${Uri.encodeComponent(query)}';
+      }
+    }
+
+    // Add the API key
+    url += '&key=$apiKey';
 
     try {
       final response = await http.get(Uri.parse(url));
@@ -1471,6 +1488,8 @@ class GoogleMapsService {
             Map<String, dynamic> placeData = {
               'placeId': place['place_id'],
               'name': place['name'],
+              'description': place['name'] +
+                  (place['vicinity'] != null ? ' - ' + place['vicinity'] : ''),
               'vicinity': place['vicinity'],
               'latitude': place['geometry']?['location']?['lat'],
               'longitude': place['geometry']?['location']?['lng'],
@@ -1493,6 +1512,34 @@ class GoogleMapsService {
       print("🔍 NEARBY SEARCH ERROR: Exception during API call: $e");
       return [];
     }
+  }
+
+  // Helper to determine if a query is likely a business name
+  bool _isLikelyBusinessName(String query) {
+    // If it contains common business indicators
+    if (query.contains("restaurant") ||
+        query.contains("cafe") ||
+        query.contains("bar") ||
+        query.contains("shop") ||
+        query.contains("store")) {
+      return false; // These are likely general searches
+    }
+
+    // If it has quotes, it's explicitly looking for exact name
+    if (query.contains('"')) {
+      return true;
+    }
+
+    // If it's short (1-3 words) and doesn't have special search operators
+    final words = query.split(' ');
+    if (words.length <= 3 &&
+        !query.contains("near") &&
+        !query.contains("around") &&
+        !query.contains("in")) {
+      return true;
+    }
+
+    return false;
   }
 
   // Helper to mask the API key for logging
