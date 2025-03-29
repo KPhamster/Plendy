@@ -123,6 +123,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   // Subscription for intent data stream
   StreamSubscription<List<SharedMediaFile>>? _intentDataStreamSubscription;
 
+  // Flag to track if a chain was detected from URL structure
+  bool _chainDetectedFromUrl = false;
+
   @override
   void initState() {
     super.initState();
@@ -463,6 +466,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   Future<Map<String, dynamic>?> _getBusinessFromYelpUrl(String yelpUrl) async {
     print("\n📊 YELP DATA: Starting business lookup for URL: $yelpUrl");
 
+    // Reset chain detection flag for this new URL
+    _chainDetectedFromUrl = false;
+
     // Create a cache key for this URL
     final cacheKey = yelpUrl.trim();
 
@@ -499,9 +505,38 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     try {
       // Extract business info from URL and share context
       String businessName = "";
+      String businessAddress = "";
       String businessCity = "";
+      String businessState = "";
+      String businessZip = "";
       String businessType = "";
       String fullSearchText = "";
+      bool isShortUrl = url.contains('yelp.to/');
+
+      // Position to bias search results if needed (for chains or generic names)
+      Position? userPosition = await _getCurrentPosition();
+
+      // If it's a shortened URL (yelp.to), try to resolve it to get the full URL
+      if (isShortUrl) {
+        print('📊 YELP DATA: Detected shortened URL, attempting to resolve it');
+        try {
+          // First try to resolve the shortened URL to get the full URL
+          final resolvedUrl = await _resolveShortUrl(url);
+          if (resolvedUrl != null &&
+              resolvedUrl != url &&
+              resolvedUrl.contains('/biz/')) {
+            print(
+                '📊 YELP DATA: Successfully resolved shortened URL to: $resolvedUrl');
+            url = resolvedUrl;
+            isShortUrl = false;
+          } else {
+            print(
+                '📊 YELP DATA: Could not resolve shortened URL, continuing with original');
+          }
+        } catch (e) {
+          print('📊 YELP DATA: Error resolving shortened URL: $e');
+        }
+      }
 
       // 1. First try to extract from the message text if it's a "Check out X on Yelp" format
       if (widget.sharedFiles.isNotEmpty) {
@@ -519,8 +554,37 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               print(
                   '📊 YELP DATA: Extracted business name from share text: $businessName');
 
+              // Try to extract address information if present
+              // Common Yelp share format includes address after business name
+              if (text.contains('located at')) {
+                final addressPart = text.split('located at')[1].trim();
+                businessAddress = addressPart.split('.')[0].trim();
+                print('📊 YELP DATA: Extracted address: $businessAddress');
+
+                // Extract city, state, zip if available
+                final addressComponents = businessAddress.split(',');
+                if (addressComponents.length > 1) {
+                  final lastComponent = addressComponents.last.trim();
+                  // Attempt to extract state and zip code (common format: "City, ST 12345")
+                  final stateZipMatch =
+                      RegExp(r'([A-Z]{2})\s+(\d{5})').firstMatch(lastComponent);
+                  if (stateZipMatch != null) {
+                    businessState = stateZipMatch.group(1) ?? '';
+                    businessZip = stateZipMatch.group(2) ?? '';
+                    print(
+                        '📊 YELP DATA: Extracted state: $businessState, zip: $businessZip');
+                  }
+
+                  // Extract city (second to last component is usually the city)
+                  if (addressComponents.length > 2) {
+                    businessCity =
+                        addressComponents[addressComponents.length - 2].trim();
+                    print('📊 YELP DATA: Extracted city: $businessCity');
+                  }
+                }
+              }
               // Try to extract city name if present (common format: "Business Name - City")
-              if (businessName.contains('-')) {
+              else if (businessName.contains('-')) {
                 final parts = businessName.split('-');
                 if (parts.length >= 2) {
                   businessName = parts[0].trim();
@@ -535,15 +599,69 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
 
       // 2. If we couldn't get it from the share text, try the URL
-      if (businessName.isEmpty && url.contains('/biz/')) {
+      if ((businessName.isEmpty || businessCity.isEmpty) &&
+          url.contains('/biz/')) {
         // Extract the business part from URL
         // Format: https://www.yelp.com/biz/business-name-location
         final bizPath = url.split('/biz/')[1].split('?')[0];
 
         print('📊 YELP DATA: Extracting from biz URL path: $bizPath');
 
+        // Check for numeric suffix after city name which indicates a chain location
+        bool isChainFromUrl = false;
+        final lastPathSegment = bizPath.split('/').last;
+        final RegExp numericSuffixRegex = RegExp(r'-(\d+)$');
+        final match = numericSuffixRegex.firstMatch(lastPathSegment);
+
+        if (match != null) {
+          print(
+              '📊 YELP DATA: Detected numeric suffix in URL path, indicating a chain location: ${match.group(1)}');
+          isChainFromUrl = true;
+        }
+
         // Convert hyphenated business name to spaces
-        businessName = bizPath.split('-').join(' ');
+        final pathParts = bizPath.split('-');
+
+        // If the last part is a number, it indicates a chain location
+        // Remove it from the business name
+        if (pathParts.isNotEmpty && RegExp(r'^\d+$').hasMatch(pathParts.last)) {
+          print(
+              '📊 YELP DATA: Removing numeric suffix ${pathParts.last} from business name');
+          pathParts.removeLast();
+          isChainFromUrl = true;
+        }
+
+        // Check if the last part might be a city name
+        if (pathParts.isNotEmpty) {
+          final possibleCity = pathParts.last;
+          // Common city names usually don't contain these words
+          final nonCityWords = [
+            'restaurant',
+            'pizza',
+            'cafe',
+            'bar',
+            'grill',
+            'and',
+            'the'
+          ];
+          bool mightBeCity = true;
+
+          for (final word in nonCityWords) {
+            if (possibleCity.toLowerCase() == word) {
+              mightBeCity = false;
+              break;
+            }
+          }
+
+          if (mightBeCity) {
+            businessCity = possibleCity;
+            print('📊 YELP DATA: Extracted city from URL path: $businessCity');
+            // Remove city from business name
+            pathParts.removeLast();
+          }
+        }
+
+        businessName = pathParts.join(' ');
 
         // If there's a location suffix at the end (like "restaurant-city"), try to extract it
         if (businessName.contains('/')) {
@@ -561,6 +679,14 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         print(
             '📊 YELP DATA: Extracted business name from URL path: $businessName');
 
+        // If we detected a chain from the URL structure, update our flag
+        if (isChainFromUrl) {
+          print(
+              '📊 YELP DATA: Marked as chain restaurant based on URL structure');
+          // Will be used later when checking isChainOrGeneric
+          _chainDetectedFromUrl = true;
+        }
+
         // Try to extract business type from hyphenated biz name (common pattern)
         final nameParts = businessName.split(' ');
         if (nameParts.length > 1) {
@@ -574,6 +700,66 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         }
       }
 
+      // 1. Detect that this is a chain restaurant from URL patterns
+      bool isChainOrGeneric = _chainDetectedFromUrl;
+
+      // 2. Assume any restaurant with very generic name might be a chain
+      if (!isChainOrGeneric && businessName.isNotEmpty) {
+        // Common chain restaurant terms
+        final chainTerms = [
+          'restaurant',
+          'cafe',
+          'pizza',
+          'coffee',
+          'bar',
+          'grill',
+          'bakery'
+        ];
+        final nameLower = businessName.toLowerCase();
+
+        for (final term in chainTerms) {
+          if (nameLower.contains(term) && businessName.split(' ').length < 3) {
+            print(
+                '📊 YELP DATA: Likely generic chain name detected: $businessName');
+            isChainOrGeneric = true;
+            break;
+          }
+        }
+      }
+
+      print('📊 YELP DATA: Is chain or generic restaurant: $isChainOrGeneric');
+
+      // If we have a short Yelp URL and couldn't resolve it,
+      // try to scrape the Yelp page for more info regardless of chain status
+      if (isShortUrl) {
+        print(
+            '📊 YELP DATA: Attempting to get location details from Yelp page');
+
+        try {
+          final extraInfo = await _getLocationDetailsFromYelpPage(url);
+          if (extraInfo != null) {
+            if (extraInfo['address'] != null &&
+                extraInfo['address']!.isNotEmpty) {
+              businessAddress = extraInfo['address']!;
+              print(
+                  '📊 YELP DATA: Extracted address from Yelp page: $businessAddress');
+            }
+            if (extraInfo['city'] != null && extraInfo['city']!.isNotEmpty) {
+              businessCity = extraInfo['city']!;
+              print(
+                  '📊 YELP DATA: Extracted city from Yelp page: $businessCity');
+            }
+            if (extraInfo['state'] != null && extraInfo['state']!.isNotEmpty) {
+              businessState = extraInfo['state']!;
+              print(
+                  '📊 YELP DATA: Extracted state from Yelp page: $businessState');
+            }
+          }
+        } catch (e) {
+          print('📊 YELP DATA: Error fetching details from Yelp page: $e');
+        }
+      }
+
       // If we couldn't extract a business name, use a generic one
       if (businessName.isEmpty) {
         businessName = "Shared Business";
@@ -583,23 +769,36 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // Create search strategies in order of most to least specific
       List<String> searchQueries = [];
 
-      // Strategy 1: Complete share text if available
+      // Strategy 1: Business name + city if available (most specific for chains)
+      if (businessName.isNotEmpty && businessCity.isNotEmpty) {
+        // For chains, exact match with city should be first priority
+        if (isChainOrGeneric) {
+          searchQueries.add('"$businessName $businessCity"');
+          searchQueries.add('$businessName $businessCity');
+        } else {
+          searchQueries.add('$businessName $businessCity');
+          searchQueries.add('"$businessName $businessCity"');
+        }
+      }
+
+      // Strategy 2: Business name + business type if both available
+      if (businessName.isNotEmpty && businessType.isNotEmpty) {
+        searchQueries.add('$businessName $businessType');
+        // If we also have city data, add with city
+        if (businessCity.isNotEmpty) {
+          searchQueries.add('$businessName $businessType $businessCity');
+        }
+      }
+
+      // Strategy 3: Complete share text if available
       if (fullSearchText.isNotEmpty) {
         searchQueries.add(fullSearchText);
       }
 
-      // Strategy 2: Business name + city if both available
-      if (businessName.isNotEmpty && businessCity.isNotEmpty) {
-        searchQueries.add('$businessName $businessCity');
-      }
-
-      // Strategy 3: Business name + business type if both available
-      if (businessName.isNotEmpty && businessType.isNotEmpty) {
-        searchQueries.add('$businessName $businessType');
-      }
-
-      // Strategy 4: Just business name
+      // Strategy 4: Just business name with various qualifiers
       if (businessName.isNotEmpty) {
+        // Add "exact" to help find the precise business
+        searchQueries.add('"$businessName"');
         searchQueries.add(businessName);
       }
 
@@ -609,11 +808,31 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       print('📊 YELP DATA: Search strategies (in order): $searchQueries');
 
       // Try each search query until we get results
+      int searchAttempt = 0;
       for (final query in searchQueries) {
-        print('📊 YELP DATA: Trying Google Places with query: "$query"');
+        searchAttempt++;
+        print(
+            '📊 YELP DATA: Trying Google Places with query: "$query" (Attempt $searchAttempt/${searchQueries.length})');
 
         // Using Google Places API to search for this business
-        final results = await _mapsService.searchPlaces(query);
+        List<Map<String, dynamic>> results = [];
+
+        // For chain restaurants or generic names, if we have user location, use it to bias search
+        if (isChainOrGeneric && userPosition != null && searchAttempt > 1) {
+          print(
+              '📊 YELP DATA: Using location-biased search for chain restaurant');
+          results = await _mapsService.searchNearbyPlaces(
+              userPosition.latitude,
+              userPosition.longitude,
+              50000, // 50km radius
+              query);
+          print(
+              '📊 YELP DATA: Location-biased search found ${results.length} results');
+        } else {
+          // Standard search for non-chains or first attempt
+          results = await _mapsService.searchPlaces(query);
+        }
+
         print(
             '📊 YELP DATA: Got ${results.length} search results from Google Places for query "$query"');
 
@@ -621,8 +840,23 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           print(
               '📊 YELP DATA: Results found! First result: ${results[0]['description']}');
 
-          // Get details of the first result
-          final placeId = results[0]['placeId'];
+          // For chain restaurants, check if we can find a better match using address info
+          int resultIndex = 0;
+          if (isChainOrGeneric && results.length > 1) {
+            // Try to find the best match based on address components if available
+            if (businessAddress.isNotEmpty || businessCity.isNotEmpty) {
+              print(
+                  '📊 YELP DATA: Comparing multiple locations for chain restaurant');
+
+              resultIndex = _findBestMatch(
+                  results, businessAddress, businessCity, businessState);
+              print(
+                  '📊 YELP DATA: Selected result #${resultIndex + 1} as best match');
+            }
+          }
+
+          // Get details of the selected result
+          final placeId = results[resultIndex]['placeId'];
           print('📊 YELP DATA: Getting details for place ID: $placeId');
 
           final location = await _mapsService.getPlaceDetails(placeId);
@@ -636,6 +870,80 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             print(
                 '📊 YELP DATA: WARNING - Zero coordinates returned, likely invalid location');
             continue; // Try the next search strategy
+          }
+
+          // Verify this is the correct business by checking name and address match
+          bool isCorrectBusiness = true;
+
+          // Name verification: If we have a business name, check that the Google result contains key parts
+          if (!isChainOrGeneric &&
+              businessName.isNotEmpty &&
+              location.displayName != null) {
+            // Simple verification: Check if key words from the business name appear in the Google result
+            final businessNameWords = businessName
+                .toLowerCase()
+                .split(' ')
+                .where(
+                    (word) => word.length > 3) // Only check significant words
+                .toList();
+
+            if (businessNameWords.isNotEmpty) {
+              final googleNameLower = location.displayName!.toLowerCase();
+
+              // Count how many key words match
+              int matchCount = 0;
+              for (final word in businessNameWords) {
+                if (googleNameLower.contains(word)) {
+                  matchCount++;
+                }
+              }
+
+              // If less than half of the key words match, it's probably not the right business
+              if (matchCount < businessNameWords.length / 2) {
+                print(
+                    '📊 YELP DATA: Name verification failed. Google name "${location.displayName}" doesn\'t match Yelp name "$businessName"');
+                isCorrectBusiness = false;
+              }
+            }
+          }
+
+          // Address verification: If we have a business address, check that the Google result address contains key parts
+          if (isCorrectBusiness &&
+              businessAddress.isNotEmpty &&
+              location.address != null) {
+            // We know from testing that Yelp shares don't include reliable address information
+            // So we'll skip detailed address verification
+            print(
+                '📊 YELP DATA: Skipping address verification as Yelp shares do not contain reliable address data');
+          }
+
+          // Special verification for chain restaurants
+          if (isChainOrGeneric) {
+            if (businessCity.isNotEmpty && location.city != null) {
+              // For chains, city match is critical
+              if (!location.city!
+                      .toLowerCase()
+                      .contains(businessCity.toLowerCase()) &&
+                  !businessCity
+                      .toLowerCase()
+                      .contains(location.city!.toLowerCase())) {
+                print(
+                    '📊 YELP DATA: City verification failed for chain. Google city "${location.city}" doesn\'t match Yelp city "$businessCity"');
+                isCorrectBusiness = false;
+                print(
+                    '📊 YELP DATA: Will try next search strategy that includes city name');
+              } else {
+                print(
+                    '📊 YELP DATA: City match confirmed for chain restaurant');
+              }
+            }
+          }
+
+          // If verification failed, try next search query
+          if (!isCorrectBusiness) {
+            print(
+                '📊 YELP DATA: Verification failed, trying next search strategy');
+            continue;
           }
 
           // Create the result data
@@ -657,6 +965,44 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         }
       }
 
+      // If all strategies failed and we have a chain restaurant, try a final attempt with nearby search
+      if (isChainOrGeneric && userPosition != null) {
+        print(
+            '📊 YELP DATA: All strategies failed for chain restaurant, trying nearby search');
+
+        // Search for the chain in a large radius around the user
+        final nearbyResults = await _mapsService.searchNearbyPlaces(
+            userPosition.latitude,
+            userPosition.longitude,
+            50000, // 50km radius
+            businessName);
+
+        if (nearbyResults.isNotEmpty) {
+          print(
+              '📊 YELP DATA: Nearby search found ${nearbyResults.length} results');
+
+          // Get the first result
+          final placeId = nearbyResults[0]['placeId'];
+          final location = await _mapsService.getPlaceDetails(placeId);
+
+          // Create the result data
+          Map<String, dynamic> resultData = {
+            'location': location,
+            'businessName': businessName,
+            'yelpUrl': url,
+          };
+
+          // Cache the result data
+          _businessDataCache[cacheKey] = resultData;
+
+          // Autofill the form data
+          _fillFormWithBusinessData(location, businessName, url);
+
+          print('📊 YELP DATA: Successfully found nearby chain location');
+          return resultData;
+        }
+      }
+
       print(
           '📊 YELP DATA: No results found after trying all search strategies');
       // Store empty map instead of null to prevent repeated processing
@@ -666,6 +1012,159 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       print('📊 YELP DATA ERROR: Error extracting business from Yelp URL: $e');
       return null;
     }
+  }
+
+  // Helper method to resolve a shortened URL to its full URL
+  Future<String?> _resolveShortUrl(String shortUrl) async {
+    try {
+      final dio = Dio(BaseOptions(
+        followRedirects: false,
+        validateStatus: (status) => status! < 500,
+      ));
+
+      final response = await dio.get(shortUrl);
+
+      if (response.statusCode == 301 || response.statusCode == 302) {
+        final redirectUrl = response.headers.map['location']?.first;
+        if (redirectUrl != null) {
+          return redirectUrl;
+        }
+      }
+
+      return null;
+    } catch (e) {
+      print('Error resolving short URL: $e');
+      return null;
+    }
+  }
+
+  // Attempt to get location details from Yelp page HTML
+  Future<Map<String, String>?> _getLocationDetailsFromYelpPage(
+      String url) async {
+    try {
+      final dio = Dio();
+      final response = await dio.get(url);
+
+      if (response.statusCode == 200) {
+        final html = response.data.toString();
+
+        // Simple regex-based extraction of address information
+        // Look for address in the page content
+        final addressRegex = RegExp(r'address":"([^"]+)');
+        final addressMatch = addressRegex.firstMatch(html);
+
+        final cityRegex = RegExp(r'addressLocality":"([^"]+)');
+        final cityMatch = cityRegex.firstMatch(html);
+
+        final stateRegex = RegExp(r'addressRegion":"([^"]+)');
+        final stateMatch = stateRegex.firstMatch(html);
+
+        if (addressMatch != null || cityMatch != null || stateMatch != null) {
+          return {
+            'address': addressMatch?.group(1) ?? '',
+            'city': cityMatch?.group(1) ?? '',
+            'state': stateMatch?.group(1) ?? '',
+          };
+        }
+      }
+
+      return null;
+    } catch (e) {
+      print('Error fetching Yelp page: $e');
+      return null;
+    }
+  }
+
+  // Helper method to get current user position for location-biased searches
+  Future<Position?> _getCurrentPosition() async {
+    try {
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        print('📊 YELP DATA: Location services are disabled');
+        return null;
+      }
+
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          print('📊 YELP DATA: Location permission denied');
+          return null;
+        }
+      }
+
+      if (permission == LocationPermission.deniedForever) {
+        print('📊 YELP DATA: Location permission permanently denied');
+        return null;
+      }
+
+      // Get last known position as it's faster than getCurrentPosition
+      Position? position = await Geolocator.getLastKnownPosition();
+
+      // If we don't have a last known position, get current position
+      if (position == null) {
+        position = await Geolocator.getCurrentPosition();
+      }
+
+      print(
+          '📊 YELP DATA: Got user position: ${position.latitude}, ${position.longitude}');
+      return position;
+    } catch (e) {
+      print('📊 YELP DATA: Error getting position: $e');
+      return null;
+    }
+  }
+
+  // Helper method to find the best matching result from a list of places
+  // Simplified to prioritize exact city matches for chain restaurants
+  int _findBestMatch(List<Map<String, dynamic>> results, String address,
+      String city, String state) {
+    if (results.isEmpty || results.length == 1) return 0;
+
+    // Only try to find a match with city if we have it
+    if (city.isNotEmpty) {
+      print('📊 YELP DATA: Looking for results matching city: $city');
+
+      // First try exact city matches
+      for (int i = 0; i < results.length; i++) {
+        final result = results[i];
+        final placeAddress =
+            result['vicinity'] ?? result['formatted_address'] ?? '';
+        final placeCity = _extractCityFromAddress(placeAddress);
+
+        if (placeCity.toLowerCase() == city.toLowerCase()) {
+          print('📊 YELP DATA: Found exact city match at index $i: $placeCity');
+          return i;
+        }
+      }
+
+      // Then try partial city matches
+      for (int i = 0; i < results.length; i++) {
+        final result = results[i];
+        final placeAddress =
+            result['vicinity'] ?? result['formatted_address'] ?? '';
+
+        if (placeAddress.toLowerCase().contains(city.toLowerCase())) {
+          print(
+              '📊 YELP DATA: Found result with city in address at index $i: $placeAddress');
+          return i;
+        }
+      }
+    }
+
+    // No specific match found, return the first result
+    print('📊 YELP DATA: No city match found, using first result');
+    return 0;
+  }
+
+  // Helper to extract city from Google Places address
+  String _extractCityFromAddress(String address) {
+    final parts = address.split(',');
+    if (parts.length >= 2) {
+      // City is typically the second-to-last part before state/zip
+      return parts[parts.length - 2].trim();
+    }
+    return '';
   }
 
   // Helper method to fill the form with business data
