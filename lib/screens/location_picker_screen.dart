@@ -59,6 +59,57 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
     try {
       final results = await _mapsService.searchPlaces(query);
 
+      // Get current map center for distance calculation
+      final GoogleMapsWidget? mapWidget =
+          _mapKey.currentWidget as GoogleMapsWidget?;
+      LatLng? mapCenter;
+      if (mapWidget?.mapController != null) {
+        try {
+          mapCenter = await mapWidget!.mapController!.getLatLng(
+              ScreenCoordinate(
+                  x: MediaQuery.of(context).size.width ~/ 2,
+                  y: MediaQuery.of(context).size.height ~/ 2));
+        } catch (e) {
+          print('Error getting map center: $e');
+        }
+      }
+
+      // Sort results based on text priority first, then by distance
+      results.sort((a, b) {
+        final String nameA = (a['description'] ?? '').toString().toLowerCase();
+        final String nameB = (b['description'] ?? '').toString().toLowerCase();
+        final String searchLower = query.toLowerCase();
+
+        // Check if name starts with search query
+        final bool aStartsWith = nameA.startsWith(searchLower);
+        final bool bStartsWith = nameB.startsWith(searchLower);
+
+        // First priority: names starting with the search query
+        if (aStartsWith && !bStartsWith) return -1;
+        if (!aStartsWith && bStartsWith) return 1;
+
+        // If both names have the same priority based on text, sort by distance
+        if (mapCenter != null) {
+          final double? latA = a['latitude'];
+          final double? lngA = a['longitude'];
+          final double? latB = b['latitude'];
+          final double? lngB = b['longitude'];
+
+          if (latA != null && lngA != null && latB != null && lngB != null) {
+            // Calculate distances
+            final distanceA = _calculateDistance(
+                mapCenter.latitude, mapCenter.longitude, latA, lngA);
+            final distanceB = _calculateDistance(
+                mapCenter.latitude, mapCenter.longitude, latB, lngB);
+
+            return distanceA.compareTo(distanceB);
+          }
+        }
+
+        // If no location data or they're the same priority, keep original order
+        return 0;
+      });
+
       setState(() {
         _searchResults = results;
         _showSearchResults = results.isNotEmpty;
@@ -74,6 +125,13 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
         _isSearching = false;
       });
     }
+  }
+
+  // Helper method to calculate distance between coordinates
+  double _calculateDistance(
+      double lat1, double lon1, double lat2, double lon2) {
+    // Simple Euclidean distance - good enough for sorting
+    return (lat1 - lat2) * (lat1 - lat2) + (lon1 - lon2) * (lon1 - lon2);
   }
 
   Future<void> _selectSearchResult(Map<String, dynamic> result) async {
