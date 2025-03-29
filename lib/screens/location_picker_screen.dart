@@ -212,6 +212,15 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
                   final result = _searchResults[index];
                   return ListTile(
                     title: Text(result['description'] ?? 'Unknown Place'),
+                    subtitle: result['address'] != null
+                        ? Text(result['address'])
+                        : (result['structured_formatting'] != null &&
+                                result['structured_formatting']
+                                        ['secondary_text'] !=
+                                    null
+                            ? Text(result['structured_formatting']
+                                ['secondary_text'])
+                            : null),
                     onTap: () => _selectSearchResult(result),
                   );
                 },
