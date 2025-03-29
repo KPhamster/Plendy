@@ -1355,7 +1355,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     // Unfocus all fields before showing the location picker
     FocusScope.of(context).unfocus();
 
-    final Location? result = await Navigator.push(
+    // Check if the card has a Yelp URL - indicates it's from a Yelp share
+    bool isFromYelpShare = card.yelpUrlController.text.isNotEmpty;
+
+    final result = await Navigator.push(
       context,
       MaterialPageRoute(
         builder: (context) => LocationPickerScreen(
@@ -1364,6 +1367,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             // This is just a placeholder during the picker's lifetime
             // The actual result is returned via Navigator.pop
           },
+          isFromYelpShare: isFromYelpShare,
         ),
       ),
     );
@@ -1372,17 +1376,36 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // Immediately unfocus after return - outside of setState to ensure it happens right away
       FocusScope.of(context).unfocus();
 
-      setState(() {
-        card.selectedLocation = result;
-        card.searchController.text = result.address ?? 'Location selected';
+      // Extract location and the update flag (if from Yelp)
+      final Location location = result is Map ? result['location'] : result;
+      final bool shouldUpdateYelpInfo =
+          result is Map ? result['shouldUpdateYelpInfo'] ?? false : false;
 
-        // If title is empty, set it to the place name
-        if (card.titleController.text.isEmpty) {
-          card.titleController.text = result.getPlaceName();
+      setState(() {
+        card.selectedLocation = location;
+        card.searchController.text = location.address ?? 'Location selected';
+
+        // If title is empty or if shouldUpdateYelpInfo is true, update the fields
+        if (card.titleController.text.isEmpty || shouldUpdateYelpInfo) {
+          card.titleController.text = location.getPlaceName();
           // Position cursor at beginning so start of text is visible
           card.titleController.selection = TextSelection.fromPosition(
             const TextPosition(offset: 0),
           );
+
+          // If we should update Yelp info, update related fields when available
+          if (shouldUpdateYelpInfo) {
+            // Update website URL if it's empty - use Google search instead since location doesn't have website
+            if (card.websiteUrlController.text.isEmpty) {
+              // We don't have website in the Location class, so we'll leave this field for manual update
+              // or could be populated from additional API calls later
+            }
+
+            // Update categories if empty - we don't have types in Location class
+            if (card.categoryController.text.isEmpty) {
+              // Categories would need to be set manually or from a separate API call
+            }
+          }
         }
       });
 
