@@ -262,24 +262,120 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
           // Search results
           if (_showSearchResults)
             Container(
-              constraints: BoxConstraints(maxHeight: 200),
-              child: ListView.builder(
+              constraints: BoxConstraints(maxHeight: 300),
+              margin: EdgeInsets.symmetric(horizontal: 8.0),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(8),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.1),
+                    blurRadius: 8,
+                    offset: Offset(0, 3),
+                  ),
+                ],
+              ),
+              child: ListView.separated(
                 shrinkWrap: true,
+                padding: EdgeInsets.symmetric(vertical: 8),
                 itemCount: _searchResults.length,
+                separatorBuilder: (context, index) =>
+                    Divider(height: 1, indent: 56, endIndent: 16),
                 itemBuilder: (context, index) {
                   final result = _searchResults[index];
-                  return ListTile(
-                    title: Text(result['description'] ?? 'Unknown Place'),
-                    subtitle: result['address'] != null
-                        ? Text(result['address'])
-                        : (result['structured_formatting'] != null &&
-                                result['structured_formatting']
-                                        ['secondary_text'] !=
-                                    null
-                            ? Text(result['structured_formatting']
-                                ['secondary_text'])
-                            : null),
-                    onTap: () => _selectSearchResult(result),
+                  final bool hasRating = result['rating'] != null;
+                  final double rating =
+                      hasRating ? (result['rating'] as double) : 0.0;
+                  final String? address = result['address'] ??
+                      (result['structured_formatting'] != null
+                          ? result['structured_formatting']['secondary_text']
+                          : null);
+
+                  return Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      onTap: () => _selectSearchResult(result),
+                      borderRadius: BorderRadius.circular(8),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 4.0),
+                        child: ListTile(
+                          leading: CircleAvatar(
+                            backgroundColor:
+                                Theme.of(context).primaryColor.withOpacity(0.1),
+                            child: Text(
+                              '${index + 1}',
+                              style: TextStyle(
+                                color: Theme.of(context).primaryColor,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 16,
+                              ),
+                            ),
+                          ),
+                          title: Text(
+                            result['description'] ?? 'Unknown Place',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w500,
+                              fontSize: 15,
+                            ),
+                          ),
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              if (address != null)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 4.0),
+                                  child: Row(
+                                    children: [
+                                      Icon(Icons.location_on,
+                                          size: 14, color: Colors.grey[600]),
+                                      SizedBox(width: 4),
+                                      Expanded(
+                                        child: Text(
+                                          address,
+                                          style: TextStyle(
+                                            color: Colors.grey[600],
+                                            fontSize: 13,
+                                          ),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              if (hasRating)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 4.0),
+                                  child: Row(
+                                    children: [
+                                      ...List.generate(
+                                          5,
+                                          (i) => Icon(
+                                                i < rating.floor()
+                                                    ? Icons.star
+                                                    : (i < rating)
+                                                        ? Icons.star_half
+                                                        : Icons.star_border,
+                                                size: 14,
+                                                color: Colors.amber,
+                                              )),
+                                      SizedBox(width: 4),
+                                      if (result['userRatingCount'] != null)
+                                        Text(
+                                          '(${result['userRatingCount']})',
+                                          style: TextStyle(
+                                            color: Colors.grey[600],
+                                            fontSize: 12,
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
                   );
                 },
               ),
@@ -420,5 +516,45 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
         ],
       ),
     );
+  }
+
+  // Helper method to get icon based on place type
+  IconData _getIconForPlaceType(String type) {
+    final typeLower = type.toLowerCase();
+
+    if (typeLower.contains('restaurant') || typeLower.contains('food')) {
+      return Icons.restaurant;
+    } else if (typeLower.contains('cafe') || typeLower.contains('coffee')) {
+      return Icons.coffee;
+    } else if (typeLower.contains('bar')) {
+      return Icons.local_bar;
+    } else if (typeLower.contains('store') || typeLower.contains('shop')) {
+      return Icons.shopping_bag;
+    } else if (typeLower.contains('hotel') || typeLower.contains('lodging')) {
+      return Icons.hotel;
+    } else if (typeLower.contains('airport')) {
+      return Icons.flight;
+    } else if (typeLower.contains('train') || typeLower.contains('transit')) {
+      return Icons.train;
+    } else if (typeLower.contains('park')) {
+      return Icons.park;
+    } else if (typeLower.contains('school') ||
+        typeLower.contains('university')) {
+      return Icons.school;
+    } else if (typeLower.contains('hospital') || typeLower.contains('doctor')) {
+      return Icons.local_hospital;
+    } else if (typeLower.contains('gym')) {
+      return Icons.fitness_center;
+    } else if (typeLower.contains('bank')) {
+      return Icons.account_balance;
+    } else if (typeLower.contains('gas') || typeLower.contains('fuel')) {
+      return Icons.local_gas_station;
+    } else if (typeLower.contains('car')) {
+      return Icons.directions_car;
+    } else if (typeLower.contains('pharmacy')) {
+      return Icons.local_pharmacy;
+    } else {
+      return Icons.place;
+    }
   }
 }
