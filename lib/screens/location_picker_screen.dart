@@ -206,7 +206,38 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Calculate keyboard height and adjust layout accordingly
+    final double keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
+    final bool isKeyboardVisible = keyboardHeight > 0;
+
+    // Calculate flexible height for map based on available space
+    final double screenHeight = MediaQuery.of(context).size.height;
+    final double searchBarHeight = 70; // Approximate height of search bar
+    final double searchResultsHeight =
+        _showSearchResults ? MediaQuery.of(context).size.height * 0.3 : 0;
+    final double locationInfoHeight =
+        _selectedLocation != null && !isKeyboardVisible ? 200 : 0;
+    final double appBarHeight =
+        kToolbarHeight + MediaQuery.of(context).padding.top;
+
+    // Min height for map when keyboard is visible
+    final double minMapHeight = 150;
+
+    // Calculate map height: available space minus other elements
+    double mapHeight = screenHeight -
+        appBarHeight -
+        searchBarHeight -
+        searchResultsHeight -
+        locationInfoHeight -
+        keyboardHeight;
+
+    // Ensure map has at least minimum height when keyboard is visible
+    if (isKeyboardVisible) {
+      mapHeight = mapHeight < minMapHeight ? minMapHeight : mapHeight;
+    }
+
     return Scaffold(
+      resizeToAvoidBottomInset: true,
       appBar: AppBar(
         title: Text(widget.title),
         actions: [
@@ -220,300 +251,332 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
             ),
         ],
       ),
-      body: Column(
-        children: [
-          // Search bar
-          Padding(
-            padding: const EdgeInsets.all(8.0),
-            child: Card(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                child: TextField(
-                  controller: _searchController,
-                  decoration: InputDecoration(
-                    hintText: 'Search for a place',
-                    border: InputBorder.none,
-                    prefixIcon: Icon(Icons.search),
-                    suffixIcon: _isSearching
-                        ? SizedBox(
-                            width: 24,
-                            height: 24,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : _searchController.text.isNotEmpty
-                            ? IconButton(
-                                icon: Icon(Icons.clear),
-                                onPressed: () {
-                                  setState(() {
-                                    _searchController.clear();
-                                    _searchResults = [];
-                                    _showSearchResults = false;
-                                  });
-                                },
-                              )
-                            : null,
-                  ),
-                  onChanged: _searchPlaces,
-                ),
-              ),
-            ),
-          ),
-
-          // Search results
-          if (_showSearchResults)
-            Container(
-              constraints: BoxConstraints(maxHeight: 300),
-              margin: EdgeInsets.symmetric(horizontal: 8.0),
+      // Fixed bottom button that's always visible
+      bottomNavigationBar: _selectedLocation != null
+          ? Container(
+              padding: EdgeInsets.all(16),
               decoration: BoxDecoration(
                 color: Colors.white,
-                borderRadius: BorderRadius.circular(8),
                 boxShadow: [
                   BoxShadow(
                     color: Colors.black.withOpacity(0.1),
                     blurRadius: 8,
-                    offset: Offset(0, 3),
+                    offset: Offset(0, -3),
                   ),
                 ],
               ),
-              child: ListView.separated(
-                shrinkWrap: true,
-                padding: EdgeInsets.symmetric(vertical: 8),
-                itemCount: _searchResults.length,
-                separatorBuilder: (context, index) =>
-                    Divider(height: 1, indent: 56, endIndent: 16),
-                itemBuilder: (context, index) {
-                  final result = _searchResults[index];
-                  final bool hasRating = result['rating'] != null;
-                  final double rating =
-                      hasRating ? (result['rating'] as double) : 0.0;
-                  final String? address = result['address'] ??
-                      (result['structured_formatting'] != null
-                          ? result['structured_formatting']['secondary_text']
-                          : null);
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  padding: EdgeInsets.symmetric(vertical: 16),
+                  backgroundColor: Theme.of(context).primaryColor,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+                onPressed: () {
+                  widget.onLocationSelected(_selectedLocation!);
+                  Navigator.of(context).pop(_selectedLocation);
+                },
+                child: Text(
+                  'Confirm Location',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            )
+          : null,
+      body: SafeArea(
+        child: Column(
+          children: [
+            // Search bar
+            Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: Card(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                  child: TextField(
+                    controller: _searchController,
+                    decoration: InputDecoration(
+                      hintText: 'Search for a place',
+                      border: InputBorder.none,
+                      prefixIcon: Icon(Icons.search),
+                      suffixIcon: _isSearching
+                          ? SizedBox(
+                              width: 24,
+                              height: 24,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : _searchController.text.isNotEmpty
+                              ? IconButton(
+                                  icon: Icon(Icons.clear),
+                                  onPressed: () {
+                                    setState(() {
+                                      _searchController.clear();
+                                      _searchResults = [];
+                                      _showSearchResults = false;
+                                    });
+                                  },
+                                )
+                              : null,
+                    ),
+                    onChanged: _searchPlaces,
+                  ),
+                ),
+              ),
+            ),
 
-                  return Material(
-                    color: Colors.transparent,
-                    child: InkWell(
-                      onTap: () => _selectSearchResult(result),
-                      borderRadius: BorderRadius.circular(8),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 4.0),
-                        child: ListTile(
-                          leading: CircleAvatar(
-                            backgroundColor:
-                                Theme.of(context).primaryColor.withOpacity(0.1),
-                            child: Text(
-                              '${index + 1}',
-                              style: TextStyle(
-                                color: Theme.of(context).primaryColor,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 16,
+            // Search results
+            if (_showSearchResults)
+              Container(
+                constraints: BoxConstraints(
+                  maxHeight: isKeyboardVisible
+                      ? MediaQuery.of(context).size.height * 0.4
+                      : MediaQuery.of(context).size.height * 0.3,
+                ),
+                margin: EdgeInsets.symmetric(horizontal: 8.0),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(8),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.1),
+                      blurRadius: 8,
+                      offset: Offset(0, 3),
+                    ),
+                  ],
+                ),
+                child: ListView.separated(
+                  shrinkWrap: true,
+                  padding: EdgeInsets.symmetric(vertical: 8),
+                  itemCount: _searchResults.length,
+                  separatorBuilder: (context, index) =>
+                      Divider(height: 1, indent: 56, endIndent: 16),
+                  itemBuilder: (context, index) {
+                    final result = _searchResults[index];
+                    final bool hasRating = result['rating'] != null;
+                    final double rating =
+                        hasRating ? (result['rating'] as double) : 0.0;
+                    final String? address = result['address'] ??
+                        (result['structured_formatting'] != null
+                            ? result['structured_formatting']['secondary_text']
+                            : null);
+
+                    return Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        onTap: () => _selectSearchResult(result),
+                        borderRadius: BorderRadius.circular(8),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 4.0),
+                          child: ListTile(
+                            leading: CircleAvatar(
+                              backgroundColor: Theme.of(context)
+                                  .primaryColor
+                                  .withOpacity(0.1),
+                              child: Text(
+                                '${index + 1}',
+                                style: TextStyle(
+                                  color: Theme.of(context).primaryColor,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
+                                ),
                               ),
                             ),
-                          ),
-                          title: Text(
-                            result['description'] ?? 'Unknown Place',
-                            style: TextStyle(
-                              fontWeight: FontWeight.w500,
-                              fontSize: 15,
+                            title: Text(
+                              result['description'] ?? 'Unknown Place',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w500,
+                                fontSize: 15,
+                              ),
+                            ),
+                            subtitle: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                if (address != null)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 4.0),
+                                    child: Row(
+                                      children: [
+                                        Icon(Icons.location_on,
+                                            size: 14, color: Colors.grey[600]),
+                                        SizedBox(width: 4),
+                                        Expanded(
+                                          child: Text(
+                                            address,
+                                            style: TextStyle(
+                                              color: Colors.grey[600],
+                                              fontSize: 13,
+                                            ),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                if (hasRating)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 4.0),
+                                    child: Row(
+                                      children: [
+                                        ...List.generate(
+                                            5,
+                                            (i) => Icon(
+                                                  i < rating.floor()
+                                                      ? Icons.star
+                                                      : (i < rating)
+                                                          ? Icons.star_half
+                                                          : Icons.star_border,
+                                                  size: 14,
+                                                  color: Colors.amber,
+                                                )),
+                                        SizedBox(width: 4),
+                                        if (result['userRatingCount'] != null)
+                                          Text(
+                                            '(${result['userRatingCount']})',
+                                            style: TextStyle(
+                                              color: Colors.grey[600],
+                                              fontSize: 12,
+                                            ),
+                                          ),
+                                      ],
+                                    ),
+                                  ),
+                              ],
                             ),
                           ),
-                          subtitle: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              if (address != null)
-                                Padding(
-                                  padding: const EdgeInsets.only(top: 4.0),
-                                  child: Row(
-                                    children: [
-                                      Icon(Icons.location_on,
-                                          size: 14, color: Colors.grey[600]),
-                                      SizedBox(width: 4),
-                                      Expanded(
-                                        child: Text(
-                                          address,
-                                          style: TextStyle(
-                                            color: Colors.grey[600],
-                                            fontSize: 13,
-                                          ),
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              if (hasRating)
-                                Padding(
-                                  padding: const EdgeInsets.only(top: 4.0),
-                                  child: Row(
-                                    children: [
-                                      ...List.generate(
-                                          5,
-                                          (i) => Icon(
-                                                i < rating.floor()
-                                                    ? Icons.star
-                                                    : (i < rating)
-                                                        ? Icons.star_half
-                                                        : Icons.star_border,
-                                                size: 14,
-                                                color: Colors.amber,
-                                              )),
-                                      SizedBox(width: 4),
-                                      if (result['userRatingCount'] != null)
-                                        Text(
-                                          '(${result['userRatingCount']})',
-                                          style: TextStyle(
-                                            color: Colors.grey[600],
-                                            fontSize: 12,
-                                          ),
-                                        ),
-                                    ],
-                                  ),
-                                ),
-                            ],
-                          ),
                         ),
                       ),
-                    ),
-                  );
-                },
-              ),
-            ),
-
-          // Map takes remaining space
-          Expanded(
-            child: Stack(
-              children: [
-                GoogleMapsWidget(
-                  key: _mapKey,
-                  initialLocation: widget.initialLocation,
-                  showUserLocation: true,
-                  allowSelection: true,
-                  onLocationSelected: _onLocationSelected,
+                    );
+                  },
                 ),
+              ),
 
-                // Directions button - only visible when a location is selected
-                if (_selectedLocation != null)
-                  Positioned(
-                    right: 7,
-                    bottom: 100,
-                    child: FloatingActionButton(
-                      heroTag: 'directionsButton',
-                      mini: true,
-                      backgroundColor: Colors.white,
-                      child: Icon(
-                        Icons.directions,
-                        color: Colors.blue,
-                      ),
-                      onPressed: _openDirectionsInGoogleMaps,
-                      tooltip: 'Get directions to this location',
-                    ),
-                  ),
-              ],
-            ),
-          ),
-
-          // Information about selected location
-          if (_selectedLocation != null)
-            Container(
-              padding: EdgeInsets.all(16),
-              color: Colors.white,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
+            // Map takes the remaining space
+            Expanded(
+              child: Stack(
                 children: [
-                  Text(
-                    'Selected Location',
-                    style: TextStyle(
-                      fontWeight: FontWeight.normal,
-                      fontSize: 14,
-                      color: Colors.grey[800],
-                    ),
+                  GoogleMapsWidget(
+                    key: _mapKey,
+                    initialLocation: widget.initialLocation,
+                    showUserLocation: true,
+                    allowSelection: true,
+                    onLocationSelected: _onLocationSelected,
                   ),
-                  SizedBox(height: 12),
 
-                  // Place name - using our new getPlaceName helper
-                  Text(
-                    _selectedLocation!.getPlaceName(),
-                    style: TextStyle(
-                      fontWeight: FontWeight.w500,
-                      fontSize: 16,
-                    ),
-                  ),
-                  SizedBox(height: 8),
-
-                  // Full address
-                  if (_selectedLocation!.address != null) ...[
-                    Text(
-                      _selectedLocation!.address!,
-                      style: TextStyle(color: Colors.grey[700]),
-                    ),
-                    SizedBox(height: 8),
-                  ],
-
-                  // Area details if available
-                  Row(children: [
-                    if (_selectedLocation!.city != null) ...[
-                      Icon(Icons.location_city,
-                          size: 16, color: Colors.grey[600]),
-                      SizedBox(width: 4),
-                      Text(
-                        _selectedLocation!.city!,
-                        style: TextStyle(color: Colors.grey[700]),
-                      ),
-                      SizedBox(width: 16),
-                    ],
-                    if (_selectedLocation!.state != null) ...[
-                      Text(
-                        _selectedLocation!.state!,
-                        style: TextStyle(color: Colors.grey[700]),
-                      ),
-                      SizedBox(width: 8),
-                    ],
-                    if (_selectedLocation!.country != null) ...[
-                      Text(
-                        _selectedLocation!.country!,
-                        style: TextStyle(color: Colors.grey[700]),
-                      ),
-                    ],
-                  ]),
-                  SizedBox(height: 12),
-
-                  // Coordinates
-                  Row(
-                    children: [
-                      Icon(Icons.gps_fixed, size: 16, color: Colors.grey[600]),
-                      SizedBox(width: 4),
-                      Expanded(
-                        child: Text(
-                          '${_selectedLocation!.latitude.toStringAsFixed(6)}, ${_selectedLocation!.longitude.toStringAsFixed(6)}',
-                          style: TextStyle(
-                            color: Colors.grey[600],
-                            fontFamily: 'monospace',
-                            fontSize: 12,
-                          ),
+                  // Directions button - only visible when a location is selected
+                  if (_selectedLocation != null)
+                    Positioned(
+                      right: 7,
+                      bottom: 16,
+                      child: FloatingActionButton(
+                        heroTag: 'directionsButton',
+                        mini: true,
+                        backgroundColor: Colors.white,
+                        child: Icon(
+                          Icons.directions,
+                          color: Colors.blue,
                         ),
+                        onPressed: _openDirectionsInGoogleMaps,
+                        tooltip: 'Get directions to this location',
                       ),
-                    ],
-                  ),
-                  SizedBox(height: 16),
-
-                  // Confirm button
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: () {
-                        widget.onLocationSelected(_selectedLocation!);
-                        Navigator.of(context).pop(_selectedLocation);
-                      },
-                      child: Text('Confirm Location'),
                     ),
-                  ),
                 ],
               ),
             ),
-        ],
+
+            // Information about selected location - only when keyboard is not visible
+            if (_selectedLocation != null && !isKeyboardVisible)
+              Container(
+                padding: EdgeInsets.all(16),
+                color: Colors.white,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Selected Location',
+                      style: TextStyle(
+                        fontWeight: FontWeight.normal,
+                        fontSize: 14,
+                        color: Colors.grey[800],
+                      ),
+                    ),
+                    SizedBox(height: 12),
+
+                    // Place name
+                    Text(
+                      _selectedLocation!.getPlaceName(),
+                      style: TextStyle(
+                        fontWeight: FontWeight.w500,
+                        fontSize: 16,
+                      ),
+                    ),
+                    SizedBox(height: 8),
+
+                    // Full address
+                    if (_selectedLocation!.address != null) ...[
+                      Text(
+                        _selectedLocation!.address!,
+                        style: TextStyle(color: Colors.grey[700]),
+                      ),
+                      SizedBox(height: 8),
+                    ],
+
+                    // Area details if available
+                    Row(children: [
+                      if (_selectedLocation!.city != null) ...[
+                        Icon(Icons.location_city,
+                            size: 16, color: Colors.grey[600]),
+                        SizedBox(width: 4),
+                        Text(
+                          _selectedLocation!.city!,
+                          style: TextStyle(color: Colors.grey[700]),
+                        ),
+                        SizedBox(width: 16),
+                      ],
+                      if (_selectedLocation!.state != null) ...[
+                        Text(
+                          _selectedLocation!.state!,
+                          style: TextStyle(color: Colors.grey[700]),
+                        ),
+                        SizedBox(width: 8),
+                      ],
+                      if (_selectedLocation!.country != null) ...[
+                        Text(
+                          _selectedLocation!.country!,
+                          style: TextStyle(color: Colors.grey[700]),
+                        ),
+                      ],
+                    ]),
+                    SizedBox(height: 12),
+
+                    // Coordinates
+                    Row(
+                      children: [
+                        Icon(Icons.gps_fixed,
+                            size: 16, color: Colors.grey[600]),
+                        SizedBox(width: 4),
+                        Expanded(
+                          child: Text(
+                            '${_selectedLocation!.latitude.toStringAsFixed(6)}, ${_selectedLocation!.longitude.toStringAsFixed(6)}',
+                            style: TextStyle(
+                              color: Colors.grey[600],
+                              fontFamily: 'monospace',
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
