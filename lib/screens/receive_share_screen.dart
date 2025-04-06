@@ -52,6 +52,10 @@ class ExperienceCardData {
   // Unique identifier for this card
   final String id = DateTime.now().millisecondsSinceEpoch.toString();
 
+  // State for preview rebuilding
+  String?
+      currentPlaceIdForPreview; // Tracks the placeId currently shown in preview
+
   // Constructor can set initial values if needed
   ExperienceCardData();
 
@@ -1172,20 +1176,59 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       Location location, String businessName, String yelpUrl) {
     final String businessKey = '${location.latitude},${location.longitude}';
 
+    // Find the specific card that matches this Yelp URL
+    ExperienceCardData? targetCard;
+    for (var card in _experienceCards) {
+      if (card.yelpUrlController.text == yelpUrl) {
+        targetCard = card;
+        break;
+      }
+    }
+
+    // If no specific card found, use the first one
+    targetCard ??= _experienceCards.isNotEmpty ? _experienceCards.first : null;
+
+    if (targetCard == null) return;
+
+    // Try to get website URL from the Maps service if the location has a placeId
+    String? websiteUrl;
+    if (location.website != null) {
+      websiteUrl = location.website;
+      print('DEBUG: Got website URL from location object: $websiteUrl');
+    }
+
     // Update UI
     setState(() {
-      for (var card in _experienceCards) {
-        // Set data in the card
-        print(
-            'DEBUG: Setting card data - title: ${location.displayName ?? businessName}');
-        card.titleController.text = location.displayName ?? businessName;
-        card.selectedLocation = location;
-        card.yelpUrlController.text = yelpUrl;
-        card.searchController.text = location.address ?? '';
+      // Set data in the target card
+      print(
+          'DEBUG: Setting card data - title: ${location.displayName ?? businessName}');
+      targetCard!.titleController.text = location.displayName ?? businessName;
+      targetCard!.selectedLocation = location;
+      targetCard!.yelpUrlController.text = yelpUrl;
+      targetCard!.searchController.text = location.address ?? '';
+
+      // Update website URL if we found one
+      if (websiteUrl != null && websiteUrl.isNotEmpty) {
+        targetCard!.websiteUrlController.text = websiteUrl;
+        print('DEBUG: Updated website URL to: $websiteUrl');
+      }
+
+      // If we have a photoUrl, make sure to force a refresh of any UI that shows it
+      if (location.photoUrl != null) {
+        print('DEBUG: Location has photo URL: ${location.photoUrl}');
       }
     });
 
-    // Success message removed
+    // Force refresh of any Yelp preview or cached business data
+    setState(() {
+      // Remove from cache to force reload
+      _businessDataCache.remove(yelpUrl.trim());
+
+      // Force refresh of the business preview
+      if (_yelpPreviewFutures.containsKey(yelpUrl)) {
+        _yelpPreviewFutures.remove(yelpUrl);
+      }
+    });
   }
 
   // Helper method to fill the form with Google Maps data
@@ -1381,33 +1424,133 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       final bool shouldUpdateYelpInfo =
           result is Map ? result['shouldUpdateYelpInfo'] ?? false : false;
 
-      setState(() {
-        card.selectedLocation = location;
-        card.searchController.text = location.address ?? 'Location selected';
+      // If shouldUpdateYelpInfo is true, we should update all the fields including the photo
+      if (shouldUpdateYelpInfo && card.yelpUrlController.text.isNotEmpty) {
+        print('Updating all business information with new location data');
+        final String yelpUrl = card.yelpUrlController.text.trim();
 
-        // If title is empty or if shouldUpdateYelpInfo is true, update the fields
-        if (card.titleController.text.isEmpty || shouldUpdateYelpInfo) {
-          card.titleController.text = location.getPlaceName();
-          // Position cursor at beginning so start of text is visible
-          card.titleController.selection = TextSelection.fromPosition(
-            const TextPosition(offset: 0),
-          );
+        try {
+          // Get detailed place information with website, photos, etc.
+          print('Fetching detailed place info for updated location');
+          Location detailedLocation;
 
-          // If we should update Yelp info, update related fields when available
-          if (shouldUpdateYelpInfo) {
-            // Update website URL if it's empty - use Google search instead since location doesn't have website
-            if (card.websiteUrlController.text.isEmpty) {
-              // We don't have website in the Location class, so we'll leave this field for manual update
-              // or could be populated from additional API calls later
-            }
+          // Check if placeId exists, otherwise search by coordinates
+          if (location.placeId != null && location.placeId!.isNotEmpty) {
+            print('Using placeId: ${location.placeId}');
+            detailedLocation =
+                await _mapsService.getPlaceDetails(location.placeId!);
+          } else {
+            print(
+                'No placeId found, searching by coordinates: ${location.latitude}, ${location.longitude}');
+            final List<Map<String, dynamic>> nearbyPlacesData =
+                await _mapsService.searchNearbyPlaces(
+                    location.latitude,
+                    location.longitude,
+                    50, // Search in a 50m radius
+                    'establishment');
 
-            // Update categories if empty - we don't have types in Location class
-            if (card.categoryController.text.isEmpty) {
-              // Categories would need to be set manually or from a separate API call
+            if (nearbyPlacesData.isNotEmpty) {
+              final String? nearbyPlaceId =
+                  nearbyPlacesData.first['placeId'] as String?;
+              if (nearbyPlaceId != null && nearbyPlaceId.isNotEmpty) {
+                detailedLocation =
+                    await _mapsService.getPlaceDetails(nearbyPlaceId);
+                print(
+                    'Found place by coordinates: ${detailedLocation.getPlaceName()} (ID: $nearbyPlaceId)');
+              } else {
+                detailedLocation = location; // Fallback
+                print(
+                    'Nearby search returned results, but no placeId found. Using original tap location.');
+              }
+            } else {
+              detailedLocation = location; // Fallback
+              print(
+                  'Could not find a specific place nearby, using original tap location.');
             }
           }
+
+          // Prepare data for the new future and card update
+          final String businessName = detailedLocation.getPlaceName();
+          final Map<String, dynamic> newFutureData = {
+            'location': detailedLocation,
+            'businessName': businessName,
+            'yelpUrl': yelpUrl, // Use the original Yelp URL as the key
+            'photoUrl': detailedLocation.photoUrl,
+            'address': detailedLocation.address,
+            'website': detailedLocation.website, // Now valid
+          };
+
+          // *** Consolidated State Update ***
+          setState(() {
+            // 1. Update card controllers
+            card.selectedLocation = detailedLocation;
+            card.searchController.text =
+                detailedLocation.address ?? 'Location selected';
+            card.titleController.text = businessName;
+            card.websiteUrlController.text =
+                detailedLocation.website ?? ''; // Use the website from location
+            card.titleController.selection = TextSelection.fromPosition(
+              const TextPosition(offset: 0), // Position cursor at beginning
+            );
+
+            // 2. Clear relevant caches
+            _businessDataCache.remove(yelpUrl);
+            _yelpPreviewFutures
+                .remove(yelpUrl); // Remove old future if using original url key
+            // Optionally remove future keyed by old placeId if it exists
+            if (card.currentPlaceIdForPreview != null) {
+              _yelpPreviewFutures.remove(card.currentPlaceIdForPreview);
+            }
+
+            // 3. Update the current placeId for the preview
+            card.currentPlaceIdForPreview = detailedLocation.placeId;
+
+            // 4. Determine the key for the futures map (use placeId if available)
+            final String futureKey = detailedLocation.placeId ?? yelpUrl;
+
+            // 5. Add the new, resolved future to the map using the new key
+            _yelpPreviewFutures[futureKey] = Future.value(newFutureData);
+
+            print('Business data and preview future updated atomically');
+            print(
+                'Updated PlaceID for preview key: ${card.currentPlaceIdForPreview}');
+            print('Future map key used: $futureKey');
+            print('Updated photo URL in future: ${detailedLocation.photoUrl}');
+            print('Updated address in future: ${detailedLocation.address}');
+            print('Updated website in future: ${detailedLocation.website}');
+          });
+        } catch (e) {
+          print('Error fetching or updating place details: $e');
+          // Optionally show error to user
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Error updating location details: $e')),
+          );
+          // Fallback to just updating basic location if fetch failed
+          setState(() {
+            card.selectedLocation = location;
+            card.searchController.text =
+                location.address ?? 'Location selected';
+            if (card.titleController.text.isEmpty) {
+              card.titleController.text = location.getPlaceName();
+            }
+          });
         }
-      });
+      } else {
+        // Just update the location without changing other fields
+        setState(() {
+          card.selectedLocation = location;
+          card.searchController.text = location.address ?? 'Location selected';
+
+          // If title is empty, set it to the place name
+          if (card.titleController.text.isEmpty) {
+            card.titleController.text = location.getPlaceName();
+            // Position cursor at beginning so start of text is visible
+            card.titleController.selection = TextSelection.fromPosition(
+              const TextPosition(offset: 0),
+            );
+          }
+        });
+      }
 
       // Unfocus again after state update to ensure keyboard is dismissed
       Future.microtask(() => FocusScope.of(context).unfocus());
@@ -1743,7 +1886,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                     crossAxisAlignment:
                                         CrossAxisAlignment.start,
                                     children: [
-                                      _buildMediaPreview(file),
+                                      _buildMediaPreview(
+                                          file, _experienceCards.first),
 
                                       // Display metadata (only for non-URL content)
                                       if (!(file.type == SharedMediaType.text &&
@@ -1955,43 +2099,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   }
 
   bool _isValidUrl(String text) {
-    // More permissive URL validation
-    try {
-      // First try with standard URL validation
-      final uri = Uri.parse(text);
-      if (uri.hasScheme && uri.hasAuthority) {
-        return true;
-      }
-
-      // Fallback for URLs without scheme
-      if (text.contains('/') &&
-          (text.contains('.com') ||
-              text.contains('.to') ||
-              text.contains('.org') ||
-              text.contains('.net') ||
-              text.contains('.io'))) {
-        return true;
-      }
-
-      // Try with an added https:// prefix
-      if (!text.startsWith('http')) {
-        final uri = Uri.parse('https://' + text);
-        return uri.hasScheme && uri.hasAuthority;
-      }
-
-      return false;
-    } catch (e) {
-      // Check if it looks like a URL but just needs a scheme
-      if (text.contains('.') && !text.contains(' ')) {
-        try {
-          final uri = Uri.parse('https://' + text);
-          return uri.hasScheme && uri.hasAuthority;
-        } catch (_) {
-          return false;
-        }
-      }
-      return false;
-    }
+    // Simple URL validation
+    return text.startsWith('http://') ||
+        text.startsWith('https://') ||
+        text.startsWith('www.') ||
+        text.contains('yelp.to/') ||
+        text.contains('goo.gl/');
   }
 
   String _getMediaTypeString(SharedMediaType type) {
@@ -2009,28 +2122,28 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     }
   }
 
-  Widget _buildMediaPreview(SharedMediaFile file) {
+  Widget _buildMediaPreview(SharedMediaFile file, ExperienceCardData card) {
     switch (file.type) {
       case SharedMediaType.image:
         return _buildImagePreview(file);
       case SharedMediaType.video:
         return _buildVideoPreview(file);
       case SharedMediaType.text:
-        return _buildTextPreview(file);
+        return _buildTextPreview(file, card);
       case SharedMediaType.file:
       default:
         return _buildFilePreview(file);
     }
   }
 
-  Widget _buildTextPreview(SharedMediaFile file) {
+  Widget _buildTextPreview(SharedMediaFile file, ExperienceCardData card) {
     // Check if it's a URL
     if (_isValidUrl(file.path)) {
       // Enhanced Yelp detection
       if (file.path.toLowerCase().contains('yelp.to/') ||
           file.path.toLowerCase().contains('yelp.com/biz/')) {
         print('DEBUG: Building Yelp preview for URL: ${file.path}');
-        return _buildYelpPreview(file.path);
+        return _buildYelpPreview(file.path, card);
       }
       return _buildUrlPreview(file.path);
     } else {
@@ -2044,7 +2157,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             // Enhanced Yelp detection to include both yelp.com and yelp.to URLs
             if (line.toLowerCase().contains('yelp.to/') ||
                 line.toLowerCase().contains('yelp.com/biz/')) {
-              return _buildYelpPreview(line.trim());
+              return _buildYelpPreview(line.trim(), card);
             }
             return _buildUrlPreview(line.trim());
           }
@@ -2059,7 +2172,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         if (match != null) {
           final extractedUrl = match.group(0);
           print('DEBUG: Extracted Yelp URL using regex: $extractedUrl');
-          return _buildYelpPreview(extractedUrl!);
+          return _buildYelpPreview(extractedUrl!, card);
         }
       } else if (file.path.contains('yelp.to/') ||
           file.path.contains('yelp.com/biz/')) {
@@ -2069,7 +2182,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         if (match != null) {
           final extractedUrl = match.group(0);
           print('DEBUG: Extracted Yelp URL using regex: $extractedUrl');
-          return _buildYelpPreview(extractedUrl!);
+          return _buildYelpPreview(extractedUrl!, card);
         }
       }
       // Regular text
@@ -2088,7 +2201,16 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   Widget _buildUrlPreview(String url) {
     // Special handling for Yelp URLs
     if (url.contains('yelp.com/biz') || url.contains('yelp.to/')) {
-      return _buildYelpPreview(url);
+      // Need to find the associated ExperienceCardData. Since Yelp/Maps shares
+      // only use the first card, we can assume it's _experienceCards.first.
+      if (_experienceCards.isNotEmpty) {
+        return _buildYelpPreview(
+            url, _experienceCards.first); // Pass the card data
+      } else {
+        // Handle case where there are no cards (shouldn't happen, but defensively)
+        return _buildYelpFallbackPreview(
+            url, _extractBusinessNameFromYelpUrl(url));
+      }
     }
 
     // Special handling for Google Maps URLs
@@ -2134,28 +2256,44 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   }
 
   /// Build a preview widget for a Yelp URL
-  Widget _buildYelpPreview(String url) {
-    // Create a stable key for the FutureBuilder to prevent unnecessary rebuilds
-    final String urlKey = url.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '_');
+  Widget _buildYelpPreview(String url, ExperienceCardData card) {
+    // Determine the primary key for this preview: use placeId if available, else the original URL
+    final String previewKey = card.currentPlaceIdForPreview ?? url;
+    // Create a stable key for the FutureBuilder based on the determined preview key
+    final String futureBuilderKey =
+        previewKey.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '_');
 
     // Try to extract business name from URL for fallback display
     String fallbackBusinessName = _extractBusinessNameFromYelpUrl(url);
 
     print("🔍 YELP PREVIEW: Starting preview generation for URL: $url");
+    print("🔍 YELP PREVIEW: Using preview key (placeId or URL): $previewKey");
     print(
         "🔍 YELP PREVIEW: Extracted fallback business name: $fallbackBusinessName");
 
-    // Get or create the future - this is the key change
-    if (!_yelpPreviewFutures.containsKey(url)) {
-      print("🔍 YELP PREVIEW: Creating new future for URL: $url");
-      _yelpPreviewFutures[url] = _getBusinessFromYelpUrl(url);
+    // Get or create the future using the previewKey
+    if (!_yelpPreviewFutures.containsKey(previewKey)) {
+      print("🔍 YELP PREVIEW: Creating new future for key: $previewKey");
+      // If the key is the original URL (meaning placeId is not set yet),
+      // fetch using the URL. If the key IS a placeId, we assume the future
+      // was already populated by _showLocationPicker and log a warning if not.
+      if (previewKey == url) {
+        _yelpPreviewFutures[previewKey] = _getBusinessFromYelpUrl(url);
+      } else {
+        // This case should ideally not happen if _showLocationPicker updated the future map correctly
+        print(
+            "🔍 YELP PREVIEW WARNING: Future not found for placeId key '$previewKey'. Re-fetching using original URL '$url'.");
+        _yelpPreviewFutures[previewKey] = _getBusinessFromYelpUrl(url);
+      }
     } else {
-      print("🔍 YELP PREVIEW: Using cached future for URL: $url");
+      print("🔍 YELP PREVIEW: Using cached future for key: $previewKey");
     }
 
     return FutureBuilder<Map<String, dynamic>?>(
-      key: ValueKey('yelp_preview_$urlKey'),
-      future: _yelpPreviewFutures[url],
+      // Use the dynamic key based on placeId or URL
+      key: ValueKey('yelp_preview_$futureBuilderKey'),
+      // Access the future using the dynamic key
+      future: _yelpPreviewFutures[previewKey],
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           print("🔍 YELP PREVIEW: Loading state - waiting for data");
@@ -2455,6 +2593,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         '🖼️ PHOTO: Location data - lat: ${location.latitude}, lng: ${location.longitude}');
     print('🖼️ PHOTO: Place ID: ${location.placeId ?? "null"}');
     print('🖼️ PHOTO: Address: ${location.address ?? "null"}');
+    print('🖼️ PHOTO: Photo URL from location: ${location.photoUrl ?? "null"}');
+
+    // First check if the location already has a photoUrl (from our updated Location object)
+    if (location.photoUrl != null && location.photoUrl!.isNotEmpty) {
+      print('🖼️ PHOTO: Using photo URL directly from location object');
+      return _buildSinglePhoto(location.photoUrl!, businessName);
+    }
 
     // Get the place ID, which should be available in the location object
     final String? placeId = location.placeId;
@@ -2665,6 +2810,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         // Image with loading indicator
         Image.network(
           photoUrl,
+          key: ValueKey(photoUrl), // Add key based on URL
           fit: BoxFit.cover,
           loadingBuilder: (context, child, loadingProgress) {
             if (loadingProgress == null) {
@@ -2773,7 +2919,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       ],
       'bar': [
         'https://images.unsplash.com/photo-1514933651103-005eec06c04b?w=800&h=400&fit=crop',
-        'https://images.unsplash.com/photo-1543007630-9710e4a00a20?w=800&h=400&fit=crop',
+        'https://images.unsplash.com/photo-1543007630917-64674bd600d8?w=800&h=400&fit=crop',
         'https://images.unsplash.com/photo-1470337458703-46ad1756a187?w=800&h=400&fit=crop',
         'https://images.unsplash.com/photo-1572116469696-31de0f17cc34?w=800&h=400&fit=crop',
         'https://images.unsplash.com/photo-1575444758702-4a6b9222336e?w=800&h=400&fit=crop'
@@ -4548,13 +4694,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
   // Check if a particular text is special content
   bool _isTextSpecialContent(String text) {
-    if (!_isValidUrl(text)) return false;
-
-    return text.contains('yelp.com/biz') ||
-        text.contains('yelp.to/') ||
-        text.contains('google.com/maps') ||
-        text.contains('maps.app.goo.gl') ||
-        text.contains('goo.gl/maps');
+    return _isValidUrl(text) &&
+        (text.contains('yelp.com/biz') ||
+            text.contains('yelp.to/') ||
+            text.contains('google.com/maps') ||
+            text.contains('maps.app.goo.gl') ||
+            text.contains('goo.gl/maps'));
   }
 }
 
