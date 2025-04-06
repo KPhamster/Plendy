@@ -19,6 +19,10 @@ import 'location_picker_screen.dart';
 import '../services/sharing_service.dart';
 import 'dart:async';
 import 'package:http/http.dart' as http;
+import 'receive_share/widgets/yelp_preview_widget.dart'; // Add import for the new widget
+import 'package:flutter/services.dart';
+import 'package:geocoding/geocoding.dart' as geocoding;
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// Data class to hold the state of each experience card
 class ExperienceCardData {
@@ -1786,12 +1790,6 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                       hintText: 'https://yelp.com/...',
                       border: OutlineInputBorder(),
                       prefixIcon: Icon(Icons.restaurant_menu),
-                      suffixIcon: IconButton(
-                        icon: FaIcon(FontAwesomeIcons.yelp, color: Colors.red),
-                        tooltip: 'Open in Yelp',
-                        onPressed: () =>
-                            _openYelpUrl(card.yelpUrlController.text),
-                      ),
                     ),
                     keyboardType: TextInputType.url,
                     validator: (value) {
@@ -2033,71 +2031,6 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     }
   }
 
-  /// Opens Yelp URL or Yelp.com if no URL is provided
-  Future<void> _openYelpUrl(String yelpUrl) async {
-    String url = yelpUrl.trim();
-
-    // If empty, use Yelp.com
-    if (url.isEmpty) {
-      url = 'https://yelp.com';
-    } else if (!url.startsWith('http')) {
-      // Make sure it starts with http:// or https://
-      url = 'https://' + url;
-    }
-
-    // Check if this is a Yelp URL for potential app deep linking
-    bool isYelpUrl = url.contains('yelp.com');
-
-    try {
-      // Parse the regular web URL
-      final Uri webUri = Uri.parse(url);
-
-      // For mobile platforms, try to create a deep link URI
-      if (!kIsWeb && isYelpUrl) {
-        // Extract business ID for deep linking if present in the URL
-        // Typical Yelp URL format: https://www.yelp.com/biz/business-name-location
-        String? yelpAppUrl;
-
-        if (url.contains('/biz/')) {
-          // Extract the business part from URL
-          final bizPath = url.split('/biz/')[1].split('?')[0];
-
-          if (Platform.isIOS) {
-            // iOS deep link format
-            yelpAppUrl = 'yelp:///biz/$bizPath';
-          } else if (Platform.isAndroid) {
-            // Android deep link format
-            yelpAppUrl = 'yelp://biz/$bizPath';
-          }
-        }
-
-        // Try opening the app URL first if available
-        if (yelpAppUrl != null) {
-          try {
-            final appUri = Uri.parse(yelpAppUrl);
-            final canOpenApp = await canLaunchUrl(appUri);
-
-            if (canOpenApp) {
-              await launchUrl(appUri, mode: LaunchMode.externalApplication);
-              return; // Exit if app opens successfully
-            }
-          } catch (e) {
-            print('Error opening Yelp app: $e');
-            // Continue to open the web URL as fallback
-          }
-        }
-      }
-
-      // Open web URL as fallback
-      await launchUrl(webUri, mode: LaunchMode.externalApplication);
-    } catch (e) {
-      print('Error launching URL: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not open Yelp: $e')),
-      );
-    }
-  }
-
   bool _isValidUrl(String text) {
     // Simple URL validation
     return text.startsWith('http://') ||
@@ -2143,7 +2076,14 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       if (file.path.toLowerCase().contains('yelp.to/') ||
           file.path.toLowerCase().contains('yelp.com/biz/')) {
         print('DEBUG: Building Yelp preview for URL: ${file.path}');
-        return _buildYelpPreview(file.path, card);
+        return YelpPreviewWidget(
+          yelpUrl: file.path,
+          card: card,
+          yelpPreviewFutures: _yelpPreviewFutures,
+          getBusinessFromYelpUrl: _getBusinessFromYelpUrl,
+          launchUrlCallback: _launchUrl,
+          mapsService: _mapsService,
+        );
       }
       return _buildUrlPreview(file.path);
     } else {
@@ -2157,7 +2097,14 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             // Enhanced Yelp detection to include both yelp.com and yelp.to URLs
             if (line.toLowerCase().contains('yelp.to/') ||
                 line.toLowerCase().contains('yelp.com/biz/')) {
-              return _buildYelpPreview(line.trim(), card);
+              return YelpPreviewWidget(
+                yelpUrl: line.trim(),
+                card: card,
+                yelpPreviewFutures: _yelpPreviewFutures,
+                getBusinessFromYelpUrl: _getBusinessFromYelpUrl,
+                launchUrlCallback: _launchUrl,
+                mapsService: _mapsService,
+              );
             }
             return _buildUrlPreview(line.trim());
           }
@@ -2172,7 +2119,16 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         if (match != null) {
           final extractedUrl = match.group(0);
           print('DEBUG: Extracted Yelp URL using regex: $extractedUrl');
-          return _buildYelpPreview(extractedUrl!, card);
+          if (extractedUrl != null) {
+            return YelpPreviewWidget(
+              yelpUrl: extractedUrl,
+              card: card,
+              yelpPreviewFutures: _yelpPreviewFutures,
+              getBusinessFromYelpUrl: _getBusinessFromYelpUrl,
+              launchUrlCallback: _launchUrl,
+              mapsService: _mapsService,
+            );
+          }
         }
       } else if (file.path.contains('yelp.to/') ||
           file.path.contains('yelp.com/biz/')) {
@@ -2182,7 +2138,16 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         if (match != null) {
           final extractedUrl = match.group(0);
           print('DEBUG: Extracted Yelp URL using regex: $extractedUrl');
-          return _buildYelpPreview(extractedUrl!, card);
+          if (extractedUrl != null) {
+            return YelpPreviewWidget(
+              yelpUrl: extractedUrl,
+              card: card,
+              yelpPreviewFutures: _yelpPreviewFutures,
+              getBusinessFromYelpUrl: _getBusinessFromYelpUrl,
+              launchUrlCallback: _launchUrl,
+              mapsService: _mapsService,
+            );
+          }
         }
       }
       // Regular text
@@ -2204,12 +2169,20 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // Need to find the associated ExperienceCardData. Since Yelp/Maps shares
       // only use the first card, we can assume it's _experienceCards.first.
       if (_experienceCards.isNotEmpty) {
-        return _buildYelpPreview(
-            url, _experienceCards.first); // Pass the card data
+        return YelpPreviewWidget(
+          yelpUrl: url,
+          card: _experienceCards.first, // Pass the card data
+          yelpPreviewFutures: _yelpPreviewFutures,
+          getBusinessFromYelpUrl: _getBusinessFromYelpUrl,
+          launchUrlCallback: _launchUrl,
+          mapsService: _mapsService,
+        );
       } else {
         // Handle case where there are no cards (shouldn't happen, but defensively)
-        return _buildYelpFallbackPreview(
-            url, _extractBusinessNameFromYelpUrl(url));
+        // Use a fallback that doesn't require state or futures
+        return Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: Text('Error: Cannot display Yelp preview.'));
       }
     }
 
@@ -2252,823 +2225,6 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         ),
         onTap: () => _launchUrl(url),
       ),
-    );
-  }
-
-  /// Build a preview widget for a Yelp URL
-  Widget _buildYelpPreview(String url, ExperienceCardData card) {
-    // Determine the primary key for this preview: use placeId if available, else the original URL
-    final String previewKey = card.currentPlaceIdForPreview ?? url;
-    // Create a stable key for the FutureBuilder based on the determined preview key
-    final String futureBuilderKey =
-        previewKey.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '_');
-
-    // Try to extract business name from URL for fallback display
-    String fallbackBusinessName = _extractBusinessNameFromYelpUrl(url);
-
-    print("🔍 YELP PREVIEW: Starting preview generation for URL: $url");
-    print("🔍 YELP PREVIEW: Using preview key (placeId or URL): $previewKey");
-    print(
-        "🔍 YELP PREVIEW: Extracted fallback business name: $fallbackBusinessName");
-
-    // Get or create the future using the previewKey
-    if (!_yelpPreviewFutures.containsKey(previewKey)) {
-      print("🔍 YELP PREVIEW: Creating new future for key: $previewKey");
-      // If the key is the original URL (meaning placeId is not set yet),
-      // fetch using the URL. If the key IS a placeId, we assume the future
-      // was already populated by _showLocationPicker and log a warning if not.
-      if (previewKey == url) {
-        _yelpPreviewFutures[previewKey] = _getBusinessFromYelpUrl(url);
-      } else {
-        // This case should ideally not happen if _showLocationPicker updated the future map correctly
-        print(
-            "🔍 YELP PREVIEW WARNING: Future not found for placeId key '$previewKey'. Re-fetching using original URL '$url'.");
-        _yelpPreviewFutures[previewKey] = _getBusinessFromYelpUrl(url);
-      }
-    } else {
-      print("🔍 YELP PREVIEW: Using cached future for key: $previewKey");
-    }
-
-    return FutureBuilder<Map<String, dynamic>?>(
-      // Use the dynamic key based on placeId or URL
-      key: ValueKey('yelp_preview_$futureBuilderKey'),
-      // Access the future using the dynamic key
-      future: _yelpPreviewFutures[previewKey],
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          print("🔍 YELP PREVIEW: Loading state - waiting for data");
-          return _buildYelpLoadingPreview();
-        }
-
-        // If we have data, build the complete preview
-        if (snapshot.data != null) {
-          final data = snapshot.data!;
-          final location = data['location'] as Location;
-          final businessName = data['businessName'] as String;
-          final yelpUrl = data['yelpUrl'] as String;
-
-          print("🔍 YELP PREVIEW: Success! Building detailed preview");
-          print("🔍 YELP PREVIEW: Business name: $businessName");
-          print(
-              "🔍 YELP PREVIEW: Location data: lat=${location.latitude}, lng=${location.longitude}");
-          print("🔍 YELP PREVIEW: Address: ${location.address}");
-
-          return _buildYelpDetailedPreview(location, businessName, yelpUrl);
-        }
-
-        // If snapshot has error, log it
-        if (snapshot.hasError) {
-          print("🔍 YELP PREVIEW ERROR: ${snapshot.error}");
-          print("🔍 YELP PREVIEW: Using fallback preview due to error");
-        } else {
-          print("🔍 YELP PREVIEW: No data received, using fallback preview");
-        }
-
-        // If we have an error or no data, build a fallback preview
-        return _buildYelpFallbackPreview(url, fallbackBusinessName);
-      },
-    );
-  }
-
-  // Extract a readable business name from a Yelp URL
-  String _extractBusinessNameFromYelpUrl(String url) {
-    try {
-      String businessName = "Yelp Business";
-
-      // For standard Yelp URLs with business name in the path
-      if (url.contains('/biz/')) {
-        // Extract the business part from URL (e.g., https://www.yelp.com/biz/business-name-location)
-        final bizPath = url.split('/biz/')[1].split('?')[0];
-
-        // Convert hyphenated business name to spaces and capitalize words
-        businessName = bizPath
-            .split('-')
-            .map((word) => word.isNotEmpty
-                ? word[0].toUpperCase() + word.substring(1)
-                : '')
-            .join(' ');
-
-        // If there's a location suffix at the end (like "restaurant-city"), remove it
-        if (businessName.contains('/')) {
-          businessName = businessName.split('/')[0];
-        }
-      }
-      // For short URLs, use the code as part of the name
-      else if (url.contains('yelp.to/')) {
-        final shortCode =
-            url.split('yelp.to/').last.split('?')[0].split('/')[0];
-        if (shortCode.isNotEmpty) {
-          businessName = "Yelp Business ($shortCode)";
-        }
-      }
-
-      return businessName;
-    } catch (e) {
-      return "Yelp Business";
-    }
-  }
-
-  // Loading state for Yelp preview
-  Widget _buildYelpLoadingPreview() {
-    return SizedBox(
-      height: 250,
-      width: double.infinity,
-      child: Card(
-        elevation: 2,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        child: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              CircularProgressIndicator(color: Color(0xFFD32323)),
-              SizedBox(height: 16),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  FaIcon(FontAwesomeIcons.yelp,
-                      color: Color(0xFFD32323), size: 18),
-                  SizedBox(width: 8),
-                  Text('Loading business information...'),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  // Detailed preview when we have location data
-  Widget _buildYelpDetailedPreview(
-      Location location, String businessName, String yelpUrl) {
-    print('🏢 PREVIEW: Building detailed Yelp preview');
-    print('🏢 PREVIEW: Business name: "$businessName"');
-    print(
-        '🏢 PREVIEW: Location - lat: ${location.latitude}, lng: ${location.longitude}');
-    print('🏢 PREVIEW: Address: ${location.address}');
-    print('🏢 PREVIEW: Yelp URL: $yelpUrl');
-
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        // Preview container with tap functionality
-        InkWell(
-          onTap: () => _openYelpUrl(yelpUrl),
-          borderRadius: BorderRadius.circular(8),
-          child: Container(
-            width: double.infinity,
-            decoration: BoxDecoration(
-              border: Border.all(color: Colors.grey[300]!),
-              borderRadius: BorderRadius.circular(8),
-              color: Colors.white,
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Business photo instead of map
-                Container(
-                  height: 180,
-                  width: double.infinity,
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.only(
-                      topLeft: Radius.circular(8),
-                      topRight: Radius.circular(8),
-                    ),
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        // Business photo based on location
-                        _getBusinessPhotoWidget(location, businessName),
-
-                        // Yelp branding overlay in top-right corner
-                        Positioned(
-                          top: 8,
-                          right: 8,
-                          child: Container(
-                            padding: EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 4),
-                            decoration: BoxDecoration(
-                              color: Color(0xFFD32323),
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                FaIcon(FontAwesomeIcons.yelp,
-                                    color: Colors.white, size: 12),
-                                SizedBox(width: 4),
-                                Text(
-                                  'Yelp',
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 12,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-
-                // Business details
-                Padding(
-                  padding: const EdgeInsets.all(12.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Yelp logo and business name
-                      Row(
-                        children: [
-                          FaIcon(FontAwesomeIcons.yelp,
-                              color: Colors.red, size: 18),
-                          SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              location.displayName ?? businessName,
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 18,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        ],
-                      ),
-                      SizedBox(height: 8),
-
-                      // Address
-                      if (location.address != null) ...[
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Icon(Icons.location_on,
-                                size: 16, color: Colors.grey[600]),
-                            SizedBox(width: 6),
-                            Expanded(
-                              child: InkWell(
-                                onTap: () async {
-                                  print(
-                                      '🧭 ADDRESS: Opening map for ${location.latitude}, ${location.longitude}');
-                                  // Open map to show location with higher zoom level
-                                  if (location.placeId != null &&
-                                      location.placeId!.isNotEmpty) {
-                                    // Use the Google Maps search API with place_id format
-                                    final placeUrl =
-                                        'https://www.google.com/maps/search/?api=1&query=${location.displayName ?? businessName}&query_place_id=${location.placeId}';
-                                    print(
-                                        '🧭 ADDRESS: Opening URL with placeId: $placeUrl');
-                                    await _launchUrl(placeUrl);
-                                  } else {
-                                    // Fallback to coordinate-based URL with zoom parameter
-                                    final zoom = 18;
-                                    final url =
-                                        'https://www.google.com/maps/search/?api=1&query=${location.latitude},${location.longitude}';
-                                    print(
-                                        '🧭 ADDRESS: Opening URL with coordinates: $url');
-                                    await _launchUrl(url);
-                                  }
-                                },
-                                child: Text(
-                                  location.address!,
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    color: Colors.grey[800],
-                                    decoration: TextDecoration.underline,
-                                  ),
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        SizedBox(height: 8),
-                      ],
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-
-        // Buttons below the container
-        SizedBox(height: 4),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Expanded(
-              child: OutlinedButton.icon(
-                icon: Icon(Icons.directions, size: 18),
-                label: Text('Get Directions'),
-                onPressed: () async {
-                  print(
-                      '🧭 DIRECTIONS: Getting directions for ${location.latitude}, ${location.longitude}');
-                  final GoogleMapsService mapsService = GoogleMapsService();
-                  final url = mapsService.getDirectionsUrl(
-                      location.latitude, location.longitude);
-                  print('🧭 DIRECTIONS: Opening URL: $url');
-                  await _launchUrl(url);
-                },
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: Colors.blue,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  /// Get a widget displaying a business photo
-  Widget _getBusinessPhotoWidget(Location location, String businessName) {
-    print('🖼️ PHOTO: Getting business photo for "$businessName"');
-    print(
-        '🖼️ PHOTO: Location data - lat: ${location.latitude}, lng: ${location.longitude}');
-    print('🖼️ PHOTO: Place ID: ${location.placeId ?? "null"}');
-    print('🖼️ PHOTO: Address: ${location.address ?? "null"}');
-    print('🖼️ PHOTO: Photo URL from location: ${location.photoUrl ?? "null"}');
-
-    // First check if the location already has a photoUrl (from our updated Location object)
-    if (location.photoUrl != null && location.photoUrl!.isNotEmpty) {
-      print('🖼️ PHOTO: Using photo URL directly from location object');
-      return _buildSinglePhoto(location.photoUrl!, businessName);
-    }
-
-    // Get the place ID, which should be available in the location object
-    final String? placeId = location.placeId;
-    if (placeId == null || placeId.isEmpty) {
-      print('🖼️ PHOTO: No place ID available, using fallback');
-      return _buildPhotoFallback(businessName);
-    }
-
-    // For diagnostics, check the API key
-    final apiKey = GoogleMapsService.apiKey;
-    print(
-        '🖼️ PHOTO: API key length: ${apiKey.length} chars, starts with: ${apiKey.substring(0, min(5, apiKey.length))}...');
-
-    // Create a unique photo query using both business name and address
-    // This ensures that chain businesses (like Trader Joe's, Starbucks) get the correct location images
-    String photoQuery = businessName;
-
-    // Include address in the query if available to get photos for the specific chain location
-    if (location.address != null && location.address!.isNotEmpty) {
-      // Extract the street address part (usually the first component before the first comma)
-      String streetAddress = location.address!;
-      if (streetAddress.contains(',')) {
-        streetAddress = streetAddress.substring(0, streetAddress.indexOf(','));
-      }
-
-      // Combine business name with street address for better identification
-      photoQuery = '$businessName, $streetAddress';
-      print('🖼️ PHOTO: Enhanced photo query with address: "$photoQuery"');
-    }
-
-    // First try to get photos by place ID
-    return FutureBuilder<List<String>>(
-      future: GoogleMapsService().getPlacePhotoReferences(placeId),
-      builder: (context, snapshot) {
-        // If we have photo URLs, display them
-        if (snapshot.hasData &&
-            snapshot.data != null &&
-            snapshot.data!.isNotEmpty) {
-          final List<String> photoUrls = snapshot.data!;
-          print('🖼️ PHOTO: Got ${photoUrls.length} photos from Places API');
-
-          // If we have multiple photos, show a carousel
-          if (photoUrls.length > 1) {
-            return _buildPhotoCarousel(photoUrls, businessName);
-          }
-
-          // Otherwise show a single photo
-          return _buildSinglePhoto(photoUrls.first, businessName);
-        }
-
-        // Check for specific errors
-        if (snapshot.hasError) {
-          print('🖼️ PHOTO ERROR: Error fetching photos: ${snapshot.error}');
-        }
-
-        // If no photos found via place ID, try a search approach
-        if (snapshot.connectionState == ConnectionState.done &&
-            (snapshot.data == null || snapshot.data!.isEmpty)) {
-          print(
-              '🖼️ PHOTO: No photos via place ID, trying search approach with "$photoQuery"');
-
-          // Use GoogleMapsService to search for the place with the enhanced query
-          return FutureBuilder<List<Map<String, dynamic>>>(
-              future: GoogleMapsService().searchPlaces(photoQuery),
-              builder: (context, searchSnapshot) {
-                if (searchSnapshot.connectionState == ConnectionState.waiting) {
-                  return Center(
-                    child: CircularProgressIndicator(
-                      color: Color(0xFFD32323),
-                    ),
-                  );
-                }
-
-                if (searchSnapshot.hasData &&
-                    searchSnapshot.data != null &&
-                    searchSnapshot.data!.isNotEmpty) {
-                  // If we found search results, use the place ID from the first match
-                  final String? foundPlaceId =
-                      searchSnapshot.data!.first['placeId'] as String?;
-
-                  if (foundPlaceId != null && foundPlaceId.isNotEmpty) {
-                    print(
-                        '🖼️ PHOTO: Found place ID via search: $foundPlaceId');
-
-                    // Try to get photos with this specific place ID
-                    return FutureBuilder<List<String>>(
-                        future: GoogleMapsService()
-                            .getPlacePhotoReferences(foundPlaceId),
-                        builder: (context, photoSnapshot) {
-                          if (photoSnapshot.connectionState ==
-                              ConnectionState.waiting) {
-                            return Center(
-                              child: CircularProgressIndicator(
-                                color: Color(0xFFD32323),
-                              ),
-                            );
-                          }
-
-                          if (photoSnapshot.hasData &&
-                              photoSnapshot.data != null &&
-                              photoSnapshot.data!.isNotEmpty) {
-                            final List<String> photoUrls = photoSnapshot.data!;
-                            print(
-                                '🖼️ PHOTO: Got ${photoUrls.length} photos via search approach');
-
-                            // Display photos
-                            if (photoUrls.length > 1) {
-                              return _buildPhotoCarousel(
-                                  photoUrls, businessName);
-                            }
-                            return _buildSinglePhoto(
-                                photoUrls.first, businessName);
-                          }
-
-                          // If no photos found via search either, use fallback
-                          print(
-                              '🖼️ PHOTO: No photos found via search approach either');
-                          final String businessSeed =
-                              _createPhotoSeed(businessName, location);
-                          final String photoUrl =
-                              _getBusinessPhotoUrl(businessName, businessSeed);
-                          return _buildSinglePhoto(photoUrl, businessName);
-                        });
-                  }
-                }
-
-                // If search approach failed, use category-based fallback
-                print(
-                    '🖼️ PHOTO: Search approach failed, using category-based fallback');
-                final String businessSeed =
-                    _createPhotoSeed(businessName, location);
-                final String photoUrl =
-                    _getBusinessPhotoUrl(businessName, businessSeed);
-                return _buildSinglePhoto(photoUrl, businessName);
-              });
-        }
-
-        // While loading, show loading state
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          print('🖼️ PHOTO: Loading photos...');
-          return Center(
-            child: CircularProgressIndicator(
-              color: Color(0xFFD32323),
-            ),
-          );
-        }
-
-        // Default fallback
-        print('🖼️ PHOTO: Using category-based fallback');
-        final String businessSeed = _createPhotoSeed(businessName, location);
-        final String photoUrl =
-            _getBusinessPhotoUrl(businessName, businessSeed);
-        return _buildSinglePhoto(photoUrl, businessName);
-      },
-    );
-  }
-
-  // Build a carousel to display multiple photos
-  Widget _buildPhotoCarousel(List<String> photoUrls, String businessName) {
-    return Stack(
-      children: [
-        PageView.builder(
-          itemCount: photoUrls.length,
-          itemBuilder: (context, index) {
-            return _buildSinglePhoto(photoUrls[index], businessName);
-          },
-        ),
-
-        // Photo counter indicator
-        Positioned(
-          right: 8,
-          bottom: 8,
-          child: Container(
-            padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            decoration: BoxDecoration(
-              color: Colors.black.withOpacity(0.6),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.photo, size: 14, color: Colors.white),
-                SizedBox(width: 4),
-                Text(
-                  '${photoUrls.length}',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  // Build a single photo display
-  Widget _buildSinglePhoto(String photoUrl, String businessName) {
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        // Background color before image loads
-        Container(color: Color(0xFFEEEEEE)),
-
-        // Image with loading indicator
-        Image.network(
-          photoUrl,
-          key: ValueKey(photoUrl), // Add key based on URL
-          fit: BoxFit.cover,
-          loadingBuilder: (context, child, loadingProgress) {
-            if (loadingProgress == null) {
-              print('🖼️ PHOTO: Image loaded successfully!');
-              return child;
-            }
-            print(
-                '🖼️ PHOTO: Loading progress: ${loadingProgress.cumulativeBytesLoaded}/${loadingProgress.expectedTotalBytes ?? 'unknown'}');
-            return Center(
-              child: CircularProgressIndicator(
-                color: Color(0xFFD32323),
-                value: loadingProgress.expectedTotalBytes != null
-                    ? loadingProgress.cumulativeBytesLoaded /
-                        loadingProgress.expectedTotalBytes!
-                    : null,
-              ),
-            );
-          },
-          errorBuilder: (context, error, stackTrace) {
-            print('🖼️ PHOTO ERROR: Failed to load image: $error');
-            return _buildPhotoFallback(businessName);
-          },
-        ),
-
-        // Subtle gradient overlay at the bottom
-        Positioned.fill(
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  Colors.transparent,
-                  Colors.black.withOpacity(0.3),
-                ],
-                stops: [0.7, 1.0],
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  // Generate a seed for consistent photo selection
-  String _createPhotoSeed(String businessName, Location location) {
-    // Create a deterministic but unique value based on business name and location
-    String seed = businessName;
-
-    // Add location info if available (truncated to avoid excessive precision)
-    if (location.latitude != null && location.longitude != null) {
-      // Round to 3 decimal places to create a general area identifier
-      String locationStr =
-          '${location.latitude!.toStringAsFixed(3)}_${location.longitude!.toStringAsFixed(3)}';
-      seed = '$seed-$locationStr';
-    }
-
-    // Generate hash for the seed
-    return seed.hashCode.abs().toString();
-  }
-
-  // Get a photo URL based on business type
-  String _getBusinessPhotoUrl(String businessName, String seed) {
-    final String businessNameLower = businessName.toLowerCase();
-    int seedNumber = int.tryParse(seed) ?? 0;
-
-    // Determine business category
-    String category = 'business';
-
-    if (businessNameLower.contains('restaurant') ||
-        businessNameLower.contains('grill') ||
-        businessNameLower.contains('pizza') ||
-        businessNameLower.contains('kitchen') ||
-        businessNameLower.contains('cafe') ||
-        businessNameLower.contains('coffee')) {
-      category = 'restaurant';
-      print('🔍 CATEGORY: Detected restaurant type business');
-    } else if (businessNameLower.contains('bar') ||
-        businessNameLower.contains('pub') ||
-        businessNameLower.contains('lounge')) {
-      category = 'bar';
-      print('🔍 CATEGORY: Detected bar type business');
-    } else if (businessNameLower.contains('shop') ||
-        businessNameLower.contains('store') ||
-        businessNameLower.contains('market')) {
-      category = 'retail';
-      print('🔍 CATEGORY: Detected retail type business');
-    } else if (businessNameLower.contains('hotel') ||
-        businessNameLower.contains('inn') ||
-        businessNameLower.contains('suites')) {
-      category = 'hotel';
-      print('🔍 CATEGORY: Detected hotel type business');
-    } else {
-      print('🔍 CATEGORY: Using generic business type');
-    }
-
-    // Create URLs for different categories
-    // Using reliable image services with category-specific images
-    Map<String, List<String>> categoryImages = {
-      'restaurant': [
-        'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=800&h=400&fit=crop',
-        'https://images.unsplash.com/photo-1552566626-52f8b828add9?w=800&h=400&fit=crop',
-        'https://images.unsplash.com/photo-1600891964599-f61ba0e24092?w=800&h=400&fit=crop',
-        'https://images.unsplash.com/photo-1466978913421-dad2ebd01d17?w=800&h=400&fit=crop',
-        'https://images.unsplash.com/photo-1592861956120-e524fc739696?w=800&h=400&fit=crop'
-      ],
-      'bar': [
-        'https://images.unsplash.com/photo-1514933651103-005eec06c04b?w=800&h=400&fit=crop',
-        'https://images.unsplash.com/photo-1543007630917-64674bd600d8?w=800&h=400&fit=crop',
-        'https://images.unsplash.com/photo-1470337458703-46ad1756a187?w=800&h=400&fit=crop',
-        'https://images.unsplash.com/photo-1572116469696-31de0f17cc34?w=800&h=400&fit=crop',
-        'https://images.unsplash.com/photo-1575444758702-4a6b9222336e?w=800&h=400&fit=crop'
-      ],
-      'retail': [
-        'https://images.unsplash.com/photo-1441986300917-64674bd600d8?w=800&h=400&fit=crop',
-        'https://images.unsplash.com/photo-1604719312566-8912e9c8a213?w=800&h=400&fit=crop',
-        'https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=800&h=400&fit=crop',
-        'https://images.unsplash.com/photo-1567401893414-76b7b1e5a7a5?w=800&h=400&fit=crop',
-        'https://images.unsplash.com/photo-1534452203293-494d7ddbf7e0?w=800&h=400&fit=crop'
-      ],
-      'hotel': [
-        'https://images.unsplash.com/photo-1582719508461-905c673771fd?w=800&h=400&fit=crop',
-        'https://images.unsplash.com/photo-1566073771259-6a8506099945?w=800&h=400&fit=crop',
-        'https://images.unsplash.com/photo-1445019980597-93fa8acb246c?w=800&h=400&fit=crop',
-        'https://images.unsplash.com/photo-1520250497591-112f2f40a3f4?w=800&h=400&fit=crop',
-        'https://images.unsplash.com/photo-1551882547-ff40c63fe5fa?w=800&h=400&fit=crop'
-      ],
-      'business': [
-        'https://images.unsplash.com/photo-1497366754035-f200968a6e72?w=800&h=400&fit=crop',
-        'https://images.unsplash.com/photo-1497215842964-222b430dc094?w=800&h=400&fit=crop',
-        'https://images.unsplash.com/photo-1504328345606-18bbc8c9d7d8?w=800&h=400&fit=crop',
-        'https://images.unsplash.com/photo-1497366811353-6870744d04b2?w=800&h=400&fit=crop',
-        'https://images.unsplash.com/photo-1568992687947-868a62a9f521?w=800&h=400&fit=crop'
-      ]
-    };
-
-    // Get the images for the determined category
-    List<String> images =
-        categoryImages[category] ?? categoryImages['business']!;
-
-    // Pick one based on the seed (deterministic selection)
-    int imageIndex = seedNumber % images.length;
-
-    return images[imageIndex];
-  }
-
-  // Fallback when image fails to load
-  Widget _buildPhotoFallback(String businessName) {
-    print('⚠️ FALLBACK: Building fallback photo for "$businessName"');
-    return Container(
-      color: Color(0xFFE8E8E8),
-      child: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.business,
-              size: 48,
-              color: Color(0xFFD32323),
-            ),
-            SizedBox(height: 8),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16.0),
-              child: Text(
-                businessName,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFF333333),
-                ),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // Detailed preview when we don't have location data
-  Widget _buildYelpFallbackPreview(String url, String businessName) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        // Fallback container with Yelp styling
-        InkWell(
-          onTap: () => _openYelpUrl(url),
-          borderRadius: BorderRadius.circular(8),
-          child: Container(
-            width: double.infinity,
-            decoration: BoxDecoration(
-              border: Border.all(color: Colors.grey[300]!),
-              borderRadius: BorderRadius.circular(8),
-              color: Colors.white,
-            ),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                // Yelp Logo
-                Container(
-                  width: 80,
-                  height: 80,
-                  decoration: BoxDecoration(
-                    color: Color(0xFFD32323),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Center(
-                    child: FaIcon(FontAwesomeIcons.yelp,
-                        size: 40, color: Colors.white),
-                  ),
-                ),
-                SizedBox(height: 16),
-
-                // Business Name
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 24.0),
-                  child: Text(
-                    businessName,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-                SizedBox(height: 8),
-
-                // Yelp URL
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 32.0),
-                  child: Text(
-                    url.length > 30 ? '${url.substring(0, 30)}...' : url,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: Colors.grey[600],
-                      fontSize: 12,
-                    ),
-                  ),
-                ),
-                SizedBox(height: 24),
-
-                // Small helper text
-                Text(
-                  'Tap to view this business on Yelp',
-                  style: TextStyle(
-                    color: Colors.grey[700],
-                    fontSize: 14,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-
-        // Action button below the container - removed
-        SizedBox(height: 8),
-      ],
     );
   }
 
