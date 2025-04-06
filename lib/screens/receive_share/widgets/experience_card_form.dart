@@ -4,6 +4,8 @@ import 'package:plendy/models/experience.dart'; // For ExperienceType and Locati
 import 'package:plendy/screens/location_picker_screen.dart'; // For Location Picker
 import 'package:plendy/services/google_maps_service.dart'; // If needed for location updates
 import 'package:plendy/widgets/google_maps_widget.dart'; // If needed
+import 'package:url_launcher/url_launcher.dart'; // Import url_launcher
+import 'package:font_awesome_flutter/font_awesome_flutter.dart'; // Import FontAwesome
 
 // Define necessary callbacks
 typedef OnRemoveCallback = void Function(ExperienceCardData card);
@@ -125,6 +127,42 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
     // Basic check, can be enhanced
     final uri = Uri.tryParse(text);
     return uri != null && (uri.isScheme('http') || uri.isScheme('https'));
+  }
+
+  // Helper method to launch Yelp URLs
+  Future<void> _launchYelpUrl() async {
+    String urlString = widget.cardData.yelpUrlController.text.trim();
+    Uri uri;
+
+    // Check if the entered text is a valid Yelp URL
+    if (_isValidUrl(urlString) &&
+        (urlString.contains('yelp.com') || urlString.contains('yelp.to'))) {
+      uri = Uri.parse(urlString);
+    } else {
+      // Fallback to Yelp homepage
+      uri = Uri.parse('https://www.yelp.com');
+    }
+
+    try {
+      bool launched =
+          await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!launched) {
+        print('Could not launch $uri');
+        // Optionally show a snackbar to the user
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Could not open Yelp link')),
+          );
+        }
+      }
+    } catch (e) {
+      print('Error launching URL: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error opening link: $e')),
+        );
+      }
+    }
   }
 
   // Build method - Logic from _buildExperienceCard goes here
@@ -380,22 +418,49 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                       controller:
                           yelpUrlController, // Use controller from widget
                       decoration: InputDecoration(
-                        labelText: 'Yelp URL (optional)',
-                        hintText: 'https://yelp.com/...',
-                        border: OutlineInputBorder(),
-                        prefixIcon: Icon(
-                            Icons.restaurant_menu), // Consider changing icon?
-                        suffixIcon: yelpUrlController.text.isNotEmpty
-                            ? IconButton(
-                                icon: Icon(Icons.clear, size: 18),
-                                onPressed: () {
-                                  yelpUrlController.clear();
-                                  // Listener calls _triggerRebuild
-                                  widget.onUpdate();
-                                },
-                              )
-                            : null,
-                      ),
+                          labelText: 'Yelp URL (optional)',
+                          hintText: 'https://yelp.com/...',
+                          border: OutlineInputBorder(),
+                          prefixIcon:
+                              Icon(FontAwesomeIcons.yelp), // Use Yelp icon here
+                          suffixIconConstraints: BoxConstraints.tightFor(
+                              width: 60,
+                              height: 48), // Increase width for both icons
+                          // Use suffix to combine clear and launch buttons
+                          suffixIcon: Row(
+                            mainAxisSize: MainAxisSize
+                                .min, // Prevent row taking full width
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            children: <Widget>[
+                              // Clear button (only shown if text exists)
+                              if (yelpUrlController.text.isNotEmpty)
+                                InkWell(
+                                  onTap: () {
+                                    yelpUrlController.clear();
+                                    widget.onUpdate();
+                                  },
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal:
+                                            2.0), // Reduce horizontal padding
+                                    child: Icon(Icons.clear, size: 18),
+                                  ),
+                                  // Consider adding splash/highlight color if desired
+                                ),
+                              // Yelp launch button
+                              InkWell(
+                                onTap: _launchYelpUrl,
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal:
+                                          8.0), // Reduce horizontal padding
+                                  child: Icon(FontAwesomeIcons.yelp,
+                                      size: 18, color: Colors.red[700]),
+                                ),
+                                // Consider adding splash/highlight color if desired
+                              ),
+                            ],
+                          )),
                       keyboardType: TextInputType.url,
                       validator: (value) {
                         if (value != null && value.isNotEmpty) {
