@@ -370,7 +370,7 @@ class _MapsPreviewWidgetState extends State<MapsPreviewWidget> {
                             ),
                           ],
                         ),
-                        SizedBox(height: 8),
+                        SizedBox(height: 12), // Add space before button
                       ],
 
                       // Website Link if available
@@ -405,44 +405,40 @@ class _MapsPreviewWidgetState extends State<MapsPreviewWidget> {
                             ),
                           ],
                         ),
-                        SizedBox(height: 8),
-                      ]
+                        SizedBox(height: 12), // Add space before button
+                      ],
+
+                      // Directions Button
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          icon: Icon(Icons.directions, size: 18),
+                          label: Text('Get Directions'),
+                          onPressed: () async {
+                            print(
+                                '🧭 DIRECTIONS WIDGET: Getting directions for ${location.latitude}, ${location.longitude}');
+                            final url = widget.mapsService.getDirectionsUrl(
+                                location.latitude,
+                                location.longitude); // Use injected service
+                            print('🧭 DIRECTIONS WIDGET: Opening URL: $url');
+                            await widget.launchUrlCallback(url); // Use callback
+                          },
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor:
+                                Colors.blue, // Keep blue color for directions
+                            side: BorderSide(
+                                color: Colors.blue.shade200), // Lighter border
+                            padding: EdgeInsets.symmetric(
+                                vertical: 10), // Adjust padding
+                          ),
+                        ),
+                      ),
                     ],
                   ),
                 ),
               ],
             ),
           ),
-        ),
-
-        // Buttons below the container
-        SizedBox(height: 4),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Expanded(
-              child: OutlinedButton.icon(
-                icon: Icon(Icons.directions, size: 18),
-                label: Text('Get Directions'),
-                onPressed: () async {
-                  print(
-                      '🧭 DIRECTIONS WIDGET: Getting directions for ${location.latitude}, ${location.longitude}');
-                  final url = widget.mapsService.getDirectionsUrl(
-                      location.latitude,
-                      location.longitude); // Use injected service
-                  print('🧭 DIRECTIONS WIDGET: Opening URL: $url');
-                  await widget.launchUrlCallback(url); // Use callback
-                },
-                style: OutlinedButton.styleFrom(
-                  foregroundColor:
-                      Colors.blue, // Keep blue color for directions
-                  side:
-                      BorderSide(color: Colors.blue.shade200), // Lighter border
-                  padding: EdgeInsets.symmetric(vertical: 10), // Adjust padding
-                ),
-              ),
-            ),
-          ],
         ),
       ],
     );

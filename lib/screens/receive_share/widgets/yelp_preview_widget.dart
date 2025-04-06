@@ -332,7 +332,28 @@ class _YelpPreviewWidgetState extends State<YelpPreviewWidget> {
                             ),
                           ],
                         ),
-                        SizedBox(height: 8),
+                        SizedBox(height: 12),
+
+                        // Directions Button
+                        SizedBox(
+                          width: double.infinity,
+                          child: OutlinedButton.icon(
+                            icon: Icon(Icons.directions, size: 18),
+                            label: Text('Get Directions'),
+                            onPressed: () async {
+                              print(
+                                  '🧭 DIRECTIONS WIDGET: Getting directions for ${location.latitude}, ${location.longitude}');
+                              final url = widget.mapsService.getDirectionsUrl(
+                                  location.latitude, location.longitude);
+                              print('🧭 DIRECTIONS WIDGET: Opening URL: $url');
+                              await widget.launchUrlCallback(url);
+                            },
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.blue,
+                              padding: EdgeInsets.symmetric(vertical: 10),
+                            ),
+                          ),
+                        ),
                       ],
                     ],
                   ),
@@ -340,31 +361,6 @@ class _YelpPreviewWidgetState extends State<YelpPreviewWidget> {
               ],
             ),
           ),
-        ),
-
-        // Buttons below the container
-        SizedBox(height: 4),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Expanded(
-              child: OutlinedButton.icon(
-                icon: Icon(Icons.directions, size: 18),
-                label: Text('Get Directions'),
-                onPressed: () async {
-                  print(
-                      '🧭 DIRECTIONS WIDGET: Getting directions for ${location.latitude}, ${location.longitude}');
-                  final url = widget.mapsService
-                      .getDirectionsUrl(location.latitude, location.longitude);
-                  print('🧭 DIRECTIONS WIDGET: Opening URL: $url');
-                  await widget.launchUrlCallback(url);
-                },
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: Colors.blue,
-                ),
-              ),
-            ),
-          ],
         ),
       ],
     );

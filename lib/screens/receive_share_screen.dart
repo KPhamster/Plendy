@@ -1651,27 +1651,6 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                           // Fallback if no cards exist (shouldn't happen with current logic)
                                           _buildMediaPreview(file,
                                               ExperienceCardData()), // Pass dummy data
-
-                                        // Optional: Display basic file info below preview
-                                        Padding(
-                                          padding: const EdgeInsets.all(8.0),
-                                          child: Text(
-                                            'Type: ${_getMediaTypeString(file.type)}',
-                                            style: Theme.of(context)
-                                                .textTheme
-                                                .bodySmall,
-                                          ),
-                                        ),
-                                        if (file.thumbnail != null)
-                                          Padding(
-                                            padding: const EdgeInsets.all(8.0),
-                                            child: Text(
-                                              'Thumbnail: ${file.thumbnail}',
-                                              style: Theme.of(context)
-                                                  .textTheme
-                                                  .bodySmall,
-                                            ),
-                                          ),
                                       ],
                                     ),
                                   );
