@@ -1480,8 +1480,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
       final provider = context.read<ReceiveShareProvider>();
 
-      if (shouldUpdateYelpInfo && card.yelpUrlController.text.isNotEmpty) {
-        print("LocationPicker returned: Update Yelp Info requested.");
+      // SIMPLIFY: Always treat as shouldUpdateYelpInfo == true if it came from Yelp
+      if (isFromYelpShare) {
+        // Simplified condition: only check if it was Yelp context
+        print("LocationPicker returned from Yelp context: Updating info.");
         // Fetch detailed Google Place info using the selected Place ID
         try {
           if (selectedLocation.placeId == null ||
@@ -1544,7 +1546,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         }
       } else {
         // Just update the location using Provider based on picker selection
-        print("LocationPicker returned: Basic location update.");
+        print("LocationPicker returned (non-Yelp): Basic location update.");
         // Update card data via provider (assuming provider has searchQuery param)
         provider.updateCardData(card,
             location: selectedLocation,
