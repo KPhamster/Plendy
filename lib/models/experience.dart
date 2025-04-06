@@ -55,6 +55,7 @@ extension ExperienceTypeExtension on ExperienceType {
 
 /// Represents a geographic location with latitude and longitude
 class Location {
+  final String? placeId;
   final double latitude;
   final double longitude;
   final String? address;
@@ -63,10 +64,11 @@ class Location {
   final String? country;
   final String? zipCode;
   final String? displayName; // Business or place display name
-  final String? placeId; // Google Places API place ID
   final String? photoUrl; // URL to the place's photo
+  final String? website; // Add website field
 
   Location({
+    this.placeId,
     required this.latitude,
     required this.longitude,
     this.address,
@@ -75,8 +77,8 @@ class Location {
     this.country,
     this.zipCode,
     this.displayName,
-    this.placeId,
     this.photoUrl,
+    this.website, // Add to constructor
   });
 
   factory Location.fromMap(Map<String, dynamic> map) {
@@ -91,6 +93,7 @@ class Location {
       displayName: map['displayName'] ?? map['name'],
       placeId: map['placeId'],
       photoUrl: map['photoUrl'],
+      website: map['website'], // Add from map
     );
   }
 
@@ -106,6 +109,7 @@ class Location {
       'displayName': displayName,
       'placeId': placeId,
       'photoUrl': photoUrl,
+      'website': website, // Add to map
     };
   }
 

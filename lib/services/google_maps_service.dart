@@ -504,8 +504,9 @@ class GoogleMapsService {
         return defaultLocation;
       }
 
+      // Include 'website' in the fields parameter
       final url =
-          'https://maps.googleapis.com/maps/api/place/details/json?place_id=$placeId&fields=name,geometry,address_components,formatted_address,vicinity&key=$apiKey';
+          'https://maps.googleapis.com/maps/api/place/details/json?place_id=$placeId&fields=name,geometry,address_components,formatted_address,vicinity,website,photos&key=$apiKey';
 
       final response = await _dio.get(url);
 
@@ -557,8 +558,30 @@ class GoogleMapsService {
             // Get the name of the place
             String? name = result['name'];
 
+            // Get the website URL if available
+            String? websiteUrl = result['website'];
+            if (websiteUrl != null) {
+              print('Found website URL for place: $websiteUrl');
+            }
+
+            // Get the first photo reference if available
+            String? photoReference;
+            if (result['photos'] != null &&
+                (result['photos'] as List).isNotEmpty) {
+              photoReference = result['photos'][0]['photo_reference'];
+            }
+
+            // If we have a photo reference, create a photo URL
+            String? photoUrl;
+            if (photoReference != null) {
+              photoUrl =
+                  'https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference=$photoReference&key=$apiKey';
+              print(
+                  'Generated photo URL for place: ${photoUrl.substring(0, photoUrl.length > 50 ? 50 : photoUrl.length)}...');
+            }
+
             // Create location object with all available details
-            return Location(
+            final locationObj = Location(
               latitude: lat,
               longitude: lng,
               address: formattedAddress ?? vicinity,
@@ -568,7 +591,11 @@ class GoogleMapsService {
               zipCode: zipCode,
               displayName: name,
               placeId: placeId, // Save the place ID
+              photoUrl: photoUrl, // Save the photo URL
+              website: websiteUrl, // Save the website URL directly
             );
+
+            return locationObj;
           }
         } else {
           print('Error in API response: ${data['status']}');
@@ -691,6 +718,8 @@ class GoogleMapsService {
           longitude: lng, // Use geocoded coordinates, not original tap
           address: placeDetails['address'] as String?,
           displayName: placeDetails['name'] as String?,
+          placeId:
+              placeDetails['placeId'] as String?, // Add the missing placeId
         );
       }
 
