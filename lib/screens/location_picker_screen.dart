@@ -10,6 +10,7 @@ class LocationPickerScreen extends StatefulWidget {
   final Function(Location) onLocationSelected;
   final String title;
   final bool isFromYelpShare;
+  final String? businessNameHint;
 
   const LocationPickerScreen({
     super.key,
@@ -17,6 +18,7 @@ class LocationPickerScreen extends StatefulWidget {
     required this.onLocationSelected,
     this.title = 'Select Location',
     this.isFromYelpShare = false,
+    this.businessNameHint,
   });
 
   @override

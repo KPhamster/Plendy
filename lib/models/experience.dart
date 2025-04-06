@@ -166,6 +166,7 @@ class Experience {
   final List<String> imageUrls;
   final List<String> reelIds; // IDs of Reel objects
   final List<String> followerIds; // IDs of users following this experience
+  final double rating; // Added for compatibility with ReceiveShareScreen
 
   // Timestamps
   final DateTime createdAt;
@@ -177,6 +178,8 @@ class Experience {
   final Map<String, dynamic>? openingHours; // Format depends on implementation
   final List<String>? tags;
   final String? priceRange; // e.g. "$", "$$", "$$$", "$$$$"
+  final List<String>? sharedMediaPaths; // Added for shared content
+  final String? sharedMediaType; // Added for shared content
 
   Experience({
     required this.id,
@@ -195,6 +198,7 @@ class Experience {
     this.imageUrls = const [],
     this.reelIds = const [],
     this.followerIds = const [],
+    this.rating = 0.0, // Added
     required this.createdAt,
     required this.updatedAt,
     this.website,
@@ -202,6 +206,8 @@ class Experience {
     this.openingHours,
     this.tags,
     this.priceRange,
+    this.sharedMediaPaths, // Added
+    this.sharedMediaType, // Added
   });
 
   /// Creates an Experience from a Firestore document
@@ -225,6 +231,7 @@ class Experience {
       imageUrls: _parseStringList(data['imageUrls']),
       reelIds: _parseStringList(data['reelIds']),
       followerIds: _parseStringList(data['followerIds']),
+      rating: _parseRating(data['rating']), // Added
       createdAt: _parseTimestamp(data['createdAt']),
       updatedAt: _parseTimestamp(data['updatedAt']),
       website: data['website'],
@@ -232,6 +239,8 @@ class Experience {
       openingHours: data['openingHours'],
       tags: _parseStringList(data['tags']),
       priceRange: data['priceRange'],
+      sharedMediaPaths: _parseStringList(data['sharedMediaPaths']), // Added
+      sharedMediaType: data['sharedMediaType'], // Added
     );
   }
 
@@ -253,6 +262,7 @@ class Experience {
       'imageUrls': imageUrls,
       'reelIds': reelIds,
       'followerIds': followerIds,
+      'rating': rating, // Added
       'createdAt': createdAt,
       'updatedAt': updatedAt,
       'website': website,
@@ -260,6 +270,8 @@ class Experience {
       'openingHours': openingHours,
       'tags': tags,
       'priceRange': priceRange,
+      'sharedMediaPaths': sharedMediaPaths, // Added
+      'sharedMediaType': sharedMediaType, // Added
     };
   }
 
@@ -280,12 +292,15 @@ class Experience {
     List<String>? imageUrls,
     List<String>? reelIds,
     List<String>? followerIds,
+    double? rating, // Added
     DateTime? updatedAt,
     String? website,
     String? phoneNumber,
     Map<String, dynamic>? openingHours,
     List<String>? tags,
     String? priceRange,
+    List<String>? sharedMediaPaths, // Added
+    String? sharedMediaType, // Added
   }) {
     return Experience(
       id: id,
@@ -304,6 +319,7 @@ class Experience {
       imageUrls: imageUrls ?? this.imageUrls,
       reelIds: reelIds ?? this.reelIds,
       followerIds: followerIds ?? this.followerIds,
+      rating: rating ?? this.rating, // Added
       createdAt: createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       website: website ?? this.website,
@@ -311,6 +327,8 @@ class Experience {
       openingHours: openingHours ?? this.openingHours,
       tags: tags ?? this.tags,
       priceRange: priceRange ?? this.priceRange,
+      sharedMediaPaths: sharedMediaPaths ?? this.sharedMediaPaths, // Added
+      sharedMediaType: sharedMediaType ?? this.sharedMediaType, // Added
     );
   }
 
