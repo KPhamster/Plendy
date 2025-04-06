@@ -153,6 +153,8 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
         _selectedLocation = location;
         _searchController.text =
             location.displayName ?? location.address ?? 'Selected Location';
+        _showSearchResults = false;
+        _isSearching = false;
       });
 
       // Get reference to the GoogleMapsWidget
@@ -179,17 +181,33 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
   }
 
   Future<void> _onLocationSelected(Location location) async {
-    setState(() {
-      _selectedLocation = location;
-    });
+    Location detailedLocation = location;
 
-    // Update the search box text to reflect the selected location
-    _searchController.text =
-        location.displayName ?? location.address ?? 'Selected Location';
+    if (location.placeId != null && location.placeId!.isNotEmpty) {
+      print(
+          "📍 Map tap has Place ID: ${location.placeId}. Fetching details...");
+      try {
+        detailedLocation =
+            await _mapsService.getPlaceDetails(location.placeId!);
+        print(
+            "📍 Fetched details for map tap: ${detailedLocation.displayName}, Website: ${detailedLocation.website}");
+      } catch (e) {
+        print("📍 Error fetching details for map tap location: $e");
+      }
+    } else {
+      print("📍 Map tap location has no Place ID. Using basic info.");
+    }
+
+    setState(() {
+      _selectedLocation = detailedLocation;
+      _searchController.text = detailedLocation.displayName ??
+          detailedLocation.address ??
+          'Selected Location';
+    });
 
     // Make sure we have the location centered on the map
     final mapWidget = _mapKey.currentWidget as GoogleMapsWidget?;
-    mapWidget?.animateToLocation(location);
+    mapWidget?.animateToLocation(detailedLocation);
   }
 
   // Open Google Maps with directions to the selected location

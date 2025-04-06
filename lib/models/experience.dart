@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
+import 'package:equatable/equatable.dart';
 import 'review.dart';
 import 'comment.dart';
 import 'reel.dart';
@@ -54,7 +55,7 @@ extension ExperienceTypeExtension on ExperienceType {
 }
 
 /// Represents a geographic location with latitude and longitude
-class Location {
+class Location extends Equatable {
   final String? placeId;
   final double latitude;
   final double longitude;
@@ -80,6 +81,21 @@ class Location {
     this.photoUrl,
     this.website, // Add to constructor
   });
+
+  @override
+  List<Object?> get props => [
+        placeId,
+        latitude,
+        longitude,
+        address,
+        city,
+        state,
+        country,
+        zipCode,
+        displayName,
+        photoUrl,
+        website
+      ];
 
   factory Location.fromMap(Map<String, dynamic> map) {
     return Location(
