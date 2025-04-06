@@ -37,20 +37,9 @@ class ExperienceCardForm extends StatefulWidget {
 }
 
 class _ExperienceCardFormState extends State<ExperienceCardForm> {
-  // We will move the logic from _buildExperienceCard here.
-  // State variables previously in ExperienceCardData might move here too,
-  // or be accessed via widget.cardData.
-
-  late TextEditingController _titleController;
-  late TextEditingController _yelpUrlController;
-  late TextEditingController _websiteController;
-  late TextEditingController
-      _searchController; // For location search within the form if needed
-  late FocusNode _titleFocusNode;
-
+  // Local state for UI elements directly managed here
   bool _isExpanded = true;
   bool _locationEnabled = true;
-  Location? _selectedLocation;
   ExperienceType _selectedType = ExperienceType.restaurant;
 
   // Service needed for location updates if interaction happens within the form
@@ -59,68 +48,100 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
   @override
   void initState() {
     super.initState();
-    // Initialize controllers and state from widget.cardData
-    _titleController = widget.cardData.titleController;
-    _yelpUrlController = widget.cardData.yelpUrlController;
-    _websiteController = widget.cardData.websiteController;
-    _searchController =
-        widget.cardData.searchController; // Location search controller
-    _titleFocusNode = widget.cardData.titleFocusNode;
-
+    // Initialize local state from widget.cardData
     _isExpanded = widget.cardData.isExpanded;
     _locationEnabled = widget.cardData.locationEnabled;
-    _selectedLocation = widget.cardData.selectedLocation;
     _selectedType = widget.cardData.selectedType;
 
-    // Add listeners to update the parent's state if necessary
-    _titleController.addListener(_handleControllerChange);
-    _yelpUrlController.addListener(_handleControllerChange);
-    _websiteController.addListener(_handleControllerChange);
-    _searchController.addListener(_handleControllerChange);
+    // Add listeners to controllers from widget.cardData
+    // to trigger rebuilds for suffix icons, collapsed header title etc.
+    widget.cardData.titleController.addListener(_triggerRebuild);
+    widget.cardData.yelpUrlController.addListener(_triggerRebuild);
+    widget.cardData.websiteController.addListener(_triggerRebuild);
   }
 
-  void _handleControllerChange() {
-    // Update the underlying cardData object
-    widget.cardData.selectedType = _selectedType;
-    widget.cardData.selectedLocation = _selectedLocation;
-    widget.cardData.isExpanded = _isExpanded;
-    widget.cardData.locationEnabled = _locationEnabled;
-    // Notify the parent widget that something changed, so it can rebuild if needed
-    widget.onUpdate();
-    // Trigger rebuild of this widget if suffix icon state depends on controller
+  // Helper simply calls setState if mounted
+  void _triggerRebuild() {
     if (mounted) {
       setState(() {});
     }
   }
 
   @override
-  void dispose() {
-    // Remove listeners
-    _titleController.removeListener(_handleControllerChange);
-    _yelpUrlController.removeListener(_handleControllerChange);
-    _websiteController.removeListener(_handleControllerChange);
-    _searchController.removeListener(_handleControllerChange);
+  void didUpdateWidget(covariant ExperienceCardForm oldWidget) {
+    super.didUpdateWidget(oldWidget);
 
-    // Note: Controllers and FocusNodes are managed by ExperienceCardData
-    // and should be disposed there when the cardData is disposed.
+    // Update local state based on incoming widget data if it changed
+    if (widget.cardData.selectedType != oldWidget.cardData.selectedType) {
+      print("FORM_DEBUG (${widget.cardData.id}): Type changed");
+      setState(() {
+        _selectedType = widget.cardData.selectedType;
+      });
+    }
+    if (widget.cardData.locationEnabled != oldWidget.cardData.locationEnabled) {
+      setState(() {
+        _locationEnabled = widget.cardData.locationEnabled;
+      });
+    }
+    if (widget.cardData.isExpanded != oldWidget.cardData.isExpanded) {
+      setState(() {
+        _isExpanded = widget.cardData.isExpanded;
+      });
+    }
+
+    // If the controller instances themselves have changed (e.g., after resetExperienceCards)
+    // update listeners.
+    if (!identical(
+        widget.cardData.titleController, oldWidget.cardData.titleController)) {
+      oldWidget.cardData.titleController.removeListener(_triggerRebuild);
+      widget.cardData.titleController.addListener(_triggerRebuild);
+    }
+    if (!identical(widget.cardData.yelpUrlController,
+        oldWidget.cardData.yelpUrlController)) {
+      oldWidget.cardData.yelpUrlController.removeListener(_triggerRebuild);
+      widget.cardData.yelpUrlController.addListener(_triggerRebuild);
+    }
+    if (!identical(widget.cardData.websiteController,
+        oldWidget.cardData.websiteController)) {
+      oldWidget.cardData.websiteController.removeListener(_triggerRebuild);
+      widget.cardData.websiteController.addListener(_triggerRebuild);
+    }
+  }
+
+  @override
+  void dispose() {
+    // Remove listeners added in initState (from the potentially old widget.cardData instance)
+    // It's safer to check if the controller still exists or handle potential errors,
+    // but typically dispose is called when the state object is permanently removed.
+    // We access the current widget's cardData controllers here.
+    widget.cardData.titleController.removeListener(_triggerRebuild);
+    widget.cardData.yelpUrlController.removeListener(_triggerRebuild);
+    widget.cardData.websiteController.removeListener(_triggerRebuild);
     super.dispose();
   }
 
   // Helper method moved from ReceiveShareScreen
   bool _isValidUrl(String text) {
-    return text.startsWith('http://') ||
-        text.startsWith('https://') ||
-        text.startsWith('www.') ||
-        text.contains('yelp.to/') ||
-        text.contains('goo.gl/');
+    // Basic check, can be enhanced
+    final uri = Uri.tryParse(text);
+    return uri != null && (uri.isScheme('http') || uri.isScheme('https'));
   }
 
   // Build method - Logic from _buildExperienceCard goes here
   @override
   Widget build(BuildContext context) {
-    // The UI structure from _buildExperienceCard will be implemented here,
-    // using state variables like _isExpanded, _selectedLocation, etc.,
-    // and calling callbacks like widget.onRemove, widget.onLocationSelect.
+    // Access controllers directly from widget.cardData
+    final titleController = widget.cardData.titleController;
+    final yelpUrlController = widget.cardData.yelpUrlController;
+    final websiteController = widget.cardData.websiteController;
+    final titleFocusNode = widget.cardData.titleFocusNode;
+    final currentLocation = widget.cardData.selectedLocation;
+
+    print("FORM_DEBUG (${widget.cardData.id}): Build method running.");
+    print(
+        "FORM_DEBUG (${widget.cardData.id}): widget.cardData.selectedLocation: ${currentLocation?.displayName}");
+    print(
+        "FORM_DEBUG (${widget.cardData.id}): websiteController text: '${websiteController.text}'");
 
     return Card(
       margin: EdgeInsets.only(bottom: 16),
@@ -135,12 +156,12 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
               onTap: () {
                 setState(() {
                   _isExpanded = !_isExpanded;
-                  widget.cardData.isExpanded = _isExpanded; // Update data model
-                  // Unfocus any active fields when collapsing
-                  if (!_isExpanded) {
-                    FocusScope.of(context).unfocus();
-                  }
                 });
+                widget.cardData.isExpanded = _isExpanded; // Update data model
+                // Unfocus any active fields when collapsing
+                if (!_isExpanded) {
+                  FocusScope.of(context).unfocus();
+                }
                 widget.onUpdate(); // Notify parent
               },
               child: Padding(
@@ -157,8 +178,8 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                     SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        _titleController.text.isNotEmpty
-                            ? _titleController.text
+                        titleController.text.isNotEmpty
+                            ? titleController.text
                             : "New Experience",
                         style: TextStyle(
                           fontWeight: FontWeight.bold,
@@ -230,7 +251,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                     : Colors.grey[400]),
                             SizedBox(width: 12),
                             Expanded(
-                              child: _selectedLocation != null
+                              child: currentLocation != null
                                   ? Column(
                                       crossAxisAlignment:
                                           CrossAxisAlignment.start,
@@ -238,7 +259,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                       children: [
                                         // Place name in bold
                                         Text(
-                                          _selectedLocation!.getPlaceName(),
+                                          currentLocation.getPlaceName(),
                                           style: TextStyle(
                                             fontWeight: FontWeight.bold,
                                             color: _locationEnabled
@@ -247,16 +268,18 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                           ),
                                         ),
                                         // Address
-                                        Text(
-                                          _selectedLocation!.address ??
-                                              'No address',
-                                          style: TextStyle(
-                                            fontSize: 12,
-                                            color: _locationEnabled
-                                                ? Colors.black87
-                                                : Colors.grey[500],
+                                        if (currentLocation.address != null)
+                                          Text(
+                                            currentLocation.address!,
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              color: _locationEnabled
+                                                  ? Colors.black87
+                                                  : Colors.grey[500],
+                                            ),
+                                            maxLines: 1, // Limit address lines
+                                            overflow: TextOverflow.ellipsis,
                                           ),
-                                        ),
                                       ],
                                     )
                                   : Text(
@@ -275,9 +298,9 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                 onChanged: (value) {
                                   setState(() {
                                     _locationEnabled = value;
-                                    widget.cardData.locationEnabled =
-                                        value; // Update model
                                   });
+                                  widget.cardData.locationEnabled =
+                                      value; // Update model
                                   widget.onUpdate(); // Notify parent
                                 },
                                 activeColor: Colors.blue,
@@ -293,22 +316,21 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
 
                     // Experience title
                     TextFormField(
-                      controller: _titleController,
-                      focusNode: _titleFocusNode,
+                      controller: titleController, // Use controller from widget
+                      focusNode: titleFocusNode, // Use focus node from widget
                       decoration: InputDecoration(
                         labelText: 'Experience Title',
                         hintText: 'Enter title',
                         border: OutlineInputBorder(),
                         prefixIcon: Icon(Icons.title),
-                        suffixIcon: _titleController.text.isNotEmpty
+                        suffixIcon: titleController.text.isNotEmpty
                             ? IconButton(
                                 icon: Icon(Icons.clear, size: 18),
                                 onPressed: () {
-                                  setState(() {
-                                    _titleController.clear();
-                                  });
-                                  widget
-                                      .onUpdate(); // Notify parent title changed
+                                  // Directly clear controller from widget.cardData
+                                  titleController.clear();
+                                  // Listener will call _triggerRebuild
+                                  widget.onUpdate(); // Notify parent if needed
                                 },
                               )
                             : null,
@@ -320,9 +342,9 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                         return null;
                       },
                       onChanged: (value) {
-                        // Trigger a rebuild to show/hide the clear button
-                        // and update the card title when collapsed
-                        _handleControllerChange(); // Use central handler
+                        // Listener calls _triggerRebuild for UI updates (suffix icon, header)
+                        // Notify parent only if parent needs immediate reaction to text changes
+                        // widget.onUpdate();
                       },
                     ),
                     SizedBox(height: 16),
@@ -345,9 +367,8 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                         if (value != null) {
                           setState(() {
                             _selectedType = value;
-                            widget.cardData.selectedType =
-                                value; // Update model
                           });
+                          widget.cardData.selectedType = value; // Update model
                           widget.onUpdate(); // Notify parent
                         }
                       },
@@ -356,20 +377,21 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
 
                     // Yelp URL
                     TextFormField(
-                      controller: _yelpUrlController,
+                      controller:
+                          yelpUrlController, // Use controller from widget
                       decoration: InputDecoration(
                         labelText: 'Yelp URL (optional)',
                         hintText: 'https://yelp.com/...',
                         border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.restaurant_menu),
-                        suffixIcon: _yelpUrlController.text.isNotEmpty
+                        prefixIcon: Icon(
+                            Icons.restaurant_menu), // Consider changing icon?
+                        suffixIcon: yelpUrlController.text.isNotEmpty
                             ? IconButton(
                                 icon: Icon(Icons.clear, size: 18),
                                 onPressed: () {
-                                  setState(() {
-                                    _yelpUrlController.clear();
-                                  });
-                                  _handleControllerChange();
+                                  yelpUrlController.clear();
+                                  // Listener calls _triggerRebuild
+                                  widget.onUpdate();
                                 },
                               )
                             : null,
@@ -377,32 +399,36 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                       keyboardType: TextInputType.url,
                       validator: (value) {
                         if (value != null && value.isNotEmpty) {
+                          // Use refined _isValidUrl
                           if (!_isValidUrl(value)) {
-                            return 'Please enter a valid URL';
+                            return 'Please enter a valid URL (http/https)';
                           }
                         }
                         return null;
                       },
-                      onChanged: (value) => _handleControllerChange(),
+                      onChanged: (value) {
+                        // Listener calls _triggerRebuild if needed
+                        // widget.onUpdate();
+                      },
                     ),
                     SizedBox(height: 16),
 
                     // Official website
                     TextFormField(
-                      controller: _websiteController,
+                      controller:
+                          websiteController, // Use controller from widget
                       decoration: InputDecoration(
                         labelText: 'Official Website (optional)',
                         hintText: 'https://...',
                         border: OutlineInputBorder(),
                         prefixIcon: Icon(Icons.language),
-                        suffixIcon: _websiteController.text.isNotEmpty
+                        suffixIcon: websiteController.text.isNotEmpty
                             ? IconButton(
                                 icon: Icon(Icons.clear, size: 18),
                                 onPressed: () {
-                                  setState(() {
-                                    _websiteController.clear();
-                                  });
-                                  _handleControllerChange();
+                                  websiteController.clear();
+                                  // Listener calls _triggerRebuild
+                                  widget.onUpdate();
                                 },
                               )
                             : null,
@@ -411,12 +437,15 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                       validator: (value) {
                         if (value != null && value.isNotEmpty) {
                           if (!_isValidUrl(value)) {
-                            return 'Please enter a valid URL';
+                            return 'Please enter a valid URL (http/https)';
                           }
                         }
                         return null;
                       },
-                      onChanged: (value) => _handleControllerChange(),
+                      onChanged: (value) {
+                        // Listener calls _triggerRebuild if needed
+                        // widget.onUpdate();
+                      },
                     ),
                   ],
                 ),

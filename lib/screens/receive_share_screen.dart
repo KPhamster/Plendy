@@ -1733,8 +1733,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                           // Pass methods directly (assuming correct signature in form widget)
                                           onRemove: _removeExperienceCard,
                                           onLocationSelect: _showLocationPicker,
-                                          onUpdate:
-                                              () {}, // Add required dummy onUpdate
+                                          onUpdate: () => setState(
+                                              () {}), // Trigger rebuild of ReceiveShareScreen
                                           formKey: card
                                               .formKey, // Pass the key from the card data
                                           // Pass maps service if needed by form (e.g., for internal search)
