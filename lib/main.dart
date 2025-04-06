@@ -8,6 +8,12 @@ import 'screens/main_screen.dart';
 import 'screens/receive_share_screen.dart';
 import 'services/auth_service.dart';
 import 'services/sharing_service.dart';
+import 'package:provider/provider.dart';
+import 'providers/receive_share_provider.dart';
+import 'dart:async'; // Import dart:async for StreamSubscription
+
+// Define a GlobalKey for the Navigator
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -29,8 +35,10 @@ class MyApp extends StatefulWidget {
 }
 
 class _MyAppState extends State<MyApp> {
+  final AuthService _authService = AuthService();
   final SharingService _sharingService = SharingService();
-  List<SharedMediaFile>? _initialSharedFiles;
+  StreamSubscription? _intentSub;
+  List<SharedMediaFile>? _sharedFiles;
 
   @override
   void initState() {
@@ -47,7 +55,7 @@ class _MyAppState extends State<MyApp> {
       if (value != null && value.isNotEmpty) {
         print("MAIN: Found initial shared files: ${value.length}");
         setState(() {
-          _initialSharedFiles = value;
+          _sharedFiles = value;
         });
 
         // Don't reset on first load to ensure we keep the data
@@ -69,6 +77,22 @@ class _MyAppState extends State<MyApp> {
         print("MAIN: App paused");
       },
     ));
+
+    // Listen for incoming shares while the app is running
+    _intentSub = ReceiveSharingIntent.instance.getMediaStream().listen(
+        (List<SharedMediaFile> value) {
+      setState(() {
+        _sharedFiles = value;
+      });
+      // Optionally, navigate immediately if context is available
+      // This might need refinement depending on app structure
+      if (navigatorKey.currentContext != null && value.isNotEmpty) {
+        _sharingService.showReceiveShareScreen(
+            navigatorKey.currentContext!, value);
+      }
+    }, onError: (err) {
+      print("getIntentDataStream error: $err");
+    });
   }
 
   @override
@@ -80,31 +104,34 @@ class _MyAppState extends State<MyApp> {
 
   @override
   Widget build(BuildContext context) {
+    // Check if launched from share AND there are files
+    bool launchedFromShare = _sharedFiles != null && _sharedFiles!.isNotEmpty;
+
     return MaterialApp(
+      navigatorKey: navigatorKey, // Assign the key to MaterialApp
       debugShowCheckedModeBanner: false, // Optional: removes debug banner
       theme: ThemeData(
         primarySwatch: Colors.blue,
       ),
-      home: _initialSharedFiles != null && _initialSharedFiles!.isNotEmpty
-          ? ReceiveShareScreen(
-              sharedFiles: _initialSharedFiles!,
-              onCancel: () {
-                setState(() {
-                  _initialSharedFiles = null;
-                });
-                _sharingService.resetSharedItems();
-
-                // Navigate to the appropriate screen based on authentication state
-                final user = AuthService().currentUser;
-                if (user != null) {
-                  Navigator.of(context).pushReplacement(
-                      MaterialPageRoute(builder: (context) => MainScreen()));
-                } else {
-                  Navigator.of(context).pushReplacement(
-                      MaterialPageRoute(builder: (context) => AuthScreen()));
-                }
-              },
+      home: launchedFromShare
+          // If launched from share, show ReceiveShareScreen directly, wrapped in Provider
+          ? ChangeNotifierProvider(
+              create: (_) => ReceiveShareProvider(),
+              child: ReceiveShareScreen(
+                  sharedFiles: _sharedFiles!,
+                  onCancel: () {
+                    // Logic to navigate back or close app
+                    // Maybe SystemNavigator.pop() or navigate to MainScreen
+                    print("MyApp: Closing share screen launched initially");
+                    _sharedFiles = null; // Clear shared files
+                    ReceiveSharingIntent.instance.reset(); // Reset intent
+                    // Trigger rebuild to show AuthWrapper/MainScreen
+                    setState(() {});
+                    // Potentially navigate to a default screen if needed
+                    // navigatorKey.currentState?.pushReplacementNamed('/');
+                  }),
             )
+          // Otherwise, proceed with normal auth flow
           : StreamBuilder<User?>(
               stream: AuthService().authStateChanges,
               builder: (context, snapshot) {

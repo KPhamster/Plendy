@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 import 'dart:io' show Platform;
 import '../screens/receive_share_screen.dart';
+import 'package:provider/provider.dart';
+import '../providers/receive_share_provider.dart';
 
 class SharingService {
   static final SharingService _instance = SharingService._internal();
@@ -133,19 +135,22 @@ class SharingService {
 
   // Show the receive share screen
   void showReceiveShareScreen(
-      BuildContext context, List<SharedMediaFile> files) {
-    _lastKnownContext = context; // Store context for future use
-    print(
-        "SHARE SERVICE: Showing ReceiveShareScreen with ${files.length} files");
-
-    Navigator.of(context).push(
+      BuildContext context, List<SharedMediaFile> sharedFiles) {
+    print('SHARING SERVICE: Showing ReceiveShareScreen');
+    Navigator.push(
+      context,
       MaterialPageRoute(
-        builder: (context) => ReceiveShareScreen(
-          sharedFiles: files,
-          onCancel: () {
-            resetSharedItems();
-            Navigator.of(context).pop();
-          },
+        builder: (context) => ChangeNotifierProvider(
+          create: (_) => ReceiveShareProvider(),
+          child: ReceiveShareScreen(
+            sharedFiles: sharedFiles,
+            onCancel: () {
+              print(
+                  'SHARING SERVICE: ReceiveShareScreen cancelled, resetting intent.');
+              resetSharedItems();
+              Navigator.pop(context);
+            },
+          ),
         ),
       ),
     );

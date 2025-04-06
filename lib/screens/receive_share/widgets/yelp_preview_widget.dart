@@ -36,8 +36,7 @@ class _YelpPreviewWidgetState extends State<YelpPreviewWidget> {
   @override
   Widget build(BuildContext context) {
     // Determine the primary key for this preview: use placeId if available, else the original URL
-    final String previewKey =
-        widget.card.currentPlaceIdForPreview ?? widget.yelpUrl;
+    final String previewKey = widget.card.placeIdForPreview ?? widget.yelpUrl;
     // Create a stable key for the FutureBuilder based on the determined preview key
     final String futureBuilderKey =
         previewKey.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '_');
