@@ -405,18 +405,34 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     if (files.isEmpty) return false;
 
     for (final file in files) {
-      if (file.type == SharedMediaType.text) {
-        String text = file.path.toLowerCase();
-        if (_isValidUrl(text)) {
-          final isYelp =
-              text.contains('yelp.com/biz') || text.contains('yelp.to/');
-          final isMaps = text.contains('google.com/maps') ||
-              text.contains('maps.app.goo.gl') ||
-              text.contains('goo.gl/maps');
-          return isYelp || isMaps;
+      if (file.type == SharedMediaType.text ||
+          file.type == SharedMediaType.url) {
+        String text = file.path; // Original text
+        String textLower =
+            text.toLowerCase(); // Lowercase for checking patterns
+
+        // Define patterns for special URLs
+        final yelpPattern = RegExp(r'yelp\.(com/biz|to)/'); // Corrected pattern
+        final mapsPattern = RegExp(
+            r'(google\.com/maps|maps\.app\.goo\.gl|goo\.gl/maps)'); // Corrected pattern
+
+        // Check if the text CONTAINS either Yelp or Maps patterns
+        if (yelpPattern.hasMatch(textLower) ||
+            mapsPattern.hasMatch(textLower)) {
+          // Added check: Ensure there's actually a link present, not just text mentioning Yelp/Maps.
+          // This helps avoid false positives if someone shares plain text like "check google.com/maps".
+          final urlRegex = RegExp(
+              r'https?://'); // Corrected pattern (though likely ok before)
+          if (urlRegex.hasMatch(text)) {
+            print(
+                "DEBUG: _isSpecialContent detected Yelp or Maps pattern in text: ${text.substring(0, min(50, text.length))}..."); // Removed trailing backslash
+            return true; // Found a pattern within the text
+          }
         }
       }
     }
+    // If loop finishes without finding special content, return false
+    print("DEBUG: _isSpecialContent did not find Yelp or Maps pattern.");
     return false;
   }
 
