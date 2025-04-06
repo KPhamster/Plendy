@@ -34,7 +34,6 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
   bool _showSearchResults = false;
   final TextEditingController _searchController = TextEditingController();
   bool _isSearching = false;
-  bool _shouldUpdateYelpInfo = true;
 
   @override
   void initState() {
@@ -271,8 +270,7 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
                 widget.onLocationSelected(_selectedLocation!);
                 Navigator.of(context).pop({
                   'location': _selectedLocation,
-                  'shouldUpdateYelpInfo':
-                      widget.isFromYelpShare ? _shouldUpdateYelpInfo : false
+                  'shouldUpdateYelpInfo': widget.isFromYelpShare
                 });
               },
             ),
@@ -305,8 +303,7 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
                   widget.onLocationSelected(_selectedLocation!);
                   Navigator.of(context).pop({
                     'location': _selectedLocation,
-                    'shouldUpdateYelpInfo':
-                        widget.isFromYelpShare ? _shouldUpdateYelpInfo : false
+                    'shouldUpdateYelpInfo': widget.isFromYelpShare
                   });
                 },
                 child: Text(
@@ -587,71 +584,6 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
                             ),
                           ],
                         ),
-
-                        // Radio button option for Yelp shares
-                        if (widget.isFromYelpShare) ...[
-                          SizedBox(height: 16),
-                          Row(
-                            children: [
-                              Radio<bool>(
-                                value: true,
-                                groupValue: _shouldUpdateYelpInfo,
-                                onChanged: (bool? value) {
-                                  setState(() {
-                                    _shouldUpdateYelpInfo = value ?? true;
-                                  });
-                                },
-                                activeColor: Theme.of(context).primaryColor,
-                              ),
-                              Expanded(
-                                child: GestureDetector(
-                                  onTap: () {
-                                    setState(() {
-                                      _shouldUpdateYelpInfo = true;
-                                    });
-                                  },
-                                  child: Text(
-                                    'Update Yelp info with this location',
-                                    style: TextStyle(
-                                      fontSize: 14,
-                                      color: Colors.grey[800],
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                          Row(
-                            children: [
-                              Radio<bool>(
-                                value: false,
-                                groupValue: _shouldUpdateYelpInfo,
-                                onChanged: (bool? value) {
-                                  setState(() {
-                                    _shouldUpdateYelpInfo = value ?? false;
-                                  });
-                                },
-                                activeColor: Theme.of(context).primaryColor,
-                              ),
-                              Expanded(
-                                child: GestureDetector(
-                                  onTap: () {
-                                    setState(() {
-                                      _shouldUpdateYelpInfo = false;
-                                    });
-                                  },
-                                  child: Text(
-                                    'Keep original Yelp info',
-                                    style: TextStyle(
-                                      fontSize: 14,
-                                      color: Colors.grey[800],
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
                       ],
                     ),
 
