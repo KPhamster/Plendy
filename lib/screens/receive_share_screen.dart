@@ -174,6 +174,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     ReceiveSharingIntent.instance
         .getInitialMedia()
         .then((List<SharedMediaFile>? value) {
+      print(
+          '🔄 INIT STATE: getInitialMedia().then() fired.'); // Log when this callback executes
       if (mounted && value != null) {
         print(
             "SHARE DEBUG: getInitialMedia returned ${value.length} files. Current: ${_currentSharedFiles.length}");
@@ -190,6 +192,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
         if (isDifferent) {
           print(
+              '🔄 INIT STATE: getInitialMedia() - Processing DIFFERENT content.');
+          print(
               "SHARE DEBUG: getInitialMedia has different content - updating UI");
           // Use provider to reset cards
           context.read<ReceiveShareProvider>().resetExperienceCards();
@@ -199,9 +203,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             _businessDataCache.clear();
             _yelpPreviewFutures.clear();
             // Process the new content
-            _processSharedContent(_currentSharedFiles);
+            _processSharedContent(_currentSharedFiles); // Log before calling
           });
         } else {
+          print('🔄 INIT STATE: getInitialMedia() - Content is NOT different.');
           print(
               "SHARE DEBUG: getInitialMedia - no different content to process");
         }
@@ -225,9 +230,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         .getMediaStream()
         .listen((List<SharedMediaFile> value) {
       print(
+          '🔄 STREAM LISTENER: Stream received ${value.length} files.'); // Log when stream fires
+      print(
           "SHARE DEBUG: Stream Listener Fired! Received ${value.length} files. Mounted: $mounted");
 
       if (mounted && value.isNotEmpty) {
+        print('🔄 STREAM LISTENER: Processing stream content.');
         print("SHARE DEBUG: Stream - Updating state with new files.");
         // Use provider to reset cards
         context.read<ReceiveShareProvider>().resetExperienceCards();
@@ -237,7 +245,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           _businessDataCache.clear(); // Clear cache for new content
           _yelpPreviewFutures.clear();
           // Process the new content
-          _processSharedContent(_currentSharedFiles);
+          _processSharedContent(_currentSharedFiles); // Log before calling
           // Show a notification
           _showSnackBar(context, "New content received!");
         });
@@ -348,115 +356,127 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     );
   }
 
-  // Process shared content to extract Yelp URLs or Map URLs
-  void _processSharedContent(List<SharedMediaFile> files) {
-    print('DEBUG: Processing shared content');
-    if (files.isEmpty) return;
-
-    // Look for Yelp URLs or Map URLs in shared files
-    for (final file in files) {
-      if (file.type == SharedMediaType.text) {
-        String text = file.path;
-        print(
-            'DEBUG: Checking shared text: ${text.substring(0, min(100, text.length))}...');
-
-        // Check if this is a special URL (Yelp or Maps)
-        // Use _isSpecialContent instead of _isTextSpecialContent
-        if (_isSpecialContent([file])) {
-          print('DEBUG: Found special content URL: $text');
-          _processSpecialUrl(text);
-          return;
-        }
-
-        // Check for "Check out X on Yelp" message format
-        if (text.contains('Check out') && text.contains('yelp.to/')) {
-          // Extract URL using regex to get the Yelp link
-          final RegExp urlRegex = RegExp(r'https?://yelp.to/[^\s]+');
-          final match = urlRegex.firstMatch(text);
-          if (match != null) {
-            final extractedUrl = match.group(0);
-            print('DEBUG: Extracted Yelp URL from share text: $extractedUrl');
-            if (extractedUrl != null) {
-              _getBusinessFromYelpUrl(extractedUrl);
-              return;
-            }
-          }
-        } else if (text.contains('\n')) {
-          // Check for multi-line text with URL on separate line
-          final lines = text.split('\n');
-          for (final line in lines) {
-            // Use _isSpecialContent instead of _isTextSpecialContent
-            if (_isValidUrl(line.trim()) &&
-                _isSpecialContent([
-                  SharedMediaFile(path: line.trim(), type: SharedMediaType.text)
-                ])) {
-              print('DEBUG: Found special URL in multi-line text: $line');
-              _processSpecialUrl(line.trim());
-              return;
-            }
-          }
-        }
-      }
-    }
+  // Extracts the first valid URL found in a given string
+  String? _extractFirstUrl(String text) {
+    if (text.isEmpty) return null;
+    // More robust regex to find URLs, handling various start/end cases
+    final RegExp urlRegex = RegExp(
+        r"(?:(?:https?|ftp):\/\/|www\.)[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b(?:[-a-zA-Z0-9()@:%_\+.~#?&\/=]*)",
+        caseSensitive: false);
+    final match = urlRegex.firstMatch(text);
+    return match?.group(0);
   }
 
-  // Check if the shared content is from Yelp or Google Maps
-  bool _isSpecialContent(List<SharedMediaFile> files) {
-    if (files.isEmpty) return false;
+  // Process shared content to extract Yelp URLs or Map URLs
+  void _processSharedContent(List<SharedMediaFile> files) {
+    print(
+        '🔄 PROCESSING START: _processSharedContent called with ${files.length} files.');
+    print('DEBUG: Processing shared content');
+    if (files.isEmpty) {
+      print('🔄 PROCESSING END: No files to process.');
+      return;
+    }
 
+    final fileFirst = files.first; // Example: Log details of the first file
+    print(
+        '🔄 PROCESSING DETAIL: First file type: ${fileFirst.type}, path: ${fileFirst.path.substring(0, min(100, fileFirst.path.length))}...');
+
+    // Find the first text/URL file and extract the first URL from it
+    String? foundUrl;
     for (final file in files) {
       if (file.type == SharedMediaType.text ||
           file.type == SharedMediaType.url) {
-        String text = file.path; // Original text
-        String textLower =
-            text.toLowerCase(); // Lowercase for checking patterns
-
-        // Define patterns for special URLs
-        final yelpPattern = RegExp(r'yelp\.(com/biz|to)/'); // Corrected pattern
-        final mapsPattern = RegExp(
-            r'(google\.com/maps|maps\.app\.goo\.gl|goo\.gl/maps)'); // Corrected pattern
-
-        // Check if the text CONTAINS either Yelp or Maps patterns
-        if (yelpPattern.hasMatch(textLower) ||
-            mapsPattern.hasMatch(textLower)) {
-          // Added check: Ensure there's actually a link present, not just text mentioning Yelp/Maps.
-          // This helps avoid false positives if someone shares plain text like "check google.com/maps".
-          final urlRegex = RegExp(
-              r'https?://'); // Corrected pattern (though likely ok before)
-          if (urlRegex.hasMatch(text)) {
+        String text = file.path;
+        print(
+            'DEBUG: Checking shared text: ${text.substring(0, min(100, text.length))}...');
+        foundUrl = _extractFirstUrl(text);
+        if (foundUrl != null) {
+          print('DEBUG: Extracted first URL: $foundUrl');
+          // Check if this URL is a special Yelp or Maps URL
+          if (_isSpecialUrl(foundUrl)) {
+            print('DEBUG: Found special content URL: $foundUrl');
+            _processSpecialUrl(foundUrl); // Process the extracted special URL
+            return; // Stop after processing the first special URL found
+          } else {
+            // Optional: Handle generic URLs if needed, otherwise ignore non-special ones
             print(
-                "DEBUG: _isSpecialContent detected Yelp or Maps pattern in text: ${text.substring(0, min(50, text.length))}..."); // Removed trailing backslash
-            return true; // Found a pattern within the text
+                'DEBUG: Extracted URL is not a special Yelp/Maps URL, ignoring.');
+            // If you want to handle generic URLs, call a different function here.
+            // For now, we only care about Yelp/Maps, so we continue the loop
+            // in case another file contains a special URL.
           }
         }
       }
     }
-    // If loop finishes without finding special content, return false
-    print("DEBUG: _isSpecialContent did not find Yelp or Maps pattern.");
+
+    // If loop completes without finding and processing a special URL
+    if (foundUrl == null) {
+      print('DEBUG: No processable URL found in any shared text/URL files.');
+    } else {
+      print(
+          'DEBUG: Found a URL ($foundUrl), but it was not a Yelp or Maps URL.');
+    }
+  }
+
+  // Check if a SINGLE URL string is from Yelp or Google Maps
+  bool _isSpecialUrl(String url) {
+    if (url.isEmpty) return false;
+    String urlLower = url.toLowerCase();
+
+    // Define patterns for special URLs
+    final yelpPattern = RegExp(r'yelp\.(com/biz|to)/');
+    final mapsPattern =
+        RegExp(r'(google\.com/maps|maps\.app\.goo\.gl|goo\.gl/maps)');
+
+    // Check if the URL matches either Yelp or Maps patterns
+    if (yelpPattern.hasMatch(urlLower) || mapsPattern.hasMatch(urlLower)) {
+      print("DEBUG: _isSpecialUrl detected Yelp or Maps pattern in URL: $url");
+      return true;
+    }
+
+    print(
+        "DEBUG: _isSpecialUrl did not find Yelp or Maps pattern in URL: $url");
     return false;
   }
 
-  // Process special URL
+  // Process a SINGLE special URL (Yelp or Maps)
   void _processSpecialUrl(String url) {
+    print('🔄 PROCESSING START: _processSpecialUrl called with URL: $url');
     final provider = context.read<ReceiveShareProvider>();
     // Ensure at least one card exists before processing
     if (provider.experienceCards.isEmpty) {
+      print("DEBUG: Adding initial experience card before processing URL.");
       provider.addExperienceCard();
     }
     // Get the (potentially just added) first card
     final firstCard = provider.experienceCards.first;
 
-    if (url.contains('yelp.com/biz') || url.contains('yelp.to/')) {
-      print("SHARE DEBUG: Processing as Yelp URL");
-      firstCard.yelpUrlController.text = url; // Set URL in the card
+    // Normalize URL before checking
+    String normalizedUrl = url.trim();
+    if (!normalizedUrl.startsWith('http')) {
+      normalizedUrl = 'https://' + normalizedUrl;
+    }
+
+    if (normalizedUrl.contains('yelp.com/biz') ||
+        normalizedUrl.contains('yelp.to/')) {
+      print("SHARE DEBUG: Processing as Yelp URL: $normalizedUrl");
+      firstCard.yelpUrlController.text =
+          normalizedUrl; // Set normalized URL in the card
       // Use the URL as the initial key for the future
-      _yelpPreviewFutures[url] = _getBusinessFromYelpUrl(url);
-    } else if (url.contains('google.com/maps') ||
-        url.contains('maps.app.goo.gl') ||
-        url.contains('goo.gl/maps')) {
-      print("SHARE DEBUG: Processing as Google Maps URL");
+      _yelpPreviewFutures[normalizedUrl] =
+          _getBusinessFromYelpUrl(normalizedUrl);
+    } else if (normalizedUrl.contains('google.com/maps') ||
+        normalizedUrl.contains('maps.app.goo.gl') ||
+        normalizedUrl.contains('goo.gl/maps')) {
+      print("SHARE DEBUG: Processing as Google Maps URL: $normalizedUrl");
+      // Set the Maps URL in a field (e.g., yelpUrlController temporarily or websiteController?)
+      // Let's use yelpUrlController for now as it's often empty for Maps shares
+      firstCard.yelpUrlController.text = normalizedUrl;
       // Use the URL as the key for the future
-      _yelpPreviewFutures[url] = _getLocationFromMapsUrl(url);
+      _yelpPreviewFutures[normalizedUrl] =
+          _getLocationFromMapsUrl(normalizedUrl);
+    } else {
+      print("ERROR: _processSpecialUrl called with non-special URL: $url");
     }
   }
 
@@ -511,6 +531,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
   /// Extract business data from a Yelp URL and look it up in Google Places API
   Future<Map<String, dynamic>?> _getBusinessFromYelpUrl(String yelpUrl) async {
+    print(
+        '🔄 GET YELP START: _getBusinessFromYelpUrl called for URL: $yelpUrl');
     print("\n📊 YELP DATA: Starting business lookup for URL: $yelpUrl");
 
     // Reset chain detection flag for this new URL
@@ -543,7 +565,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     // Check if this is a Yelp URL
     bool isYelpUrl = url.contains('yelp.com') || url.contains('yelp.to');
     if (!isYelpUrl) {
-      print('📊 YELP DATA: Not a Yelp URL, aborting');
+      print('📊 YELP DATA: Not a Yelp URL, aborting: $url');
       return null;
     }
 
@@ -557,7 +579,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       String businessState = "";
       String businessZip = "";
       String businessType = "";
-      String fullSearchText = "";
+      // Remove fullSearchText extraction here, rely on URL/Scraping
+      // String fullSearchText = "";
       bool isShortUrl = url.contains('yelp.to/');
 
       // Position to bias search results if needed (for chains or generic names)
@@ -574,7 +597,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               resolvedUrl.contains('/biz/')) {
             print(
                 '📊 YELP DATA: Successfully resolved shortened URL to: $resolvedUrl');
-            url = resolvedUrl;
+            url = resolvedUrl; // IMPORTANT: Update the URL variable being used
             isShortUrl = false;
           } else {
             print(
@@ -585,73 +608,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         }
       }
 
-      // 1. First try to extract from the message text if it's a "Check out X on Yelp" format
-      if (widget.sharedFiles.isNotEmpty) {
-        print('📊 YELP DATA: Examining shared text for business info');
-        for (final file in widget.sharedFiles) {
-          if (file.type == SharedMediaType.text) {
-            final text = file.path;
-            print(
-                '📊 YELP DATA: Shared text: ${text.length > 50 ? text.substring(0, 50) + "..." : text}');
-
-            // "Check out X on Yelp!" format
-            if (text.contains('Check out') && text.contains('!')) {
-              fullSearchText = text.split('Check out ')[1].split('!')[0].trim();
-              businessName = fullSearchText;
-              print(
-                  '📊 YELP DATA: Extracted business name from share text: $businessName');
-
-              // Try to extract address information if present
-              // Common Yelp share format includes address after business name
-              if (text.contains('located at')) {
-                final addressPart = text.split('located at')[1].trim();
-                businessAddress = addressPart.split('.')[0].trim();
-                print('📊 YELP DATA: Extracted address: $businessAddress');
-
-                // Extract city, state, zip if available
-                final addressComponents = businessAddress.split(',');
-                if (addressComponents.length > 1) {
-                  final lastComponent = addressComponents.last.trim();
-                  // Attempt to extract state and zip code (common format: "City, ST 12345")
-                  final stateZipMatch =
-                      RegExp(r'([A-Z]{2})\s+(\d{5})').firstMatch(lastComponent);
-                  if (stateZipMatch != null) {
-                    businessState = stateZipMatch.group(1) ?? '';
-                    businessZip = stateZipMatch.group(2) ?? '';
-                    print(
-                        '📊 YELP DATA: Extracted state: $businessState, zip: $businessZip');
-                  }
-
-                  // Extract city (second to last component is usually the city)
-                  if (addressComponents.length > 2) {
-                    businessCity =
-                        addressComponents[addressComponents.length - 2].trim();
-                    print('📊 YELP DATA: Extracted city: $businessCity');
-                  }
-                }
-              }
-              // Try to extract city name if present (common format: "Business Name - City")
-              else if (businessName.contains('-')) {
-                final parts = businessName.split('-');
-                if (parts.length >= 2) {
-                  businessName = parts[0].trim();
-                  businessCity = parts[1].trim();
-                  print('📊 YELP DATA: Extracted city: $businessCity');
-                }
-              }
-              break;
-            }
-          }
-        }
-      }
-
-      // 2. If we couldn't get it from the share text, try the URL
-      if ((businessName.isEmpty || businessCity.isEmpty) &&
-          url.contains('/biz/')) {
+      // --- URL Extraction Logic ---
+      // We now assume `url` holds either the original full URL or the resolved full URL.
+      if (url.contains('/biz/')) {
         // Extract the business part from URL
-        // Format: https://www.yelp.com/biz/business-name-location
         final bizPath = url.split('/biz/')[1].split('?')[0];
-
         print('📊 YELP DATA: Extracting from biz URL path: $bizPath');
 
         // Check for numeric suffix after city name which indicates a chain location
@@ -659,7 +620,6 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         final lastPathSegment = bizPath.split('/').last;
         final RegExp numericSuffixRegex = RegExp(r'-(\d+)$');
         final match = numericSuffixRegex.firstMatch(lastPathSegment);
-
         if (match != null) {
           print(
               '📊 YELP DATA: Detected numeric suffix in URL path, indicating a chain location: ${match.group(1)}');
@@ -667,10 +627,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         }
 
         // Convert hyphenated business name to spaces
-        final pathParts = bizPath.split('-');
+        List<String> pathParts = bizPath.split('-');
 
         // If the last part is a number, it indicates a chain location
-        // Remove it from the business name
         if (pathParts.isNotEmpty && RegExp(r'^\d+$').hasMatch(pathParts.last)) {
           print(
               '📊 YELP DATA: Removing numeric suffix ${pathParts.last} from business name');
@@ -679,66 +638,142 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         }
 
         // Check if the last part might be a city name
-        if (pathParts.isNotEmpty) {
-          final possibleCity = pathParts.last;
-          // Common city names usually don't contain these words
-          final nonCityWords = [
-            'restaurant',
-            'pizza',
-            'cafe',
-            'bar',
-            'grill',
-            'and',
-            'the'
-          ];
-          bool mightBeCity = true;
+        // Improved City Extraction - Look for known US states or common abbreviations
+        // to better identify the boundary between name and city.
+        int cityStartIndex = -1;
+        List<String> states = [
+          "al",
+          "ak",
+          "az",
+          "ar",
+          "ca",
+          "co",
+          "ct",
+          "de",
+          "fl",
+          "ga",
+          "hi",
+          "id",
+          "il",
+          "in",
+          "ia",
+          "ks",
+          "ky",
+          "la",
+          "me",
+          "md",
+          "ma",
+          "mi",
+          "mn",
+          "ms",
+          "mo",
+          "mt",
+          "ne",
+          "nv",
+          "nh",
+          "nj",
+          "nm",
+          "ny",
+          "nc",
+          "nd",
+          "oh",
+          "ok",
+          "or",
+          "pa",
+          "ri",
+          "sc",
+          "sd",
+          "tn",
+          "tx",
+          "ut",
+          "vt",
+          "va",
+          "wa",
+          "wv",
+          "wi",
+          "wy"
+        ];
 
-          for (final word in nonCityWords) {
-            if (possibleCity.toLowerCase() == word) {
-              mightBeCity = false;
+        for (int i = pathParts.length - 1; i >= 0; i--) {
+          // Check if a part looks like a state abbreviation or common city endings
+          if (states.contains(pathParts[i].toLowerCase()) ||
+              ["city", "town", "village"]
+                  .contains(pathParts[i].toLowerCase())) {
+            // Potential boundary found, city might start after this index
+            // Let's assume the city is the part immediately before the state/marker
+            if (i > 0) {
+              // Make sure there is a part before the state/marker
+              cityStartIndex =
+                  i - 1; // The part before is likely the end of the city
               break;
             }
           }
-
-          if (mightBeCity) {
-            businessCity = possibleCity;
-            print('📊 YELP DATA: Extracted city from URL path: $businessCity');
-            // Remove city from business name
-            pathParts.removeLast();
+          // Simple check if the last part could be a city (less reliable)
+          if (i == pathParts.length - 1 &&
+              pathParts[i].length > 2 &&
+              !isChainFromUrl) {
+            final possibleCity = pathParts.last;
+            final nonCityWords = [
+              'restaurant',
+              'pizza',
+              'cafe',
+              'bar',
+              'grill',
+              'and',
+              'the',
+              'co',
+              'inc'
+            ];
+            bool mightBeCity =
+                !nonCityWords.contains(possibleCity.toLowerCase());
+            if (mightBeCity) {
+              cityStartIndex = i; // Assume last part is city
+              break;
+            }
           }
         }
 
-        businessName = pathParts.join(' ');
-
-        // If there's a location suffix at the end (like "restaurant-city"), try to extract it
-        if (businessName.contains('/')) {
-          final parts = businessName.split('/');
-          businessName = parts[0];
-
-          // Remaining parts might have city or business type info
-          if (parts.length > 1) {
-            // The last part is often a city
-            businessCity = parts[parts.length - 1];
-            print('📊 YELP DATA: Extracted city from URL path: $businessCity');
-          }
+        if (cityStartIndex != -1 && cityStartIndex < pathParts.length) {
+          // Extract city parts (potentially multi-word)
+          businessCity = pathParts.sublist(cityStartIndex).join(' ');
+          // Capitalize city name properly
+          businessCity = businessCity
+              .split(' ')
+              .map((word) => word.isNotEmpty
+                  ? word[0].toUpperCase() + word.substring(1)
+                  : '')
+              .join(' ');
+          print('📊 YELP DATA: Extracted city from URL path: $businessCity');
+          // Extract business name parts
+          businessName = pathParts.sublist(0, cityStartIndex).join(' ');
+        } else {
+          // Fallback if city wasn't clearly identified
+          businessName = pathParts.join(' ');
+          print(
+              '📊 YELP DATA: Could not reliably extract city, using full path as name basis: $businessName');
         }
+
+        // Capitalize business name properly
+        businessName = businessName
+            .split(' ')
+            .map((word) => word.isNotEmpty
+                ? word[0].toUpperCase() + word.substring(1)
+                : '')
+            .join(' ');
 
         print(
             '📊 YELP DATA: Extracted business name from URL path: $businessName');
 
-        // If we detected a chain from the URL structure, update our flag
         if (isChainFromUrl) {
           print(
               '📊 YELP DATA: Marked as chain restaurant based on URL structure');
-          // Will be used later when checking isChainOrGeneric
           _chainDetectedFromUrl = true;
         }
 
-        // Try to extract business type from hyphenated biz name (common pattern)
+        // Try to extract business type
         final nameParts = businessName.split(' ');
-        if (nameParts.length > 1) {
-          // Last word might be business type (e.g., "restaurant", "cafe", etc.)
-          final lastWord = nameParts[nameParts.length - 1].toLowerCase();
+        if (nameParts.isNotEmpty) {
+          final lastWord = nameParts.last.toLowerCase();
           if (['restaurant', 'cafe', 'bar', 'grill', 'bakery', 'coffee']
               .contains(lastWord)) {
             businessType = lastWord;
@@ -747,12 +782,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         }
       }
 
-      // 1. Detect that this is a chain restaurant from URL patterns
+      // Chain detection logic (remains similar)
       bool isChainOrGeneric = _chainDetectedFromUrl;
-
-      // 2. Assume any restaurant with very generic name might be a chain
       if (!isChainOrGeneric && businessName.isNotEmpty) {
-        // Common chain restaurant terms
         final chainTerms = [
           'restaurant',
           'cafe',
@@ -763,7 +795,6 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           'bakery'
         ];
         final nameLower = businessName.toLowerCase();
-
         for (final term in chainTerms) {
           if (nameLower.contains(term) && businessName.split(' ').length < 3) {
             print(
@@ -773,110 +804,77 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           }
         }
       }
-
       print('📊 YELP DATA: Is chain or generic restaurant: $isChainOrGeneric');
 
-      // If we have a short Yelp URL and couldn't resolve it,
-      // try to scrape the Yelp page for more info regardless of chain status
+      // Scraping attempt (can remain as a fallback if needed, but less critical now)
       if (isShortUrl) {
         print(
-            '📊 YELP DATA: Attempting to get location details from Yelp page');
-
+            '📊 YELP DATA: Short URL was not resolved, attempting scrape as fallback');
         try {
-          final extraInfo = await _getLocationDetailsFromYelpPage(url);
+          final extraInfo = await _getLocationDetailsFromYelpPage(
+              yelpUrl); // Use original short URL for scrape
           if (extraInfo != null) {
-            if (extraInfo['address'] != null &&
-                extraInfo['address']!.isNotEmpty) {
-              businessAddress = extraInfo['address']!;
-              print(
-                  '📊 YELP DATA: Extracted address from Yelp page: $businessAddress');
-            }
-            if (extraInfo['city'] != null && extraInfo['city']!.isNotEmpty) {
+            // Prioritize scraped info if URL parsing failed to get city
+            if (businessCity.isEmpty &&
+                extraInfo['city'] != null &&
+                extraInfo['city']!.isNotEmpty) {
               businessCity = extraInfo['city']!;
               print(
-                  '📊 YELP DATA: Extracted city from Yelp page: $businessCity');
+                  '📊 YELP DATA: Extracted city from Yelp page scrape: $businessCity');
             }
+            // Add state extraction if needed
             if (extraInfo['state'] != null && extraInfo['state']!.isNotEmpty) {
               businessState = extraInfo['state']!;
               print(
-                  '📊 YELP DATA: Extracted state from Yelp page: $businessState');
+                  '📊 YELP DATA: Extracted state from Yelp page scrape: $businessState');
             }
           }
         } catch (e) {
-          print('📊 YELP DATA: Error fetching details from Yelp page: $e');
+          print(
+              '📊 YELP DATA: Error fetching details from Yelp page scrape: $e');
         }
       }
 
-      // If we couldn't extract a business name, use a generic one
+      // Ensure a business name exists
       if (businessName.isEmpty) {
         businessName = "Shared Business";
         print('📊 YELP DATA: Using generic business name');
       }
 
-      // Create search strategies in order of most to least specific
+      // Create search strategies (prioritize name + city)
       List<String> searchQueries = [];
-
-      // Strategy 1: Business name + city if available (most specific for chains)
       if (businessName.isNotEmpty && businessCity.isNotEmpty) {
-        // For chains, exact match with city should be first priority
-        if (isChainOrGeneric) {
-          searchQueries.add('"$businessName $businessCity"');
-          searchQueries.add('$businessName $businessCity');
-        } else {
-          searchQueries.add('$businessName $businessCity');
-          searchQueries.add('"$businessName $businessCity"');
-        }
+        String query = '$businessName $businessCity';
+        searchQueries.add('"$query"'); // Exact phrase first
+        searchQueries.add(query);
       }
-
-      // Strategy 2: Business name + business type if both available
-      if (businessName.isNotEmpty && businessType.isNotEmpty) {
-        searchQueries.add('$businessName $businessType');
-        // If we also have city data, add with city
-        if (businessCity.isNotEmpty) {
-          searchQueries.add('$businessName $businessType $businessCity');
-        }
-      }
-
-      // Strategy 3: Complete share text if available
-      if (fullSearchText.isNotEmpty) {
-        searchQueries.add(fullSearchText);
-      }
-
-      // Strategy 4: Just business name with various qualifiers
       if (businessName.isNotEmpty) {
-        // Add "exact" to help find the precise business
         searchQueries.add('"$businessName"');
         searchQueries.add(businessName);
       }
-
-      // Deduplicate search queries
-      searchQueries = searchQueries.toSet().toList();
-
+      searchQueries = searchQueries.toSet().toList(); // Deduplicate
       print('📊 YELP DATA: Search strategies (in order): $searchQueries');
 
-      // Try each search query until we get results
+      // Search Logic (remains mostly the same, but should use better queries now)
       int searchAttempt = 0;
+      Location? foundLocation;
       for (final query in searchQueries) {
         searchAttempt++;
         print(
             '📊 YELP DATA: Trying Google Places with query: "$query" (Attempt $searchAttempt/${searchQueries.length})');
 
-        // Using Google Places API to search for this business
-        List<Map<String, dynamic>> results = [];
-
-        // For chain restaurants or generic names, if we have user location, use it to bias search
-        if (isChainOrGeneric && userPosition != null && searchAttempt > 1) {
+        List<Map<String, dynamic>> results;
+        if (userPosition != null) {
           print(
-              '📊 YELP DATA: Using location-biased search for chain restaurant');
-          results = await _mapsService.searchNearbyPlaces(
-              userPosition.latitude,
-              userPosition.longitude,
-              50000, // 50km radius
-              query);
-          print(
-              '📊 YELP DATA: Location-biased search found ${results.length} results');
+              '📊 YELP DATA: Calling searchPlaces WITH location bias (lat: ${userPosition.latitude}, lng: ${userPosition.longitude})');
+          results = await _mapsService.searchPlaces(
+            query,
+            latitude: userPosition.latitude,
+            longitude: userPosition.longitude,
+            radius: 50000,
+          );
         } else {
-          // Standard search for non-chains or first attempt
+          print('📊 YELP DATA: Calling searchPlaces WITHOUT location bias');
           results = await _mapsService.searchPlaces(query);
         }
 
@@ -887,176 +885,150 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           print(
               '📊 YELP DATA: Results found! First result: ${results[0]['description']}');
 
-          // For chain restaurants, check if we can find a better match using address info
           int resultIndex = 0;
-          if (isChainOrGeneric && results.length > 1) {
-            // Try to find the best match based on address components if available
-            if (businessAddress.isNotEmpty || businessCity.isNotEmpty) {
-              print(
-                  '📊 YELP DATA: Comparing multiple locations for chain restaurant');
-
-              resultIndex = _findBestMatch(
-                  results, businessAddress, businessCity, businessState);
-              print(
-                  '📊 YELP DATA: Selected result #${resultIndex + 1} as best match');
-            }
+          if (results.length > 1) {
+            print('📊 YELP DATA: Comparing multiple locations for best match');
+            resultIndex = _findBestMatch(
+                results, businessAddress, businessCity, businessState);
+            print(
+                '📊 YELP DATA: Selected result #${resultIndex + 1} as best match based on city/state.');
           }
 
-          // Get details of the selected result
           final placeId = results[resultIndex]['placeId'];
+          if (placeId == null || placeId.isEmpty) {
+            print('📊 YELP DATA: Selected result missing placeId, skipping.');
+            continue;
+          }
           print('📊 YELP DATA: Getting details for place ID: $placeId');
 
-          final location = await _mapsService.getPlaceDetails(placeId);
-          print(
-              '📊 YELP DATA: Retrieved location details: ${location.displayName}, ${location.address}');
-          print(
-              '📊 YELP DATA: Coordinates: ${location.latitude}, ${location.longitude}');
-          print('📊 YELP DATA: Place ID: ${location.placeId}');
-
-          if (location.latitude == 0.0 && location.longitude == 0.0) {
+          try {
+            foundLocation = await _mapsService.getPlaceDetails(placeId);
+          } catch (detailsError) {
             print(
-                '📊 YELP DATA: WARNING - Zero coordinates returned, likely invalid location');
-            continue; // Try the next search strategy
-          }
-
-          // Verify this is the correct business by checking name and address match
-          bool isCorrectBusiness = true;
-
-          // Name verification: If we have a business name, check that the Google result contains key parts
-          if (!isChainOrGeneric &&
-              businessName.isNotEmpty &&
-              location.displayName != null) {
-            // Simple verification: Check if key words from the business name appear in the Google result
-            final businessNameWords = businessName
-                .toLowerCase()
-                .split(' ')
-                .where(
-                    (word) => word.length > 3) // Only check significant words
-                .toList();
-
-            if (businessNameWords.isNotEmpty) {
-              final googleNameLower = location.displayName!.toLowerCase();
-
-              // Count how many key words match
-              int matchCount = 0;
-              for (final word in businessNameWords) {
-                if (googleNameLower.contains(word)) {
-                  matchCount++;
-                }
-              }
-
-              // If less than half of the key words match, it's probably not the right business
-              if (matchCount < businessNameWords.length / 2) {
-                print(
-                    '📊 YELP DATA: Name verification failed. Google name "${location.displayName}" doesn\'t match Yelp name "$businessName"');
-                isCorrectBusiness = false;
-              }
-            }
-          }
-
-          // Address verification: If we have a business address, check that the Google result address contains key parts
-          if (isCorrectBusiness &&
-              businessAddress.isNotEmpty &&
-              location.address != null) {
-            // We know from testing that Yelp shares don't include reliable address information
-            // So we'll skip detailed address verification
-            print(
-                '📊 YELP DATA: Skipping address verification as Yelp shares do not contain reliable address data');
-          }
-
-          // Special verification for chain restaurants
-          if (isChainOrGeneric) {
-            if (businessCity.isNotEmpty && location.city != null) {
-              // For chains, city match is critical
-              if (!location.city!
-                      .toLowerCase()
-                      .contains(businessCity.toLowerCase()) &&
-                  !businessCity
-                      .toLowerCase()
-                      .contains(location.city!.toLowerCase())) {
-                print(
-                    '📊 YELP DATA: City verification failed for chain. Google city "${location.city}" doesn\'t match Yelp city "$businessCity"');
-                isCorrectBusiness = false;
-                print(
-                    '📊 YELP DATA: Will try next search strategy that includes city name');
-              } else {
-                print(
-                    '📊 YELP DATA: City match confirmed for chain restaurant');
-              }
-            }
-          }
-
-          // If verification failed, try next search query
-          if (!isCorrectBusiness) {
-            print(
-                '📊 YELP DATA: Verification failed, trying next search strategy');
+                '📊 YELP DATA ERROR: Failed to get place details for $placeId: $detailsError');
             continue;
           }
 
-          // Create the result data
-          Map<String, dynamic> resultData = {
-            'location': location,
-            'businessName': businessName,
-            'yelpUrl': url,
-          };
-
-          // Cache the result data
-          _businessDataCache[cacheKey] = resultData;
-
-          // Autofill the form data
-          _fillFormWithBusinessData(location, businessName, url);
-
-          print('📊 YELP DATA: Successfully found and processed business data');
-
-          return resultData;
-        }
-      }
-
-      // If all strategies failed and we have a chain restaurant, try a final attempt with nearby search
-      if (isChainOrGeneric && userPosition != null) {
-        print(
-            '📊 YELP DATA: All strategies failed for chain restaurant, trying nearby search');
-
-        // Search for the chain in a large radius around the user
-        final nearbyResults = await _mapsService.searchNearbyPlaces(
-            userPosition.latitude,
-            userPosition.longitude,
-            50000, // 50km radius
-            businessName);
-
-        if (nearbyResults.isNotEmpty) {
           print(
-              '📊 YELP DATA: Nearby search found ${nearbyResults.length} results');
+              '📊 YELP DATA: Retrieved location details: ${foundLocation.displayName}, ${foundLocation.address}');
+          print(
+              '📊 YELP DATA: Coordinates: ${foundLocation.latitude}, ${foundLocation.longitude}');
+          print('📊 YELP DATA: Place ID: ${foundLocation.placeId}');
 
-          // Get the first result
+          if (foundLocation.latitude == 0.0 && foundLocation.longitude == 0.0) {
+            print(
+                '📊 YELP DATA: WARNING - Zero coordinates returned, likely invalid location');
+            foundLocation = null;
+            continue;
+          }
+
+          // Verification Logic (Simplified Name Check, Keep City Check for Chains)
+          bool isCorrectBusiness = true;
+
+          // Simple name containment check
+          if (businessName.isNotEmpty && foundLocation.displayName != null) {
+            final googleNameLower = foundLocation.displayName!.toLowerCase();
+            final yelpNameLower = businessName.toLowerCase();
+            // Check if Google name contains Yelp name or vice versa (more flexible)
+            if (!googleNameLower.contains(yelpNameLower) &&
+                !yelpNameLower.contains(googleNameLower.split(' ')[0])) {
+              // Check against first word too
+              print(
+                  '📊 YELP DATA: Name verification failed. Google name \"${foundLocation.displayName}\" doesn\'t align well with Yelp name \"$businessName\"');
+              // isCorrectBusiness = false; // Make name check less strict, rely more on city
+            } else {
+              print(
+                  '📊 YELP DATA: Name check passed (containment): Google="${foundLocation.displayName}", Yelp="$businessName"');
+            }
+          }
+
+          // City verification for chains (critical)
+          if (isChainOrGeneric && isCorrectBusiness) {
+            if (businessCity.isNotEmpty && foundLocation.city != null) {
+              String googleCityLower = foundLocation.city!.toLowerCase();
+              String yelpCityLower = businessCity.toLowerCase();
+              if (!googleCityLower.contains(yelpCityLower) &&
+                  !yelpCityLower.contains(googleCityLower)) {
+                print(
+                    '📊 YELP DATA: City verification failed for chain. Google city \"${foundLocation.city}\" doesn\'t match Yelp city \"$businessCity\"');
+                isCorrectBusiness = false;
+                print('📊 YELP DATA: Will try next search strategy');
+              } else {
+                print(
+                    '📊 YELP DATA: City match confirmed for chain restaurant: Google="${foundLocation.city}", Yelp="$businessCity"');
+              }
+            } else if (businessCity.isNotEmpty && foundLocation.city == null) {
+              print(
+                  '📊 YELP DATA: City verification needed but Google location has no city info. Assuming mismatch.');
+              isCorrectBusiness = false;
+            }
+          }
+
+          if (isCorrectBusiness) {
+            print(
+                '📊 YELP DATA: Verification successful for location: ${foundLocation.displayName}');
+            break;
+          } else {
+            print(
+                '📊 YELP DATA: Verification failed, trying next search strategy');
+            foundLocation = null;
+            continue;
+          }
+        }
+      } // End search loop
+
+      // Fallback nearby search for chains (remains the same)
+      if (foundLocation == null && isChainOrGeneric && userPosition != null) {
+        print(
+            '📊 YELP DATA: All strategies failed for chain restaurant, trying FINAL fallback with Nearby Search');
+        final nearbyResults = await _mapsService.searchNearbyPlaces(
+            userPosition.latitude, userPosition.longitude, 50000, businessName);
+        if (nearbyResults.isNotEmpty) {
+          // ... (rest of nearby logic is unchanged)
           final placeId = nearbyResults[0]['placeId'];
-          final location = await _mapsService.getPlaceDetails(placeId);
-
-          // Create the result data
-          Map<String, dynamic> resultData = {
-            'location': location,
-            'businessName': businessName,
-            'yelpUrl': url,
-          };
-
-          // Cache the result data
-          _businessDataCache[cacheKey] = resultData;
-
-          // Autofill the form data
-          _fillFormWithBusinessData(location, businessName, url);
-
-          print('📊 YELP DATA: Successfully found nearby chain location');
-          return resultData;
+          if (placeId != null && placeId.isNotEmpty) {
+            try {
+              foundLocation = await _mapsService.getPlaceDetails(placeId);
+              print(
+                  '📊 YELP DATA: Successfully found nearby chain location via fallback: ${foundLocation.displayName}');
+            } catch (detailsError) {
+              print(
+                  '📊 YELP DATA ERROR: Failed to get place details for nearby result $placeId: $detailsError');
+              foundLocation = null;
+            }
+          } else {
+            print('📊 YELP DATA: Nearby search result missing placeId.');
+            foundLocation = null;
+          }
+        } else {
+          print('📊 YELP DATA: Fallback Nearby search found no results.');
+          foundLocation = null;
         }
       }
 
+      // Final result processing
+      if (foundLocation != null) {
+        Map<String, dynamic> resultData = {
+          'location': foundLocation,
+          'businessName': businessName,
+          // Use the URL that was successfully processed (potentially resolved one)
+          'yelpUrl': url,
+        };
+        _businessDataCache[cacheKey] = resultData;
+        // Pass the potentially resolved URL to fill form
+        _fillFormWithBusinessData(foundLocation, businessName, url);
+        print(
+            '📊 YELP DATA: Successfully found and processed business data for ${foundLocation.displayName}');
+        return resultData;
+      } else {
+        print(
+            '📊 YELP DATA: No suitable location found after trying all search strategies and fallbacks.');
+        _businessDataCache[cacheKey] = {};
+        return null;
+      }
+    } catch (e, stackTrace) {
       print(
-          '📊 YELP DATA: No results found after trying all search strategies');
-      // Store empty map instead of null to prevent repeated processing
-      _businessDataCache[cacheKey] = {};
-      return null;
-    } catch (e) {
-      print('📊 YELP DATA ERROR: Error extracting business from Yelp URL: $e');
+          '📊 YELP DATA ERROR: Error extracting business from Yelp URL: $e\n$stackTrace');
       return null;
     }
   }
@@ -1174,56 +1146,128 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     }
   }
 
-  // Helper method to find the best matching result from a list of places
   // Simplified to prioritize exact city matches for chain restaurants
   int _findBestMatch(List<Map<String, dynamic>> results, String address,
       String city, String state) {
     if (results.isEmpty || results.length == 1) return 0;
 
-    // Only try to find a match with city if we have it
-    if (city.isNotEmpty) {
-      print('📊 YELP DATA: Looking for results matching city: $city');
+    // Normalize the target city name
+    final targetCityLower = city.trim().toLowerCase();
+    print(
+        '📊 YELP DATA _findBestMatch: Looking for results matching city: "$targetCityLower"');
 
-      // First try exact city matches
-      for (int i = 0; i < results.length; i++) {
-        final result = results[i];
-        final placeAddress =
-            result['vicinity'] ?? result['formatted_address'] ?? '';
-        final placeCity = _extractCityFromAddress(placeAddress);
+    int bestMatchIndex = 0; // Default to first result
+    int highestScore =
+        -1; // Score: 2=Exact City, 1=Partial City, 0=State, -1=None
 
-        if (placeCity.toLowerCase() == city.toLowerCase()) {
-          print('📊 YELP DATA: Found exact city match at index $i: $placeCity');
-          return i;
+    for (int i = 0; i < results.length; i++) {
+      final result = results[i];
+      // Prefer 'vicinity' if available, otherwise use 'formatted_address' or 'description'
+      final placeAddress = result['vicinity'] as String? ??
+          result['formatted_address'] as String? ??
+          result['description'] as String? ??
+          '';
+      final placeAddressLower = placeAddress.toLowerCase();
+      print(
+          '📊 YELP DATA _findBestMatch: Checking Result ${i + 1}: "$placeAddress"');
+
+      int currentScore = -1;
+
+      // Check for City match first
+      if (targetCityLower.isNotEmpty) {
+        // Try extracting city using helper
+        final extractedCity = _extractCityFromAddress(placeAddress);
+        final extractedCityLower = extractedCity.toLowerCase();
+
+        if (extractedCityLower == targetCityLower) {
+          print(
+              '📊 YELP DATA _findBestMatch: Found EXACT city match "$extractedCity" at index $i');
+          currentScore = 2; // Highest score for exact city match
+        } else if (placeAddressLower.contains(targetCityLower)) {
+          // Check if the full address string contains the city name (partial match)
+          print(
+              '📊 YELP DATA _findBestMatch: Found PARTIAL city match in address "$placeAddress" at index $i');
+          currentScore = max(currentScore, 1); // Score 1 for partial match
         }
       }
 
-      // Then try partial city matches
-      for (int i = 0; i < results.length; i++) {
-        final result = results[i];
-        final placeAddress =
-            result['vicinity'] ?? result['formatted_address'] ?? '';
+      // If no city match found yet, check for state match (lower priority)
+      final targetStateLower = state.trim().toLowerCase();
+      if (currentScore < 1 &&
+          targetStateLower.isNotEmpty &&
+          targetStateLower.length == 2) {
+        // Only check if state looks valid (2 letters)
+        // Look for ", ST " or " ST," or " ST " pattern
+        // Use string interpolation within a single raw string
+        final statePattern = RegExp(
+            r'[\s,]' + targetStateLower + r'(?:\s+\d{5}(-\d{4})?|,|\s*$)',
+            caseSensitive: false);
 
-        if (placeAddress.toLowerCase().contains(city.toLowerCase())) {
+        if (statePattern.hasMatch(placeAddress)) {
           print(
-              '📊 YELP DATA: Found result with city in address at index $i: $placeAddress');
-          return i;
+              '📊 YELP DATA _findBestMatch: Found STATE match "$targetStateLower" in address "$placeAddress" at index $i');
+          currentScore = max(currentScore, 0); // Score 0 for state match
         }
+      }
+
+      // Update best match if current score is higher
+      if (currentScore > highestScore) {
+        highestScore = currentScore;
+        bestMatchIndex = i;
+        print(
+            '📊 YELP DATA _findBestMatch: New best match index: $i (Score: $highestScore)');
+      }
+
+      // If we found an exact city match, we can stop searching
+      if (highestScore == 2) {
+        break;
       }
     }
 
-    // No specific match found, return the first result
-    print('📊 YELP DATA: No city match found, using first result');
-    return 0;
+    // Return the index of the best match found
+    print(
+        '📊 YELP DATA _findBestMatch: Final selected index: $bestMatchIndex (Score: $highestScore)');
+    return bestMatchIndex;
   }
 
-  // Helper to extract city from Google Places address
+  // Helper to extract city from Google Places address (Improved)
   String _extractCityFromAddress(String address) {
+    if (address.isEmpty) return '';
     final parts = address.split(',');
-    if (parts.length >= 2) {
-      // City is typically the second-to-last part before state/zip
-      return parts[parts.length - 2].trim();
+    if (parts.length >= 3) {
+      // City is often the third part from the end (..., City, ST ZIP)
+      String potentialCity = parts[parts.length - 3].trim();
+      // Basic sanity check: avoid returning state abbreviations or just numbers
+      if (potentialCity.length > 2 &&
+          !RegExp(r'^[A-Z]{2}$').hasMatch(potentialCity) &&
+          !RegExp(r'^\d+$').hasMatch(potentialCity)) {
+        return potentialCity;
+      }
+      // Fallback: try second to last part if third didn't work
+      potentialCity = parts[parts.length - 2].trim();
+      if (potentialCity.length > 2 &&
+          !RegExp(r'^[A-Z]{2}$').hasMatch(potentialCity) &&
+          !RegExp(r'^\d+$').hasMatch(potentialCity)) {
+        // Remove potential state/zip if present using corrected regex (single backslashes in raw string)
+        potentialCity = potentialCity.replaceAll(
+            RegExp(r'\s+[A-Z]{2}(\s+\d{5}(-\d{4})?)?$'), '');
+        return potentialCity.trim();
+      }
+    } else if (parts.length == 2) {
+      // Less reliable: assume first part might be city if second looks like state/zip
+      String potentialCity = parts[0].trim();
+      String lastPart = parts[1].trim();
+      if (RegExp(r'^[A-Z]{2}(\s+\d{5}(-\d{4})?)?$').hasMatch(lastPart)) {
+        return potentialCity;
+      }
+    } else if (parts.length == 1) {
+      // Single part, might be just the city name if it's short enough
+      if (address.length < 30 && !address.contains(RegExp(r'\d'))) {
+        // Avoid if it looks like a full street address
+        return address.trim();
+      }
     }
-    return '';
+    return ''; // Return empty if city cannot be reliably extracted
   }
 
   // Helper method to fill the form with business data
@@ -1237,6 +1281,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     // Find the specific card that matches this Yelp URL
     ExperienceCardData? targetCard;
     for (var card in provider.experienceCards) {
+      // Use the yelpUrl passed to this function for matching
       if (card.yelpUrlController.text == yelpUrl) {
         targetCard = card;
         break;
@@ -1259,7 +1304,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         '====> 📝 CARD FORM Log:   Location Coords: ${location.latitude}, ${location.longitude}');
     print('====> 📝 CARD FORM Log:   Location Website: ${location.website}');
     print(
-        '====> 📝 CARD FORM Log:   Business Name (from initial Yelp parse): $businessName');
+        '====> 📝 CARD FORM Log:   Business Name (from Yelp URL parse): $businessName');
 
     // Try to get website URL from the Maps service if the location has a placeId
     String? websiteUrl;
@@ -1287,55 +1332,108 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
       targetCard!.titleController.text = titleToSet; // Use determined title
       targetCard!.selectedLocation = location;
-      targetCard!.yelpUrlController.text = yelpUrl;
+      targetCard!.yelpUrlController.text =
+          yelpUrl; // Set the correct (maybe resolved) yelpUrl
       targetCard!.searchController.text =
           addressToSet; // Use determined address
 
-      // Update website URL if we found one
-      // if (websiteUrl != null && websiteUrl.isNotEmpty) {
       targetCard!.websiteController.text =
           websiteToSet; // Use determined website
-      //   print('DEBUG: Updated website URL to: $websiteUrl');
-      // }
 
-      // If we have a photoUrl, make sure to force a refresh of any UI that shows it
+      // Explicitly update the placeId used by the preview's FutureBuilder key
+      targetCard!.placeIdForPreview = location.placeId;
+      print(
+          '====> 📝 CARD FORM Log:   Set placeIdForPreview to: "${location.placeId}"');
+
       if (location.photoUrl != null) {
         print('DEBUG: Location has photo URL: ${location.photoUrl}');
       }
     });
 
-    // Force refresh of any Yelp preview or cached business data
+    // --- MODIFICATION: Update future map with Place ID as key ---
     setState(() {
-      // Remove from cache to force reload
-      _businessDataCache.remove(yelpUrl.trim());
+      final String originalUrlKey =
+          yelpUrl.trim(); // Use the yelpUrl passed to the function
+      final String? placeIdKey = location.placeId;
 
-      // Force refresh of the business preview
-      if (_yelpPreviewFutures.containsKey(yelpUrl)) {
-        _yelpPreviewFutures.remove(yelpUrl);
+      // Remove old future keyed by URL if it exists
+      // Also check if the original cache key exists before trying to remove
+      if (_yelpPreviewFutures.containsKey(originalUrlKey)) {
+        _yelpPreviewFutures.remove(originalUrlKey);
+        print(
+            '🔄 FUTURE MAP: Removed future keyed by original URL: $originalUrlKey');
+      } else {
+        print(
+            '🔄 FUTURE MAP: No future found for original URL key to remove: $originalUrlKey');
+      }
+
+      // If we have a placeId, update the future map keyed by placeId
+      if (placeIdKey != null && placeIdKey.isNotEmpty) {
+        final Map<String, dynamic> finalData = {
+          'location': location,
+          'businessName': location.displayName ??
+              businessName, // Prefer Google's name if available
+          'yelpUrl': yelpUrl,
+          // Add other relevant fields if needed by preview
+        };
+        // Update the future map with the definitive data, keyed by Place ID
+        _yelpPreviewFutures[placeIdKey] = Future.value(finalData);
+        print(
+            '🔄 FUTURE MAP: Updated/Added future keyed by Place ID: $placeIdKey');
+      } else {
+        print('🔄 FUTURE MAP: No Place ID available to update future map.');
       }
     });
+    // --- END MODIFICATION ---
   }
 
   // Helper method to fill the form with Google Maps data
   void _fillFormWithGoogleMapsData(
       Location location, String placeName, String websiteUrl) {
-    final String locationKey = '${location.latitude},${location.longitude}';
-
     // Use provider to get cards
     final provider = context.read<ReceiveShareProvider>();
+    final firstCard = provider.experienceCards.isNotEmpty
+        ? provider.experienceCards.first
+        : null;
+
+    if (firstCard == null) return; // Exit if no card exists
+
+    print(
+        '🗺️ MAPS FILL: Filling card for Maps Location: ${location.displayName ?? placeName}');
 
     // Update UI
     setState(() {
-      for (var card in provider.experienceCards) {
-        // Set data in the card
+      // Set data in the card
+      firstCard.titleController.text = location.displayName ?? placeName;
+      firstCard.selectedLocation = location;
+      firstCard.websiteController.text =
+          websiteUrl; // Set official website if available
+      firstCard.searchController.text = location.address ?? '';
+
+      // --- ADD THIS LINE ---
+      firstCard.placeIdForPreview = location.placeId;
+      print('🗺️ MAPS FILL: Set placeIdForPreview to: "${location.placeId}"');
+      // --- END ADD ---
+
+      // --- ADD FUTURE MAP UPDATE for Maps ---
+      final String? placeIdKey = location.placeId;
+      if (placeIdKey != null && placeIdKey.isNotEmpty) {
+        final Map<String, dynamic> finalData = {
+          'location': location,
+          'placeName': placeName, // Use the name passed to this function
+          'website': websiteUrl,
+          'mapsUrl': firstCard.yelpUrlController
+              .text, // Assuming maps url was stored here temporarily
+        };
+        _yelpPreviewFutures[placeIdKey] =
+            Future.value(finalData); // Use the same future map
         print(
-            '🗺️ MAPS: Setting card data - title: ${location.displayName ?? placeName}');
-        card.titleController.text = location.displayName ?? placeName;
-        card.selectedLocation = location;
-        card.websiteController.text =
-            websiteUrl; // Set official website if available
-        card.searchController.text = location.address ?? '';
+            '🔄 FUTURE MAP (Maps): Updated/Added future keyed by Place ID: $placeIdKey');
+      } else {
+        print(
+            '🔄 FUTURE MAP (Maps): No Place ID available to update future map.');
       }
+      // --- END FUTURE MAP UPDATE ---
     });
 
     // Show success message (optional)
@@ -1620,7 +1718,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     return _wrapWithWillPopScope(Scaffold(
       appBar: AppBar(
-        title: _isSpecialContent(_currentSharedFiles)
+        title: _isSpecialUrl(_currentSharedFiles.isNotEmpty
+                ? _currentSharedFiles.first.path
+                : '') // Check if first file content is special URL
             ? const Text('Save Shared Content')
             : const Text('Save to Experiences'),
         leading: IconButton(
@@ -1632,7 +1732,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             false, // We handle the leading button manually
         actions: [
           // Add button - only show if not special content
-          if (!_isSpecialContent(_currentSharedFiles))
+          if (!_isSpecialUrl(_currentSharedFiles.isNotEmpty
+              ? _currentSharedFiles.first.path
+              : '')) // Check if first file content is special URL
             IconButton(
               icon: const Icon(Icons.add),
               tooltip: 'Add Another Experience',
@@ -1777,7 +1879,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                       }),
 
                                 // Add another experience button - only show if not special content
-                                if (!_isSpecialContent(_currentSharedFiles))
+                                if (!_isSpecialUrl(_currentSharedFiles
+                                        .isNotEmpty
+                                    ? _currentSharedFiles.first.path
+                                    : '')) // Check if first file content is special URL
                                   Padding(
                                     padding: const EdgeInsets.only(
                                         top: 12.0,
@@ -1924,71 +2029,15 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     String textContent = file.path; // Path contains the text or URL
 
-    // Check if it's likely a URL
-    if (_isValidUrl(textContent)) {
-      // Pass the card data (already obtained from provider in build method)
-      // to _buildUrlPreview which handles URL-specific previews.
-      return _buildUrlPreview(textContent, card);
-    } else {
-      // Handle complex text that might *contain* a URL
-      if (textContent.contains('\n') && textContent.contains('http')) {
-        final lines = textContent.split('\n');
-        for (String line in lines) {
-          line = line.trim();
-          if (_isValidUrl(line)) {
-            if (line.toLowerCase().contains('yelp.to/') ||
-                line.toLowerCase().contains('yelp.com/biz/')) {
-              return YelpPreviewWidget(
-                yelpUrl: line,
-                card: card, // Pass card data
-                yelpPreviewFutures: _yelpPreviewFutures,
-                getBusinessFromYelpUrl: _getBusinessFromYelpUrl,
-                launchUrlCallback: _launchUrl,
-                mapsService: _mapsService,
-              );
-            }
-            // Add checks for other special URLs (Maps, Instagram) if needed here
-            // Fallback to generic URL preview for the first valid URL found
-            return _buildUrlPreview(line, card);
-          }
-        }
-        // If no valid URL found in lines, show as plain text
-        print("Complex text, no standalone URL line found.");
-      } else if (textContent.contains('Check out') &&
-          textContent.contains('yelp.to/')) {
-        final urlRegex = RegExp(r'(https?://yelp\.to/[^\s]+)');
-        final match = urlRegex.firstMatch(textContent);
-        if (match != null) {
-          final extractedUrl = match.group(0)!;
-          return YelpPreviewWidget(
-            yelpUrl: extractedUrl,
-            card: card, // Pass card data
-            yelpPreviewFutures: _yelpPreviewFutures,
-            getBusinessFromYelpUrl: _getBusinessFromYelpUrl,
-            launchUrlCallback: _launchUrl,
-            mapsService: _mapsService,
-          );
-        }
-      } else if (textContent.toLowerCase().contains('yelp.to/') ||
-          textContent.toLowerCase().contains('yelp.com/biz/')) {
-        // Attempt to extract Yelp URL from general text if specific patterns above failed
-        final urlRegex =
-            RegExp(r'(https?://(?:www\.)?yelp\.(?:com/biz|to)/[^\s]+)');
-        final match = urlRegex.firstMatch(textContent);
-        if (match != null) {
-          final extractedUrl = match.group(0)!;
-          return YelpPreviewWidget(
-            yelpUrl: extractedUrl,
-            card: card, // Pass card data
-            yelpPreviewFutures: _yelpPreviewFutures,
-            getBusinessFromYelpUrl: _getBusinessFromYelpUrl,
-            launchUrlCallback: _launchUrl,
-            mapsService: _mapsService,
-          );
-        }
-      }
+    // Extract the first URL found in the text content
+    String? extractedUrl = _extractFirstUrl(textContent);
 
-      // If not a URL or special format, display as plain text (potentially truncated)
+    // Check if we extracted a URL and if it's a special one
+    if (extractedUrl != null && _isSpecialUrl(extractedUrl)) {
+      // Build the appropriate special URL preview
+      return _buildUrlPreview(extractedUrl, card);
+    } else {
+      // If no special URL found, display the original text content (potentially truncated)
       return Container(
         padding: const EdgeInsets.all(16.0),
         child: Text(
@@ -2081,363 +2130,115 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
   // --- Google Maps Specific Logic ---
 
-  // Fetches location details from a Google Maps URL
+  // Fetches location details from a Google Maps URL (Simplified)
   Future<Map<String, dynamic>?> _getLocationFromMapsUrl(String mapsUrl) async {
-    print("Attempting to get location details for Maps URL: $mapsUrl");
-    String resolvedUrl = mapsUrl;
+    print(
+        '🔄 GET MAPS START: _getLocationFromMapsUrl called for URL: $mapsUrl');
+    print("🗺️ MAPS PARSE (Simplified): Getting location for URL: $mapsUrl");
+    final String originalUrlKey = mapsUrl.trim();
 
-    // Resolve potential short URLs (e.g., maps.app.goo.gl, goo.gl/maps)
+    // --- Check Cache ---
+    if (_businessDataCache.containsKey(originalUrlKey)) {
+      print("🗺️ MAPS PARSE: Returning cached data for $originalUrlKey");
+      return _businessDataCache[originalUrlKey];
+    }
+
+    // --- 1. Resolve URL ---
+    String resolvedUrl = mapsUrl;
     if (!resolvedUrl.contains('google.com/maps')) {
       try {
         final String? expandedUrl = await _resolveShortUrl(resolvedUrl);
         if (expandedUrl != null && expandedUrl.contains('google.com/maps')) {
           resolvedUrl = expandedUrl;
-          print("Resolved short Maps URL to: $resolvedUrl");
+          print("🗺️ MAPS PARSE: Resolved short URL to: $resolvedUrl");
         } else {
           print(
-              "Failed to resolve short Maps URL or resolved to non-maps page: $expandedUrl");
+              "🗺️ MAPS PARSE ERROR: Failed to resolve short URL or not a Google Maps link: $expandedUrl");
           return null;
         }
       } catch (e) {
-        print("Error resolving short Maps URL $resolvedUrl: $e");
+        print(
+            "🗺️ MAPS PARSE ERROR: Error resolving short URL $resolvedUrl: $e");
         return null;
       }
     }
 
     // Ensure it's a google.com/maps link now
     if (!resolvedUrl.contains('google.com/maps')) {
-      print("URL is not a standard Google Maps URL: $resolvedUrl");
+      print(
+          "🗺️ MAPS PARSE ERROR: URL is not a standard Google Maps URL: $resolvedUrl");
       return null;
     }
 
-    // Check cache first (using the original URL as key)
-    if (_businessDataCache.containsKey(mapsUrl.trim())) {
-      print("Returning cached data for $mapsUrl");
-      return _businessDataCache[mapsUrl.trim()];
-    }
+    Location? foundLocation;
+    String? placeIdToLookup;
 
     try {
-      // Extract relevant info (name, coords, placeID) from the URL
-      final extractedInfo = _extractInfoFromMapsUrl(resolvedUrl);
-      if (extractedInfo == null) {
-        print("Could not extract usable info from Maps URL: $resolvedUrl");
-        return null;
-      }
+      // --- 2. Extract Place ID (Primary Strategy) ---
+      placeIdToLookup = _extractPlaceIdFromMapsUrl(resolvedUrl);
 
-      String? placeName = extractedInfo['name'];
-      double? lat = extractedInfo['lat'];
-      double? lng = extractedInfo['lng'];
-      String? placeId = extractedInfo['placeId'];
-      String? query = extractedInfo['query']; // Search query from ?q=
-      String? data = extractedInfo['data']; // Data blob
-
-      print(
-          "Extracted Maps Info: Name=$placeName, Lat=$lat, Lng=$lng, PlaceID=$placeId, Query=$query, Data=$data");
-
-      Location? foundLocation;
-
-      // Strategy:
-      // 1. If Place ID exists, use it to get details (most reliable).
-      // 2. If Lat/Lng exist, reverse geocode to get an address and maybe refine with name.
-      // 3. If only Name/Query exists, perform a search.
-      // 4. Use Data blob as a potential source for Place ID or refinement.
-
-      // --- Try using Place ID ---
-      if (placeId != null && placeId.isNotEmpty) {
-        try {
-          print("Attempting lookup via Place ID: $placeId");
-          foundLocation = await _mapsService.getPlaceDetails(placeId);
-          print("Found location via Place ID: ${foundLocation.displayName}");
-        } catch (e) {
-          print("Initial Place ID lookup failed for '$placeId': $e");
-          // Handle potential DioException for API errors
-          bool isInvalidIdError = false;
-          if (e is DioException && e.response?.data is Map) {
-            var errorData = e.response?.data as Map;
-            if (errorData['status'] == 'INVALID_REQUEST') {
-              // Check API status
-              isInvalidIdError = true;
-              print("API confirmed INVALID_REQUEST for Place ID: $placeId");
-            }
-          }
-
-          // If it was an invalid ID error AND we have a name, try searching
-          if (isInvalidIdError && placeName != null && placeName.isNotEmpty) {
-            print(
-                "Invalid Place ID from blob. Attempting search with name: '$placeName'");
-            try {
-              // --- ENHANCED FALLBACK SEARCH ---
-              String searchQuery = placeName;
-              // Try to make the search more specific if we have coordinates
-              if (lat != null && lng != null) {
-                try {
-                  print(
-                      "🗺️ FALLBACK: Reverse geocoding $lat, $lng to add context to search");
-                  final addresses =
-                      await geocoding.placemarkFromCoordinates(lat, lng);
-                  if (addresses.isNotEmpty) {
-                    final placemark = addresses.first;
-                    String city = placemark.locality ?? '';
-                    String street = placemark.thoroughfare ?? '';
-                    if (city.isNotEmpty) {
-                      searchQuery = "$placeName, $city";
-                      print(
-                          "🗺️ FALLBACK: Using query with city: '$searchQuery'");
-                    } else if (street.isNotEmpty) {
-                      searchQuery = "$placeName, $street";
-                      print(
-                          "🗺️ FALLBACK: Using query with street: '$searchQuery'");
-                    }
-                  }
-                } catch (geocodeError) {
-                  print(
-                      "🗺️ FALLBACK: Error during reverse geocoding for search context: $geocodeError");
-                  // Proceed with just the name if geocoding fails
-                }
-              }
-              print(
-                  "🗺️ FALLBACK: Performing search with query: '$searchQuery'");
-              // --- END ENHANCED FALLBACK SEARCH ---
-
-              List<Map<String, dynamic>> searchResults = await _mapsService
-                  .searchPlaces(searchQuery); // Use enhanced query
-              if (searchResults.isNotEmpty) {
-                String? searchResultPlaceId = searchResults.first['placeId'];
-                if (searchResultPlaceId != null &&
-                    searchResultPlaceId.isNotEmpty) {
-                  print(
-                      "Search found potential match. Getting details for Place ID: $searchResultPlaceId");
-                  // Get details using the ID from the search result
-                  foundLocation =
-                      await _mapsService.getPlaceDetails(searchResultPlaceId);
-                  print(
-                      "Successfully found location via search fallback: ${foundLocation.displayName}");
-                } else {
-                  print("Search result missing Place ID.");
-                }
-              } else {
-                print("Search with name '$placeName' returned no results.");
-              }
-            } catch (searchError) {
-              print(
-                  "Error during fallback search for '$placeName': $searchError");
-            } // End fallback search try-catch
-          } // End if (isInvalidIdError...)
-          // Place ID might be invalid or outdated, continue to other methods
-        }
-      }
-
-      // --- Try using Data Blob (often contains Place ID) ---
-      if (foundLocation == null && data != null && data.isNotEmpty) {
-        // Example data blob: !1s0x... !2sPlace+Name !3dlat !4dlng ... !9sPlaceID
-        // This parsing is fragile and specific to observed formats
-        final placeIdMatch = RegExp(r'!9s([^!]+)').firstMatch(data);
-        final nameMatch =
-            RegExp(r'!2s([^!]+)').firstMatch(data); // Name might be here
-        final latMatch = RegExp(r'!3d([\d.-]+)').firstMatch(data);
-        final lngMatch = RegExp(r'!4d([\d.-]+)').firstMatch(data);
-
-        String? dataPlaceId = placeIdMatch?.group(1);
-        String? dataName = nameMatch?.group(1)?.replaceAll('+', ' ');
-        double? dataLat = latMatch?.group(1) != null
-            ? double.tryParse(latMatch!.group(1)!)
-            : null;
-        double? dataLng = lngMatch?.group(1) != null
-            ? double.tryParse(lngMatch!.group(1)!)
-            : null;
-
+      if (placeIdToLookup != null && placeIdToLookup.isNotEmpty) {
         print(
-            "Parsed Data Blob: Name=$dataName, Lat=$dataLat, Lng=$dataLng, PlaceID=$dataPlaceId");
-
-        if (dataPlaceId != null && dataPlaceId.isNotEmpty) {
-          try {
-            print(
-                "Attempting lookup via Place ID from data blob: $dataPlaceId");
-            foundLocation = await _mapsService.getPlaceDetails(dataPlaceId);
-            print(
-                "Found location via Place ID from data blob: ${foundLocation.displayName}");
-          } catch (e) {
-            print(
-                "Error fetching details by Place ID from data blob '$dataPlaceId': $e");
-          }
-        }
-        // If lookup by Place ID failed, but we have lat/lng from data, use that
-        if (foundLocation == null && dataLat != null && dataLng != null) {
-          print("Using Lat/Lng from data blob for reverse geocoding.");
-          lat = dataLat;
-          lng = dataLng;
-          // Proceed to Lat/Lng section below
-        }
-        // Use name from data blob if primary name wasn't found earlier
-        if (placeName == null && dataName != null) {
-          placeName = dataName;
-        }
-      }
-
-      // --- Try using Lat/Lng ---
-      if (foundLocation == null && lat != null && lng != null) {
+            "🗺️ MAPS PARSE: Found Place ID '$placeIdToLookup' in URL query parameters. Attempting direct lookup.");
         try {
-          print("Attempting reverse geocoding for $lat, $lng");
-          final addresses = await geocoding.placemarkFromCoordinates(lat, lng);
-          if (addresses.isNotEmpty) {
-            final placemark = addresses.first;
-            String bestAddress = [
-              placemark.name, // Often the POI name or number
-              placemark.thoroughfare, // Street
-              placemark.locality, // City
-              placemark.administrativeArea, // State
-              placemark.postalCode,
-            ].where((s) => s != null && s.isNotEmpty).join(', ');
-
-            print("Reverse geocoded address: $bestAddress");
-
-            // If we also have a placeName from the URL, try to refine the search
-            if (placeName != null && placeName.isNotEmpty) {
-              print("Refining reverse geocoded result with name: $placeName");
-              // Search near the coords using the name
-              // Fix type mismatch and parameters for searchPlaces
-              List<
-                  Map<String,
-                      dynamic>> searchResultsMap = await _mapsService.searchPlaces(
-                  placeName /*, lat: lat, lng: lng, radius: 50*/); // Fix params
-              if (searchResultsMap.isNotEmpty) {
-                final firstResultMap = searchResultsMap.first;
-                final firstResultName =
-                    firstResultMap['description'] as String? ??
-                        firstResultMap['name'] as String?;
-                final firstResultPlaceId = firstResultMap['placeId'] as String?;
-
-                // Heuristic: If the top result name is similar to the original name, use it.
-                if (firstResultName != null &&
-                    (firstResultName
-                            .toLowerCase()
-                            .contains(placeName.toLowerCase()) ??
-                        false)) {
-                  print("Refined search found better match: $firstResultName");
-                  // Attempt to get full details for this refined match
-                  try {
-                    if (firstResultPlaceId != null) {
-                      foundLocation = await _mapsService
-                          .getPlaceDetails(firstResultPlaceId);
-                      print(
-                          "Got details for refined match: ${foundLocation.displayName}");
-                    } else {
-                      // Convert map to Location if no placeId for details
-                      // foundLocation = Location.fromJson(firstResultMap); // TODO: Uncomment when Location.fromJson exists
-                      print(
-                          "Skipping Location.fromJson call for now"); // Placeholder
-                    }
-                  } catch (detailError) {
-                    print(
-                        "Error getting details for refined match: $detailError");
-                    // foundLocation = Location.fromJson(firstResultMap); // TODO: Uncomment when Location.fromJson exists // Fallback, assuming fromJson
-                    print(
-                        "Skipping Location.fromJson call for now"); // Placeholder
-                  } // End inner try-catch
-                }
-              }
-            }
-
-            // If refinement didn't work or wasn't needed, use the reverse geocoded result directly
-            if (foundLocation == null) {
-              print("Using direct reverse geocoded result.");
-              foundLocation = Location(
-                  latitude: lat,
-                  longitude: lng,
-                  address: bestAddress,
-                  displayName: placemark.name ??
-                      placeName ??
-                      'Unnamed Location', // Use name from placemark or URL if available
-                  placeId:
-                      null // Reverse geocoding doesn't reliably give Place ID
-                  );
-            }
-          } else {
-            print("Reverse geocoding failed for $lat, $lng");
-            // Use Lat/Lng directly without address/name?
-            foundLocation = Location(
-                latitude: lat,
-                longitude: lng,
-                address: 'Coordinates: $lat, $lng',
-                displayName: placeName ?? 'Unknown Location',
-                placeId: null);
-          }
+          foundLocation = await _mapsService.getPlaceDetails(placeIdToLookup);
+          print(
+              "🗺️ MAPS PARSE: Successfully found location via Place ID: ${foundLocation.displayName}");
         } catch (e) {
-          print("Error during reverse geocoding for $lat, $lng: $e");
-          // Fallback to basic location if geocoding fails
-          foundLocation = Location(
-              latitude: lat,
-              longitude: lng,
-              address: 'Error finding address',
-              displayName: placeName ?? 'Unknown Location',
-              placeId: null);
-        } // End outer try-catch for Lat/Lng
+          print(
+              "🗺️ MAPS PARSE WARN: Direct Place ID lookup failed for '$placeIdToLookup': $e. Will proceed to search fallback.");
+          // Reset placeIdToLookup if direct lookup failed, forcing search fallback
+          placeIdToLookup = null;
+          foundLocation = null;
+        }
+      } else {
+        print(
+            "🗺️ MAPS PARSE: No Place ID (cid/placeid) found in query parameters.");
       }
 
-      // --- Try using Name/Query ---
-      if (foundLocation == null && placeName != null && placeName.isNotEmpty) {
-        print("Attempting search by name/query: $placeName");
+      // --- 3. Search with Full URL (Fallback) ---
+      if (foundLocation == null) {
+        print(
+            "🗺️ MAPS PARSE: Using fallback: Searching Places API with the full URL as query: \"$resolvedUrl\"");
         try {
-          // Replace incorrect _findBestMatch call with searchPlaces
-          List<Map<String, dynamic>> searchResultsMap =
-              await _mapsService.searchPlaces(placeName);
-          if (searchResultsMap.isNotEmpty) {
-            String? resultPlaceId = searchResultsMap.first['placeId'];
-            if (resultPlaceId != null) {
-              foundLocation = await _mapsService.getPlaceDetails(resultPlaceId);
-              print("Found location via search: ${foundLocation.displayName}");
+          List<Map<String, dynamic>> searchResults =
+              await _mapsService.searchPlaces(resolvedUrl);
+
+          if (searchResults.isNotEmpty) {
+            // Extract placeId from the first result
+            placeIdToLookup = searchResults.first['placeId'] as String?;
+            if (placeIdToLookup != null && placeIdToLookup.isNotEmpty) {
+              print(
+                  "🗺️ MAPS PARSE: Search found Place ID: '$placeIdToLookup'. Getting details.");
+              // Get details using the placeId from search
+              foundLocation =
+                  await _mapsService.getPlaceDetails(placeIdToLookup);
+              print(
+                  "🗺️ MAPS PARSE: Successfully found location via URL search fallback: ${foundLocation.displayName}");
             } else {
-              // Handle case where search result has no place ID
-              // foundLocation = Location.fromJson(searchResultsMap.first); // TODO: Uncomment when Location.fromJson exists // Assuming fromJson
-              print("Skipping Location.fromJson call for now"); // Placeholder
               print(
-                  "Found location via search (basic): ${foundLocation?.displayName ?? 'N/A'}");
+                  "🗺️ MAPS PARSE WARN: Top search result for URL query did not contain a Place ID.");
+              // Potentially use Location.fromMap if available and desired
+              // foundLocation = Location.fromMap(searchResults.first);
             }
           } else {
-            print("Search returned no results for '$placeName'.");
+            print(
+                "🗺️ MAPS PARSE WARN: Search with full URL query returned no results.");
           }
         } catch (e) {
-          print("Error searching by name '$placeName': $e");
-        } // End try-catch for Name search
-      } else if (foundLocation == null && query != null && query.isNotEmpty) {
-        // Fallback to using the 'q' parameter if name wasn't found elsewhere
-        print("Attempting search by query parameter: $query");
-        try {
-          // Replace incorrect _findBestMatch call with searchPlaces
-          List<Map<String, dynamic>> searchResultsMap =
-              await _mapsService.searchPlaces(query);
-          if (searchResultsMap.isNotEmpty) {
-            String? resultPlaceId = searchResultsMap.first['placeId'];
-            if (resultPlaceId != null) {
-              foundLocation = await _mapsService.getPlaceDetails(resultPlaceId);
-              print(
-                  "Found location via query search: ${foundLocation.displayName}");
-            } else {
-              foundLocation = Location.fromMap(
-                  searchResultsMap.first); // Assuming fromMap - WAS fromJson
-              print(
-                  "Found location via query search (basic): ${foundLocation.displayName}");
-            }
-          } else {
-            print("Search returned no results for query '$query'.");
-          }
-        } catch (e) {
-          print("Error searching by query '$query': $e");
-        } // End try-catch for Query search
+          print(
+              "🗺️ MAPS PARSE ERROR: Error during fallback search with URL query: $e");
+        }
       }
 
-      // --- Final Check and Return ---
+      // --- 4. Final Check and Return ---
       if (foundLocation != null) {
-        // Ensure name consistency if possible
-        final finalName =
-            foundLocation.displayName ?? placeName ?? 'Location Found';
-        final finalWebsite =
-            foundLocation.website; // Website comes from getPlaceDetails
+        final String finalName = foundLocation.getPlaceName(); // Use helper
+        final String? finalWebsite = foundLocation.website;
 
         // Fill form using the first card from provider
         final provider = context.read<ReceiveShareProvider>();
         if (provider.experienceCards.isNotEmpty) {
-          // Fix nullability for websiteUrl
           _fillFormWithGoogleMapsData(
               foundLocation, finalName, finalWebsite ?? '');
         }
@@ -2445,207 +2246,60 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         // Prepare result map for FutureBuilder
         final Map<String, dynamic> result = {
           'location': foundLocation,
-          'businessName': finalName, // Use the best name we found
-          'website': finalWebsite, // Pass website if available
+          // Use a consistent key, 'businessName' might be misleading for Maps
+          'placeName': finalName,
+          'website': finalWebsite,
           'mapsUrl': mapsUrl, // Original URL for reference
         };
 
         // Cache the result using the original URL
-        _businessDataCache[mapsUrl.trim()] = result;
-        print("Successfully processed Maps URL: $mapsUrl");
+        _businessDataCache[originalUrlKey] = result;
+        print("🗺️ MAPS PARSE: Successfully processed Maps URL: $mapsUrl");
         return result;
       } else {
-        print("Failed to determine location from Maps URL: $mapsUrl");
+        print(
+            "🗺️ MAPS PARSE ERROR: Failed to determine location from Maps URL after all strategies: $mapsUrl");
+        _businessDataCache[originalUrlKey] = {}; // Cache empty result
         return null; // Could not find location
       }
     } catch (e) {
-      print("Error processing Google Maps URL $mapsUrl: $e");
+      print(
+          "🗺️ MAPS PARSE ERROR: Unexpected error processing Google Maps URL $mapsUrl: $e");
+      _businessDataCache[originalUrlKey] = {}; // Cache empty result
       return null;
     }
   }
 
-  // Extracts Name, Lat/Lng, PlaceID, Query from Google Maps URL
-  Map<String, dynamic>? _extractInfoFromMapsUrl(String url) {
-    print("🗺️ EXTRACT: Parsing URL: $url");
-    final Uri uri = Uri.parse(url);
-    double? lat;
-    double? lng;
-    String? name;
-    String? placeId;
-    String? query;
-    String? dataBlob; // Changed variable name for clarity
+  // Extracts PlaceID ONLY from Google Maps URL query parameters (Simplified)
+  String? _extractPlaceIdFromMapsUrl(String url) {
+    print("🗺️ EXTRACT (Simplified): Parsing URL for Place ID: $url");
+    try {
+      final Uri uri = Uri.parse(url);
+      final queryParams = uri.queryParameters;
 
-    // --- Strategy 1: Extract from path segments ---
-    final pathSegments = uri.pathSegments;
-    print("🗺️ EXTRACT: Path segments: $pathSegments");
+      // Get Place ID from 'cid' (preferred) or 'placeid'
+      String? placeId = queryParams['cid'] ?? queryParams['placeid'];
 
-    // Check for @lat,lng,zoom pattern
-    int atIndex = pathSegments.indexWhere((s) => s.startsWith('@'));
-    if (atIndex != -1) {
-      final parts = pathSegments[atIndex].substring(1).split(',');
-      if (parts.length >= 2) {
-        lat = double.tryParse(parts[0]);
-        lng = double.tryParse(parts[1]);
-        print("🗺️ EXTRACT: Found @lat,lng in path: $lat, $lng");
-      }
-    }
-
-    // Check for /place/Place+Name pattern
-    int placeIndex = pathSegments.indexOf('place');
-    if (placeIndex != -1 && placeIndex < pathSegments.length - 1) {
-      String potentialName = pathSegments[placeIndex + 1];
-      // Check if the segment after /place/ is the data blob
-      if (!potentialName.startsWith('data=')) {
-        name = Uri.decodeComponent(potentialName)
-            .replaceAll('+', ' '); // Use decodeComponent
-        print("🗺️ EXTRACT: Found name after /place/: $name");
-      }
-    }
-
-    // Check for /data=! pattern
-    int dataIndex = pathSegments.indexWhere((s) => s.startsWith('data='));
-    if (dataIndex != -1) {
-      dataBlob =
-          pathSegments[dataIndex].substring(5); // Get the part after 'data='
-      print("🗺️ EXTRACT: Found data blob in path: $dataBlob");
-      // If name wasn't found via /place/, try the segment *before* /data=
-      if (name == null &&
-          dataIndex > 0 &&
-          pathSegments[dataIndex - 1] != 'place') {
-        name = Uri.decodeComponent(pathSegments[dataIndex - 1])
-            .replaceAll('+', ' '); // Use decodeComponent
-        print("🗺️ EXTRACT: Found name before /data=/: $name");
-      }
-    }
-
-    // --- Strategy 2: Extract from query parameters ---
-    print("🗺️ EXTRACT: Query parameters: ${uri.queryParameters}");
-    // Prioritize 'q' for name if it's not coordinates and name isn't set yet
-    query = uri.queryParameters['q'];
-    if (name == null && query != null && !_containsOnlyCoordinates(query)) {
-      name = query;
-      print("🗺️ EXTRACT: Found name in query param 'q': $name");
-    }
-
-    // Get Place ID from 'cid' or 'placeid'
-    placeId = uri.queryParameters['cid'] ?? uri.queryParameters['placeid'];
-    if (placeId != null) {
-      print("🗺️ EXTRACT: Found placeId in query params: $placeId");
-    }
-
-    // Get data blob from 'data' query param if not found in path
-    dataBlob ??= uri.queryParameters['data'];
-    if (dataBlob != null && uri.queryParameters.containsKey('data')) {
-      print("🗺️ EXTRACT: Found data blob in query param 'data': $dataBlob");
-    }
-
-    // --- Strategy 3: Parse the data blob if found ---
-    if (dataBlob != null && dataBlob.isNotEmpty) {
-      print("🗺️ EXTRACT: Parsing data blob: $dataBlob");
-
-      // Regex patterns for data blob parsing (more specific)
-      // Place ID patterns: !1s..., !9s..., !16s... (handle potential encoding)
-      // final placeIdPattern = RegExp(r'!(?:1s|9s|16s%2F[a-zA-Z0-9%]+)([^!]+)'); // REMOVED - This is not a valid Place ID
-      final latPattern = RegExp(r'!3d([\d.-]+)');
-      final lngPattern = RegExp(r'!4d([\d.-]+)');
-
-      // Extract Place ID - REMOVED Block
-      /*
-      final placeIdMatch = placeIdPattern.firstMatch(dataBlob);
-      if (placeIdMatch != null) {
-        String extractedPid = Uri.decodeComponent(placeIdMatch.group(1)!);
-        extractedPid = extractedPid
-            .split(RegExp(r'[!&\\]')).first; // Split by !, &, or backslash
-        print("🗺️ EXTRACT: Extracted Place ID from blob: $extractedPid");
-        if (placeId == null ||
-            (placeId != extractedPid && extractedPid.length > 5)) {
-          placeId = extractedPid;
-          print("🗺️ EXTRACT: Using Place ID from data blob.");
+      if (placeId != null && placeId.isNotEmpty) {
+        // Basic sanity check: Place IDs are typically > 10 chars and don't contain spaces
+        if (placeId.length > 10 && !placeId.contains(' ')) {
+          print(
+              "🗺️ EXTRACT (Simplified): Found Place ID '$placeId' in query parameters.");
+          return placeId.trim();
+        } else {
+          print(
+              "🗺️ EXTRACT (Simplified): Found potential Place ID '$placeId' but it looks invalid. Ignoring.");
+          return null;
         }
       } else {
-        print("🗺️ EXTRACT: Place ID pattern not found in data blob.");
+        print(
+            "🗺️ EXTRACT (Simplified): No Place ID (cid/placeid) found in query parameters.");
+        return null;
       }
-      */ // Added closing comment tag
-
-      // Extract Latitude
-      final latMatch = latPattern.firstMatch(dataBlob);
-      if (latMatch != null) {
-        double? extractedLat = double.tryParse(latMatch.group(1)!);
-        if (extractedLat != null) {
-          print("🗺️ EXTRACT: Extracted Latitude from blob: $extractedLat");
-          if (lat == null) {
-            lat = extractedLat;
-            print("🗺️ EXTRACT: Using Latitude from data blob.");
-          }
-        }
-      } else {
-        print("🗺️ EXTRACT: Latitude pattern not found in data blob.");
-      }
-
-      // Extract Longitude
-      final lngMatch = lngPattern.firstMatch(dataBlob);
-      if (lngMatch != null) {
-        double? extractedLng = double.tryParse(lngMatch.group(1)!);
-        if (extractedLng != null) {
-          print("🗺️ EXTRACT: Extracted Longitude from blob: $extractedLng");
-          if (lng == null) {
-            lng = extractedLng;
-            print("🗺️ EXTRACT: Using Longitude from data blob.");
-          }
-        }
-      } else {
-        print("🗺️ EXTRACT: Longitude pattern not found in data blob.");
-      }
-
-      // Attempt to extract name from data blob (less reliable, use as last resort)
-      final namePattern = RegExp(r'!2s([^!]+)');
-      final nameMatch = namePattern.firstMatch(dataBlob);
-      if (name == null && nameMatch != null) {
-        String potentialName =
-            Uri.decodeComponent(nameMatch.group(1)!).replaceAll('+', ' ');
-        if (potentialName.length < 100 &&
-            !potentialName.contains('=') &&
-            !potentialName.contains('!')) {
-          name = potentialName;
-          print("🗺️ EXTRACT: Found potential name in data blob: $name");
-        }
-      }
+    } catch (e) {
+      print("🗺️ EXTRACT (Simplified): Error parsing URL: $e");
+      return null;
     }
-
-    // --- Final Check and Return ---
-    // If name is still null, try using the last path segment if it doesn't look like coordinates or data
-    if (name == null && pathSegments.isNotEmpty) {
-      String lastSegment = pathSegments.last;
-      if (!lastSegment.startsWith('@') &&
-          !lastSegment.startsWith('data=') &&
-          !_containsOnlyCoordinates(lastSegment)) {
-        name = Uri.decodeComponent(lastSegment)
-            .replaceAll('+', ' '); // Use decodeComponent
-        print("🗺️ EXTRACT: Using last path segment as name fallback: $name");
-      }
-    }
-
-    print(
-        "🗺️ EXTRACT: Final Extracted Info -> Name: $name, Lat: $lat, Lng: $lng, PlaceID: $placeId, Query: $query");
-
-    // If we have extracted *any* useful info, return it
-    if (name != null ||
-        lat != null ||
-        lng != null ||
-        placeId != null ||
-        query != null) {
-      // Removed dataBlob from the check, only return useful fields
-      return {
-        'name': name?.trim(),
-        'lat': lat,
-        'lng': lng,
-        'placeId': placeId?.trim(),
-        'query': query?.trim(),
-      };
-    }
-
-    print("🗺️ EXTRACT: Could not extract any useful info from URL.");
-    return null; // No useful info extracted
   }
 
   // Check if a string looks like "lat,lng"

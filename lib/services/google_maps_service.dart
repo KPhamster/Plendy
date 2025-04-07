@@ -72,26 +72,34 @@ class GoogleMapsService {
   }
 
   /// Search for places using Google Places API
-  Future<List<Map<String, dynamic>>> searchPlaces(String query) async {
+  Future<List<Map<String, dynamic>>> searchPlaces(
+    String query, {
+    double? latitude, // Optional latitude for location bias
+    double? longitude, // Optional longitude for location bias
+    double? radius, // Optional radius for location bias (meters)
+  }) async {
     if (query.isEmpty) {
       return [];
     }
 
     print("\n🔎 PLACES SEARCH: Starting search for query: '$query'");
+    // Log location bias if provided
+    if (latitude != null && longitude != null) {
+      print(
+          "🔎 PLACES SEARCH: Using location bias: lat=$latitude, lng=$longitude, radius=${radius ?? 'default'}m");
+    }
     print(
         "🔎 PLACES SEARCH: API key length: ${apiKey.length} chars, starts with: ${apiKey.substring(0, min(5, apiKey.length))}...");
 
     try {
-      // Get location for better results
-      Position? position;
-      try {
-        position = await getCurrentLocation();
-        print(
-            "🔎 PLACES SEARCH: Got user location: ${position.latitude}, ${position.longitude}");
-      } catch (e) {
-        // Continue without position if we can't get it
-        print("🔎 PLACES SEARCH: Unable to get current position: $e");
-      }
+      // We no longer need to fetch current position here, it's passed in
+      // Position? position;
+      // try {
+      //   position = await getCurrentLocation();
+      //   print("🔎 PLACES SEARCH: Got user location: ${position.latitude}, ${position.longitude}");
+      // } catch (e) {
+      //   print("🔎 PLACES SEARCH: Unable to get current position: $e");
+      // }
 
       // First try the newer Places API for better results
       try {
@@ -100,32 +108,29 @@ class GoogleMapsService {
         // Prepare request body with structured search
         Map<String, dynamic> requestBody = {
           "input": query,
-          "locationBias": {
-            "circle": {
-              "center": {
-                "latitude": position?.latitude ??
-                    33.6846, // Fallback to Southern California
-                "longitude": position?.longitude ?? -117.8265
-              },
-              "radius": 50000.0 // 50km radius
-            }
-          },
           "inputType": "textQuery",
-          "fields": [
-            "places.displayName",
-            "places.formattedAddress",
-            "places.location",
-            "places.types",
-            "places.primaryType",
-            "places.primaryTypeDisplayName",
-            "places.nationalPhoneNumber",
-            "places.websiteUri",
-            "places.rating",
-            "places.userRatingCount",
-            "places.regularOpeningHours",
-            "places.priceLevel"
-          ]
+          // Removed "fields" as they are set via FieldMask header now
         };
+
+        // Add location bias if provided
+        if (latitude != null && longitude != null) {
+          requestBody["locationBias"] = {
+            "circle": {
+              "center": {"latitude": latitude, "longitude": longitude},
+              // Use provided radius or default to 50km
+              "radius": radius ?? 50000.0
+            }
+          };
+        } else {
+          // Default bias if no specific location given (e.g., Southern California)
+          // Consider removing this if we always want unbiased search unless explicitly biased
+          requestBody["locationBias"] = {
+            "circle": {
+              "center": {"latitude": 33.6846, "longitude": -117.8265},
+              "radius": 50000.0
+            }
+          };
+        }
 
         print("🔎 PLACES SEARCH: Request body: ${jsonEncode(requestBody)}");
 
@@ -137,7 +142,7 @@ class GoogleMapsService {
             headers: {
               'Content-Type': 'application/json',
               'X-Goog-Api-Key': apiKey,
-              'X-Goog-FieldMask':
+              'X-Goog-FieldMask': // Request specific fields
                   'places.id,places.displayName,places.formattedAddress,places.location,places.types,places.primaryType,places.primaryTypeDisplayName,places.nationalPhoneNumber,places.websiteUri,places.rating,places.userRatingCount,places.regularOpeningHours,places.priceLevel'
             },
           ),
@@ -225,76 +230,18 @@ class GoogleMapsService {
       try {
         print("🔎 PLACES SEARCH: Trying method 2 - Places Text Search API");
 
-        // If we have a specific address in the query, try to find an exact match first
-        if (query.contains(',')) {
-          final addressQuery =
-              query.split(',')[0].trim(); // Get the first part before the comma
-          final encodedQuery = Uri.encodeComponent(addressQuery);
-          final url =
-              'https://maps.googleapis.com/maps/api/place/textsearch/json'
-              '?query=$encodedQuery'
-              '&key=$apiKey';
+        // Build base URL
+        String baseUrl =
+            'https://maps.googleapis.com/maps/api/place/textsearch/json';
+        String encodedQuery = Uri.encodeComponent(query);
+        String url = '$baseUrl?query=$encodedQuery&key=$apiKey';
 
-          print(
-              "🔎 PLACES SEARCH: Request URL: ${url.replaceAll(apiKey, 'API_KEY')}");
-
-          final response = await http.get(Uri.parse(url));
-
-          if (response.statusCode == 200) {
-            final data = jsonDecode(response.body);
-            print("🔎 PLACES SEARCH: Response status: ${data['status']}");
-
-            if (data['status'] == 'OK' && data['results'] != null) {
-              final places = data['results'] as List;
-              print("🔎 PLACES SEARCH: Found ${places.length} places");
-
-              // Look for an exact address match
-              for (var place in places) {
-                String? name = place['name'];
-                String? address = place['formatted_address'];
-                String? vicinity = place['vicinity'];
-                double? rating = place['rating']?.toDouble();
-                int? userRatingCount = place['user_ratings_total'];
-                List<String>? types = (place['types'] as List?)?.cast<String>();
-                bool? isOpen = place['opening_hours']?['open_now'];
-                int? priceLevel = place['price_level'];
-
-                // Get location coordinates
-                Map<String, dynamic>? geometry = place['geometry'];
-                Map<String, dynamic>? location = geometry?['location'];
-                double? lat = location?['lat'];
-                double? lng = location?['lng'];
-
-                // Check if this is an exact address match
-                if (address != null &&
-                    address.toLowerCase().contains(query.toLowerCase())) {
-                  print("🔎 PLACES SEARCH: Found exact address match!");
-                  return [
-                    {
-                      'placeId': place['place_id'] ?? '',
-                      'description': name,
-                      'address': address,
-                      'rating': rating,
-                      'userRatingCount': userRatingCount,
-                      'types': types,
-                      'isOpen': isOpen,
-                      'priceLevel': priceLevel,
-                      'latitude': lat,
-                      'longitude': lng,
-                      'place': place
-                    }
-                  ];
-                }
-              }
-            }
-          }
+        // Add location bias parameters if provided
+        if (latitude != null && longitude != null) {
+          url += '&location=$latitude,$longitude';
+          // Use provided radius or default to 50km for legacy API
+          url += '&radius=${radius ?? 50000}';
         }
-
-        // If no exact match found or no address in query, proceed with regular search
-        final encodedQuery = Uri.encodeComponent(query);
-        final url = 'https://maps.googleapis.com/maps/api/place/textsearch/json'
-            '?query=$encodedQuery'
-            '&key=$apiKey';
 
         print(
             "🔎 PLACES SEARCH: Request URL: ${url.replaceAll(apiKey, 'API_KEY')}");
@@ -302,27 +249,32 @@ class GoogleMapsService {
         final response = await http.get(Uri.parse(url));
 
         if (response.statusCode == 200) {
-          print("🔎 PLACES SEARCH: API returned status code 200");
           final data = jsonDecode(response.body);
           print("🔎 PLACES SEARCH: Response status: ${data['status']}");
 
-          if (data['status'] != 'OK') {
-            print(
-                "🔎 PLACES SEARCH: API returned non-OK status: ${data['status']}");
-            if (data['error_message'] != null) {
-              print(
-                  "🔎 PLACES SEARCH: Error message: ${data['error_message']}");
-            }
-          }
-
-          List<Map<String, dynamic>> results = [];
-
-          if (data['results'] != null) {
+          if (data['status'] == 'OK' && data['results'] != null) {
             final places = data['results'] as List;
-            print("🔎 PLACES SEARCH: Found ${places.length} places");
+            print(
+                "🔎 PLACES SEARCH: Found ${places.length} places via TextSearch");
 
+            // If we have location bias, sort results by distance (approximate)
+            if (latitude != null && longitude != null) {
+              places.sort((a, b) {
+                final locA = a['geometry']?['location'];
+                final locB = b['geometry']?['location'];
+                if (locA == null || locB == null) return 0;
+                final distA = _calculateDistance(
+                    latitude, longitude, locA['lat'], locA['lng']);
+                final distB = _calculateDistance(
+                    latitude, longitude, locB['lat'], locB['lng']);
+                return distA.compareTo(distB);
+              });
+              print("🔎 PLACES SEARCH: Sorted results by distance.");
+            }
+
+            // Process and return results (moved logic inside)
+            List<Map<String, dynamic>> results = [];
             for (var place in places) {
-              // Verify we have both name and address
               String? name = place['name'];
               String? address = place['formatted_address'];
               String? vicinity = place['vicinity'];
@@ -331,22 +283,23 @@ class GoogleMapsService {
               List<String>? types = (place['types'] as List?)?.cast<String>();
               bool? isOpen = place['opening_hours']?['open_now'];
               int? priceLevel = place['price_level'];
-
-              // Get location coordinates
               Map<String, dynamic>? geometry = place['geometry'];
               Map<String, dynamic>? location = geometry?['location'];
               double? lat = location?['lat'];
               double? lng = location?['lng'];
 
-              // Only add places that have both name and address
               if (name != null &&
                   (address != null || vicinity != null) &&
                   lat != null &&
                   lng != null) {
                 results.add({
                   'placeId': place['place_id'] ?? '',
-                  'description': name,
+                  'description': name +
+                      (vicinity != null && vicinity != name
+                          ? ' - $vicinity'
+                          : ''), // Better description
                   'address': address ?? vicinity,
+                  'vicinity': vicinity, // Keep vicinity separately if needed
                   'rating': rating,
                   'userRatingCount': userRatingCount,
                   'types': types,
@@ -358,107 +311,10 @@ class GoogleMapsService {
                 });
               }
             }
-          }
-
-          if (results.isNotEmpty) {
-            print(
-                "🔎 PLACES SEARCH: Found ${results.length} verified results using Places Text Search API");
-            for (int i = 0; i < min(3, results.length); i++) {
-              print(
-                  "🔎 PLACES SEARCH: Result ${i + 1}: '${results[i]['description']}' at '${results[i]['address']}'");
-            }
-            return results;
-          } else {
-            print(
-                "🔎 PLACES SEARCH: No verified results from Places Text Search API despite 200 status");
-          }
-        } else {
-          print(
-              "🔎 PLACES SEARCH: API returned non-200 status code: ${response.statusCode}");
-        }
-      } catch (e) {
-        print("🔎 PLACES SEARCH: Error with Places Text Search API: $e");
-        // Continue to next fallback
-      }
-
-      // Last attempt: Try using Nearby Search which can sometimes find businesses better
-      if (position != null) {
-        try {
-          print("🔎 PLACES SEARCH: Trying method 3 - Places Nearby Search API");
-
-          final url =
-              'https://maps.googleapis.com/maps/api/place/nearbysearch/json'
-              '?location=${position.latitude},${position.longitude}'
-              '&radius=50000'
-              '&keyword=${Uri.encodeComponent(query)}'
-              '&key=$apiKey';
-
-          print(
-              "🔎 PLACES SEARCH: Request URL: ${url.replaceAll(apiKey, 'API_KEY')}");
-
-          final response = await http.get(Uri.parse(url));
-
-          if (response.statusCode == 200) {
-            print("🔎 PLACES SEARCH: API returned status code 200");
-            final data = jsonDecode(response.body);
-            print("🔎 PLACES SEARCH: Response status: ${data['status']}");
-
-            if (data['status'] != 'OK') {
-              print(
-                  "🔎 PLACES SEARCH: API returned non-OK status: ${data['status']}");
-              if (data['error_message'] != null) {
-                print(
-                    "🔎 PLACES SEARCH: Error message: ${data['error_message']}");
-              }
-            }
-
-            List<Map<String, dynamic>> results = [];
-
-            if (data['results'] != null) {
-              final places = data['results'] as List;
-              print("🔎 PLACES SEARCH: Found ${places.length} nearby places");
-
-              for (var place in places) {
-                // Verify we have both name and address
-                String? name = place['name'];
-                String? address = place['vicinity'];
-                double? rating = place['rating']?.toDouble();
-                int? userRatingCount = place['user_ratings_total'];
-                List<String>? types = (place['types'] as List?)?.cast<String>();
-                bool? isOpen = place['opening_hours']?['open_now'];
-                int? priceLevel = place['price_level'];
-
-                // Get location coordinates
-                Map<String, dynamic>? geometry = place['geometry'];
-                Map<String, dynamic>? location = geometry?['location'];
-                double? lat = location?['lat'];
-                double? lng = location?['lng'];
-
-                // Only add places that have both name and address
-                if (name != null &&
-                    address != null &&
-                    lat != null &&
-                    lng != null) {
-                  results.add({
-                    'placeId': place['place_id'] ?? '',
-                    'description': name,
-                    'address': address,
-                    'rating': rating,
-                    'userRatingCount': userRatingCount,
-                    'types': types,
-                    'isOpen': isOpen,
-                    'priceLevel': priceLevel,
-                    'latitude': lat,
-                    'longitude': lng,
-                    'place': place
-                  });
-                }
-              }
-            }
 
             if (results.isNotEmpty) {
               print(
-                  "🔎 PLACES SEARCH: Found ${results.length} verified results using Places Nearby Search API");
+                  "🔎 PLACES SEARCH: Found ${results.length} verified results using Places Text Search API");
               for (int i = 0; i < min(3, results.length); i++) {
                 print(
                     "🔎 PLACES SEARCH: Result ${i + 1}: '${results[i]['description']}' at '${results[i]['address']}'");
@@ -466,28 +322,44 @@ class GoogleMapsService {
               return results;
             } else {
               print(
-                  "🔎 PLACES SEARCH: No verified results from Places Nearby Search API despite 200 status");
+                  "🔎 PLACES SEARCH: No verified results from Places Text Search API despite OK status");
             }
           } else {
             print(
-                "🔎 PLACES SEARCH: API returned non-200 status code: ${response.statusCode}");
+                "🔎 PLACES SEARCH: API returned non-OK status: ${data['status']}");
+            if (data['error_message'] != null) {
+              print(
+                  "🔎 PLACES SEARCH: Error message: ${data['error_message']}");
+            }
           }
-        } catch (e) {
-          print("🔎 PLACES SEARCH: Error with Places Nearby Search API: $e");
+        } else {
+          print(
+              "🔎 PLACES SEARCH: Text Search API returned non-200 status code: ${response.statusCode}");
         }
-      } else {
-        print(
-            "🔎 PLACES SEARCH: Skipping Nearby Search API because position is null");
+      } catch (e) {
+        print("🔎 PLACES SEARCH: Error with Places Text Search API: $e");
+        // Continue to next fallback? (Currently no other fallback here)
       }
 
-      // If we got here, all search methods failed
+      // If we got here, all search methods inside this function failed
       print(
           "🔎 PLACES SEARCH: All Places API search methods failed for query: $query");
       return [];
     } catch (e) {
-      print("🔎 PLACES SEARCH ERROR: $e");
+      print("🔎 PLACES SEARCH ERROR: Top-level error: $e");
       return [];
     }
+  }
+
+  // Helper function to calculate distance between two coordinates (Haversine formula)
+  double _calculateDistance(
+      double lat1, double lon1, double lat2, double lon2) {
+    const p = 0.017453292519943295; // Pi / 180
+    const c = cos;
+    final a = 0.5 -
+        c((lat2 - lat1) * p) / 2 +
+        c(lat1 * p) * c(lat2 * p) * (1 - c((lon2 - lon1) * p)) / 2;
+    return 12742 * asin(sqrt(a)); // 2 * R; R = 6371 km
   }
 
   /// Get place details by placeId
