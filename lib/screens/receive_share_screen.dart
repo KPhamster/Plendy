@@ -1039,29 +1039,30 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     try {
       // Reverted back to Dio implementation
       final dio = Dio(BaseOptions(
-        followRedirects:
-            false, // Important: Do not follow redirects automatically
+        followRedirects: true, // Let Dio handle redirects
+        maxRedirects: 5, // Sensible limit
         validateStatus: (status) =>
             status != null && status < 500, // Allow redirect statuses
       ));
 
       final response = await dio.get(shortUrl);
 
-      // Check if it's a redirect status
-      if (response.statusCode == 301 ||
-          response.statusCode == 302 ||
-          response.statusCode == 307 || // Handle temporary redirects too
-          response.statusCode == 308) {
-        // Extract the 'location' header
-        final redirectUrl = response.headers.map['location']?.first;
-        if (redirectUrl != null) {
+      // After following redirects, the final URL is in response.realUri
+      if (response.statusCode == 200 && response.realUri != null) {
+        final finalUrl = response.realUri.toString();
+        // Check if it actually redirected somewhere different
+        if (finalUrl != shortUrl) {
           print(
-              "🔗 RESOLVE: Successfully resolved via Location header to: $redirectUrl");
-          return redirectUrl;
+              "🔗 RESOLVE: Successfully resolved via redirects to: $finalUrl");
+          return finalUrl;
+        } else {
+          print("🔗 RESOLVE: URL did not redirect to a different location.");
+          return null; // Or return shortUrl if no redirect is not an error?
         }
       }
 
-      print("🔗 RESOLVE: No redirect status or Location header found.");
+      print(
+          "🔗 RESOLVE: Request completed but status was ${response.statusCode} or realUri was null.");
       return null; // Not a redirect or missing header
     } catch (e) {
       print("🔗 RESOLVE ERROR: Error resolving short URL $shortUrl: $e");
@@ -1719,8 +1720,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     return _wrapWithWillPopScope(Scaffold(
       appBar: AppBar(
         title: _isSpecialUrl(_currentSharedFiles.isNotEmpty
-                ? _currentSharedFiles.first.path
-                : '') // Check if first file content is special URL
+                ? _extractFirstUrl(_currentSharedFiles.first.path) ?? ''
+                : '') // Check if first file content contains a special URL
             ? const Text('Save Shared Content')
             : const Text('Save to Experiences'),
         leading: IconButton(
@@ -1733,8 +1734,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         actions: [
           // Add button - only show if not special content
           if (!_isSpecialUrl(_currentSharedFiles.isNotEmpty
-              ? _currentSharedFiles.first.path
-              : '')) // Check if first file content is special URL
+              ? _extractFirstUrl(_currentSharedFiles.first.path) ?? ''
+              : '')) // Check if first file content contains a special URL
             IconButton(
               icon: const Icon(Icons.add),
               tooltip: 'Add Another Experience',
@@ -1881,8 +1882,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                 // Add another experience button - only show if not special content
                                 if (!_isSpecialUrl(_currentSharedFiles
                                         .isNotEmpty
-                                    ? _currentSharedFiles.first.path
-                                    : '')) // Check if first file content is special URL
+                                    ? _extractFirstUrl(
+                                            _currentSharedFiles.first.path) ??
+                                        ''
+                                    : '')) // Check if first file content contains a special URL
                                   Padding(
                                     padding: const EdgeInsets.only(
                                         top: 12.0,
@@ -2174,60 +2177,91 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     String? placeIdToLookup;
 
     try {
-      // --- 2. Extract Place ID (Primary Strategy) ---
-      placeIdToLookup = _extractPlaceIdFromMapsUrl(resolvedUrl);
+      // --- 2. Search with Extracted Path Info (Primary Strategy) ---
+      String searchQuery =
+          resolvedUrl; // Default to full URL in case path extraction fails
+      try {
+        final Uri uri = Uri.parse(resolvedUrl);
+        // Look for /place/ segment
+        final placeSegmentIndex = uri.pathSegments.indexOf('place');
+        if (placeSegmentIndex != -1 &&
+            placeSegmentIndex < uri.pathSegments.length - 1) {
+          // Extract text after /place/
+          String placePathInfo = uri.pathSegments[placeSegmentIndex + 1];
+          // Decode and clean up
+          placePathInfo =
+              Uri.decodeComponent(placePathInfo).replaceAll('+', ' ');
+          // Remove trailing coordinates if present (@lat,lng)
+          placePathInfo = placePathInfo.split('@')[0].trim();
 
-      if (placeIdToLookup != null && placeIdToLookup.isNotEmpty) {
-        print(
-            "🗺️ MAPS PARSE: Found Place ID '$placeIdToLookup' in URL query parameters. Attempting direct lookup.");
-        try {
-          foundLocation = await _mapsService.getPlaceDetails(placeIdToLookup);
-          print(
-              "🗺️ MAPS PARSE: Successfully found location via Place ID: ${foundLocation.displayName}");
-        } catch (e) {
-          print(
-              "🗺️ MAPS PARSE WARN: Direct Place ID lookup failed for '$placeIdToLookup': $e. Will proceed to search fallback.");
-          // Reset placeIdToLookup if direct lookup failed, forcing search fallback
-          placeIdToLookup = null;
-          foundLocation = null;
-        }
-      } else {
-        print(
-            "🗺️ MAPS PARSE: No Place ID (cid/placeid) found in query parameters.");
-      }
-
-      // --- 3. Search with Full URL (Fallback) ---
-      if (foundLocation == null) {
-        print(
-            "🗺️ MAPS PARSE: Using fallback: Searching Places API with the full URL as query: \"$resolvedUrl\"");
-        try {
-          List<Map<String, dynamic>> searchResults =
-              await _mapsService.searchPlaces(resolvedUrl);
-
-          if (searchResults.isNotEmpty) {
-            // Extract placeId from the first result
-            placeIdToLookup = searchResults.first['placeId'] as String?;
-            if (placeIdToLookup != null && placeIdToLookup.isNotEmpty) {
-              print(
-                  "🗺️ MAPS PARSE: Search found Place ID: '$placeIdToLookup'. Getting details.");
-              // Get details using the placeId from search
-              foundLocation =
-                  await _mapsService.getPlaceDetails(placeIdToLookup);
-              print(
-                  "🗺️ MAPS PARSE: Successfully found location via URL search fallback: ${foundLocation.displayName}");
-            } else {
-              print(
-                  "🗺️ MAPS PARSE WARN: Top search result for URL query did not contain a Place ID.");
-              // Potentially use Location.fromMap if available and desired
-              // foundLocation = Location.fromMap(searchResults.first);
-            }
+          if (placePathInfo.isNotEmpty) {
+            searchQuery = placePathInfo;
+            print(
+                "🗺️ MAPS PARSE: Extracted path info for search fallback: \"$searchQuery\"");
           } else {
             print(
-                "🗺️ MAPS PARSE WARN: Search with full URL query returned no results.");
+                "🗺️ MAPS PARSE WARN: Found /place/ segment but extracted info was empty. Using full URL.");
           }
-        } catch (e) {
+        } else {
           print(
-              "🗺️ MAPS PARSE ERROR: Error during fallback search with URL query: $e");
+              "🗺️ MAPS PARSE: No /place/ segment found in path. Using full URL for fallback search.");
+        }
+      } catch (e) {
+        print(
+            "🗺️ MAPS PARSE ERROR: Error parsing URL path for fallback query: $e. Using full URL.");
+      }
+
+      print(
+          "🗺️ MAPS PARSE (Path Search): Searching Places API with query: \"$searchQuery\"");
+      try {
+        List<Map<String, dynamic>> searchResults =
+            await _mapsService.searchPlaces(searchQuery);
+
+        if (searchResults.isNotEmpty) {
+          // Extract placeId from the first result
+          placeIdToLookup = searchResults.first['placeId'] as String?;
+          if (placeIdToLookup != null && placeIdToLookup.isNotEmpty) {
+            print(
+                "🗺️ MAPS PARSE: Search found Place ID: '$placeIdToLookup'. Getting details.");
+            // Get details using the placeId from search
+            foundLocation = await _mapsService.getPlaceDetails(placeIdToLookup);
+            print(
+                "🗺️ MAPS PARSE (Path Search): Successfully found location: ${foundLocation.displayName}");
+          } else {
+            print(
+                "🗺️ MAPS PARSE WARN: Top search result for query did not contain a Place ID.");
+          }
+        } else {
+          print(
+              "🗺️ MAPS PARSE WARN: Search with query \"$searchQuery\" returned no results.");
+        }
+      } catch (e) {
+        print(
+            "🗺️ MAPS PARSE ERROR: Error during fallback search with query \"$searchQuery\": $e");
+      }
+
+      // --- 3. Extract Place ID from Query (Fallback Strategy) ---
+      // Only try this if the path search failed
+      if (foundLocation == null) {
+        print(
+            "🗺️ MAPS PARSE: Path search failed. Trying Place ID extraction from query parameters as fallback.");
+        placeIdToLookup = _extractPlaceIdFromMapsUrl(resolvedUrl);
+
+        if (placeIdToLookup != null && placeIdToLookup.isNotEmpty) {
+          print(
+              "🗺️ MAPS PARSE (Query Fallback): Found Place ID '$placeIdToLookup'. Attempting direct lookup.");
+          try {
+            foundLocation = await _mapsService.getPlaceDetails(placeIdToLookup);
+            print(
+                "🗺️ MAPS PARSE (Query Fallback): Successfully found location: ${foundLocation.displayName}");
+          } catch (e) {
+            print(
+                "🗺️ MAPS PARSE ERROR (Query Fallback): Direct Place ID lookup failed for '$placeIdToLookup': $e.");
+            foundLocation = null; // Ensure location is null if lookup fails
+          }
+        } else {
+          print(
+              "🗺️ MAPS PARSE (Query Fallback): No Place ID (cid/placeid) found in query parameters either.");
         }
       }
 
