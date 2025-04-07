@@ -187,11 +187,23 @@ class _YelpPreviewWidgetState extends State<YelpPreviewWidget> {
   Widget _buildYelpDetailedPreview(
       Location location, String businessName, String yelpUrl) {
     print('🏢 PREVIEW WIDGET: Building detailed Yelp preview');
-    print('🏢 PREVIEW WIDGET: Business name: "$businessName"');
     print(
-        '🏢 PREVIEW WIDGET: Location - lat: ${location.latitude}, lng: ${location.longitude}');
-    print('🏢 PREVIEW WIDGET: Address: ${location.address}');
+        '🏢 PREVIEW WIDGET: Business name (from initial Yelp parse): "$businessName"');
+    print(
+        '🏢 PREVIEW WIDGET: Location Display Name: "${location.displayName}"');
+    print('🏢 PREVIEW WIDGET: Location Address: "${location.address}"');
+    print('🏢 PREVIEW WIDGET: Location Website: "${location.website}"');
+    print(
+        '🏢 PREVIEW WIDGET: Location Coords: ${location.latitude}, ${location.longitude}');
+    print('🏢 PREVIEW WIDGET: Location Place ID: ${location.placeId}');
     print('🏢 PREVIEW WIDGET: Yelp URL: $yelpUrl');
+
+    // Determine the final name and address to display in the preview
+    final String finalDisplayName = location.displayName ?? businessName;
+    final String finalAddress = location.address ?? 'Address not available';
+
+    print('====> ✨ PREVIEW Log: Final Name to display: "$finalDisplayName"');
+    print('====> ✨ PREVIEW Log: Final Address to display: "$finalAddress"');
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -273,7 +285,7 @@ class _YelpPreviewWidgetState extends State<YelpPreviewWidget> {
                           SizedBox(width: 8),
                           Expanded(
                             child: Text(
-                              location.displayName ?? businessName,
+                              finalDisplayName,
                               style: TextStyle(
                                 fontWeight: FontWeight.bold,
                                 fontSize: 18,
@@ -287,7 +299,7 @@ class _YelpPreviewWidgetState extends State<YelpPreviewWidget> {
                       SizedBox(height: 8),
 
                       // Address
-                      if (location.address != null) ...[
+                      if (finalAddress != null && finalAddress.isNotEmpty) ...[
                         Row(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
@@ -304,7 +316,7 @@ class _YelpPreviewWidgetState extends State<YelpPreviewWidget> {
                                       location.placeId!.isNotEmpty) {
                                     // Use the Google Maps search API with place_id format
                                     final placeUrl =
-                                        'https://www.google.com/maps/search/?api=1&query=${Uri.encodeComponent(location.displayName ?? businessName)}&query_place_id=${location.placeId}';
+                                        'https://www.google.com/maps/search/?api=1&query=${Uri.encodeComponent(finalDisplayName)}&query_place_id=${location.placeId}';
                                     print(
                                         '🧭 ADDRESS WIDGET: Opening URL with placeId: $placeUrl');
                                     await widget.launchUrlCallback(placeUrl);
@@ -319,7 +331,7 @@ class _YelpPreviewWidgetState extends State<YelpPreviewWidget> {
                                   }
                                 },
                                 child: Text(
-                                  location.address!,
+                                  finalAddress,
                                   style: TextStyle(
                                     fontSize: 14,
                                     color: Colors.grey[800],

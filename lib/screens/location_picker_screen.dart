@@ -139,6 +139,9 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
   }
 
   Future<void> _selectSearchResult(Map<String, dynamic> result) async {
+    // Dismiss keyboard
+    FocusScope.of(context).unfocus();
+
     setState(() {
       _showSearchResults = false;
       _isSearching = true;

@@ -1250,6 +1250,17 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     if (targetCard == null) return;
 
+    // Log the data before setting it to the card
+    print('====> 📝 CARD FORM Log: Filling card for Yelp URL: $yelpUrl');
+    print(
+        '====> 📝 CARD FORM Log:   Location Display Name: ${location.displayName}');
+    print('====> 📝 CARD FORM Log:   Location Address: ${location.address}');
+    print(
+        '====> 📝 CARD FORM Log:   Location Coords: ${location.latitude}, ${location.longitude}');
+    print('====> 📝 CARD FORM Log:   Location Website: ${location.website}');
+    print(
+        '====> 📝 CARD FORM Log:   Business Name (from initial Yelp parse): $businessName');
+
     // Try to get website URL from the Maps service if the location has a placeId
     String? websiteUrl;
     if (location.website != null) {
@@ -1262,16 +1273,30 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // Set data in the target card
       print(
           'DEBUG: Setting card data - title: ${location.displayName ?? businessName}');
-      targetCard!.titleController.text = location.displayName ?? businessName;
+
+      // Determine the final title and address to be set
+      final String titleToSet = location.displayName ?? businessName;
+      final String addressToSet = location.address ?? '';
+      final String websiteToSet =
+          websiteUrl ?? ''; // Use fetched website if available
+
+      print('====> 📝 CARD FORM Log:   Title being set: "$titleToSet"');
+      print(
+          '====> 📝 CARD FORM Log:   Search text being set (address): "$addressToSet"');
+      print('====> 📝 CARD FORM Log:   Website being set: "$websiteToSet"');
+
+      targetCard!.titleController.text = titleToSet; // Use determined title
       targetCard!.selectedLocation = location;
       targetCard!.yelpUrlController.text = yelpUrl;
-      targetCard!.searchController.text = location.address ?? '';
+      targetCard!.searchController.text =
+          addressToSet; // Use determined address
 
       // Update website URL if we found one
-      if (websiteUrl != null && websiteUrl.isNotEmpty) {
-        targetCard!.websiteController.text = websiteUrl;
-        print('DEBUG: Updated website URL to: $websiteUrl');
-      }
+      // if (websiteUrl != null && websiteUrl.isNotEmpty) {
+      targetCard!.websiteController.text =
+          websiteToSet; // Use determined website
+      //   print('DEBUG: Updated website URL to: $websiteUrl');
+      // }
 
       // If we have a photoUrl, make sure to force a refresh of any UI that shows it
       if (location.photoUrl != null) {
