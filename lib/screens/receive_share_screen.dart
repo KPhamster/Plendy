@@ -1063,24 +1063,36 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
   // Helper method to resolve a shortened URL to its full URL
   Future<String?> _resolveShortUrl(String shortUrl) async {
+    print("🔗 RESOLVE: Attempting to resolve URL: $shortUrl"); // Keep log
     try {
+      // Reverted back to Dio implementation
       final dio = Dio(BaseOptions(
-        followRedirects: false,
-        validateStatus: (status) => status! < 500,
+        followRedirects:
+            false, // Important: Do not follow redirects automatically
+        validateStatus: (status) =>
+            status != null && status < 500, // Allow redirect statuses
       ));
 
       final response = await dio.get(shortUrl);
 
-      if (response.statusCode == 301 || response.statusCode == 302) {
+      // Check if it's a redirect status
+      if (response.statusCode == 301 ||
+          response.statusCode == 302 ||
+          response.statusCode == 307 || // Handle temporary redirects too
+          response.statusCode == 308) {
+        // Extract the 'location' header
         final redirectUrl = response.headers.map['location']?.first;
         if (redirectUrl != null) {
+          print(
+              "🔗 RESOLVE: Successfully resolved via Location header to: $redirectUrl");
           return redirectUrl;
         }
       }
 
-      return null;
+      print("🔗 RESOLVE: No redirect status or Location header found.");
+      return null; // Not a redirect or missing header
     } catch (e) {
-      print('Error resolving short URL: $e');
+      print("🔗 RESOLVE ERROR: Error resolving short URL $shortUrl: $e");
       return null;
     }
   }
@@ -2112,7 +2124,80 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           foundLocation = await _mapsService.getPlaceDetails(placeId);
           print("Found location via Place ID: ${foundLocation.displayName}");
         } catch (e) {
-          print("Error fetching details by Place ID '$placeId': $e");
+          print("Initial Place ID lookup failed for '$placeId': $e");
+          // Handle potential DioException for API errors
+          bool isInvalidIdError = false;
+          if (e is DioException && e.response?.data is Map) {
+            var errorData = e.response?.data as Map;
+            if (errorData['status'] == 'INVALID_REQUEST') {
+              // Check API status
+              isInvalidIdError = true;
+              print("API confirmed INVALID_REQUEST for Place ID: $placeId");
+            }
+          }
+
+          // If it was an invalid ID error AND we have a name, try searching
+          if (isInvalidIdError && placeName != null && placeName.isNotEmpty) {
+            print(
+                "Invalid Place ID from blob. Attempting search with name: '$placeName'");
+            try {
+              // --- ENHANCED FALLBACK SEARCH ---
+              String searchQuery = placeName;
+              // Try to make the search more specific if we have coordinates
+              if (lat != null && lng != null) {
+                try {
+                  print(
+                      "🗺️ FALLBACK: Reverse geocoding $lat, $lng to add context to search");
+                  final addresses =
+                      await geocoding.placemarkFromCoordinates(lat, lng);
+                  if (addresses.isNotEmpty) {
+                    final placemark = addresses.first;
+                    String city = placemark.locality ?? '';
+                    String street = placemark.thoroughfare ?? '';
+                    if (city.isNotEmpty) {
+                      searchQuery = "$placeName, $city";
+                      print(
+                          "🗺️ FALLBACK: Using query with city: '$searchQuery'");
+                    } else if (street.isNotEmpty) {
+                      searchQuery = "$placeName, $street";
+                      print(
+                          "🗺️ FALLBACK: Using query with street: '$searchQuery'");
+                    }
+                  }
+                } catch (geocodeError) {
+                  print(
+                      "🗺️ FALLBACK: Error during reverse geocoding for search context: $geocodeError");
+                  // Proceed with just the name if geocoding fails
+                }
+              }
+              print(
+                  "🗺️ FALLBACK: Performing search with query: '$searchQuery'");
+              // --- END ENHANCED FALLBACK SEARCH ---
+
+              List<Map<String, dynamic>> searchResults = await _mapsService
+                  .searchPlaces(searchQuery); // Use enhanced query
+              if (searchResults.isNotEmpty) {
+                String? searchResultPlaceId = searchResults.first['placeId'];
+                if (searchResultPlaceId != null &&
+                    searchResultPlaceId.isNotEmpty) {
+                  print(
+                      "Search found potential match. Getting details for Place ID: $searchResultPlaceId");
+                  // Get details using the ID from the search result
+                  foundLocation =
+                      await _mapsService.getPlaceDetails(searchResultPlaceId);
+                  print(
+                      "Successfully found location via search fallback: ${foundLocation.displayName}");
+                } else {
+                  print("Search result missing Place ID.");
+                }
+              } else {
+                print("Search with name '$placeName' returned no results.");
+              }
+            } catch (searchError) {
+              print(
+                  "Error during fallback search for '$placeName': $searchError");
+            } // End fallback search try-catch
+          } // End if (isInvalidIdError...)
           // Place ID might be invalid or outdated, continue to other methods
         }
       }
@@ -2356,97 +2441,191 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
   // Extracts Name, Lat/Lng, PlaceID, Query from Google Maps URL
   Map<String, dynamic>? _extractInfoFromMapsUrl(String url) {
+    print("🗺️ EXTRACT: Parsing URL: $url");
     final Uri uri = Uri.parse(url);
     double? lat;
     double? lng;
     String? name;
     String? placeId;
     String? query;
-    String? data; // For the !1s... blob
+    String? dataBlob; // Changed variable name for clarity
 
-    // Check path segments for @lat,lng,zoom
+    // --- Strategy 1: Extract from path segments ---
     final pathSegments = uri.pathSegments;
-    for (String segment in pathSegments) {
-      if (segment.startsWith('@')) {
-        final parts = segment.substring(1).split(',');
-        if (parts.length >= 2) {
-          lat = double.tryParse(parts[0]);
-          lng = double.tryParse(parts[1]);
-          // Optional: zoom = double.tryParse(parts[2].replaceAll('z', ''));
+    print("🗺️ EXTRACT: Path segments: $pathSegments");
+
+    // Check for @lat,lng,zoom pattern
+    int atIndex = pathSegments.indexWhere((s) => s.startsWith('@'));
+    if (atIndex != -1) {
+      final parts = pathSegments[atIndex].substring(1).split(',');
+      if (parts.length >= 2) {
+        lat = double.tryParse(parts[0]);
+        lng = double.tryParse(parts[1]);
+        print("🗺️ EXTRACT: Found @lat,lng in path: $lat, $lng");
+      }
+    }
+
+    // Check for /place/Place+Name pattern
+    int placeIndex = pathSegments.indexOf('place');
+    if (placeIndex != -1 && placeIndex < pathSegments.length - 1) {
+      String potentialName = pathSegments[placeIndex + 1];
+      // Check if the segment after /place/ is the data blob
+      if (!potentialName.startsWith('data=')) {
+        name = Uri.decodeComponent(potentialName)
+            .replaceAll('+', ' '); // Use decodeComponent
+        print("🗺️ EXTRACT: Found name after /place/: $name");
+      }
+    }
+
+    // Check for /data=! pattern
+    int dataIndex = pathSegments.indexWhere((s) => s.startsWith('data='));
+    if (dataIndex != -1) {
+      dataBlob =
+          pathSegments[dataIndex].substring(5); // Get the part after 'data='
+      print("🗺️ EXTRACT: Found data blob in path: $dataBlob");
+      // If name wasn't found via /place/, try the segment *before* /data=
+      if (name == null &&
+          dataIndex > 0 &&
+          pathSegments[dataIndex - 1] != 'place') {
+        name = Uri.decodeComponent(pathSegments[dataIndex - 1])
+            .replaceAll('+', ' '); // Use decodeComponent
+        print("🗺️ EXTRACT: Found name before /data=/: $name");
+      }
+    }
+
+    // --- Strategy 2: Extract from query parameters ---
+    print("🗺️ EXTRACT: Query parameters: ${uri.queryParameters}");
+    // Prioritize 'q' for name if it's not coordinates and name isn't set yet
+    query = uri.queryParameters['q'];
+    if (name == null && query != null && !_containsOnlyCoordinates(query)) {
+      name = query;
+      print("🗺️ EXTRACT: Found name in query param 'q': $name");
+    }
+
+    // Get Place ID from 'cid' or 'placeid'
+    placeId = uri.queryParameters['cid'] ?? uri.queryParameters['placeid'];
+    if (placeId != null) {
+      print("🗺️ EXTRACT: Found placeId in query params: $placeId");
+    }
+
+    // Get data blob from 'data' query param if not found in path
+    dataBlob ??= uri.queryParameters['data'];
+    if (dataBlob != null && uri.queryParameters.containsKey('data')) {
+      print("🗺️ EXTRACT: Found data blob in query param 'data': $dataBlob");
+    }
+
+    // --- Strategy 3: Parse the data blob if found ---
+    if (dataBlob != null && dataBlob.isNotEmpty) {
+      print("🗺️ EXTRACT: Parsing data blob: $dataBlob");
+
+      // Regex patterns for data blob parsing (more specific)
+      // Place ID patterns: !1s..., !9s..., !16s... (handle potential encoding)
+      // final placeIdPattern = RegExp(r'!(?:1s|9s|16s%2F[a-zA-Z0-9%]+)([^!]+)'); // REMOVED - This is not a valid Place ID
+      final latPattern = RegExp(r'!3d([\d.-]+)');
+      final lngPattern = RegExp(r'!4d([\d.-]+)');
+
+      // Extract Place ID - REMOVED Block
+      /*
+      final placeIdMatch = placeIdPattern.firstMatch(dataBlob);
+      if (placeIdMatch != null) {
+        String extractedPid = Uri.decodeComponent(placeIdMatch.group(1)!);
+        extractedPid = extractedPid
+            .split(RegExp(r'[!&\\]')).first; // Split by !, &, or backslash
+        print("🗺️ EXTRACT: Extracted Place ID from blob: $extractedPid");
+        if (placeId == null ||
+            (placeId != extractedPid && extractedPid.length > 5)) {
+          placeId = extractedPid;
+          print("🗺️ EXTRACT: Using Place ID from data blob.");
         }
-        break; // Assume only one @ segment is relevant
+      } else {
+        print("🗺️ EXTRACT: Place ID pattern not found in data blob.");
+      }
+      */ // Added closing comment tag
+
+      // Extract Latitude
+      final latMatch = latPattern.firstMatch(dataBlob);
+      if (latMatch != null) {
+        double? extractedLat = double.tryParse(latMatch.group(1)!);
+        if (extractedLat != null) {
+          print("🗺️ EXTRACT: Extracted Latitude from blob: $extractedLat");
+          if (lat == null) {
+            lat = extractedLat;
+            print("🗺️ EXTRACT: Using Latitude from data blob.");
+          }
+        }
+      } else {
+        print("🗺️ EXTRACT: Latitude pattern not found in data blob.");
+      }
+
+      // Extract Longitude
+      final lngMatch = lngPattern.firstMatch(dataBlob);
+      if (lngMatch != null) {
+        double? extractedLng = double.tryParse(lngMatch.group(1)!);
+        if (extractedLng != null) {
+          print("🗺️ EXTRACT: Extracted Longitude from blob: $extractedLng");
+          if (lng == null) {
+            lng = extractedLng;
+            print("🗺️ EXTRACT: Using Longitude from data blob.");
+          }
+        }
+      } else {
+        print("🗺️ EXTRACT: Longitude pattern not found in data blob.");
+      }
+
+      // Attempt to extract name from data blob (less reliable, use as last resort)
+      final namePattern = RegExp(r'!2s([^!]+)');
+      final nameMatch = namePattern.firstMatch(dataBlob);
+      if (name == null && nameMatch != null) {
+        String potentialName =
+            Uri.decodeComponent(nameMatch.group(1)!).replaceAll('+', ' ');
+        if (potentialName.length < 100 &&
+            !potentialName.contains('=') &&
+            !potentialName.contains('!')) {
+          name = potentialName;
+          print("🗺️ EXTRACT: Found potential name in data blob: $name");
+        }
       }
     }
 
-    // Check query parameters
-    query = uri.queryParameters['q']; // Search query
-    placeId = uri.queryParameters['cid'] ??
-        uri.queryParameters['placeid']; // Common place ID params
-    data = uri.queryParameters['data']; // Check for data blob
-
-    // Attempt to get name from query if not obviously coordinates
-    if (query != null && !_containsOnlyCoordinates(query)) {
-      name = query.split(',').first; // Simple extraction, might need refinement
-    }
-
-    // If name/lat/lng still missing, try parsing from path structure like /maps/place/Place+Name/@lat,lng,zoom
-    if (pathSegments.length >= 3 &&
-        pathSegments[pathSegments.length - 2] == 'place') {
-      name ??= Uri.decodeFull(pathSegments[pathSegments.length - 1])
-          .replaceAll('+', ' ');
-    } else if (pathSegments.length >= 2 &&
-        pathSegments.last != 'search' &&
-        name == null) {
-      // Handle cases where the last segment might be the name if no '@' is present
-      // Avoid if it looks like coordinates
-      if (!_containsOnlyCoordinates(pathSegments.last)) {
-        name ??= Uri.decodeFull(pathSegments.last).replaceAll('+', ' ');
+    // --- Final Check and Return ---
+    // If name is still null, try using the last path segment if it doesn't look like coordinates or data
+    if (name == null && pathSegments.isNotEmpty) {
+      String lastSegment = pathSegments.last;
+      if (!lastSegment.startsWith('@') &&
+          !lastSegment.startsWith('data=') &&
+          !_containsOnlyCoordinates(lastSegment)) {
+        name = Uri.decodeComponent(lastSegment)
+            .replaceAll('+', ' '); // Use decodeComponent
+        print("🗺️ EXTRACT: Using last path segment as name fallback: $name");
       }
     }
 
-    // Special case for /maps/search/Query+Name/@lat,lng
-    if (pathSegments.contains('search') &&
-        pathSegments.length > pathSegments.indexOf('search') + 1) {
-      name ??= Uri.decodeFull(pathSegments[pathSegments.indexOf('search') + 1])
-          .replaceAll('+', ' ');
-    }
-
-    // Extract Place ID from the 'data' parameter if not found elsewhere
-    if (placeId == null && data != null) {
-      // Example: data=!3m1!4b1!4m6!3m5!1s0x...:0x...!7e2!8m2!3d[lat]!4d[lng]!16s%2Fg%2F[place_id_encoded]
-      // Look for the !1s, !9s or !16s pattern which often precedes the ID
-      final dataPlaceIdMatch =
-          RegExp(r'!(?:1s|9s|16s%2F.)([^!]+)').firstMatch(data);
-      if (dataPlaceIdMatch != null) {
-        placeId = Uri.decodeFull(dataPlaceIdMatch.group(1)!);
-        // Sometimes it includes extra chars like ':0x...' remove them? No, Place IDs can contain colons.
-        // placeId = placeId.split(':').first; // Example cleanup if needed
-        print("Extracted Place ID from data: $placeId");
-      }
-    }
+    print(
+        "🗺️ EXTRACT: Final Extracted Info -> Name: $name, Lat: $lat, Lng: $lng, PlaceID: $placeId, Query: $query");
 
     // If we have extracted *any* useful info, return it
     if (name != null ||
         lat != null ||
         lng != null ||
         placeId != null ||
-        query != null ||
-        data != null) {
+        query != null) {
+      // Removed dataBlob from the check, only return useful fields
       return {
         'name': name?.trim(),
         'lat': lat,
         'lng': lng,
         'placeId': placeId?.trim(),
         'query': query?.trim(),
-        'data': data?.trim(),
       };
     }
 
+    print("🗺️ EXTRACT: Could not extract any useful info from URL.");
     return null; // No useful info extracted
   }
 
   // Check if a string looks like "lat,lng"
   bool _containsOnlyCoordinates(String text) {
+    // Adjusted regex to be less strict, matching potential float numbers
     final coordRegex = RegExp(r'^-?[\d.]+, ?-?[\d.]+$');
     return coordRegex.hasMatch(text.trim());
   }
@@ -2477,4 +2656,12 @@ extension LocationNameHelper on Location {
     final coordRegex = RegExp(r'-?[\d.]+ ?, ?-?[\d.]+');
     return coordRegex.hasMatch(text);
   }
+
+  /*
+  // Helper to check if a string *only* contains coordinates <-- COMMENTED OUT DUPLICATE
+  bool _containsOnlyCoordinates(String text) {
+    final coordOnlyRegex = RegExp(r'^-?[\d.]+ ?, ?-?[\d.]+$');
+    return coordOnlyRegex.hasMatch(text.trim());
+  }
+  */
 }
