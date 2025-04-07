@@ -487,16 +487,71 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                         hintText: 'https://...',
                         border: OutlineInputBorder(),
                         prefixIcon: Icon(Icons.language),
-                        suffixIcon: websiteController.text.isNotEmpty
-                            ? IconButton(
-                                icon: Icon(Icons.clear, size: 18),
-                                onPressed: () {
+                        // Combine clear and launch buttons in the suffix
+                        suffixIconConstraints: BoxConstraints.tightFor(
+                            width: 60,
+                            height: 48), // Adjust constraints for two icons
+                        suffixIcon: Row(
+                          mainAxisSize:
+                              MainAxisSize.min, // Prevent row taking full width
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: <Widget>[
+                            // Clear button (only show if text exists)
+                            if (websiteController.text.isNotEmpty)
+                              InkWell(
+                                onTap: () {
                                   websiteController.clear();
-                                  // Listener calls _triggerRebuild
                                   widget.onUpdate();
                                 },
-                              )
-                            : null,
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal:
+                                          2.0), // Reduce horizontal padding
+                                  child: Icon(Icons.clear, size: 18),
+                                ),
+                              ),
+                            // Launch button
+                            InkWell(
+                              onTap: () async {
+                                String urlString =
+                                    websiteController.text.trim();
+                                if (_isValidUrl(urlString)) {
+                                  try {
+                                    await launchUrl(
+                                      Uri.parse(urlString),
+                                      mode: LaunchMode.externalApplication,
+                                    );
+                                  } catch (e) {
+                                    print('Error launching URL: $e');
+                                    if (mounted) {
+                                      ScaffoldMessenger.of(context)
+                                          .showSnackBar(
+                                        SnackBar(
+                                            content:
+                                                Text('Error opening link: $e')),
+                                      );
+                                    }
+                                  }
+                                } else {
+                                  if (mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                          content: Text('Enter a valid URL')),
+                                    );
+                                  }
+                                }
+                              },
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal:
+                                        8.0), // Adjust padding as needed
+                                child: Icon(Icons.launch, // Use launch icon
+                                    size: 18,
+                                    color: Colors.blue[700]),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                       keyboardType: TextInputType.url,
                       validator: (value) {
