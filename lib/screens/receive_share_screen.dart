@@ -1596,7 +1596,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     return _wrapWithWillPopScope(Scaffold(
       appBar: AppBar(
         title: _isSpecialContent(_currentSharedFiles)
-            ? const Text('Add Restaurant to Experiences')
+            ? const Text('Save Shared Content')
             : const Text('Save to Experiences'),
         leading: IconButton(
           // Use leading for the cancel/back action

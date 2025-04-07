@@ -196,35 +196,36 @@ class Experience {
   final String? priceRange; // e.g. "$", "$$", "$$$", "$$$$"
   final List<String>? sharedMediaPaths; // Added for shared content
   final String? sharedMediaType; // Added for shared content
+  final String? additionalNotes; // Added for user notes
 
-  Experience({
-    required this.id,
-    required this.name,
-    required this.description,
-    required this.location,
-    required this.type,
-    this.yelpUrl,
-    this.yelpRating,
-    this.yelpReviewCount,
-    this.googleUrl,
-    this.googleRating,
-    this.googleReviewCount,
-    this.plendyRating = 0.0,
-    this.plendyReviewCount = 0,
-    this.imageUrls = const [],
-    this.reelIds = const [],
-    this.followerIds = const [],
-    this.rating = 0.0, // Added
-    required this.createdAt,
-    required this.updatedAt,
-    this.website,
-    this.phoneNumber,
-    this.openingHours,
-    this.tags,
-    this.priceRange,
-    this.sharedMediaPaths, // Added
-    this.sharedMediaType, // Added
-  });
+  Experience(
+      {required this.id,
+      required this.name,
+      required this.description,
+      required this.location,
+      required this.type,
+      this.yelpUrl,
+      this.yelpRating,
+      this.yelpReviewCount,
+      this.googleUrl,
+      this.googleRating,
+      this.googleReviewCount,
+      this.plendyRating = 0.0,
+      this.plendyReviewCount = 0,
+      this.imageUrls = const [],
+      this.reelIds = const [],
+      this.followerIds = const [],
+      this.rating = 0.0, // Added
+      required this.createdAt,
+      required this.updatedAt,
+      this.website,
+      this.phoneNumber,
+      this.openingHours,
+      this.tags,
+      this.priceRange,
+      this.sharedMediaPaths, // Added
+      this.sharedMediaType, // Added
+      this.additionalNotes});
 
   /// Creates an Experience from a Firestore document
   factory Experience.fromFirestore(DocumentSnapshot doc) {
@@ -257,6 +258,7 @@ class Experience {
       priceRange: data['priceRange'],
       sharedMediaPaths: _parseStringList(data['sharedMediaPaths']), // Added
       sharedMediaType: data['sharedMediaType'], // Added
+      additionalNotes: data['additionalNotes'], // Added
     );
   }
 
@@ -288,6 +290,7 @@ class Experience {
       'priceRange': priceRange,
       'sharedMediaPaths': sharedMediaPaths, // Added
       'sharedMediaType': sharedMediaType, // Added
+      'additionalNotes': additionalNotes, // Added
     };
   }
 
@@ -317,6 +320,7 @@ class Experience {
     String? priceRange,
     List<String>? sharedMediaPaths, // Added
     String? sharedMediaType, // Added
+    String? additionalNotes, // Added
   }) {
     return Experience(
       id: id,
@@ -345,6 +349,7 @@ class Experience {
       priceRange: priceRange ?? this.priceRange,
       sharedMediaPaths: sharedMediaPaths ?? this.sharedMediaPaths, // Added
       sharedMediaType: sharedMediaType ?? this.sharedMediaType, // Added
+      additionalNotes: additionalNotes ?? this.additionalNotes, // Added
     );
   }
 

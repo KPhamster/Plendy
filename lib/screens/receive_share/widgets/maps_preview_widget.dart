@@ -373,41 +373,6 @@ class _MapsPreviewWidgetState extends State<MapsPreviewWidget> {
                         SizedBox(height: 12), // Add space before button
                       ],
 
-                      // Website Link if available
-                      if (websiteUrl != null && websiteUrl.isNotEmpty) ...[
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Icon(Icons.language,
-                                size: 16, color: Colors.grey[600]),
-                            SizedBox(width: 6),
-                            Expanded(
-                              child: InkWell(
-                                onTap: () async {
-                                  print(
-                                      '🔗 WEBSITE WIDGET: Opening website: $websiteUrl');
-                                  await widget.launchUrlCallback(
-                                      websiteUrl); // Use callback
-                                },
-                                child: Text(
-                                  websiteUrl, // Display the website URL
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    color: Colors
-                                        .blue, // Make website look clickable
-                                    decoration: TextDecoration.underline,
-                                    decorationColor: Colors.blue,
-                                  ),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        SizedBox(height: 12), // Add space before button
-                      ],
-
                       // Directions Button
                       SizedBox(
                         width: double.infinity,

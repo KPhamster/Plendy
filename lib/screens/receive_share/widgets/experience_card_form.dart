@@ -512,6 +512,39 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                         // widget.onUpdate();
                       },
                     ),
+                    SizedBox(height: 16),
+
+                    // Notes field
+                    TextFormField(
+                      controller: widget
+                          .cardData.notesController, // Use notes controller
+                      decoration: InputDecoration(
+                        labelText: 'Notes (optional)',
+                        hintText: 'Enter any additional notes...',
+                        border: OutlineInputBorder(),
+                        prefixIcon: Icon(Icons.notes),
+                        alignLabelWithHint:
+                            true, // Align label top-left for multi-line
+                        suffixIcon:
+                            widget.cardData.notesController.text.isNotEmpty
+                                ? IconButton(
+                                    icon: Icon(Icons.clear, size: 18),
+                                    onPressed: () {
+                                      widget.cardData.notesController.clear();
+                                      widget.onUpdate();
+                                    },
+                                  )
+                                : null,
+                      ),
+                      keyboardType: TextInputType.multiline,
+                      minLines: 3, // Start with 3 lines height
+                      maxLines: null, // Allow unlimited lines
+                      // No validator needed as it's optional
+                      onChanged: (value) {
+                        // Trigger rebuild if suffix icon logic depends on it
+                        widget.onUpdate();
+                      },
+                    ),
                   ],
                 ),
               ),
