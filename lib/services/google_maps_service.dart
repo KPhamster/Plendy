@@ -1298,20 +1298,36 @@ class GoogleMapsService {
   }
 
   /// Generate directions URL
-  String getDirectionsUrl(double destLat, double destLng,
-      {double? originLat, double? originLng}) {
-    if (originLat != null && originLng != null) {
-      return 'https://www.google.com/maps/dir/?api=1&origin=$originLat,$originLng&destination=$destLat,$destLng';
+  String getDirectionsUrl(Location location) {
+    // Prioritize using the address if available and seems valid
+    String destination;
+    if (location.address != null &&
+        location.address!.isNotEmpty &&
+        !location.address!.contains('Coordinates:')) {
+      // Added check to avoid using placeholder address
+      destination = Uri.encodeComponent(location.address!);
+      print(
+          '🧭 DIRECTIONS SERVICE: Using address for destination: ${location.address}');
     } else {
-      return 'https://www.google.com/maps/dir/?api=1&destination=$destLat,$destLng';
+      // Fallback to coordinates
+      destination = '${location.latitude},${location.longitude}';
+      print(
+          '🧭 DIRECTIONS SERVICE: Using coordinates for destination: $destination');
     }
+
+    // Construct the URL
+    final url =
+        'https://www.google.com/maps/dir/?api=1&destination=$destination';
+    return url;
   }
 
   /// Get directions URL between two coordinates (legacy method signature for compatibility)
   String getDirectionsUrlFromCoordinates(
       double startLat, double startLng, double endLat, double endLng) {
-    return getDirectionsUrl(endLat, endLng,
-        originLat: startLat, originLng: startLng);
+    return getDirectionsUrl(Location(
+      latitude: endLat,
+      longitude: endLng,
+    ));
   }
 
   // Check if place has photos and return the first photo reference

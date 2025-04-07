@@ -7,7 +7,7 @@ import '../services/google_maps_service.dart';
 
 class ExperienceMapScreen extends StatefulWidget {
   final Experience experience;
-  
+
   const ExperienceMapScreen({
     super.key,
     required this.experience,
@@ -19,7 +19,7 @@ class ExperienceMapScreen extends StatefulWidget {
 
 class _ExperienceMapScreenState extends State<ExperienceMapScreen> {
   final GoogleMapsService _mapsService = GoogleMapsService();
-  
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -35,7 +35,7 @@ class _ExperienceMapScreenState extends State<ExperienceMapScreen> {
             showUserLocation: true,
             allowSelection: false, // Read-only map
           ),
-          
+
           // Information panel
           Positioned(
             bottom: 16,
@@ -67,7 +67,8 @@ class _ExperienceMapScreenState extends State<ExperienceMapScreen> {
                   ),
                   SizedBox(height: 8),
                   Text(
-                    widget.experience.location.address ?? 'No address available',
+                    widget.experience.location.address ??
+                        'No address available',
                     style: TextStyle(
                       fontSize: 14,
                       color: Colors.grey[700],
@@ -90,19 +91,14 @@ class _ExperienceMapScreenState extends State<ExperienceMapScreen> {
       ),
     );
   }
-  
+
   Future<void> _getDirections() async {
     // Get user's current location
     try {
       final position = await _mapsService.getCurrentLocation();
-      
-      final url = _mapsService.getDirectionsUrl(
-        widget.experience.location.latitude,
-        widget.experience.location.longitude,
-        originLat: position.latitude,
-        originLng: position.longitude,
-      );
-      
+
+      final url = _mapsService.getDirectionsUrl(widget.experience.location);
+
       final uri = Uri.parse(url);
       if (await canLaunchUrl(uri)) {
         await launchUrl(uri, mode: LaunchMode.externalApplication);
@@ -111,11 +107,8 @@ class _ExperienceMapScreenState extends State<ExperienceMapScreen> {
       }
     } catch (e) {
       // If we can't get current location, provide directions without origin
-      final url = _mapsService.getDirectionsUrl(
-        widget.experience.location.latitude,
-        widget.experience.location.longitude,
-      );
-      
+      final url = _mapsService.getDirectionsUrl(widget.experience.location);
+
       final uri = Uri.parse(url);
       if (await canLaunchUrl(uri)) {
         await launchUrl(uri, mode: LaunchMode.externalApplication);

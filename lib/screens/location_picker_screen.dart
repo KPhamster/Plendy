@@ -213,8 +213,8 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
   Future<void> _openDirectionsInGoogleMaps() async {
     if (_selectedLocation == null) return;
 
-    final url = _mapsService.getDirectionsUrl(
-        _selectedLocation!.latitude, _selectedLocation!.longitude);
+    // Pass the entire Location object
+    final url = _mapsService.getDirectionsUrl(_selectedLocation!);
 
     try {
       await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);

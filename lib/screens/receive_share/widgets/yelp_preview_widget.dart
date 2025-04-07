@@ -343,8 +343,9 @@ class _YelpPreviewWidgetState extends State<YelpPreviewWidget> {
                             onPressed: () async {
                               print(
                                   '🧭 DIRECTIONS WIDGET: Getting directions for ${location.latitude}, ${location.longitude}');
-                              final url = widget.mapsService.getDirectionsUrl(
-                                  location.latitude, location.longitude);
+                              // Pass the entire Location object
+                              final url =
+                                  widget.mapsService.getDirectionsUrl(location);
                               print('🧭 DIRECTIONS WIDGET: Opening URL: $url');
                               await widget.launchUrlCallback(url);
                             },

@@ -417,9 +417,9 @@ class _MapsPreviewWidgetState extends State<MapsPreviewWidget> {
                           onPressed: () async {
                             print(
                                 '🧭 DIRECTIONS WIDGET: Getting directions for ${location.latitude}, ${location.longitude}');
-                            final url = widget.mapsService.getDirectionsUrl(
-                                location.latitude,
-                                location.longitude); // Use injected service
+                            // Pass the full location object
+                            final url =
+                                widget.mapsService.getDirectionsUrl(location);
                             print('🧭 DIRECTIONS WIDGET: Opening URL: $url');
                             await widget.launchUrlCallback(url); // Use callback
                           },
