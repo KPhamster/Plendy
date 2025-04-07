@@ -22,6 +22,9 @@ class GoogleMapsService {
   // For more advanced API requests
   final Dio _dio = Dio();
 
+  // Cache for Place Details results keyed by Place ID
+  final Map<String, Location> _placeDetailsCache = {};
+
   // Get the API key securely
   static String get apiKey => ApiSecrets.googleMapsApiKey;
 
@@ -489,6 +492,14 @@ class GoogleMapsService {
 
   /// Get place details by placeId
   Future<Location> getPlaceDetails(String placeId) async {
+    // 1. Check cache first
+    if (_placeDetailsCache.containsKey(placeId)) {
+      print('📍 PLACE DETAILS CACHE HIT for Place ID: $placeId');
+      return _placeDetailsCache[placeId]!;
+    }
+
+    print('📍 PLACE DETAILS CACHE MISS for Place ID: $placeId. Calling API...');
+
     // Default location (used if there's an error)
     Location defaultLocation = Location(
       latitude: 0.0,
@@ -595,18 +606,27 @@ class GoogleMapsService {
               website: websiteUrl, // Save the website URL directly
             );
 
+            // 2. Store successful result in cache before returning
+            _placeDetailsCache[placeId] = locationObj;
+            print('📍 PLACE DETAILS CACHE STORED for Place ID: $placeId');
             return locationObj;
           }
         } else {
-          print('Error in API response: ${data['status']}');
+          // Don't cache API errors like NOT_FOUND, let it retry next time
+          print(
+              'Error in API response: ${data['status']} for Place ID: $placeId');
         }
       } else {
-        print('Failed with status code: ${response.statusCode}');
+        // Don't cache network errors
+        print(
+            'Failed with status code: ${response.statusCode} for Place ID: $placeId');
       }
     } catch (e) {
-      print('Error getting place details: $e');
+      // Don't cache exceptions
+      print('Error getting place details for Place ID $placeId: $e');
     }
 
+    // Return default location if API call failed or returned error status
     return defaultLocation;
   }
 
