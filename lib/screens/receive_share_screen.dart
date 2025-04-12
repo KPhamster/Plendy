@@ -30,6 +30,9 @@ import 'package:geocoding/geocoding.dart' as geocoding;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'receive_share/widgets/experience_card_form.dart';
 
+// Enum to track the source of the shared content
+enum ShareType { none, yelp, maps, instagram, genericUrl, image, video, file }
+
 /// Data class to hold the state of each experience card
 class ExperienceCardData {
   // Form controllers
@@ -71,6 +74,9 @@ class ExperienceCardData {
   // State for preview rebuilding
   String?
       placeIdForPreview; // Tracks the placeId currently shown in preview - RENAMED from currentPlaceIdForPreview
+
+  // Track the original source of the shared content
+  ShareType originalShareType = ShareType.none;
 
   // Constructor can set initial values if needed
   ExperienceCardData();
@@ -460,6 +466,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     if (normalizedUrl.contains('yelp.com/biz') ||
         normalizedUrl.contains('yelp.to/')) {
       print("SHARE DEBUG: Processing as Yelp URL: $normalizedUrl");
+      firstCard.originalShareType = ShareType.yelp; // <<< SET SHARE TYPE
       firstCard.yelpUrlController.text =
           normalizedUrl; // Set normalized URL in the card
       // Use the URL as the initial key for the future
@@ -469,6 +476,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         normalizedUrl.contains('maps.app.goo.gl') ||
         normalizedUrl.contains('goo.gl/maps')) {
       print("SHARE DEBUG: Processing as Google Maps URL: $normalizedUrl");
+      firstCard.originalShareType = ShareType.maps; // <<< SET SHARE TYPE
       // Set the Maps URL in a field (e.g., yelpUrlController temporarily or websiteController?)
       // Let's use yelpUrlController for now as it's often empty for Maps shares
       firstCard.yelpUrlController.text = normalizedUrl;
@@ -1603,8 +1611,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   Future<void> _showLocationPicker(ExperienceCardData card) async {
     FocusScope.of(context).unfocus(); // Dismiss keyboard
 
-    // Determine if the picker should behave differently based on Yelp context
-    bool isFromYelpShare = card.yelpUrlController.text.isNotEmpty;
+    // Use the tracked original share type
+    bool isOriginalShareYelp = card.originalShareType == ShareType.yelp;
+    print(
+        "LocationPicker opening context: originalShareType is ${card.originalShareType}");
 
     final result = await Navigator.push(
       context,
@@ -1613,10 +1623,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           initialLocation: card.selectedLocation,
           // Pass a dummy callback, the update happens below based on the result
           onLocationSelected: (location) {},
-          isFromYelpShare: isFromYelpShare,
+          // isFromYelpShare: isOriginalShareYelp, // No longer needed? Remove if LocationPickerScreen doesn't use it
           // Pass name hint (assuming LocationPickerScreen has this param)
           businessNameHint:
-              isFromYelpShare ? card.titleController.text : null, // UNCOMMENTED
+              isOriginalShareYelp ? card.titleController.text : null,
         ),
       ),
     );
@@ -1627,14 +1637,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
       final Location selectedLocation =
           result is Map ? result['location'] : result as Location;
-      final bool shouldUpdateYelpInfo =
-          result is Map ? result['shouldUpdateYelpInfo'] ?? false : false;
+      // shouldUpdateYelpInfo is effectively handled by the isOriginalShareYelp check now
 
       final provider = context.read<ReceiveShareProvider>();
 
-      // SIMPLIFY: Always treat as shouldUpdateYelpInfo == true if it came from Yelp
-      if (isFromYelpShare) {
-        // Simplified condition: only check if it was Yelp context
+      // Check based on the ORIGINAL share type
+      if (isOriginalShareYelp) {
         print("LocationPicker returned from Yelp context: Updating info.");
         // Fetch detailed Google Place info using the selected Place ID
         try {
@@ -1692,18 +1700,87 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           setState(() {});
         } catch (e) {
           print("Error getting place details or updating card: $e");
-          _showSnackBar(context, "Error updating location details.");
+          _showSnackBar(
+              context, "Error updating location details from Yelp context: $e");
           // Fallback: Update with the basic location selected
           provider.updateCardData(card, location: selectedLocation);
         }
       } else {
         // Just update the location using Provider based on picker selection
-        print("LocationPicker returned (non-Yelp): Basic location update.");
-        // Update card data via provider (assuming provider has searchQuery param)
-        provider.updateCardData(card,
-            location: selectedLocation,
-            // UNCOMMENTED
-            searchQuery: selectedLocation.address ?? 'Location Selected');
+        print(
+            "LocationPicker returned (non-Yelp/Maps/etc. context): Fetching details and updating card fully.");
+        // --- ENHANCED UPDATE LOGIC for non-Yelp contexts ---
+        try {
+          if (selectedLocation.placeId == null ||
+              selectedLocation.placeId!.isEmpty) {
+            print(
+                "Error: Location picked has no Place ID. Performing basic update.");
+            // Basic update if no Place ID
+            provider.updateCardData(card,
+                location: selectedLocation,
+                searchQuery: selectedLocation.address ?? 'Selected Location');
+            return;
+          }
+
+          print(
+              "Fetching details for selected Place ID: ${selectedLocation.placeId}");
+          Location detailedLocation =
+              await _mapsService.getPlaceDetails(selectedLocation.placeId!);
+          print(
+              "Fetched details: ${detailedLocation.displayName}, Addr: ${detailedLocation.address}, Web: ${detailedLocation.website}");
+
+          // Prepare data for update
+          final String title = detailedLocation.getPlaceName();
+          final String? website = detailedLocation.website;
+          final String address = detailedLocation.address ?? '';
+          final String? placeId = detailedLocation.placeId;
+
+          // Clear potentially conflicting caches (use original URL if needed, or Place ID?)
+          // Let's clear based on the *old* placeIdForPreview if it exists
+          if (card.placeIdForPreview != null) {
+            _yelpPreviewFutures.remove(card.placeIdForPreview);
+            print(
+                "Cleared future cache for old placeId: ${card.placeIdForPreview}");
+          }
+          // Consider clearing _businessDataCache too if necessary, based on how keys are formed.
+
+          // Update card data via provider with all fetched details
+          provider.updateCardData(card,
+              location: detailedLocation,
+              title: title,
+              website: website,
+              searchQuery: address,
+              placeIdForPreview: placeId);
+
+          // Update the futures map with the *new* detailed data, keyed by Place ID
+          if (placeId != null && placeId.isNotEmpty) {
+            final String futureKey = placeId;
+            final Map<String, dynamic> newFutureData = {
+              'location': detailedLocation,
+              'placeName': title, // Use consistent naming
+              'website': website,
+              'mapsUrl':
+                  card.yelpUrlController.text, // Keep original URL if needed
+              'photoUrl': detailedLocation.photoUrl,
+              'address': address,
+            };
+            _yelpPreviewFutures[futureKey] = Future.value(newFutureData);
+            print("Updated future cache for new placeId: $futureKey");
+          }
+
+          // Trigger rebuild for the preview widget if it depends on the future map
+          setState(() {});
+          print("LocationPicker update successful for non-Yelp context.");
+        } catch (e) {
+          print(
+              "Error getting place details or updating card in non-Yelp context: $e");
+          _showSnackBar(context, "Error updating location details: $e");
+          // Fallback: Update with the basic location selected if details fetch fails
+          provider.updateCardData(card,
+              location: selectedLocation,
+              searchQuery: selectedLocation.address ?? 'Selected Location');
+        }
+        // --- END ENHANCED UPDATE LOGIC ---
       }
     } else {
       print("LocationPicker returned null or screen unmounted.");

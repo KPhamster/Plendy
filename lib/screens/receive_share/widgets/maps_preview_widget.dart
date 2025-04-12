@@ -562,7 +562,7 @@ class _MapsPreviewWidgetState extends State<MapsPreviewWidget> {
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 16.0),
                     child: Text(
-                      placeName,
+                      'Failed to load location details. Try refreshing.',
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         fontSize: 18, // Slightly smaller font
