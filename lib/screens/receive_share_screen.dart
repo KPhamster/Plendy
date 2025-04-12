@@ -477,9 +477,6 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         normalizedUrl.contains('goo.gl/maps')) {
       print("SHARE DEBUG: Processing as Google Maps URL: $normalizedUrl");
       firstCard.originalShareType = ShareType.maps; // <<< SET SHARE TYPE
-      // Set the Maps URL in a field (e.g., yelpUrlController temporarily or websiteController?)
-      // Let's use yelpUrlController for now as it's often empty for Maps shares
-      firstCard.yelpUrlController.text = normalizedUrl;
       // Use the URL as the key for the future
       _yelpPreviewFutures[normalizedUrl] =
           _getLocationFromMapsUrl(normalizedUrl);
@@ -506,7 +503,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         final websiteUrl = mapData['website'] as String? ?? '';
 
         // Fill the form with the retrieved data
-        _fillFormWithGoogleMapsData(location, placeName, websiteUrl);
+        _fillFormWithGoogleMapsData(location, placeName, websiteUrl, url);
 
         // Show success message
         _showSnackBar(context, 'Location added from Google Maps');
@@ -1397,8 +1394,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   }
 
   // Helper method to fill the form with Google Maps data
-  void _fillFormWithGoogleMapsData(
-      Location location, String placeName, String websiteUrl) {
+  void _fillFormWithGoogleMapsData(Location location, String placeName,
+      String websiteUrl, String originalMapsUrl) {
     // Use provider to get cards
     final provider = context.read<ReceiveShareProvider>();
     final firstCard = provider.experienceCards.isNotEmpty
@@ -1431,8 +1428,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           'location': location,
           'placeName': placeName, // Use the name passed to this function
           'website': websiteUrl,
-          'mapsUrl': firstCard.yelpUrlController
-              .text, // Assuming maps url was stored here temporarily
+          'mapsUrl': originalMapsUrl, // Use the passed original Maps URL
         };
         _yelpPreviewFutures[placeIdKey] =
             Future.value(finalData); // Use the same future map
@@ -1760,7 +1756,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               'placeName': title, // Use consistent naming
               'website': website,
               'mapsUrl':
-                  card.yelpUrlController.text, // Keep original URL if needed
+                  null, // Explicitly null as original Maps URL isn't relevant to the NEW location preview
               'photoUrl': detailedLocation.photoUrl,
               'address': address,
             };
@@ -2350,8 +2346,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         // Fill form using the first card from provider
         final provider = context.read<ReceiveShareProvider>();
         if (provider.experienceCards.isNotEmpty) {
-          _fillFormWithGoogleMapsData(
-              foundLocation, finalName, finalWebsite ?? '');
+          _fillFormWithGoogleMapsData(foundLocation, finalName,
+              finalWebsite ?? '', mapsUrl); // Pass original mapsUrl
         }
 
         // Prepare result map for FutureBuilder
