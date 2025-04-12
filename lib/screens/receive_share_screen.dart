@@ -401,7 +401,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           // Check if this URL is a special Yelp or Maps URL
           if (_isSpecialUrl(foundUrl)) {
             print('DEBUG: Found special content URL: $foundUrl');
-            _processSpecialUrl(foundUrl); // Process the extracted special URL
+            _processSpecialUrl(
+                foundUrl, file); // Pass the whole file for context
             return; // Stop after processing the first special URL found
           } else {
             // Optional: Handle generic URLs if needed, otherwise ignore non-special ones
@@ -446,7 +447,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   }
 
   // Process a SINGLE special URL (Yelp or Maps)
-  void _processSpecialUrl(String url) {
+  void _processSpecialUrl(String url, SharedMediaFile file) {
     print('🔄 PROCESSING START: _processSpecialUrl called with URL: $url');
     final provider = context.read<ReceiveShareProvider>();
     // Ensure at least one card exists before processing
@@ -470,8 +471,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       firstCard.yelpUrlController.text =
           normalizedUrl; // Set normalized URL in the card
       // Use the URL as the initial key for the future
-      _yelpPreviewFutures[normalizedUrl] =
-          _getBusinessFromYelpUrl(normalizedUrl);
+      _yelpPreviewFutures[normalizedUrl] = _getBusinessFromYelpUrl(
+        normalizedUrl,
+        sharedText: file.path, // Pass the full shared text
+      );
     } else if (normalizedUrl.contains('google.com/maps') ||
         normalizedUrl.contains('maps.app.goo.gl') ||
         normalizedUrl.contains('goo.gl/maps')) {
@@ -535,9 +538,17 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   }
 
   /// Extract business data from a Yelp URL and look it up in Google Places API
-  Future<Map<String, dynamic>?> _getBusinessFromYelpUrl(String yelpUrl) async {
+  Future<Map<String, dynamic>?> _getBusinessFromYelpUrl(String yelpUrl,
+      {String? sharedText}) async {
     print(
         '🔄 GET YELP START: _getBusinessFromYelpUrl called for URL: $yelpUrl');
+    if (sharedText != null) {
+      print(
+          '🔄 GET YELP START: Shared text provided (first 100 chars): ${sharedText.substring(0, min(100, sharedText.length))}...');
+    } else {
+      print(
+          '🔄 GET YELP START: No shared text provided (likely called from preview).');
+    }
     print("\n📊 YELP DATA: Starting business lookup for URL: $yelpUrl");
 
     // Reset chain detection flag for this new URL
@@ -606,7 +617,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             isShortUrl = false;
           } else {
             print(
-                '📊 YELP DATA: Could not resolve shortened URL, continuing with original');
+                '📊 YELP DATA: Could not resolve shortened URL or resolved URL is not a /biz/ link.');
           }
         } catch (e) {
           print('📊 YELP DATA: Error resolving shortened URL: $e');
@@ -615,6 +626,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
       // --- URL Extraction Logic ---
       // We now assume `url` holds either the original full URL or the resolved full URL.
+      bool extractedFromUrl = false;
       if (url.contains('/biz/')) {
         // Extract the business part from URL
         final bizPath = url.split('/biz/')[1].split('?')[0];
@@ -784,6 +796,42 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             businessType = lastWord;
             print('📊 YELP DATA: Extracted business type: $businessType');
           }
+        }
+        extractedFromUrl =
+            true; // Mark that we successfully extracted from URL path
+      }
+
+      // --- Shared Text Extraction Fallback ---
+      if (!extractedFromUrl && sharedText != null) {
+        print(
+            '📊 YELP DATA: URL extraction/resolution failed. Attempting name extraction from shared text.');
+        try {
+          int urlIndex = sharedText.indexOf(yelpUrl); // Find original short URL
+          if (urlIndex != -1) {
+            String potentialName = sharedText.substring(0, urlIndex).trim();
+            // Clean common prefixes
+            potentialName = potentialName.replaceAll(
+                RegExp(r'^Check out ', caseSensitive: false), '');
+            potentialName = potentialName.replaceAll(
+                RegExp(r'\s*\n.*$', multiLine: true),
+                ''); // Remove lines after name
+            potentialName = potentialName.trim();
+
+            if (potentialName.isNotEmpty && potentialName.length < 100) {
+              // Basic sanity check
+              businessName = potentialName;
+              print(
+                  '📊 YELP DATA: Extracted business name from shared text: "$businessName"');
+            } else {
+              print(
+                  '📊 YELP DATA: Failed to extract meaningful name from text preceding URL.');
+            }
+          } else {
+            print(
+                '📊 YELP DATA: Could not find the Yelp URL within the shared text to extract preceding name.');
+          }
+        } catch (e) {
+          print('📊 YELP DATA: Error during shared text name extraction: $e');
         }
       }
 
