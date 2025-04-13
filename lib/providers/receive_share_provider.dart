@@ -48,85 +48,93 @@ class ReceiveShareProvider extends ChangeNotifier {
     int index = _experienceCards.indexWhere((c) => c.id == card.id);
     if (index != -1) {
       final targetCard = _experienceCards[index]; // Easier reference
-      print("PROVIDER_DEBUG: Updating card ${targetCard.id}"); // Log card ID
+      // print("PROVIDER_DEBUG (updateCardData ENTRY): Updating card ${targetCard.id}"); // Keep commented for now
+
+      // --- Keep Logs & Preservation ---
+      final String? originalExistingId = targetCard.existingExperienceId;
+      print(
+          "PROVIDER_DEBUG (updateCardData): BEFORE update. Existing ID: $originalExistingId");
+      // --- End Logs & Preservation ---
 
       // Update Location and related fields
       if (location != null) {
-        print(
-            "PROVIDER_DEBUG: Received location: ${location.displayName} (${location.latitude}, ${location.longitude})");
-        print("PROVIDER_DEBUG: Location website: ${location.website}");
-        print(
-            "PROVIDER_DEBUG: Current websiteController text: '${targetCard.websiteController.text}'");
+        // print("PROVIDER_DEBUG: Received location: ${location.displayName} (${location.latitude}, ${location.longitude})");
+        // print("PROVIDER_DEBUG: Location website: ${location.website}");
+        // print("PROVIDER_DEBUG: Current websiteController text: '${targetCard.websiteController.text}'");
 
         targetCard.selectedLocation = location;
         // Update search query only if it's empty or location address is different
         if (targetCard.searchController.text.isEmpty ||
             targetCard.searchController.text != (location.address ?? '')) {
-          print(
-              "PROVIDER_DEBUG: Updating searchController text to: '${location.address ?? ''}'");
+          // print("PROVIDER_DEBUG: Updating searchController text to: '${location.address ?? ''}'");
           targetCard.searchController.text = location.address ?? '';
         }
         // Update title only if it's empty or location display name is different
         if (targetCard.titleController.text.isEmpty ||
             targetCard.titleController.text != location.getPlaceName()) {
-          print(
-              "PROVIDER_DEBUG: Updating titleController text to: '${location.getPlaceName()}'");
+          // print("PROVIDER_DEBUG: Updating titleController text to: '${location.getPlaceName()}'");
           targetCard.titleController.text =
               location.getPlaceName(); // <-- Updates title
         }
         // Update website only if it's empty or location website is different
         if (targetCard.websiteController.text.isEmpty ||
             targetCard.websiteController.text != (location.website ?? '')) {
-          print(
-              "PROVIDER_DEBUG: Updating websiteController text to: '${location.website ?? ''}'");
+          // print("PROVIDER_DEBUG: Updating websiteController text to: '${location.website ?? ''}'");
           targetCard.websiteController.text =
               location.website ?? ''; // <-- Updates website
         }
-      } else {
-        print("PROVIDER_DEBUG: No location object provided for update.");
-      }
+      } // else {
+      // print("PROVIDER_DEBUG: No location object provided for update.");
+      // }
 
       // Update Title (Explicitly passed)
       if (title != null) {
-        print(
-            "PROVIDER_DEBUG: Explicitly updating titleController text to: '$title'");
+        // print("PROVIDER_DEBUG: Explicitly updating titleController text to: '$title'");
         targetCard.titleController.text = title;
       }
 
       // Update Website (Explicitly passed)
       if (website != null) {
-        print(
-            "PROVIDER_DEBUG: Explicitly updating websiteController text to: '$website'");
+        // print("PROVIDER_DEBUG: Explicitly updating websiteController text to: '$website'");
         targetCard.websiteController.text = website;
       }
 
       // Update Search Query (Explicitly passed)
       if (searchQuery != null) {
-        print(
-            "PROVIDER_DEBUG: Explicitly updating searchController text to: '$searchQuery'");
+        // print("PROVIDER_DEBUG: Explicitly updating searchController text to: '$searchQuery'");
         targetCard.searchController.text = searchQuery;
       }
 
       // Update Place ID for Preview
       if (placeIdForPreview != null) {
-        print(
-            "PROVIDER_DEBUG: Updating placeIdForPreview to: '$placeIdForPreview'");
+        // print("PROVIDER_DEBUG: Updating placeIdForPreview to: '$placeIdForPreview'");
         targetCard.placeIdForPreview = placeIdForPreview;
       }
 
-      print("PROVIDER_DEBUG: --- Update Check ---");
+      // --- Keep Logs & Restoration ---
       print(
-          "PROVIDER_DEBUG: Final card.selectedLocation: ${targetCard.selectedLocation?.displayName}");
+          "PROVIDER_DEBUG (updateCardData): AFTER update. Current Existing ID: ${targetCard.existingExperienceId}");
+      // Just in case, ensure the original ID wasn't overwritten if it existed
+      if (originalExistingId != null &&
+          targetCard.existingExperienceId == null) {
+        print(
+            "PROVIDER_DEBUG (updateCardData): WARNING! Existing ID was lost during update. Restoring.");
+        targetCard.existingExperienceId = originalExistingId;
+      }
       print(
-          "PROVIDER_DEBUG: Final titleController: '${targetCard.titleController.text}'");
-      print(
-          "PROVIDER_DEBUG: Final websiteController: '${targetCard.websiteController.text}'");
-      print("PROVIDER_DEBUG: --- End Update Check ---");
+          "PROVIDER_DEBUG (updateCardData): FINAL Existing ID for card ${targetCard.id}: ${targetCard.existingExperienceId}");
+      // --- END LOGS & RESTORATION ---
+
+      // print("PROVIDER_DEBUG: --- Update Check ---");
+      // print("PROVIDER_DEBUG: Final card.selectedLocation: ${targetCard.selectedLocation?.displayName}");
+      // print("PROVIDER_DEBUG: Final titleController: '${targetCard.titleController.text}'");
+      // print("PROVIDER_DEBUG: Final websiteController: '${targetCard.websiteController.text}'");
+      // print("PROVIDER_DEBUG: --- End Update Check ---");
 
       notifyListeners(); // Notify that card data has changed
-    } else {
-      print("PROVIDER_DEBUG: Card with ID ${card.id} not found for update.");
-    }
+    } // else {
+    // print("PROVIDER_DEBUG: Card with ID ${card.id} not found for update.");
+    // }
   }
 
   // Update a card's data based on a selected existing Experience
@@ -135,6 +143,11 @@ class ReceiveShareProvider extends ChangeNotifier {
     int index = _experienceCards.indexWhere((c) => c.id == cardId);
     if (index != -1) {
       final targetCard = _experienceCards[index];
+
+      // --- Keep Log ---
+      print(
+          "PROVIDER_DEBUG (updateCardWithExisting): Setting existingExperienceId to '${selectedExperience.id}' for card ${targetCard.id}");
+      // --- END Log ---
 
       // Update the fields in the ExperienceCardData
       targetCard.existingExperienceId = selectedExperience.id;
@@ -153,13 +166,11 @@ class ReceiveShareProvider extends ChangeNotifier {
       // Optionally update placeIdForPreview if the location has one
       targetCard.placeIdForPreview = selectedExperience.location.placeId;
 
-      print(
-          'PROVIDER_DEBUG: Updated card $cardId with existing experience ${selectedExperience.id} (${selectedExperience.name})');
+      // print('PROVIDER_DEBUG: Updated card $cardId with existing experience ${selectedExperience.id} (${selectedExperience.name})');
       notifyListeners();
-    } else {
-      print(
-          'PROVIDER_DEBUG: Card with ID $cardId not found for update with existing experience.');
-    }
+    } // else {
+    // print('PROVIDER_DEBUG: Card with ID $cardId not found for update with existing experience.');
+    // }
   }
 
   // Notify listeners that a specific card's data might have changed externally
