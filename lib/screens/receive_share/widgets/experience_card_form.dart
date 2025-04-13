@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:plendy/screens/receive_share_screen.dart'; // For ExperienceCardData
-import 'package:plendy/models/experience.dart'; // For ExperienceType and Location
+import 'package:plendy/models/experience.dart'
+    show Location; // ONLY import Location
+import 'package:plendy/models/user_experience_type.dart'; // ADDED
 import 'package:plendy/screens/location_picker_screen.dart'; // For Location Picker
 import 'package:plendy/services/google_maps_service.dart'; // If needed for location updates
 import 'package:plendy/widgets/google_maps_widget.dart'; // If needed
@@ -20,6 +22,7 @@ class ExperienceCardForm extends StatefulWidget {
   final ExperienceCardData cardData;
   final bool isFirstCard; // To potentially hide remove button
   final bool canRemove; // Explicit flag to control remove button visibility
+  final List<UserExperienceType> userExperienceTypes; // ADDED
   final OnRemoveCallback onRemove;
   final OnLocationSelectCallback onLocationSelect;
   final OnSelectSavedExperienceCallback onSelectSavedExperience;
@@ -31,6 +34,7 @@ class ExperienceCardForm extends StatefulWidget {
     required this.cardData,
     required this.isFirstCard,
     required this.canRemove,
+    required this.userExperienceTypes, // ADDED
     required this.onRemove,
     required this.onLocationSelect,
     required this.onSelectSavedExperience,
@@ -46,7 +50,6 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
   // Local state for UI elements directly managed here
   bool _isExpanded = true;
   bool _locationEnabled = true;
-  ExperienceType _selectedType = ExperienceType.restaurant;
 
   // Service needed for location updates if interaction happens within the form
   final GoogleMapsService _mapsService = GoogleMapsService();
@@ -57,7 +60,6 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
     // Initialize local state from widget.cardData
     _isExpanded = widget.cardData.isExpanded;
     _locationEnabled = widget.cardData.locationEnabled;
-    _selectedType = widget.cardData.selectedType;
 
     // Add listeners to controllers from widget.cardData
     // to trigger rebuilds for suffix icons, collapsed header title etc.
@@ -78,12 +80,6 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
     super.didUpdateWidget(oldWidget);
 
     // Update local state based on incoming widget data if it changed
-    if (widget.cardData.selectedType != oldWidget.cardData.selectedType) {
-      // print("FORM_DEBUG (${widget.cardData.id}): Type changed");
-      setState(() {
-        _selectedType = widget.cardData.selectedType;
-      });
-    }
     if (widget.cardData.locationEnabled != oldWidget.cardData.locationEnabled) {
       setState(() {
         _locationEnabled = widget.cardData.locationEnabled;
@@ -93,6 +89,10 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
       setState(() {
         _isExpanded = widget.cardData.isExpanded;
       });
+    }
+    if (widget.cardData.selectedUserExperienceTypeName !=
+        oldWidget.cardData.selectedUserExperienceTypeName) {
+      _triggerRebuild();
     }
 
     // If the controller instances themselves have changed (e.g., after resetExperienceCards)
@@ -167,6 +167,19 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
         );
       }
     }
+  }
+
+  // ADDED: Helper to find icon for selected type
+  String _getIconForSelectedType() {
+    final selectedName = widget.cardData.selectedUserExperienceTypeName;
+    if (selectedName == null) {
+      return '❓'; // Default icon
+    }
+    final matchingType = widget.userExperienceTypes.firstWhere(
+      (type) => type.name == selectedName,
+      orElse: () => UserExperienceType(id: '', name: '', icon: '❓'), // Fallback
+    );
+    return matchingType.icon;
   }
 
   // Build method - Logic from _buildExperienceCard goes here
@@ -391,27 +404,44 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                     SizedBox(height: 16),
 
                     // Experience type selection
-                    DropdownButtonFormField<ExperienceType>(
-                      value: _selectedType,
+                    DropdownButtonFormField<String>(
+                      value: widget.cardData.selectedUserExperienceTypeName,
                       decoration: InputDecoration(
                         labelText: 'Experience Type',
                         border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.category),
+                        prefixIcon: Padding(
+                          padding: const EdgeInsets.all(12.0),
+                          child: Text(
+                            _getIconForSelectedType(),
+                            style: TextStyle(fontSize: 20),
+                          ),
+                        ),
                       ),
-                      items: ExperienceType.values.map((type) {
-                        return DropdownMenuItem(
-                          value: type,
-                          child: Text(type.displayName),
+                      items: widget.userExperienceTypes.map((type) {
+                        return DropdownMenuItem<String>(
+                          value: type.name,
+                          child: Row(
+                            children: [
+                              Text(type.icon, style: TextStyle(fontSize: 18)),
+                              SizedBox(width: 8),
+                              Text(type.name),
+                            ],
+                          ),
                         );
                       }).toList(),
                       onChanged: (value) {
                         if (value != null) {
-                          setState(() {
-                            _selectedType = value;
-                          });
-                          widget.cardData.selectedType = value; // Update model
-                          widget.onUpdate(); // Notify parent
+                          widget.cardData.selectedUserExperienceTypeName =
+                              value;
+                          setState(() {});
+                          widget.onUpdate();
                         }
+                      },
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Please select a type';
+                        }
+                        return null;
                       },
                     ),
                     SizedBox(height: 16),

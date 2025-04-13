@@ -13,6 +13,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:provider/provider.dart'; // Import Provider
 import '../providers/receive_share_provider.dart'; // Import the provider
 import '../models/experience.dart';
+import '../models/user_experience_type.dart'; // ADDED Import
 import '../services/experience_service.dart';
 import '../services/google_maps_service.dart';
 import '../widgets/google_maps_widget.dart';
@@ -43,7 +44,7 @@ class ExperienceCardData {
       TextEditingController(); // Added
   final TextEditingController searchController = TextEditingController();
   final TextEditingController locationController = TextEditingController();
-  final TextEditingController categoryController = TextEditingController();
+  // REMOVED: final TextEditingController categoryController = TextEditingController();
   final TextEditingController notesController =
       TextEditingController(); // Added
 
@@ -54,7 +55,9 @@ class ExperienceCardData {
   final FocusNode titleFocusNode = FocusNode();
 
   // Experience type selection
-  ExperienceType selectedType = ExperienceType.restaurant;
+  // REMOVED: ExperienceType selectedType = ExperienceType.restaurant;
+  String?
+      selectedUserExperienceTypeName; // ADDED: Stores the name of the selected type
 
   // Rating
   double rating = 0.0; // Added (or use double? rating)
@@ -85,7 +88,14 @@ class ExperienceCardData {
   // --- END ADDED ---
 
   // Constructor can set initial values if needed
-  ExperienceCardData();
+  // Set default experience type name
+  ExperienceCardData() {
+    // Initialize with the name of the first default type, or 'Other'
+    selectedUserExperienceTypeName =
+        UserExperienceType.defaultTypes.keys.isNotEmpty
+            ? UserExperienceType.defaultTypes.keys.first
+            : 'Other';
+  }
 
   // Dispose resources
   void dispose() {
@@ -94,7 +104,7 @@ class ExperienceCardData {
     websiteController.dispose(); // Added
     searchController.dispose();
     locationController.dispose();
-    categoryController.dispose();
+    // REMOVED: categoryController.dispose();
     notesController.dispose(); // Added
     titleFocusNode.dispose();
   }
@@ -161,6 +171,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   // Flag to track if a chain was detected from URL structure
   bool _chainDetectedFromUrl = false;
 
+  // ADDED: State for user experience types
+  Future<List<UserExperienceType>>? _userExperienceTypesFuture;
+  List<UserExperienceType> _userExperienceTypes = []; // Cache the loaded types
+
   @override
   void initState() {
     super.initState();
@@ -169,6 +183,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     // Register observer for app lifecycle events
     WidgetsBinding.instance.addObserver(this);
+
+    // ADDED: Fetch user experience types
+    _loadUserExperienceTypes();
 
     // Access provider - DO NOT listen here, just need read access
     // final provider = context.read<ReceiveShareProvider>();
@@ -230,6 +247,56 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     });
   }
 
+  // ADDED: Method to load user experience types
+  void _loadUserExperienceTypes() {
+    _userExperienceTypesFuture = _experienceService.getUserExperienceTypes();
+    _userExperienceTypesFuture!.then((types) {
+      if (mounted) {
+        setState(() {
+          _userExperienceTypes = types;
+          // Optionally, update the default type in cards if the list is loaded
+          // and the default isn't present (e.g., if 'Other' was customized)
+          _updateCardDefaultTypesIfNeeded(types);
+        });
+      }
+    }).catchError((error) {
+      print("Error loading user experience types: $error");
+      if (mounted) {
+        setState(() {
+          // Handle error state, maybe show defaults or an error message
+          _userExperienceTypes =
+              UserExperienceType.createInitialTypes(); // Fallback
+        });
+        _showSnackBar(
+            context, "Error loading your custom types. Using defaults.");
+      }
+    });
+  }
+
+  // ADDED: Helper to ensure card default type exists in loaded list
+  void _updateCardDefaultTypesIfNeeded(List<UserExperienceType> loadedTypes) {
+    final provider = context.read<ReceiveShareProvider>();
+    if (provider.experienceCards.isEmpty || loadedTypes.isEmpty) return;
+
+    final firstLoadedTypeName = loadedTypes.first.name;
+
+    for (var card in provider.experienceCards) {
+      // If the card's current type name isn't in the loaded list,
+      // reset it to the first available loaded type.
+      if (!loadedTypes
+          .any((t) => t.name == card.selectedUserExperienceTypeName)) {
+        print(
+            "Card default type '${card.selectedUserExperienceTypeName}' not found in loaded list. Resetting to '$firstLoadedTypeName'.");
+        // Use provider method if available, otherwise update directly (requires setState)
+        // provider.updateCardData(card, selectedUserExperienceTypeName: firstLoadedTypeName);
+        // OR, if no provider method:
+        card.selectedUserExperienceTypeName = firstLoadedTypeName;
+      }
+    }
+    // If direct update was used, trigger rebuild:
+    // setState(() {});
+  }
+
   // Setup the intent listener
   void _setupIntentListener() {
     // Cancel any existing subscription first
@@ -289,6 +356,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     if (state == AppLifecycleState.resumed) {
       print("SHARE DEBUG: App resumed - recreating intent listener");
       _setupIntentListener();
+      // ADDED: Reload user types on resume in case they were changed elsewhere
+      _loadUserExperienceTypes();
 
       // Also check for any pending intents
       ReceiveSharingIntent.instance.getInitialMedia().then((value) {
@@ -302,7 +371,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             // Reset UI for new content NOT related to cards
             _businessDataCache.clear();
             _yelpPreviewFutures.clear();
-            _addExperienceCard();
+            // _addExperienceCard(); // Card is added by provider reset if needed
             _processSharedContent(_currentSharedFiles);
             _showSnackBar(context, "New content received after resume!");
           });
@@ -1503,18 +1572,31 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
   // Handle experience save along with shared content
   Future<void> _saveExperience() async {
-    // Get cards from provider
     final provider = context.read<ReceiveShareProvider>();
     final experienceCards = provider.experienceCards;
 
-    // Validate all forms within the cards
+    // --- ADDED: Check if types are loaded ---
+    if (_userExperienceTypes.isEmpty) {
+      _showSnackBar(context, 'Experience types not loaded yet. Please wait.');
+      return;
+    }
+    // --- END ADDED ---
+
     bool allValid = true;
     for (var card in experienceCards) {
       if (!card.formKey.currentState!.validate()) {
         allValid = false;
-        // Optionally break or collect all errors
         break;
       }
+      // --- ADDED: Validate selected type name is set ---
+      if (card.selectedUserExperienceTypeName == null ||
+          card.selectedUserExperienceTypeName!.isEmpty) {
+        _showSnackBar(
+            context, 'Please select an experience type for each card.');
+        allValid = false;
+        break;
+      }
+      // --- END ADDED ---
     }
 
     if (!allValid) {
@@ -1522,8 +1604,6 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       return;
     }
 
-    // Check for required locations if enabled
-    // Use provider list here
     for (int i = 0; i < experienceCards.length; i++) {
       final card = experienceCards[i];
       if (card.locationEnabled && card.selectedLocation == null) {
@@ -1542,58 +1622,54 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     List<String> errors = [];
 
     try {
-      final now = DateTime.now(); // Used for local model timestamp if needed
-      // Extract the paths from the currently shared files ONCE
+      final now = DateTime.now();
       final List<String> newMediaPaths =
           _currentSharedFiles.map((f) => f.path).toList();
 
-      // Save each experience using data from provider list
       for (final card in experienceCards) {
         try {
-          // --- ENSURE LOG IS PRESENT ---
           print(
               "SAVE_DEBUG: Processing card ${card.id}. ExistingExperienceId: ${card.existingExperienceId}");
-          // --- END LOG ---
 
-          // Inner try-catch for individual card processing
           final Location defaultLocation = Location(
             latitude: 0.0,
             longitude: 0.0,
             address: 'No location specified',
           );
 
-          // Determine location for saving
           final Location locationToSave =
               (card.locationEnabled && card.selectedLocation != null)
                   ? card.selectedLocation!
                   : defaultLocation;
 
-          // Determine notes
           final String notes = card.notesController.text.trim();
+
+          // --- UPDATED: Use selectedUserExperienceTypeName ---
+          final String typeNameToSave = card.selectedUserExperienceTypeName!;
+          // --- END UPDATED ---
 
           if (card.existingExperienceId == null ||
               card.existingExperienceId!.isEmpty) {
             // --- CREATE NEW EXPERIENCE ---
             Experience newExperience = Experience(
-              id: '', // ID will be assigned by Firestore
+              id: '',
               name: card.titleController.text,
-              // Use notes as description if provided, otherwise a default
               description:
                   notes.isNotEmpty ? notes : 'Created from shared content',
               location: locationToSave,
-              type: card.selectedType,
+              // --- UPDATED ---
+              userExperienceTypeName: typeNameToSave,
+              // --- END UPDATED ---
               yelpUrl: card.yelpUrlController.text.isNotEmpty
                   ? card.yelpUrlController.text.trim()
                   : null,
               website: card.websiteController.text.isNotEmpty
                   ? card.websiteController.text.trim()
                   : null,
-              additionalNotes: notes.isNotEmpty ? notes : null, // Store notes
-              sharedMediaPaths: newMediaPaths, // Add the new shared paths
-              createdAt: now, // Firestore uses server timestamp
-              updatedAt: now, // Firestore uses server timestamp
-              // Fields not set from card: rating, yelpRating/Count, googleUrl/Rating/Count,
-              // plendyRating/Count, imageUrls, reelIds, followerIds, phoneNumber, openingHours, tags, priceRange
+              additionalNotes: notes.isNotEmpty ? notes : null,
+              sharedMediaPaths: newMediaPaths,
+              createdAt: now,
+              updatedAt: now,
             );
 
             await _experienceService.createExperience(newExperience);
@@ -1604,36 +1680,34 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                 .getExperience(card.existingExperienceId!);
 
             if (existingExperience != null) {
-              // Combine and deduplicate media paths
               final Set<String> combinedPathsSet = {
-                ...?existingExperience.sharedMediaPaths, // Add existing paths
-                ...newMediaPaths // Add new paths
+                ...?existingExperience.sharedMediaPaths,
+                ...newMediaPaths
               };
               final List<String> updatedMediaPaths = combinedPathsSet.toList();
 
               Experience updatedExperience = existingExperience.copyWith(
                 name: card.titleController.text,
-                location: locationToSave, // Update location based on card state
-                // type: card.selectedType, // Typically type shouldn't change easily, omit for now
+                location: locationToSave,
+                // --- UPDATED ---
+                userExperienceTypeName: typeNameToSave,
+                // --- END UPDATED ---
                 yelpUrl: card.yelpUrlController.text.isNotEmpty
                     ? card.yelpUrlController.text.trim()
                     : null,
                 website: card.websiteController.text.isNotEmpty
                     ? card.websiteController.text.trim()
                     : null,
-                // Update description only if notes were provided
                 description:
                     notes.isNotEmpty ? notes : existingExperience.description,
-                additionalNotes:
-                    notes.isNotEmpty ? notes : null, // Update notes
-                sharedMediaPaths: updatedMediaPaths, // Set combined list
-                updatedAt: now, // Service handles server timestamp
+                additionalNotes: notes.isNotEmpty ? notes : null,
+                sharedMediaPaths: updatedMediaPaths,
+                updatedAt: now,
               );
 
               await _experienceService.updateExperience(updatedExperience);
               updateCount++;
             } else {
-              // Handle case where existing experience ID was set but not found
               print(
                   'Error: Could not find existing experience with ID: ${card.existingExperienceId}');
               errors.add(
@@ -1641,13 +1715,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             }
           }
         } catch (e) {
-          // Catch errors for individual card processing
           print('Error processing card "${card.titleController.text}": $e');
           errors.add('Error saving "${card.titleController.text}".');
         }
       } // End for loop
 
-      // --- Show Final Snackbar ---
       String message;
       if (errors.isEmpty) {
         message = '';
@@ -1655,30 +1727,22 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           message += '$successCount experience(s) created. ';
         if (updateCount > 0) message += '$updateCount experience(s) updated. ';
         message = message.trim();
-        if (message.isEmpty) message = 'No changes saved.'; // Fallback
+        if (message.isEmpty) message = 'No changes saved.';
       } else {
         message = 'Completed with errors: ';
         if (successCount > 0) message += '$successCount created. ';
         if (updateCount > 0) message += '$updateCount updated. ';
         message += '${errors.length} failed.';
-        // Optionally log detailed errors
         print('Save errors: ${errors.join('\n')}');
       }
       _showSnackBar(context, message);
 
-      // Call the onCancel callback to close the screen
-      // Only close if there were no errors?
-      // Or always close after attempting save?
-      // Let's close regardless, errors are notified via snackbar.
       widget.onCancel();
     } catch (e) {
-      // Catch outer errors (validation, provider, etc.)
       print('Error saving experiences: $e');
       _showSnackBar(context, 'Error saving experiences: $e');
     } finally {
-      // Ensure saving state is reset even if errors occur
       if (mounted) {
-        // Check if widget is still mounted before calling setState
         setState(() {
           _isSaving = false;
         });
@@ -1957,10 +2021,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
   @override
   Widget build(BuildContext context) {
-    // Get the provider instance - listen for changes here
     final shareProvider = context.watch<ReceiveShareProvider>();
-    final experienceCards =
-        shareProvider.experienceCards; // Get list from provider
+    final experienceCards = shareProvider.experienceCards;
 
     return _wrapWithWillPopScope(Scaffold(
       appBar: AppBar(
@@ -2001,220 +2063,247 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                   ],
                 ),
               )
-            : Column(
-                children: [
-                  Expanded(
-                    child: SingleChildScrollView(
-                      // Add padding around the scrollable content
-                      padding: const EdgeInsets.only(
-                          bottom: 80), // Prevent overlap with bottom buttons
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          // Display the shared content preview section
-                          if (_currentSharedFiles.isEmpty)
-                            const Padding(
-                              padding: EdgeInsets.all(16.0),
-                              child: Center(
-                                  child: Text('No shared content received')),
-                            )
-                          else
-                            Padding(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 16.0, vertical: 8.0),
-                              child: ListView.builder(
-                                // Use a Column instead of ListView for previews if only one?
-                                // Or keep ListView for potential multi-file shares later
-                                padding: EdgeInsets.zero,
-                                shrinkWrap: true,
-                                physics: const NeverScrollableScrollPhysics(),
-                                itemCount: _currentSharedFiles
-                                    .length, // Show preview for each shared item
-                                itemBuilder: (context, index) {
-                                  final file = _currentSharedFiles[index];
-                                  // Pass the first card from the provider to previews if it exists
-                                  // Use provider list here
-                                  final firstCard = experienceCards.isNotEmpty
-                                      ? experienceCards.first
-                                      : null;
-                                  // Wrap preview in a Card for visual separation
-                                  return Card(
-                                    elevation: 2.0,
-                                    margin: const EdgeInsets.only(bottom: 12),
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        // Build the appropriate preview based on type
-                                        if (firstCard != null)
-                                          _buildMediaPreview(file, firstCard)
-                                        else
-                                          // Fallback if no cards exist (shouldn't happen with current logic)
-                                          _buildMediaPreview(file,
-                                              ExperienceCardData()), // Pass dummy data
-                                      ],
-                                    ),
-                                  );
-                                },
+            // --- ADDED: FutureBuilder for User Types ---
+            : FutureBuilder<List<UserExperienceType>>(
+                future: _userExperienceTypesFuture,
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+                  if (snapshot.hasError) {
+                    // Already handled error in _loadUserExperienceTypes, show the UI with defaults
+                    print(
+                        "FutureBuilder Error (already handled): ${snapshot.error}");
+                    // Proceed to build UI with potentially default types loaded in _userExperienceTypes
+                  }
+                  // snapshot.hasData or error handled (defaults loaded)
+                  // Now _userExperienceTypes should be populated
+
+                  // --- ORIGINAL BODY CONTENT WRAPPED ---
+                  return Column(
+                    children: [
+                      Expanded(
+                        child: SingleChildScrollView(
+                          padding: const EdgeInsets.only(bottom: 80),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              // Preview section (no change needed here)
+                              if (_currentSharedFiles.isEmpty)
+                                // --- Restored Placeholder Structure ---
+                                const Padding(
+                                  padding: EdgeInsets.all(16.0),
+                                  child: Center(
+                                      child:
+                                          Text('No shared content received')),
+                                )
+                              // --- End Placeholder ---
+                              else
+                                // --- Restored Preview Padding/Structure ---
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 16.0, vertical: 8.0),
+                                  child: ListView.builder(
+                                    padding: EdgeInsets.zero,
+                                    shrinkWrap: true,
+                                    physics:
+                                        const NeverScrollableScrollPhysics(),
+                                    itemCount: _currentSharedFiles.length,
+                                    itemBuilder: (context, index) {
+                                      final file = _currentSharedFiles[index];
+                                      final firstCard =
+                                          experienceCards.isNotEmpty
+                                              ? experienceCards.first
+                                              : null;
+                                      return Card(
+                                        elevation: 2.0,
+                                        margin:
+                                            const EdgeInsets.only(bottom: 12),
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            if (firstCard != null)
+                                              _buildMediaPreview(
+                                                  file, firstCard)
+                                            else
+                                              _buildMediaPreview(
+                                                  file, ExperienceCardData()),
+                                          ],
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                ),
+                              // --- End Preview Structure ---
+
+                              // Experience association form section
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 16.0),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    if (experienceCards.isNotEmpty)
+                                      // --- Restored Title Placeholder ---
+                                      Padding(
+                                        padding: const EdgeInsets.only(
+                                            top: 16.0, bottom: 8.0),
+                                        child: Text(
+                                            experienceCards.length > 1
+                                                ? 'Associated Experiences'
+                                                : 'Associate Experience',
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .titleLarge),
+                                      )
+                                    // --- End Title Placeholder ---
+                                    else
+                                      // --- Restored No Cards Title ---
+                                      const Padding(
+                                          padding: EdgeInsets.only(
+                                              top: 16.0, bottom: 8.0),
+                                          child: Text(
+                                              "No Experience Card")), // <<< ADDED COMMA HERE
+                                    // --- End No Cards Title ---
+
+                                    const SizedBox(height: 8),
+
+                                    if (experienceCards.isEmpty)
+                                      // --- Restored Error Placeholder ---
+                                      const Center(
+                                          child: Padding(
+                                        padding: EdgeInsets.symmetric(
+                                            vertical: 20.0),
+                                        child: Text(
+                                            "Error: No experience card available.",
+                                            style:
+                                                TextStyle(color: Colors.red)),
+                                      ))
+                                    // --- End Error Placeholder ---
+                                    else
+                                      ListView.builder(
+                                          padding: EdgeInsets.zero,
+                                          shrinkWrap: true,
+                                          physics:
+                                              const NeverScrollableScrollPhysics(),
+                                          itemCount: experienceCards.length,
+                                          itemBuilder: (context, i) {
+                                            final card = experienceCards[i];
+                                            return ExperienceCardForm(
+                                              key: ValueKey(card.id),
+                                              cardData: card,
+                                              isFirstCard: i == 0,
+                                              canRemove:
+                                                  experienceCards.length > 1,
+                                              userExperienceTypes:
+                                                  _userExperienceTypes, // Parameter error here is expected
+                                              onRemove: _removeExperienceCard,
+                                              onLocationSelect:
+                                                  _showLocationPicker,
+                                              onSelectSavedExperience:
+                                                  _selectSavedExperienceForCard,
+                                              onUpdate: () => setState(() {}),
+                                              formKey: card.formKey,
+                                            );
+                                          }),
+
+                                    // Add another experience button
+                                    // --- Restored _isSpecialUrl check ---
+                                    if (!_isSpecialUrl(_currentSharedFiles
+                                            .isNotEmpty
+                                        ? _extractFirstUrl(_currentSharedFiles
+                                                .first.path) ??
+                                            ''
+                                        : ''))
+                                      // --- End Restored Check ---
+                                      // --- Restored Button Placeholder ---
+                                      Padding(
+                                        padding: const EdgeInsets.only(
+                                            top: 12.0, bottom: 16.0),
+                                        child: Center(
+                                          child: OutlinedButton.icon(
+                                            icon: const Icon(Icons.add),
+                                            label: const Text(
+                                                'Add Another Experience'),
+                                            onPressed: _addExperienceCard,
+                                            style: OutlinedButton.styleFrom(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                      vertical: 12,
+                                                      horizontal: 24),
+                                              side: BorderSide(
+                                                  color: Theme.of(context)
+                                                      .colorScheme
+                                                      .primary),
+                                            ),
+                                          ),
+                                        ),
+                                      )
+                                    // --- End Button Placeholder ---
+                                    ,
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      // Action buttons (Save/Cancel) - Fixed at the bottom
+                      // --- Restored Buttons Container ---
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16.0, vertical: 12.0),
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).cardColor,
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.1),
+                              spreadRadius: 0,
+                              blurRadius: 4,
+                              offset: const Offset(0, -2),
+                            ),
+                          ],
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            OutlinedButton(
+                              onPressed: widget.onCancel,
+                              child: const Text('Cancel'),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: Colors.grey[700],
                               ),
                             ),
-
-                          // Experience association form section
-                          Padding(
-                            padding:
-                                const EdgeInsets.symmetric(horizontal: 16.0),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                if (experienceCards.isNotEmpty)
-                                  Padding(
-                                    padding: const EdgeInsets.only(
-                                        top: 16.0, bottom: 8.0),
-                                    child: Text(
-                                        experienceCards.length > 1
-                                            ? 'Associated Experiences'
-                                            : 'Associate Experience',
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .titleLarge),
-                                  )
-                                else // Show if no cards (e.g., error state)
-                                  const Padding(
-                                      padding: EdgeInsets.only(
-                                          top: 16.0, bottom: 8.0),
-                                      child: Text("No Experience Card")),
-
-                                const SizedBox(height: 8),
-
-                                // Use AnimatedList or similar for smoother add/remove?
-                                // For now, just rebuild the list from provider state
-                                if (experienceCards.isEmpty)
-                                  Center(
-                                      child: Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                        vertical: 20.0),
-                                    child: Text(
-                                        "Error: No experience card available.",
-                                        style: TextStyle(color: Colors.red)),
-                                  ))
-                                else
-                                  ListView.builder(
-                                      padding: EdgeInsets.zero,
-                                      shrinkWrap: true,
-                                      physics:
-                                          const NeverScrollableScrollPhysics(),
-                                      itemCount: experienceCards.length,
-                                      itemBuilder: (context, i) {
-                                        final card = experienceCards[i];
-                                        return ExperienceCardForm(
-                                          // Use a unique key based on the card's ID
-                                          key: ValueKey(card.id),
-                                          cardData: card,
-                                          isFirstCard: i == 0,
-                                          canRemove: experienceCards.length > 1,
-                                          // Pass methods directly (assuming correct signature in form widget)
-                                          onRemove: _removeExperienceCard,
-                                          onLocationSelect: _showLocationPicker,
-                                          // --- ADDED: Pass the new select function ---
-                                          onSelectSavedExperience:
-                                              _selectSavedExperienceForCard,
-                                          // --- END ADDED ---
-                                          onUpdate: () => setState(
-                                              () {}), // Trigger rebuild of ReceiveShareScreen
-                                          formKey: card
-                                              .formKey, // Pass the key from the card data
-                                          // Pass maps service if needed by form (e.g., for internal search)
-                                          // mapsService: _mapsService,
-                                        );
-                                      }),
-
-                                // Add another experience button - only show if not special content
-                                if (!_isSpecialUrl(_currentSharedFiles
-                                        .isNotEmpty
-                                    ? _extractFirstUrl(
-                                            _currentSharedFiles.first.path) ??
-                                        ''
-                                    : '')) // Check if first file content contains a special URL
-                                  Padding(
-                                    padding: const EdgeInsets.only(
-                                        top: 12.0,
-                                        bottom: 16.0), // Adjust spacing
-                                    child: Center(
-                                      // Center the button
-                                      child: OutlinedButton.icon(
-                                        icon: const Icon(Icons.add),
-                                        label: const Text(
-                                            'Add Another Experience'),
-                                        // Use the corrected method name
-                                        onPressed: _addExperienceCard,
-                                        style: OutlinedButton.styleFrom(
-                                          // foregroundColor: Colors.blue,
-                                          padding: const EdgeInsets.symmetric(
-                                              vertical: 12, horizontal: 24),
-                                          side: BorderSide(
-                                              color: Theme.of(context)
-                                                  .colorScheme
-                                                  .primary), // Use theme color
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                              ],
+                            ElevatedButton.icon(
+                              onPressed: _isSaving ? null : _saveExperience,
+                              icon: _isSaving
+                                  ? Container(
+                                      width: 20,
+                                      height: 20,
+                                      padding: const EdgeInsets.all(2.0),
+                                      child: const CircularProgressIndicator(
+                                          strokeWidth: 3, color: Colors.white),
+                                    )
+                                  : const Icon(Icons.save),
+                              label: Text(_isSaving
+                                  ? 'Saving...'
+                                  : 'Save Experience(s)'),
+                              style: ElevatedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 24, vertical: 12),
+                              ),
                             ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  // Action buttons (Save/Cancel) - Fixed at the bottom
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 16.0, vertical: 12.0),
-                    decoration: BoxDecoration(
-                      color:
-                          Theme.of(context).cardColor, // Match card background
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.1),
-                          spreadRadius: 0,
-                          blurRadius: 4,
-                          offset: const Offset(0, -2), // Shadow upwards
+                          ],
                         ),
-                      ],
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        OutlinedButton(
-                          onPressed: widget.onCancel, // Use callback
-                          child: const Text('Cancel'),
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: Colors.grey[700],
-                          ),
-                        ),
-                        ElevatedButton.icon(
-                          onPressed: _isSaving ? null : _saveExperience,
-                          icon: _isSaving
-                              ? Container(
-                                  width: 20,
-                                  height: 20,
-                                  padding: const EdgeInsets.all(2.0),
-                                  child: const CircularProgressIndicator(
-                                      strokeWidth: 3, color: Colors.white),
-                                )
-                              : const Icon(Icons.save),
-                          label: Text(
-                              _isSaving ? 'Saving...' : 'Save Experience(s)'),
-                          style: ElevatedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 24, vertical: 12),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
+                      )
+                      // --- End Buttons Container ---
+                    ],
+                  );
+                  // --- END ORIGINAL BODY CONTENT WRAPPED ---
+                },
               ),
+        // --- END FutureBuilder ---
       ),
     ));
   }

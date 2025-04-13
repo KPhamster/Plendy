@@ -5,55 +5,6 @@ import 'review.dart';
 import 'comment.dart';
 import 'reel.dart';
 
-/// Represents different types of experiences available in the app
-enum ExperienceType {
-  restaurant,
-  cafe,
-  bar,
-  museum,
-  theater,
-  park,
-  event,
-  attraction,
-  dateSpot,
-  other,
-}
-
-/// Extension to provide string values for ExperienceType enum
-extension ExperienceTypeExtension on ExperienceType {
-  String get displayName {
-    switch (this) {
-      case ExperienceType.restaurant:
-        return 'Restaurant';
-      case ExperienceType.cafe:
-        return 'Cafe';
-      case ExperienceType.bar:
-        return 'Bar';
-      case ExperienceType.museum:
-        return 'Museum';
-      case ExperienceType.theater:
-        return 'Theater';
-      case ExperienceType.park:
-        return 'Park';
-      case ExperienceType.event:
-        return 'Event';
-      case ExperienceType.attraction:
-        return 'Attraction';
-      case ExperienceType.dateSpot:
-        return 'Date Spot';
-      case ExperienceType.other:
-        return 'Other';
-    }
-  }
-
-  static ExperienceType fromString(String value) {
-    return ExperienceType.values.firstWhere(
-      (type) => type.displayName.toLowerCase() == value.toLowerCase(),
-      orElse: () => ExperienceType.other,
-    );
-  }
-}
-
 /// Represents a geographic location with latitude and longitude
 class Location extends Equatable {
   final String? placeId;
@@ -165,7 +116,8 @@ class Experience {
   final String name;
   final String description;
   final Location location;
-  final ExperienceType type;
+  final String
+      userExperienceTypeName; // ADDED: Stores the user-selected type name
 
   // External ratings and links
   final String? yelpUrl;
@@ -203,7 +155,7 @@ class Experience {
       required this.name,
       required this.description,
       required this.location,
-      required this.type,
+      required this.userExperienceTypeName, // ADDED
       this.yelpUrl,
       this.yelpRating,
       this.yelpReviewCount,
@@ -236,7 +188,8 @@ class Experience {
       name: data['name'] ?? '',
       description: data['description'] ?? '',
       location: Location.fromMap(data['location'] ?? {}),
-      type: _parseExperienceType(data['type']),
+      userExperienceTypeName: data['userExperienceTypeName'] ??
+          'Other', // ADDED: Default to 'Other'
       yelpUrl: data['yelpUrl'],
       yelpRating: _parseRating(data['yelpRating']),
       yelpReviewCount: data['yelpReviewCount'],
@@ -268,7 +221,7 @@ class Experience {
       'name': name,
       'description': description,
       'location': location.toMap(),
-      'type': type.displayName,
+      'userExperienceTypeName': userExperienceTypeName, // ADDED
       'yelpUrl': yelpUrl,
       'yelpRating': yelpRating,
       'yelpReviewCount': yelpReviewCount,
@@ -299,7 +252,7 @@ class Experience {
     String? name,
     String? description,
     Location? location,
-    ExperienceType? type,
+    String? userExperienceTypeName, // ADDED
     String? yelpUrl,
     double? yelpRating,
     int? yelpReviewCount,
@@ -327,7 +280,8 @@ class Experience {
       name: name ?? this.name,
       description: description ?? this.description,
       location: location ?? this.location,
-      type: type ?? this.type,
+      userExperienceTypeName:
+          userExperienceTypeName ?? this.userExperienceTypeName, // ADDED
       yelpUrl: yelpUrl ?? this.yelpUrl,
       yelpRating: yelpRating ?? this.yelpRating,
       yelpReviewCount: yelpReviewCount ?? this.yelpReviewCount,
@@ -351,21 +305,6 @@ class Experience {
       sharedMediaType: sharedMediaType ?? this.sharedMediaType, // Added
       additionalNotes: additionalNotes ?? this.additionalNotes, // Added
     );
-  }
-
-  /// Helper method to parse experience type from string
-  static ExperienceType _parseExperienceType(dynamic value) {
-    if (value == null) return ExperienceType.other;
-
-    if (value is String) {
-      return ExperienceTypeExtension.fromString(value);
-    } else if (value is int &&
-        value >= 0 &&
-        value < ExperienceType.values.length) {
-      return ExperienceType.values[value];
-    }
-
-    return ExperienceType.other;
   }
 
   /// Helper method to parse rating values
