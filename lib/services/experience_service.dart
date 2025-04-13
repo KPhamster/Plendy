@@ -4,6 +4,7 @@ import '../models/experience.dart';
 import '../models/review.dart';
 import '../models/comment.dart';
 import '../models/reel.dart';
+import '../models/user_experience_type.dart';
 
 /// Service for managing Experience-related operations
 class ExperienceService {
@@ -18,9 +19,112 @@ class ExperienceService {
   CollectionReference get _commentsCollection =>
       _firestore.collection('comments');
   CollectionReference get _reelsCollection => _firestore.collection('reels');
+  CollectionReference get _usersCollection => _firestore.collection('users');
 
   // User-related operations
   String? get _currentUserId => _auth.currentUser?.uid;
+
+  // Helper to get the path to a user's custom experience types sub-collection
+  CollectionReference _userExperienceTypesCollection(String userId) =>
+      _usersCollection.doc(userId).collection('experienceTypes');
+
+  // ======= User Experience Type Operations =======
+
+  /// Fetches the user's custom experience types.
+  /// If none exist, it initializes them with defaults and returns the defaults.
+  Future<List<UserExperienceType>> getUserExperienceTypes() async {
+    final userId = _currentUserId;
+    if (userId == null) {
+      // Return default types for non-logged-in users or handle as error
+      print(
+          "Warning: No authenticated user. Returning default experience types.");
+      return UserExperienceType.createInitialTypes();
+    }
+
+    final snapshot = await _userExperienceTypesCollection(userId)
+        .orderBy('name') // Optional: Order by name
+        .get();
+
+    if (snapshot.docs.isEmpty) {
+      // No custom types found, initialize with defaults
+      print("No custom types found for user $userId. Initializing defaults.");
+      return initializeDefaultUserExperienceTypes(userId);
+    }
+
+    // Map Firestore documents to UserExperienceType objects
+    return snapshot.docs
+        .map((doc) => UserExperienceType.fromFirestore(doc))
+        .toList();
+  }
+
+  /// Initializes the default experience types for a user in Firestore.
+  /// This is typically called once when needed (e.g., on first fetch if empty).
+  Future<List<UserExperienceType>> initializeDefaultUserExperienceTypes(
+      String userId) async {
+    final defaultTypes = UserExperienceType.createInitialTypes();
+    final batch = _firestore.batch();
+    final collectionRef = _userExperienceTypesCollection(userId);
+
+    List<UserExperienceType> createdTypes = [];
+
+    for (final type in defaultTypes) {
+      final docRef = collectionRef.doc(); // Auto-generate ID
+      batch.set(docRef, type.toMap());
+      // Create the object with the generated ID to return it immediately
+      createdTypes.add(
+          UserExperienceType(id: docRef.id, name: type.name, icon: type.icon));
+    }
+
+    await batch.commit();
+    print(
+        "Successfully initialized ${createdTypes.length} default types for user $userId.");
+    return createdTypes;
+  }
+
+  /// Adds a new custom experience type for the current user.
+  Future<UserExperienceType> addUserExperienceType(
+      String name, String icon) async {
+    final userId = _currentUserId;
+    if (userId == null) {
+      throw Exception('User not authenticated');
+    }
+
+    // Optional: Check if a type with the same name already exists
+    final existing = await _userExperienceTypesCollection(userId)
+        .where('name', isEqualTo: name)
+        .limit(1)
+        .get();
+    if (existing.docs.isNotEmpty) {
+      throw Exception('An experience type with this name already exists.');
+    }
+
+    final data = {'name': name, 'icon': icon};
+    final docRef = await _userExperienceTypesCollection(userId).add(data);
+    return UserExperienceType(id: docRef.id, name: name, icon: icon);
+  }
+
+  /// Updates an existing custom experience type for the current user.
+  Future<void> updateUserExperienceType(UserExperienceType type) async {
+    final userId = _currentUserId;
+    if (userId == null) {
+      throw Exception('User not authenticated');
+    }
+    // Add check: Ensure the user owns this type? (Maybe not needed if path includes userId)
+    await _userExperienceTypesCollection(userId)
+        .doc(type.id)
+        .update(type.toMap());
+  }
+
+  /// Deletes a custom experience type for the current user.
+  Future<void> deleteUserExperienceType(String typeId) async {
+    final userId = _currentUserId;
+    if (userId == null) {
+      throw Exception('User not authenticated');
+    }
+    // Add check: Ensure the user owns this type?
+    await _userExperienceTypesCollection(userId).doc(typeId).delete();
+    // Consider what happens to Experiences using this type. Reassign? Mark as 'Other'?
+  }
 
   // ======= Experience CRUD Operations =======
 
@@ -82,11 +186,11 @@ class ExperienceService {
 
   /// Get experiences by type
   Future<List<Experience>> getExperiencesByType(
-    ExperienceType type, {
+    String typeName, {
     int limit = 20,
   }) async {
     final snapshot = await _experiencesCollection
-        .where('type', isEqualTo: type.displayName)
+        .where('userExperienceTypeName', isEqualTo: typeName)
         .orderBy('plendyRating', descending: true)
         .limit(limit)
         .get();
