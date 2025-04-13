@@ -78,6 +78,11 @@ class ExperienceCardData {
   // Track the original source of the shared content
   ShareType originalShareType = ShareType.none;
 
+  // --- ADDED ---
+  // ID of the existing experience if this card represents one
+  String? existingExperienceId;
+  // --- END ADDED ---
+
   // Constructor can set initial values if needed
   ExperienceCardData();
 
@@ -1531,67 +1536,147 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       _isSaving = true;
     });
 
+    int successCount = 0;
+    int updateCount = 0;
+    List<String> errors = [];
+
     try {
-      final now = DateTime.now();
-      int successCount = 0;
+      final now = DateTime.now(); // Used for local model timestamp if needed
+      // Extract the paths from the currently shared files ONCE
+      final List<String> newMediaPaths =
+          _currentSharedFiles.map((f) => f.path).toList();
 
       // Save each experience using data from provider list
       for (final card in experienceCards) {
-        final Location defaultLocation = Location(
-          latitude: 0.0,
-          longitude: 0.0,
-          address: 'No location specified',
-        );
-
-        Experience newExperience = Experience(
-          id: '', // ID will be assigned by Firestore
-          name: card.titleController.text,
-          description: card.notesController.text.isNotEmpty
-              ? card.notesController.text
-              : 'Created from shared content', // Use notes if available
-          location: card.locationEnabled
-              ? card.selectedLocation!
-              : defaultLocation, // Use default when disabled
-          type: card.selectedType,
-          rating: card
-              .rating, // Pass rating (assuming Experience model has it) // UNCOMMENTED
-          yelpUrl: card.yelpUrlController.text.isNotEmpty
-              ? card.yelpUrlController.text
-              : null,
-          website: card.websiteController.text.isNotEmpty
-              ? card.websiteController.text
-              : null,
-          createdAt: now,
-          updatedAt: now,
-        );
-
-        // Include shared media paths if available (assuming Experience model has fields)
-        // UNCOMMENTED Block
-        if (_currentSharedFiles.isNotEmpty) {
-          // Note: This assumes the Experience model now has these fields
-          newExperience = newExperience.copyWith(
-            sharedMediaPaths: _currentSharedFiles.map((f) => f.path).toList(),
-            sharedMediaType: _getMediaTypeString(_currentSharedFiles
-                .first.type), // Assuming homogeneous type for now
+        try {
+          // Inner try-catch for individual card processing
+          final Location defaultLocation = Location(
+            latitude: 0.0,
+            longitude: 0.0,
+            address: 'No location specified',
           );
+
+          // Determine location for saving
+          final Location locationToSave =
+              (card.locationEnabled && card.selectedLocation != null)
+                  ? card.selectedLocation!
+                  : defaultLocation;
+
+          // Determine notes
+          final String notes = card.notesController.text.trim();
+
+          if (card.existingExperienceId == null ||
+              card.existingExperienceId!.isEmpty) {
+            // --- CREATE NEW EXPERIENCE ---
+            Experience newExperience = Experience(
+              id: '', // ID will be assigned by Firestore
+              name: card.titleController.text,
+              // Use notes as description if provided, otherwise a default
+              description:
+                  notes.isNotEmpty ? notes : 'Created from shared content',
+              location: locationToSave,
+              type: card.selectedType,
+              yelpUrl: card.yelpUrlController.text.isNotEmpty
+                  ? card.yelpUrlController.text.trim()
+                  : null,
+              website: card.websiteController.text.isNotEmpty
+                  ? card.websiteController.text.trim()
+                  : null,
+              additionalNotes: notes.isNotEmpty ? notes : null, // Store notes
+              sharedMediaPaths: newMediaPaths, // Add the new shared paths
+              createdAt: now, // Firestore uses server timestamp
+              updatedAt: now, // Firestore uses server timestamp
+              // Fields not set from card: rating, yelpRating/Count, googleUrl/Rating/Count,
+              // plendyRating/Count, imageUrls, reelIds, followerIds, phoneNumber, openingHours, tags, priceRange
+            );
+
+            await _experienceService.createExperience(newExperience);
+            successCount++;
+          } else {
+            // --- UPDATE EXISTING EXPERIENCE ---
+            Experience? existingExperience = await _experienceService
+                .getExperience(card.existingExperienceId!);
+
+            if (existingExperience != null) {
+              // Combine and deduplicate media paths
+              final Set<String> combinedPathsSet = {
+                ...?existingExperience.sharedMediaPaths, // Add existing paths
+                ...newMediaPaths // Add new paths
+              };
+              final List<String> updatedMediaPaths = combinedPathsSet.toList();
+
+              Experience updatedExperience = existingExperience.copyWith(
+                name: card.titleController.text,
+                location: locationToSave, // Update location based on card state
+                // type: card.selectedType, // Typically type shouldn't change easily, omit for now
+                yelpUrl: card.yelpUrlController.text.isNotEmpty
+                    ? card.yelpUrlController.text.trim()
+                    : null,
+                website: card.websiteController.text.isNotEmpty
+                    ? card.websiteController.text.trim()
+                    : null,
+                // Update description only if notes were provided
+                description:
+                    notes.isNotEmpty ? notes : existingExperience.description,
+                additionalNotes:
+                    notes.isNotEmpty ? notes : null, // Update notes
+                sharedMediaPaths: updatedMediaPaths, // Set combined list
+                updatedAt: now, // Service handles server timestamp
+              );
+
+              await _experienceService.updateExperience(updatedExperience);
+              updateCount++;
+            } else {
+              // Handle case where existing experience ID was set but not found
+              print(
+                  'Error: Could not find existing experience with ID: ${card.existingExperienceId}');
+              errors.add(
+                  'Could not update "${card.titleController.text}" (not found).');
+            }
+          }
+        } catch (e) {
+          // Catch errors for individual card processing
+          print('Error processing card "${card.titleController.text}": $e');
+          errors.add('Error saving "${card.titleController.text}".');
         }
+      } // End for loop
 
-        await _experienceService.createExperience(newExperience);
-        successCount++;
+      // --- Show Final Snackbar ---
+      String message;
+      if (errors.isEmpty) {
+        message = '';
+        if (successCount > 0)
+          message += '$successCount experience(s) created. ';
+        if (updateCount > 0) message += '$updateCount experience(s) updated. ';
+        message = message.trim();
+        if (message.isEmpty) message = 'No changes saved.'; // Fallback
+      } else {
+        message = 'Completed with errors: ';
+        if (successCount > 0) message += '$successCount created. ';
+        if (updateCount > 0) message += '$updateCount updated. ';
+        message += '${errors.length} failed.';
+        // Optionally log detailed errors
+        print('Save errors: ${errors.join('\n')}');
       }
-
-      print('Successfully created $successCount experiences');
-      _showSnackBar(
-          context, '$successCount Experience(s) created successfully');
+      _showSnackBar(context, message);
 
       // Call the onCancel callback to close the screen
+      // Only close if there were no errors?
+      // Or always close after attempting save?
+      // Let's close regardless, errors are notified via snackbar.
       widget.onCancel();
     } catch (e) {
+      // Catch outer errors (validation, provider, etc.)
       print('Error saving experiences: $e');
-      _showSnackBar(context, 'Error creating experiences: $e');
-      setState(() {
-        _isSaving = false;
-      });
+      _showSnackBar(context, 'Error saving experiences: $e');
+    } finally {
+      // Ensure saving state is reset even if errors occur
+      if (mounted) {
+        // Check if widget is still mounted before calling setState
+        setState(() {
+          _isSaving = false;
+        });
+      }
     }
   }
 
