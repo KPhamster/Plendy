@@ -29,6 +29,7 @@ import 'package:flutter/services.dart';
 import 'package:geocoding/geocoding.dart' as geocoding;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'receive_share/widgets/experience_card_form.dart';
+import 'package:plendy/screens/select_saved_experience_screen.dart';
 
 // Enum to track the source of the shared content
 enum ShareType { none, yelp, maps, instagram, genericUrl, image, video, file }
@@ -1916,6 +1917,39 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     }
   }
 
+  // Navigate to select an existing experience and update the card
+  Future<void> _selectSavedExperienceForCard(ExperienceCardData card) async {
+    // Ensure the context is valid before navigating
+    if (!mounted) return;
+
+    final selectedExperience = await Navigator.push<Experience>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => const SelectSavedExperienceScreen(),
+      ),
+    );
+
+    if (selectedExperience != null && mounted) {
+      // Unfocus after returning
+      Future.microtask(() => FocusScope.of(context).unfocus());
+
+      // Use provider to update the specific card
+      context.read<ReceiveShareProvider>().updateCardWithExistingExperience(
+            card.id, // Use the card's unique ID to find it
+            selectedExperience,
+          );
+
+      // Optionally show confirmation
+      _showSnackBar(context, 'Linked to "${selectedExperience.name}"');
+
+      // Trigger a rebuild to show updated card form details
+      // This setState might not be strictly necessary if the provider update
+      // triggers the ExperienceCardForm rebuild correctly via context.watch,
+      // but it can ensure the ReceiveShareScreen itself rebuilds if needed.
+      setState(() {});
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     // Get the provider instance - listen for changes here
@@ -2076,6 +2110,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                           // Pass methods directly (assuming correct signature in form widget)
                                           onRemove: _removeExperienceCard,
                                           onLocationSelect: _showLocationPicker,
+                                          // --- ADDED: Pass the new select function ---
+                                          onSelectSavedExperience:
+                                              _selectSavedExperienceForCard,
+                                          // --- END ADDED ---
                                           onUpdate: () => setState(
                                               () {}), // Trigger rebuild of ReceiveShareScreen
                                           formKey: card

@@ -129,6 +129,39 @@ class ReceiveShareProvider extends ChangeNotifier {
     }
   }
 
+  // Update a card's data based on a selected existing Experience
+  void updateCardWithExistingExperience(
+      String cardId, Experience selectedExperience) {
+    int index = _experienceCards.indexWhere((c) => c.id == cardId);
+    if (index != -1) {
+      final targetCard = _experienceCards[index];
+
+      // Update the fields in the ExperienceCardData
+      targetCard.existingExperienceId = selectedExperience.id;
+      targetCard.titleController.text = selectedExperience.name;
+      targetCard.selectedLocation =
+          selectedExperience.location; // Assign the whole Location object
+      targetCard.selectedType = selectedExperience.type;
+      targetCard.yelpUrlController.text = selectedExperience.yelpUrl ?? '';
+      targetCard.websiteController.text = selectedExperience.website ?? '';
+      targetCard.notesController.text =
+          selectedExperience.additionalNotes ?? '';
+      // Clear search text as location is now set
+      targetCard.searchController.clear();
+      // Ensure location is enabled
+      targetCard.locationEnabled = true;
+      // Optionally update placeIdForPreview if the location has one
+      targetCard.placeIdForPreview = selectedExperience.location.placeId;
+
+      print(
+          'PROVIDER_DEBUG: Updated card $cardId with existing experience ${selectedExperience.id} (${selectedExperience.name})');
+      notifyListeners();
+    } else {
+      print(
+          'PROVIDER_DEBUG: Card with ID $cardId not found for update with existing experience.');
+    }
+  }
+
   // Notify listeners that a specific card's data might have changed externally
   void notifyCardChanged(ExperienceCardData card) {
     // We don't strictly need the card object here, but it mirrors the pattern

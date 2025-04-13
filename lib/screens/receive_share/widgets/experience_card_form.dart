@@ -11,6 +11,8 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart'; // Import FontA
 typedef OnRemoveCallback = void Function(ExperienceCardData card);
 typedef OnLocationSelectCallback = Future<void> Function(
     ExperienceCardData card);
+typedef OnSelectSavedExperienceCallback = Future<void> Function(
+    ExperienceCardData card);
 typedef OnUpdateCallback = void
     Function(); // Generic callback to trigger setState in parent
 
@@ -20,6 +22,7 @@ class ExperienceCardForm extends StatefulWidget {
   final bool canRemove; // Explicit flag to control remove button visibility
   final OnRemoveCallback onRemove;
   final OnLocationSelectCallback onLocationSelect;
+  final OnSelectSavedExperienceCallback onSelectSavedExperience;
   final OnUpdateCallback onUpdate; // Callback to parent
   final GlobalKey<FormState> formKey; // Pass form key down
 
@@ -30,6 +33,7 @@ class ExperienceCardForm extends StatefulWidget {
     required this.canRemove,
     required this.onRemove,
     required this.onLocationSelect,
+    required this.onSelectSavedExperience,
     required this.onUpdate,
     required this.formKey,
   });
@@ -253,7 +257,8 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                       child: OutlinedButton.icon(
                         icon: Icon(Icons.bookmark_outline),
                         label: Text('Choose a saved experience'),
-                        onPressed: null, // No functionality yet
+                        onPressed: () =>
+                            widget.onSelectSavedExperience(widget.cardData),
                         style: OutlinedButton.styleFrom(
                           foregroundColor: Colors.blue,
                           padding:
