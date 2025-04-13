@@ -1550,6 +1550,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // Save each experience using data from provider list
       for (final card in experienceCards) {
         try {
+          // --- ENSURE LOG IS PRESENT ---
+          print(
+              "SAVE_DEBUG: Processing card ${card.id}. ExistingExperienceId: ${card.existingExperienceId}");
+          // --- END LOG ---
+
           // Inner try-catch for individual card processing
           final Location defaultLocation = Location(
             latitude: 0.0,

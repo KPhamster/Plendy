@@ -79,7 +79,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
 
     // Update local state based on incoming widget data if it changed
     if (widget.cardData.selectedType != oldWidget.cardData.selectedType) {
-      print("FORM_DEBUG (${widget.cardData.id}): Type changed");
+      // print("FORM_DEBUG (${widget.cardData.id}): Type changed");
       setState(() {
         _selectedType = widget.cardData.selectedType;
       });
@@ -151,7 +151,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
       bool launched =
           await launchUrl(uri, mode: LaunchMode.externalApplication);
       if (!launched) {
-        print('Could not launch $uri');
+        // print('Could not launch $uri');
         // Optionally show a snackbar to the user
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -160,7 +160,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
         }
       }
     } catch (e) {
-      print('Error launching URL: $e');
+      // print('Error launching URL: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error opening link: $e')),
@@ -179,11 +179,9 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
     final titleFocusNode = widget.cardData.titleFocusNode;
     final currentLocation = widget.cardData.selectedLocation;
 
-    print("FORM_DEBUG (${widget.cardData.id}): Build method running.");
-    print(
-        "FORM_DEBUG (${widget.cardData.id}): widget.cardData.selectedLocation: ${currentLocation?.displayName}");
-    print(
-        "FORM_DEBUG (${widget.cardData.id}): websiteController text: '${websiteController.text}'");
+    // print("FORM_DEBUG (${widget.cardData.id}): Build method running.");
+    // print("FORM_DEBUG (${widget.cardData.id}): widget.cardData.selectedLocation: ${currentLocation?.displayName}");
+    // print("FORM_DEBUG (${widget.cardData.id}): websiteController text: '${websiteController.text}'");
 
     return Card(
       margin: EdgeInsets.only(bottom: 16),
@@ -527,7 +525,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                       mode: LaunchMode.externalApplication,
                                     );
                                   } catch (e) {
-                                    print('Error launching URL: $e');
+                                    // print('Error launching URL: $e');
                                     if (mounted) {
                                       ScaffoldMessenger.of(context)
                                           .showSnackBar(
