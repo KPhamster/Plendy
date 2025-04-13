@@ -116,8 +116,7 @@ class Experience {
   final String name;
   final String description;
   final Location location;
-  final String
-      userExperienceTypeName; // ADDED: Stores the user-selected type name
+  final String userCategoryName; // RENAMED
 
   // External ratings and links
   final String? yelpUrl;
@@ -155,7 +154,7 @@ class Experience {
       required this.name,
       required this.description,
       required this.location,
-      required this.userExperienceTypeName, // ADDED
+      required this.userCategoryName, // RENAMED
       this.yelpUrl,
       this.yelpRating,
       this.yelpReviewCount,
@@ -188,8 +187,8 @@ class Experience {
       name: data['name'] ?? '',
       description: data['description'] ?? '',
       location: Location.fromMap(data['location'] ?? {}),
-      userExperienceTypeName: data['userExperienceTypeName'] ??
-          'Other', // ADDED: Default to 'Other'
+      userCategoryName:
+          data['userCategoryName'] ?? 'Other', // RENAMED field in Firestore
       yelpUrl: data['yelpUrl'],
       yelpRating: _parseRating(data['yelpRating']),
       yelpReviewCount: data['yelpReviewCount'],
@@ -221,7 +220,7 @@ class Experience {
       'name': name,
       'description': description,
       'location': location.toMap(),
-      'userExperienceTypeName': userExperienceTypeName, // ADDED
+      'userCategoryName': userCategoryName, // RENAMED field for Firestore
       'yelpUrl': yelpUrl,
       'yelpRating': yelpRating,
       'yelpReviewCount': yelpReviewCount,
@@ -252,7 +251,7 @@ class Experience {
     String? name,
     String? description,
     Location? location,
-    String? userExperienceTypeName, // ADDED
+    String? userCategoryName, // RENAMED
     String? yelpUrl,
     double? yelpRating,
     int? yelpReviewCount,
@@ -280,8 +279,7 @@ class Experience {
       name: name ?? this.name,
       description: description ?? this.description,
       location: location ?? this.location,
-      userExperienceTypeName:
-          userExperienceTypeName ?? this.userExperienceTypeName, // ADDED
+      userCategoryName: userCategoryName ?? this.userCategoryName, // RENAMED
       yelpUrl: yelpUrl ?? this.yelpUrl,
       yelpRating: yelpRating ?? this.yelpRating,
       yelpReviewCount: yelpReviewCount ?? this.yelpReviewCount,

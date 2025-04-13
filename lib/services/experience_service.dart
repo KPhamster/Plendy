@@ -4,7 +4,7 @@ import '../models/experience.dart';
 import '../models/review.dart';
 import '../models/comment.dart';
 import '../models/reel.dart';
-import '../models/user_experience_type.dart';
+import '../models/user_category.dart';
 
 /// Service for managing Experience-related operations
 class ExperienceService {
@@ -24,105 +24,102 @@ class ExperienceService {
   // User-related operations
   String? get _currentUserId => _auth.currentUser?.uid;
 
-  // Helper to get the path to a user's custom experience types sub-collection
-  CollectionReference _userExperienceTypesCollection(String userId) =>
-      _usersCollection.doc(userId).collection('experienceTypes');
+  // Helper to get the path to a user's custom categories sub-collection
+  CollectionReference _userCategoriesCollection(String userId) =>
+      _usersCollection.doc(userId).collection('categories');
 
-  // ======= User Experience Type Operations =======
+  // ======= User Category Operations =======
 
-  /// Fetches the user's custom experience types.
+  /// Fetches the user's custom categories.
   /// If none exist, it initializes them with defaults and returns the defaults.
-  Future<List<UserExperienceType>> getUserExperienceTypes() async {
+  Future<List<UserCategory>> getUserCategories() async {
     final userId = _currentUserId;
     if (userId == null) {
       // Return default types for non-logged-in users or handle as error
-      print(
-          "Warning: No authenticated user. Returning default experience types.");
-      return UserExperienceType.createInitialTypes();
+      print("Warning: No authenticated user. Returning default categories.");
+      return UserCategory.createInitialCategories();
     }
 
-    final snapshot = await _userExperienceTypesCollection(userId)
+    final snapshot = await _userCategoriesCollection(userId)
         .orderBy('name') // Optional: Order by name
         .get();
 
     if (snapshot.docs.isEmpty) {
       // No custom types found, initialize with defaults
-      print("No custom types found for user $userId. Initializing defaults.");
-      return initializeDefaultUserExperienceTypes(userId);
+      print(
+          "No custom categories found for user $userId. Initializing defaults.");
+      return initializeDefaultUserCategories(userId);
     }
 
-    // Map Firestore documents to UserExperienceType objects
-    return snapshot.docs
-        .map((doc) => UserExperienceType.fromFirestore(doc))
-        .toList();
+    // Map Firestore documents to UserCategory objects
+    return snapshot.docs.map((doc) => UserCategory.fromFirestore(doc)).toList();
   }
 
-  /// Initializes the default experience types for a user in Firestore.
+  /// Initializes the default categories for a user in Firestore.
   /// This is typically called once when needed (e.g., on first fetch if empty).
-  Future<List<UserExperienceType>> initializeDefaultUserExperienceTypes(
+  Future<List<UserCategory>> initializeDefaultUserCategories(
       String userId) async {
-    final defaultTypes = UserExperienceType.createInitialTypes();
+    final defaultCategories = UserCategory.createInitialCategories();
     final batch = _firestore.batch();
-    final collectionRef = _userExperienceTypesCollection(userId);
+    final collectionRef = _userCategoriesCollection(userId);
 
-    List<UserExperienceType> createdTypes = [];
+    List<UserCategory> createdCategories = [];
 
-    for (final type in defaultTypes) {
+    for (final category in defaultCategories) {
       final docRef = collectionRef.doc(); // Auto-generate ID
-      batch.set(docRef, type.toMap());
+      batch.set(docRef, category.toMap());
       // Create the object with the generated ID to return it immediately
-      createdTypes.add(
-          UserExperienceType(id: docRef.id, name: type.name, icon: type.icon));
+      createdCategories.add(UserCategory(
+          id: docRef.id, name: category.name, icon: category.icon));
     }
 
     await batch.commit();
     print(
-        "Successfully initialized ${createdTypes.length} default types for user $userId.");
-    return createdTypes;
+        "Successfully initialized ${createdCategories.length} default categories for user $userId.");
+    return createdCategories;
   }
 
-  /// Adds a new custom experience type for the current user.
-  Future<UserExperienceType> addUserExperienceType(
-      String name, String icon) async {
+  /// Adds a new custom category for the current user.
+  Future<UserCategory> addUserCategory(String name, String icon) async {
     final userId = _currentUserId;
     if (userId == null) {
       throw Exception('User not authenticated');
     }
 
     // Optional: Check if a type with the same name already exists
-    final existing = await _userExperienceTypesCollection(userId)
+    final existing = await _userCategoriesCollection(userId)
         .where('name', isEqualTo: name)
         .limit(1)
         .get();
     if (existing.docs.isNotEmpty) {
-      throw Exception('An experience type with this name already exists.');
+      throw Exception('A category with this name already exists.');
     }
 
     final data = {'name': name, 'icon': icon};
-    final docRef = await _userExperienceTypesCollection(userId).add(data);
-    return UserExperienceType(id: docRef.id, name: name, icon: icon);
+    final docRef = await _userCategoriesCollection(userId).add(data);
+    return UserCategory(id: docRef.id, name: name, icon: icon);
   }
 
-  /// Updates an existing custom experience type for the current user.
-  Future<void> updateUserExperienceType(UserExperienceType type) async {
+  /// Updates an existing custom category for the current user.
+  Future<void> updateUserCategory(UserCategory category) async {
     final userId = _currentUserId;
     if (userId == null) {
       throw Exception('User not authenticated');
     }
     // Add check: Ensure the user owns this type? (Maybe not needed if path includes userId)
-    await _userExperienceTypesCollection(userId)
-        .doc(type.id)
-        .update(type.toMap());
+    await _userCategoriesCollection(userId)
+        .doc(category.id)
+        .update(category.toMap());
   }
 
-  /// Deletes a custom experience type for the current user.
-  Future<void> deleteUserExperienceType(String typeId) async {
+  /// Deletes a custom category for the current user.
+  Future<void> deleteUserCategory(String categoryId) async {
     final userId = _currentUserId;
     if (userId == null) {
       throw Exception('User not authenticated');
     }
     // Add check: Ensure the user owns this type?
-    await _userExperienceTypesCollection(userId).doc(typeId).delete();
+    await _userCategoriesCollection(userId).doc(categoryId).delete();
     // Consider what happens to Experiences using this type. Reassign? Mark as 'Other'?
   }
 
@@ -184,13 +181,13 @@ class ExperienceService {
     return snapshot.docs.map((doc) => Experience.fromFirestore(doc)).toList();
   }
 
-  /// Get experiences by type
-  Future<List<Experience>> getExperiencesByType(
-    String typeName, {
+  /// Get experiences by category
+  Future<List<Experience>> getExperiencesByCategory(
+    String categoryName, {
     int limit = 20,
   }) async {
     final snapshot = await _experiencesCollection
-        .where('userExperienceTypeName', isEqualTo: typeName)
+        .where('userCategoryName', isEqualTo: categoryName)
         .orderBy('plendyRating', descending: true)
         .limit(limit)
         .get();
