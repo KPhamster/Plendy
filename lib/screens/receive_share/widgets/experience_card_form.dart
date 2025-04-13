@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:plendy/screens/receive_share_screen.dart'; // For ExperienceCardData
 import 'package:plendy/models/experience.dart'
     show Location; // ONLY import Location
-import 'package:plendy/models/user_experience_type.dart'; // ADDED
+import 'package:plendy/models/user_category.dart'; // RENAMED Import
 import 'package:plendy/screens/location_picker_screen.dart'; // For Location Picker
 import 'package:plendy/services/google_maps_service.dart'; // If needed for location updates
 import 'package:plendy/widgets/google_maps_widget.dart'; // If needed
@@ -22,7 +22,7 @@ class ExperienceCardForm extends StatefulWidget {
   final ExperienceCardData cardData;
   final bool isFirstCard; // To potentially hide remove button
   final bool canRemove; // Explicit flag to control remove button visibility
-  final List<UserExperienceType> userExperienceTypes; // ADDED
+  final List<UserCategory> userCategories; // RENAMED
   final OnRemoveCallback onRemove;
   final OnLocationSelectCallback onLocationSelect;
   final OnSelectSavedExperienceCallback onSelectSavedExperience;
@@ -34,7 +34,7 @@ class ExperienceCardForm extends StatefulWidget {
     required this.cardData,
     required this.isFirstCard,
     required this.canRemove,
-    required this.userExperienceTypes, // ADDED
+    required this.userCategories, // RENAMED
     required this.onRemove,
     required this.onLocationSelect,
     required this.onSelectSavedExperience,
@@ -90,8 +90,8 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
         _isExpanded = widget.cardData.isExpanded;
       });
     }
-    if (widget.cardData.selectedUserExperienceTypeName !=
-        oldWidget.cardData.selectedUserExperienceTypeName) {
+    if (widget.cardData.selectedUserCategoryName !=
+        oldWidget.cardData.selectedUserCategoryName) {
       _triggerRebuild();
     }
 
@@ -169,17 +169,19 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
     }
   }
 
-  // ADDED: Helper to find icon for selected type
-  String _getIconForSelectedType() {
-    final selectedName = widget.cardData.selectedUserExperienceTypeName;
+  // RENAMED: Helper to find icon for selected category
+  String _getIconForSelectedCategory() {
+    // Use renamed field
+    final selectedName = widget.cardData.selectedUserCategoryName;
     if (selectedName == null) {
       return '❓'; // Default icon
     }
-    final matchingType = widget.userExperienceTypes.firstWhere(
-      (type) => type.name == selectedName,
-      orElse: () => UserExperienceType(id: '', name: '', icon: '❓'), // Fallback
+    // Use renamed parameter and class
+    final matchingCategory = widget.userCategories.firstWhere(
+      (category) => category.name == selectedName,
+      orElse: () => UserCategory(id: '', name: '', icon: '❓'), // Fallback
     );
-    return matchingType.icon;
+    return matchingCategory.icon;
   }
 
   // Build method - Logic from _buildExperienceCard goes here
@@ -403,43 +405,48 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                     ),
                     SizedBox(height: 16),
 
-                    // Experience type selection
+                    // UPDATED: Category selection
                     DropdownButtonFormField<String>(
-                      value: widget.cardData.selectedUserExperienceTypeName,
+                      value: widget.cardData
+                          .selectedUserCategoryName, // RENAMED value field
                       decoration: InputDecoration(
-                        labelText: 'Experience Type',
+                        // RENAMED labelText
+                        labelText: 'Category',
                         border: OutlineInputBorder(),
+                        // Use renamed helper
                         prefixIcon: Padding(
                           padding: const EdgeInsets.all(12.0),
                           child: Text(
-                            _getIconForSelectedType(),
+                            _getIconForSelectedCategory(), // RENAMED helper
                             style: TextStyle(fontSize: 20),
                           ),
                         ),
                       ),
-                      items: widget.userExperienceTypes.map((type) {
+                      // Use renamed parameter
+                      items: widget.userCategories.map((category) {
                         return DropdownMenuItem<String>(
-                          value: type.name,
+                          value: category.name,
                           child: Row(
                             children: [
-                              Text(type.icon, style: TextStyle(fontSize: 18)),
+                              Text(category.icon,
+                                  style: TextStyle(fontSize: 18)),
                               SizedBox(width: 8),
-                              Text(type.name),
+                              Text(category.name),
                             ],
                           ),
                         );
                       }).toList(),
                       onChanged: (value) {
                         if (value != null) {
-                          widget.cardData.selectedUserExperienceTypeName =
-                              value;
+                          // Update renamed field
+                          widget.cardData.selectedUserCategoryName = value;
                           setState(() {});
                           widget.onUpdate();
                         }
                       },
                       validator: (value) {
                         if (value == null || value.isEmpty) {
-                          return 'Please select a type';
+                          return 'Please select a category'; // Updated text
                         }
                         return null;
                       },

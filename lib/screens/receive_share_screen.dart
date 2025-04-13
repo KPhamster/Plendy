@@ -13,7 +13,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:provider/provider.dart'; // Import Provider
 import '../providers/receive_share_provider.dart'; // Import the provider
 import '../models/experience.dart';
-import '../models/user_experience_type.dart'; // ADDED Import
+import '../models/user_category.dart'; // RENAMED Import
 import '../services/experience_service.dart';
 import '../services/google_maps_service.dart';
 import '../widgets/google_maps_widget.dart';
@@ -44,7 +44,6 @@ class ExperienceCardData {
       TextEditingController(); // Added
   final TextEditingController searchController = TextEditingController();
   final TextEditingController locationController = TextEditingController();
-  // REMOVED: final TextEditingController categoryController = TextEditingController();
   final TextEditingController notesController =
       TextEditingController(); // Added
 
@@ -54,10 +53,8 @@ class ExperienceCardData {
   // Focus nodes
   final FocusNode titleFocusNode = FocusNode();
 
-  // Experience type selection
-  // REMOVED: ExperienceType selectedType = ExperienceType.restaurant;
-  String?
-      selectedUserExperienceTypeName; // ADDED: Stores the name of the selected type
+  // Category selection
+  String? selectedUserCategoryName; // RENAMED
 
   // Rating
   double rating = 0.0; // Added (or use double? rating)
@@ -88,13 +85,12 @@ class ExperienceCardData {
   // --- END ADDED ---
 
   // Constructor can set initial values if needed
-  // Set default experience type name
+  // Set default category name
   ExperienceCardData() {
-    // Initialize with the name of the first default type, or 'Other'
-    selectedUserExperienceTypeName =
-        UserExperienceType.defaultTypes.keys.isNotEmpty
-            ? UserExperienceType.defaultTypes.keys.first
-            : 'Other';
+    // Initialize with the name of the first default category, or 'Other'
+    selectedUserCategoryName = UserCategory.defaultCategories.keys.isNotEmpty
+        ? UserCategory.defaultCategories.keys.first
+        : 'Other';
   }
 
   // Dispose resources
@@ -104,7 +100,6 @@ class ExperienceCardData {
     websiteController.dispose(); // Added
     searchController.dispose();
     locationController.dispose();
-    // REMOVED: categoryController.dispose();
     notesController.dispose(); // Added
     titleFocusNode.dispose();
   }
@@ -171,9 +166,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   // Flag to track if a chain was detected from URL structure
   bool _chainDetectedFromUrl = false;
 
-  // ADDED: State for user experience types
-  Future<List<UserExperienceType>>? _userExperienceTypesFuture;
-  List<UserExperienceType> _userExperienceTypes = []; // Cache the loaded types
+  // RENAMED: State for user categories
+  Future<List<UserCategory>>? _userCategoriesFuture; // RENAMED
+  List<UserCategory> _userCategories =
+      []; // RENAMED Cache the loaded categories
 
   @override
   void initState() {
@@ -184,8 +180,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     // Register observer for app lifecycle events
     WidgetsBinding.instance.addObserver(this);
 
-    // ADDED: Fetch user experience types
-    _loadUserExperienceTypes();
+    // RENAMED: Fetch user categories
+    _loadUserCategories();
 
     // Access provider - DO NOT listen here, just need read access
     // final provider = context.read<ReceiveShareProvider>();
@@ -247,50 +243,48 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     });
   }
 
-  // ADDED: Method to load user experience types
-  void _loadUserExperienceTypes() {
-    _userExperienceTypesFuture = _experienceService.getUserExperienceTypes();
-    _userExperienceTypesFuture!.then((types) {
+  // RENAMED: Method to load user categories
+  void _loadUserCategories() {
+    // Use renamed service method
+    _userCategoriesFuture = _experienceService.getUserCategories();
+    _userCategoriesFuture!.then((categories) {
       if (mounted) {
         setState(() {
-          _userExperienceTypes = types;
-          // Optionally, update the default type in cards if the list is loaded
-          // and the default isn't present (e.g., if 'Other' was customized)
-          _updateCardDefaultTypesIfNeeded(types);
+          _userCategories = categories; // RENAMED state variable
+          // Update card defaults if needed
+          _updateCardDefaultCategoriesIfNeeded(
+              categories); // RENAMED helper call
         });
       }
     }).catchError((error) {
-      print("Error loading user experience types: $error");
+      print("Error loading user categories: $error");
       if (mounted) {
         setState(() {
-          // Handle error state, maybe show defaults or an error message
-          _userExperienceTypes =
-              UserExperienceType.createInitialTypes(); // Fallback
+          // Use renamed class and static method
+          _userCategories = UserCategory.createInitialCategories(); // RENAMED
         });
         _showSnackBar(
-            context, "Error loading your custom types. Using defaults.");
+            context, "Error loading your custom categories. Using defaults.");
       }
     });
   }
 
-  // ADDED: Helper to ensure card default type exists in loaded list
-  void _updateCardDefaultTypesIfNeeded(List<UserExperienceType> loadedTypes) {
+  // RENAMED: Helper to ensure card default category exists in loaded list
+  void _updateCardDefaultCategoriesIfNeeded(
+      List<UserCategory> loadedCategories) {
     final provider = context.read<ReceiveShareProvider>();
-    if (provider.experienceCards.isEmpty || loadedTypes.isEmpty) return;
+    if (provider.experienceCards.isEmpty || loadedCategories.isEmpty) return;
 
-    final firstLoadedTypeName = loadedTypes.first.name;
+    final firstLoadedCategoryName = loadedCategories.first.name;
 
     for (var card in provider.experienceCards) {
-      // If the card's current type name isn't in the loaded list,
-      // reset it to the first available loaded type.
-      if (!loadedTypes
-          .any((t) => t.name == card.selectedUserExperienceTypeName)) {
+      // Check against renamed field
+      if (!loadedCategories
+          .any((c) => c.name == card.selectedUserCategoryName)) {
         print(
-            "Card default type '${card.selectedUserExperienceTypeName}' not found in loaded list. Resetting to '$firstLoadedTypeName'.");
-        // Use provider method if available, otherwise update directly (requires setState)
-        // provider.updateCardData(card, selectedUserExperienceTypeName: firstLoadedTypeName);
-        // OR, if no provider method:
-        card.selectedUserExperienceTypeName = firstLoadedTypeName;
+            "Card default category '${card.selectedUserCategoryName}' not found in loaded list. Resetting to '$firstLoadedCategoryName'.");
+        // Use renamed field
+        card.selectedUserCategoryName = firstLoadedCategoryName;
       }
     }
     // If direct update was used, trigger rebuild:
@@ -356,8 +350,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     if (state == AppLifecycleState.resumed) {
       print("SHARE DEBUG: App resumed - recreating intent listener");
       _setupIntentListener();
-      // ADDED: Reload user types on resume in case they were changed elsewhere
-      _loadUserExperienceTypes();
+      // RENAMED: Reload user categories
+      _loadUserCategories();
 
       // Also check for any pending intents
       ReceiveSharingIntent.instance.getInitialMedia().then((value) {
@@ -1575,9 +1569,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     final provider = context.read<ReceiveShareProvider>();
     final experienceCards = provider.experienceCards;
 
-    // --- ADDED: Check if types are loaded ---
-    if (_userExperienceTypes.isEmpty) {
-      _showSnackBar(context, 'Experience types not loaded yet. Please wait.');
+    // RENAMED: Check if categories are loaded
+    if (_userCategories.isEmpty) {
+      _showSnackBar(context, 'Categories not loaded yet. Please wait.');
       return;
     }
     // --- END ADDED ---
@@ -1588,11 +1582,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         allValid = false;
         break;
       }
-      // --- ADDED: Validate selected type name is set ---
-      if (card.selectedUserExperienceTypeName == null ||
-          card.selectedUserExperienceTypeName!.isEmpty) {
-        _showSnackBar(
-            context, 'Please select an experience type for each card.');
+      // RENAMED: Validate selected category name is set
+      if (card.selectedUserCategoryName == null ||
+          card.selectedUserCategoryName!.isEmpty) {
+        _showSnackBar(context, 'Please select a category for each card.');
         allValid = false;
         break;
       }
@@ -1644,22 +1637,20 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
           final String notes = card.notesController.text.trim();
 
-          // --- UPDATED: Use selectedUserExperienceTypeName ---
-          final String typeNameToSave = card.selectedUserExperienceTypeName!;
-          // --- END UPDATED ---
+          // RENAMED: Use selectedUserCategoryName
+          final String categoryNameToSave = card.selectedUserCategoryName!;
 
           if (card.existingExperienceId == null ||
               card.existingExperienceId!.isEmpty) {
-            // --- CREATE NEW EXPERIENCE ---
+            // CREATE NEW EXPERIENCE
             Experience newExperience = Experience(
               id: '',
               name: card.titleController.text,
               description:
                   notes.isNotEmpty ? notes : 'Created from shared content',
               location: locationToSave,
-              // --- UPDATED ---
-              userExperienceTypeName: typeNameToSave,
-              // --- END UPDATED ---
+              // RENAMED
+              userCategoryName: categoryNameToSave,
               yelpUrl: card.yelpUrlController.text.isNotEmpty
                   ? card.yelpUrlController.text.trim()
                   : null,
@@ -1675,7 +1666,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             await _experienceService.createExperience(newExperience);
             successCount++;
           } else {
-            // --- UPDATE EXISTING EXPERIENCE ---
+            // UPDATE EXISTING EXPERIENCE
             Experience? existingExperience = await _experienceService
                 .getExperience(card.existingExperienceId!);
 
@@ -1689,9 +1680,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               Experience updatedExperience = existingExperience.copyWith(
                 name: card.titleController.text,
                 location: locationToSave,
-                // --- UPDATED ---
-                userExperienceTypeName: typeNameToSave,
-                // --- END UPDATED ---
+                // RENAMED
+                userCategoryName: categoryNameToSave,
                 yelpUrl: card.yelpUrlController.text.isNotEmpty
                     ? card.yelpUrlController.text.trim()
                     : null,
@@ -2063,23 +2053,22 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                   ],
                 ),
               )
-            // --- ADDED: FutureBuilder for User Types ---
-            : FutureBuilder<List<UserExperienceType>>(
-                future: _userExperienceTypesFuture,
+            // RENAMED: FutureBuilder for User Categories
+            : FutureBuilder<List<UserCategory>>(
+                future: _userCategoriesFuture, // RENAMED future
                 builder: (context, snapshot) {
                   if (snapshot.connectionState == ConnectionState.waiting) {
                     return const Center(child: CircularProgressIndicator());
                   }
                   if (snapshot.hasError) {
-                    // Already handled error in _loadUserExperienceTypes, show the UI with defaults
+                    // Already handled error in _loadUserCategories, show the UI with defaults
                     print(
                         "FutureBuilder Error (already handled): ${snapshot.error}");
-                    // Proceed to build UI with potentially default types loaded in _userExperienceTypes
+                    // Proceed to build UI with potentially default categories loaded in _userCategories
                   }
                   // snapshot.hasData or error handled (defaults loaded)
-                  // Now _userExperienceTypes should be populated
+                  // Now _userCategories should be populated
 
-                  // --- ORIGINAL BODY CONTENT WRAPPED ---
                   return Column(
                     children: [
                       Expanded(
@@ -2196,8 +2185,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                               isFirstCard: i == 0,
                                               canRemove:
                                                   experienceCards.length > 1,
-                                              userExperienceTypes:
-                                                  _userExperienceTypes, // Parameter error here is expected
+                                              // Corrected parameter name:
+                                              userCategories: _userCategories,
                                               onRemove: _removeExperienceCard,
                                               onLocationSelect:
                                                   _showLocationPicker,
@@ -2300,7 +2289,6 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                       // --- End Buttons Container ---
                     ],
                   );
-                  // --- END ORIGINAL BODY CONTENT WRAPPED ---
                 },
               ),
         // --- END FutureBuilder ---
