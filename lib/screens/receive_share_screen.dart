@@ -2075,37 +2075,65 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              // Preview section (no change needed here)
+                              // Preview section
                               if (_currentSharedFiles.isEmpty)
-                                // --- Restored Placeholder Structure ---
                                 const Padding(
                                   padding: EdgeInsets.all(16.0),
                                   child: Center(
                                       child:
                                           Text('No shared content received')),
                                 )
-                              // --- End Placeholder ---
                               else
-                                // --- Restored Preview Padding/Structure ---
-                                Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 16.0, vertical: 8.0),
-                                  child: ListView.builder(
-                                    padding: EdgeInsets.zero,
-                                    shrinkWrap: true,
-                                    physics:
-                                        const NeverScrollableScrollPhysics(),
-                                    itemCount: _currentSharedFiles.length,
-                                    itemBuilder: (context, index) {
-                                      final file = _currentSharedFiles[index];
-                                      final firstCard =
-                                          experienceCards.isNotEmpty
-                                              ? experienceCards.first
-                                              : null;
-                                      return Card(
+                                // REMOVED Outer Padding around ListView
+                                ListView.builder(
+                                  padding: EdgeInsets
+                                      .zero, // Ensure ListView itself has no padding
+                                  shrinkWrap: true,
+                                  physics: const NeverScrollableScrollPhysics(),
+                                  itemCount: _currentSharedFiles.length,
+                                  itemBuilder: (context, index) {
+                                    final file = _currentSharedFiles[index];
+                                    final firstCard = experienceCards.isNotEmpty
+                                        ? experienceCards.first
+                                        : null;
+
+                                    // --- ADDED: Conditional Padding Logic ---
+                                    bool isInstagram = false;
+                                    if (file.type == SharedMediaType.text ||
+                                        file.type == SharedMediaType.url) {
+                                      String? url = _extractFirstUrl(file.path);
+                                      if (url != null &&
+                                          url.contains('instagram.com')) {
+                                        isInstagram = true;
+                                      }
+                                    }
+                                    final double horizontalPadding =
+                                        isInstagram ? 0.0 : 16.0;
+                                    final double verticalPadding =
+                                        8.0; // Consistent vertical padding
+                                    // --- END Conditional Padding Logic ---
+
+                                    // Apply padding conditionally around the Card
+                                    return Padding(
+                                      padding: EdgeInsets.symmetric(
+                                        horizontal: horizontalPadding,
+                                        vertical: verticalPadding,
+                                      ),
+                                      child: Card(
                                         elevation: 2.0,
-                                        margin:
-                                            const EdgeInsets.only(bottom: 12),
+                                        // SET margin based on type
+                                        margin: isInstagram
+                                            ? EdgeInsets.zero
+                                            : const EdgeInsets.only(
+                                                bottom:
+                                                    0), // Keep original vertical logic if any was intended, else just use EdgeInsets.zero for instagram
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(
+                                              isInstagram ? 0 : 8),
+                                        ),
+                                        clipBehavior: isInstagram
+                                            ? Clip.antiAlias
+                                            : Clip.none,
                                         child: Column(
                                           crossAxisAlignment:
                                               CrossAxisAlignment.start,
@@ -2114,15 +2142,15 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                               _buildMediaPreview(
                                                   file, firstCard)
                                             else
+                                              // Fallback if no cards exist
                                               _buildMediaPreview(
                                                   file, ExperienceCardData()),
                                           ],
                                         ),
-                                      );
-                                    },
-                                  ),
+                                      ),
+                                    );
+                                  },
                                 ),
-                              // --- End Preview Structure ---
 
                               // Experience association form section
                               Padding(
