@@ -4,10 +4,13 @@ import 'package:plendy/models/experience.dart'
     show Location; // ONLY import Location
 import 'package:plendy/models/user_category.dart'; // RENAMED Import
 import 'package:plendy/screens/location_picker_screen.dart'; // For Location Picker
+import 'package:plendy/services/experience_service.dart'; // ADDED for adding category
 import 'package:plendy/services/google_maps_service.dart'; // If needed for location updates
 import 'package:plendy/widgets/google_maps_widget.dart'; // If needed
 import 'package:url_launcher/url_launcher.dart'; // Import url_launcher
 import 'package:font_awesome_flutter/font_awesome_flutter.dart'; // Import FontAwesome
+// UPDATED: Import the modal
+import 'package:plendy/widgets/add_category_modal.dart';
 
 // Define necessary callbacks
 typedef OnRemoveCallback = void Function(ExperienceCardData card);
@@ -15,8 +18,10 @@ typedef OnLocationSelectCallback = Future<void> Function(
     ExperienceCardData card);
 typedef OnSelectSavedExperienceCallback = Future<void> Function(
     ExperienceCardData card);
-typedef OnUpdateCallback = void
-    Function(); // Generic callback to trigger setState in parent
+typedef OnUpdateCallback = void Function({
+  // Modified to accept optional flag
+  bool refreshCategories, // Flag to indicate category list needs refresh
+});
 
 class ExperienceCardForm extends StatefulWidget {
   final ExperienceCardData cardData;
@@ -26,7 +31,7 @@ class ExperienceCardForm extends StatefulWidget {
   final OnRemoveCallback onRemove;
   final OnLocationSelectCallback onLocationSelect;
   final OnSelectSavedExperienceCallback onSelectSavedExperience;
-  final OnUpdateCallback onUpdate; // Callback to parent
+  final OnUpdateCallback onUpdate; // Callback to parent (signature updated)
   final GlobalKey<FormState> formKey; // Pass form key down
 
   const ExperienceCardForm({
@@ -38,7 +43,7 @@ class ExperienceCardForm extends StatefulWidget {
     required this.onRemove,
     required this.onLocationSelect,
     required this.onSelectSavedExperience,
-    required this.onUpdate,
+    required this.onUpdate, // Signature updated
     required this.formKey,
   });
 
@@ -53,6 +58,9 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
 
   // Service needed for location updates if interaction happens within the form
   final GoogleMapsService _mapsService = GoogleMapsService();
+
+  // ADDED: Service instance
+  final ExperienceService _experienceService = ExperienceService();
 
   @override
   void initState() {
@@ -90,8 +98,8 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
         _isExpanded = widget.cardData.isExpanded;
       });
     }
-    if (widget.cardData.selectedUserCategoryName !=
-        oldWidget.cardData.selectedUserCategoryName) {
+    if (widget.cardData.selectedcategory !=
+        oldWidget.cardData.selectedcategory) {
       _triggerRebuild();
     }
 
@@ -172,7 +180,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
   // RENAMED: Helper to find icon for selected category
   String _getIconForSelectedCategory() {
     // Use renamed field
-    final selectedName = widget.cardData.selectedUserCategoryName;
+    final selectedName = widget.cardData.selectedcategory;
     if (selectedName == null) {
       return '❓'; // Default icon
     }
@@ -182,6 +190,37 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
       orElse: () => UserCategory(id: '', name: '', icon: '❓'), // Fallback
     );
     return matchingCategory.icon;
+  }
+
+  // UPDATED: Method to handle adding a new category
+  Future<void> _handleAddCategory() async {
+    // Unfocus any text fields before opening modal
+    FocusScope.of(context).unfocus();
+
+    // Show the modal bottom sheet
+    final newCategory = await showModalBottomSheet<UserCategory>(
+      context: context,
+      // Use the created modal widget
+      builder: (context) => const AddCategoryModal(),
+      isScrollControlled:
+          true, // Allows the sheet to take more height if needed
+      // Optional: Customize shape, background color etc.
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+    );
+
+    if (newCategory != null && mounted) {
+      // New category was added successfully by the modal
+      print("New category added: ${newCategory.name} (${newCategory.icon})");
+
+      // Update the selected category in the current card
+      // No need for setState here as the parent will rebuild
+      widget.cardData.selectedcategory = newCategory.name;
+
+      // Notify the parent screen to refresh the category list and rebuild
+      widget.onUpdate(refreshCategories: true);
+    }
   }
 
   // Build method - Logic from _buildExperienceCard goes here
@@ -217,7 +256,9 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                 if (!_isExpanded) {
                   FocusScope.of(context).unfocus();
                 }
-                widget.onUpdate(); // Notify parent
+                widget.onUpdate(
+                    refreshCategories:
+                        false); // Notify parent, no refresh needed
               },
               child: Padding(
                 padding:
@@ -357,7 +398,9 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                   });
                                   widget.cardData.locationEnabled =
                                       value; // Update model
-                                  widget.onUpdate(); // Notify parent
+                                  widget.onUpdate(
+                                      refreshCategories:
+                                          false); // Notify parent, no refresh needed
                                 },
                                 activeColor: Colors.blue,
                                 materialTapTargetSize:
@@ -386,7 +429,9 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                   // Directly clear controller from widget.cardData
                                   titleController.clear();
                                   // Listener will call _triggerRebuild
-                                  widget.onUpdate(); // Notify parent if needed
+                                  widget.onUpdate(
+                                      refreshCategories:
+                                          false); // Notify parent, no refresh needed
                                 },
                               )
                             : null,
@@ -405,48 +450,78 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                     ),
                     SizedBox(height: 16),
 
-                    // UPDATED: Category selection
-                    DropdownButtonFormField<String>(
-                      value: widget.cardData
-                          .selectedUserCategoryName, // RENAMED value field
+                    // UPDATED: Category selection Dropdown
+                    DropdownButtonFormField<String?>(
+                      // Use String? to allow null for the "Add" option
+                      value: widget.cardData.selectedcategory,
                       decoration: InputDecoration(
-                        // RENAMED labelText
                         labelText: 'Category',
                         border: OutlineInputBorder(),
-                        // Use renamed helper
                         prefixIcon: Padding(
                           padding: const EdgeInsets.all(12.0),
                           child: Text(
-                            _getIconForSelectedCategory(), // RENAMED helper
+                            _getIconForSelectedCategory(),
                             style: TextStyle(fontSize: 20),
                           ),
                         ),
                       ),
-                      // Use renamed parameter
-                      items: widget.userCategories.map((category) {
-                        return DropdownMenuItem<String>(
-                          value: category.name,
-                          child: Row(
-                            children: [
-                              Text(category.icon,
-                                  style: TextStyle(fontSize: 18)),
-                              SizedBox(width: 8),
-                              Text(category.name),
-                            ],
+                      items: () {
+                        // --- ADDED: De-duplicate categories by name ---
+                        final uniqueCategoriesByName = <String, UserCategory>{};
+                        for (var category in widget.userCategories) {
+                          uniqueCategoriesByName[category.name] = category;
+                        }
+                        final uniqueCategoryList =
+                            uniqueCategoriesByName.values.toList();
+                        // --- END De-duplication ---
+
+                        // Build items from the unique list
+                        return [
+                          ...uniqueCategoryList.map((category) {
+                            return DropdownMenuItem<String>(
+                              value: category.name,
+                              child: Row(
+                                children: [
+                                  Text(category.icon,
+                                      style: TextStyle(fontSize: 18)),
+                                  SizedBox(width: 8),
+                                  Text(category.name),
+                                ],
+                              ),
+                            );
+                          }).toList(),
+                          // Add the special "Add New Category" item
+                          DropdownMenuItem<String?>(
+                            value: null,
+                            child: Row(
+                              children: [
+                                Icon(Icons.add, size: 18, color: Colors.blue),
+                                SizedBox(width: 8),
+                                Text('Add New Category',
+                                    style: TextStyle(color: Colors.blue)),
+                              ],
+                            ),
                           ),
-                        );
-                      }).toList(),
+                        ];
+                      }(),
                       onChanged: (value) {
-                        if (value != null) {
-                          // Update renamed field
-                          widget.cardData.selectedUserCategoryName = value;
-                          setState(() {});
-                          widget.onUpdate();
+                        if (value == null) {
+                          // "Add New Category" was selected
+                          _handleAddCategory(); // Call the handler
+                        } else {
+                          // A regular category was selected
+                          widget.cardData.selectedcategory = value;
+                          setState(() {}); // Rebuild for prefix icon
+                          widget.onUpdate(
+                              refreshCategories:
+                                  false); // Notify parent, no refresh needed
                         }
                       },
                       validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'Please select a category'; // Updated text
+                        // Validator needs to check against the actual selected name
+                        if (widget.cardData.selectedcategory == null ||
+                            widget.cardData.selectedcategory!.isEmpty) {
+                          return 'Please select a category';
                         }
                         return null;
                       },
@@ -477,7 +552,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                 InkWell(
                                   onTap: () {
                                     yelpUrlController.clear();
-                                    widget.onUpdate();
+                                    widget.onUpdate(refreshCategories: false);
                                   },
                                   child: Padding(
                                     padding: const EdgeInsets.symmetric(
@@ -541,7 +616,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                               InkWell(
                                 onTap: () {
                                   websiteController.clear();
-                                  widget.onUpdate();
+                                  widget.onUpdate(refreshCategories: false);
                                 },
                                 child: Padding(
                                   padding: const EdgeInsets.symmetric(
@@ -626,7 +701,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                     icon: Icon(Icons.clear, size: 18),
                                     onPressed: () {
                                       widget.cardData.notesController.clear();
-                                      widget.onUpdate();
+                                      widget.onUpdate(refreshCategories: false);
                                     },
                                   )
                                 : null,
@@ -637,7 +712,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                       // No validator needed as it's optional
                       onChanged: (value) {
                         // Trigger rebuild if suffix icon logic depends on it
-                        widget.onUpdate();
+                        widget.onUpdate(refreshCategories: false);
                       },
                     ),
                   ],

@@ -31,52 +31,96 @@ class ExperienceService {
   // ======= User Category Operations =======
 
   /// Fetches the user's custom categories.
-  /// If none exist, it initializes them with defaults and returns the defaults.
+  /// Ensures default categories are present if missing.
   Future<List<UserCategory>> getUserCategories() async {
     final userId = _currentUserId;
     if (userId == null) {
-      // Return default types for non-logged-in users or handle as error
       print("Warning: No authenticated user. Returning default categories.");
-      return UserCategory.createInitialCategories();
+      return UserCategory
+          .createInitialCategories(); // Return static defaults for logged-out
     }
 
-    final snapshot = await _userCategoriesCollection(userId)
-        .orderBy('name') // Optional: Order by name
-        .get();
+    final collectionRef = _userCategoriesCollection(userId);
+    final snapshot = await collectionRef.orderBy('name').get();
 
-    if (snapshot.docs.isEmpty) {
-      // No custom types found, initialize with defaults
+    List<UserCategory> fetchedCategories =
+        snapshot.docs.map((doc) => UserCategory.fromFirestore(doc)).toList();
+
+    // Check if default categories need to be added
+    final defaultCategoryMap = UserCategory.defaultCategories;
+    final fetchedCategoryNames = fetchedCategories.map((c) => c.name).toSet();
+    List<UserCategory> missingDefaults = [];
+
+    defaultCategoryMap.forEach((name, icon) {
+      if (!fetchedCategoryNames.contains(name)) {
+        // Create a UserCategory object (without ID initially)
+        missingDefaults.add(UserCategory(id: '', name: name, icon: icon));
+      }
+    });
+
+    // If defaults are missing, add them in a batch
+    if (missingDefaults.isNotEmpty) {
       print(
-          "No custom categories found for user $userId. Initializing defaults.");
-      return initializeDefaultUserCategories(userId);
+          "Adding ${missingDefaults.length} missing default categories for user $userId.");
+      final batch = _firestore.batch();
+      List<UserCategory> addedDefaultsWithIds = [];
+
+      for (final category in missingDefaults) {
+        final docRef = collectionRef.doc(); // Auto-generate ID
+        batch.set(docRef, category.toMap());
+        // Store the newly created object with its ID
+        addedDefaultsWithIds.add(UserCategory(
+            id: docRef.id, name: category.name, icon: category.icon));
+      }
+
+      try {
+        await batch.commit();
+        print("Successfully added missing default categories.");
+        // Combine fetched list with the newly added defaults
+        fetchedCategories.addAll(addedDefaultsWithIds);
+        // Optional: Sort the combined list alphabetically by name
+        fetchedCategories.sort((a, b) => a.name.compareTo(b.name));
+      } catch (e) {
+        print("Error adding missing default categories: $e");
+        // Proceed with only the fetched categories if batch fails
+      }
     }
 
-    // Map Firestore documents to UserCategory objects
-    return snapshot.docs.map((doc) => UserCategory.fromFirestore(doc)).toList();
+    // Return the (potentially updated) list of categories
+    return fetchedCategories;
   }
 
   /// Initializes the default categories for a user in Firestore.
-  /// This is typically called once when needed (e.g., on first fetch if empty).
+  /// Note: This is now primarily called internally by getUserCategories if needed,
+  /// or could be called explicitly on user creation.
   Future<List<UserCategory>> initializeDefaultUserCategories(
       String userId) async {
     final defaultCategories = UserCategory.createInitialCategories();
     final batch = _firestore.batch();
     final collectionRef = _userCategoriesCollection(userId);
-
     List<UserCategory> createdCategories = [];
 
+    print(
+        "INITIALIZING default categories for user $userId (likely called because collection was empty).");
+
     for (final category in defaultCategories) {
-      final docRef = collectionRef.doc(); // Auto-generate ID
+      final docRef = collectionRef.doc();
       batch.set(docRef, category.toMap());
-      // Create the object with the generated ID to return it immediately
       createdCategories.add(UserCategory(
           id: docRef.id, name: category.name, icon: category.icon));
     }
 
-    await batch.commit();
-    print(
-        "Successfully initialized ${createdCategories.length} default categories for user $userId.");
-    return createdCategories;
+    try {
+      await batch.commit();
+      print(
+          "Successfully initialized ${createdCategories.length} default categories for user $userId.");
+      // Sort before returning
+      createdCategories.sort((a, b) => a.name.compareTo(b.name));
+      return createdCategories;
+    } catch (e) {
+      print("Error during default category initialization batch commit: $e");
+      return []; // Return empty list on error
+    }
   }
 
   /// Adds a new custom category for the current user.
@@ -187,7 +231,7 @@ class ExperienceService {
     int limit = 20,
   }) async {
     final snapshot = await _experiencesCollection
-        .where('userCategoryName', isEqualTo: categoryName)
+        .where('category', isEqualTo: categoryName)
         .orderBy('plendyRating', descending: true)
         .limit(limit)
         .get();

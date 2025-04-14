@@ -77,7 +77,7 @@ class _SelectSavedExperienceScreenState
           final notesLower = exp.additionalNotes?.toLowerCase() ?? '';
           final addressLower = exp.location.address?.toLowerCase() ?? '';
           final cityLower = exp.location.city?.toLowerCase() ?? '';
-          final categoryLower = exp.userCategoryName.toLowerCase();
+          final categoryLower = exp.category.toLowerCase();
 
           return nameLower.contains(query) ||
               notesLower.contains(query) ||

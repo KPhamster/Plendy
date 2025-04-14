@@ -54,7 +54,7 @@ class ExperienceCardData {
   final FocusNode titleFocusNode = FocusNode();
 
   // Category selection
-  String? selectedUserCategoryName; // RENAMED
+  String? selectedcategory; // RENAMED
 
   // Rating
   double rating = 0.0; // Added (or use double? rating)
@@ -88,7 +88,7 @@ class ExperienceCardData {
   // Set default category name
   ExperienceCardData() {
     // Initialize with the name of the first default category, or 'Other'
-    selectedUserCategoryName = UserCategory.defaultCategories.keys.isNotEmpty
+    selectedcategory = UserCategory.defaultCategories.keys.isNotEmpty
         ? UserCategory.defaultCategories.keys.first
         : 'Other';
   }
@@ -279,12 +279,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     for (var card in provider.experienceCards) {
       // Check against renamed field
-      if (!loadedCategories
-          .any((c) => c.name == card.selectedUserCategoryName)) {
+      if (!loadedCategories.any((c) => c.name == card.selectedcategory)) {
         print(
-            "Card default category '${card.selectedUserCategoryName}' not found in loaded list. Resetting to '$firstLoadedCategoryName'.");
+            "Card default category '${card.selectedcategory}' not found in loaded list. Resetting to '$firstLoadedCategoryName'.");
         // Use renamed field
-        card.selectedUserCategoryName = firstLoadedCategoryName;
+        card.selectedcategory = firstLoadedCategoryName;
       }
     }
     // If direct update was used, trigger rebuild:
@@ -1583,8 +1582,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         break;
       }
       // RENAMED: Validate selected category name is set
-      if (card.selectedUserCategoryName == null ||
-          card.selectedUserCategoryName!.isEmpty) {
+      if (card.selectedcategory == null || card.selectedcategory!.isEmpty) {
         _showSnackBar(context, 'Please select a category for each card.');
         allValid = false;
         break;
@@ -1637,8 +1635,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
           final String notes = card.notesController.text.trim();
 
-          // RENAMED: Use selectedUserCategoryName
-          final String categoryNameToSave = card.selectedUserCategoryName!;
+          // RENAMED: Use selectedcategory
+          final String categoryNameToSave = card.selectedcategory!;
 
           if (card.existingExperienceId == null ||
               card.existingExperienceId!.isEmpty) {
@@ -1650,7 +1648,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                   notes.isNotEmpty ? notes : 'Created from shared content',
               location: locationToSave,
               // RENAMED
-              userCategoryName: categoryNameToSave,
+              category: categoryNameToSave,
               yelpUrl: card.yelpUrlController.text.isNotEmpty
                   ? card.yelpUrlController.text.trim()
                   : null,
@@ -1681,7 +1679,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                 name: card.titleController.text,
                 location: locationToSave,
                 // RENAMED
-                userCategoryName: categoryNameToSave,
+                category: categoryNameToSave,
                 yelpUrl: card.yelpUrlController.text.isNotEmpty
                     ? card.yelpUrlController.text.trim()
                     : null,
@@ -2185,14 +2183,24 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                               isFirstCard: i == 0,
                                               canRemove:
                                                   experienceCards.length > 1,
-                                              // Corrected parameter name:
                                               userCategories: _userCategories,
                                               onRemove: _removeExperienceCard,
                                               onLocationSelect:
                                                   _showLocationPicker,
                                               onSelectSavedExperience:
                                                   _selectSavedExperienceForCard,
-                                              onUpdate: () => setState(() {}),
+                                              // UPDATED onUpdate handling:
+                                              onUpdate: (
+                                                  {bool refreshCategories =
+                                                      false}) {
+                                                if (refreshCategories) {
+                                                  // Reload categories and trigger rebuild
+                                                  _loadUserCategories();
+                                                } else {
+                                                  // Just trigger rebuild for other updates
+                                                  setState(() {});
+                                                }
+                                              },
                                               formKey: card.formKey,
                                             );
                                           }),
@@ -2361,12 +2369,36 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     // Extract the first URL found in the text content
     String? extractedUrl = _extractFirstUrl(textContent);
 
-    // Check if we extracted a URL and if it's a special one
-    if (extractedUrl != null && _isSpecialUrl(extractedUrl)) {
-      // Build the appropriate special URL preview
-      return _buildUrlPreview(extractedUrl, card);
+    // Check if we extracted a URL
+    if (extractedUrl != null) {
+      // Check if it's a special one (Yelp/Maps)
+      if (_isSpecialUrl(extractedUrl)) {
+        // Build the appropriate special URL preview
+        return _buildUrlPreview(extractedUrl, card);
+      }
+      // --- ADDED: Explicit check for Instagram ---
+      else if (extractedUrl.contains('instagram.com')) {
+        // Build the Instagram preview
+        // Note: _buildUrlPreview handles the routing to InstagramPreviewWidget
+        return _buildUrlPreview(extractedUrl, card);
+      }
+      // --- END ADDED ---
+      else {
+        // It's a generic URL, potentially show a generic preview or just the text
+        // Let's use _buildUrlPreview which has a generic fallback
+        return _buildUrlPreview(extractedUrl, card);
+        // OR Fallback to plain text:
+        /* return Container(
+          padding: const EdgeInsets.all(16.0),
+          child: Text(
+            textContent, // Show original shared content if URL isn't special
+            maxLines: 5, // Limit lines for preview
+            overflow: TextOverflow.ellipsis,
+          ),
+        ); */
+      }
     } else {
-      // If no special URL found, display the original text content (potentially truncated)
+      // No URL extracted, display the original text content
       return Container(
         padding: const EdgeInsets.all(16.0),
         child: Text(
@@ -2379,6 +2411,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   }
 
   // Modify _buildUrlPreview to accept and use card data
+  // This method already handles routing to InstagramPreviewWidget
   Widget _buildUrlPreview(String url, ExperienceCardData card) {
     // Access provider only if needed for actions, not just data access
     // final provider = context.read<ReceiveShareProvider>();
