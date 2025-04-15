@@ -162,13 +162,22 @@ class _AddCategoryModalState extends State<AddCategoryModal> {
           mainAxisSize: MainAxisSize.min, // Important for bottom sheet
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Add New Category',
-                style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: 16),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text('Create a New Category',
+                    style: Theme.of(context).textTheme.titleLarge),
+                IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: () => Navigator.of(context).pop(), // Dismiss modal
+                  tooltip: 'Cancel',
+                ),
+              ],
+            ),
             TextFormField(
               controller: _nameController,
               decoration: const InputDecoration(
-                labelText: 'Category Name',
+                labelText: 'Name your new category',
                 border: OutlineInputBorder(),
               ),
               validator: (value) {
@@ -184,7 +193,7 @@ class _AddCategoryModalState extends State<AddCategoryModal> {
             const SizedBox(height: 8),
             // Simple Emoji Grid
             SizedBox(
-              height: 150, // Adjust height as needed
+              height: 300,
               child: GridView.builder(
                 gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                   crossAxisCount: 6, // Adjust column count
