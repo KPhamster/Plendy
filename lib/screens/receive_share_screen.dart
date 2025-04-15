@@ -302,35 +302,68 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         .getMediaStream()
         .listen((List<SharedMediaFile> value) {
       print(
-          '🔄 STREAM LISTENER: Stream received ${value.length} files.'); // Log when stream fires
-      print(
-          "SHARE DEBUG: Stream Listener Fired! Received ${value.length} files. Mounted: $mounted");
+          '🔄 STREAM LISTENER: Stream received ${value.length} files. Mounted: $mounted');
 
       if (mounted && value.isNotEmpty) {
-        print('🔄 STREAM LISTENER: Processing stream content.');
-        print("SHARE DEBUG: Stream - Updating state with new files.");
-        // Use provider to reset cards
-        context.read<ReceiveShareProvider>().resetExperienceCards();
-        setState(() {
-          _currentSharedFiles = value; // Update with the latest files
-          // Reset UI state NOT related to cards
-          _businessDataCache.clear(); // Clear cache for new content
-          _yelpPreviewFutures.clear();
-          // Process the new content
-          _processSharedContent(_currentSharedFiles); // Log before calling
-          // Show a notification
-          _showSnackBar(context, "New content received!");
-        });
-
-        // Only reset for Android - iOS needs the intent to persist
-        if (!Platform.isIOS) {
-          // Reset the intent *after* processing
-          ReceiveSharingIntent.instance.reset();
-          print("SHARE DEBUG: Stream - Intent stream processed and reset.");
+        // --- ADDED: Compare incoming data with current data ---
+        // --- REFINED COMPARISON LOGIC ---
+        bool isDifferent = true; // Assume different by default
+        if (_currentSharedFiles.length == value.length) {
+          // If lengths match, compare paths carefully
+          isDifferent = false; // Assume same until proven different
+          for (int i = 0; i < value.length; i++) {
+            // Compare paths at each index
+            if (value[i].path != _currentSharedFiles[i].path) {
+              print('🔄 STREAM LISTENER: Path difference found at index $i:');
+              print('  Current: ${_currentSharedFiles[i].path}');
+              print('  Incoming: ${value[i].path}');
+              isDifferent = true;
+              break; // Found a difference, no need to check further
+            }
+          }
         } else {
           print(
-              "SHARE DEBUG: On iOS - not resetting intent to ensure it persists");
+              '🔄 STREAM LISTENER: Lengths differ (${_currentSharedFiles.length} vs ${value.length})');
+          // isDifferent remains true (initialized value)
         }
+        // Handle case where current is empty but incoming is not
+        if (_currentSharedFiles.isEmpty && value.isNotEmpty) {
+          print('🔄 STREAM LISTENER: Current is empty, incoming has data.');
+          isDifferent = true;
+        }
+        // --- END REFINED COMPARISON ---
+
+        print('🔄 STREAM LISTENER: Final isDifferent decision: $isDifferent');
+
+        if (isDifferent) {
+          // Only process if the content is actually different
+          print('🔄 STREAM LISTENER: Processing DIFFERENT stream content.');
+          // Use provider to reset cards
+          context.read<ReceiveShareProvider>().resetExperienceCards();
+          setState(() {
+            _currentSharedFiles = value; // Update with the latest files
+            // Reset UI state NOT related to cards
+            _businessDataCache.clear(); // Clear cache for new content
+            _yelpPreviewFutures.clear();
+            // Process the new content
+            _processSharedContent(_currentSharedFiles);
+            // Show a notification
+            _showSnackBar(context, "New content received!");
+          });
+
+          // Reset intent only if processed (and not iOS)
+          if (!Platform.isIOS) {
+            ReceiveSharingIntent.instance.reset();
+            print("SHARE DEBUG: Stream - Intent stream processed and reset.");
+          } else {
+            print(
+                "SHARE DEBUG: On iOS - not resetting intent to ensure it persists");
+          }
+        } else {
+          print(
+              '🔄 STREAM LISTENER: Content is the same as current. Ignoring stream event.');
+        }
+        // --- END COMPARISON ---
       } else {
         print(
             "SHARE DEBUG: Stream - Listener fired but not processing (mounted: $mounted, value empty: ${value.isEmpty})");
@@ -351,25 +384,6 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       _setupIntentListener();
       // RENAMED: Reload user categories
       _loadUserCategories();
-
-      // Also check for any pending intents
-      ReceiveSharingIntent.instance.getInitialMedia().then((value) {
-        if (value != null && value.isNotEmpty && mounted) {
-          print(
-              "SHARE DEBUG: Found pending intent after resume: ${value.length} files");
-          // Use provider to reset cards
-          context.read<ReceiveShareProvider>().resetExperienceCards();
-          setState(() {
-            _currentSharedFiles = value;
-            // Reset UI for new content NOT related to cards
-            _businessDataCache.clear();
-            _yelpPreviewFutures.clear();
-            // _addExperienceCard(); // Card is added by provider reset if needed
-            _processSharedContent(_currentSharedFiles);
-            _showSnackBar(context, "New content received after resume!");
-          });
-        }
-      });
     }
   }
 
