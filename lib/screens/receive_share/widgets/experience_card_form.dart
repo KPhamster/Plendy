@@ -452,18 +452,10 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
 
                     // UPDATED: Category selection Dropdown
                     DropdownButtonFormField<String?>(
-                      // Use String? to allow null for the "Add" option
                       value: widget.cardData.selectedcategory,
                       decoration: InputDecoration(
                         labelText: 'Category',
                         border: OutlineInputBorder(),
-                        prefixIcon: Padding(
-                          padding: const EdgeInsets.all(12.0),
-                          child: Text(
-                            _getIconForSelectedCategory(),
-                            style: TextStyle(fontSize: 20),
-                          ),
-                        ),
                       ),
                       items: () {
                         // --- ADDED: De-duplicate categories by name ---
