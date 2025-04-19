@@ -49,78 +49,26 @@ class ExperienceService {
         "getUserCategories - Fetched ${fetchedCategories.length} from Firestore:"); // Log Fetched Raw
     fetchedCategories.forEach((c) => print("  - ${c.name} (ID: ${c.id})"));
 
-    // Check if default categories need to be added
-    final defaultCategoryMap = UserCategory.defaultCategories;
-    final fetchedCategoryNamesLower =
-        fetchedCategories.map((c) => c.name.toLowerCase()).toSet();
-    print(
-        "getUserCategories - Lowercase fetched names set: $fetchedCategoryNamesLower"); // Log Fetched Lowercase Set
-    List<UserCategory> missingDefaults = [];
-
-    defaultCategoryMap.forEach((name, icon) {
-      final nameLower = name.toLowerCase();
-      final isMissing = !fetchedCategoryNamesLower.contains(nameLower);
-      print(
-          "getUserCategories - Checking default '$name' (lowercase: '$nameLower'): Missing? $isMissing"); // Log Default Check
-      if (isMissing) {
-        missingDefaults.add(UserCategory(id: '', name: name, icon: icon));
-      }
-    });
-
-    print(
-        "getUserCategories - Found ${missingDefaults.length} missing defaults."); // Log Missing Count
-
-    // If defaults are missing, add them in a batch
-    if (missingDefaults.isNotEmpty) {
-      print("getUserCategories - Adding missing defaults via batch...");
-      final batch = _firestore.batch();
-      List<UserCategory> addedDefaultsWithIds = [];
-
-      for (final category in missingDefaults) {
-        final docRef = collectionRef.doc();
-        batch.set(docRef, category.toMap());
-        addedDefaultsWithIds.add(UserCategory(
-            id: docRef.id, name: category.name, icon: category.icon));
-      }
-
-      try {
-        await batch.commit();
-        print(
-            "getUserCategories - Batch commit successful for missing defaults.");
-        fetchedCategories.addAll(addedDefaultsWithIds);
-        fetchedCategories.sort((a, b) => a.name.compareTo(b.name));
-      } catch (e) {
-        print(
-            "getUserCategories - Batch commit FAILED for missing defaults: $e");
-      }
-    }
-
-    // --- ADDED: De-duplicate the fetched list based on name ---
+    // De-duplicate the fetched list based on name
     final uniqueCategoriesByName = <String, UserCategory>{};
     for (var category in fetchedCategories) {
-      // Use lowercase for the key to ensure case-insensitive uniqueness
       final nameLower = category.name.toLowerCase();
-      // Only add if this name hasn't been seen yet
       uniqueCategoriesByName.putIfAbsent(nameLower, () => category);
     }
     final uniqueFetchedCategories = uniqueCategoriesByName.values.toList();
-    // Optional: Sort the final unique list again if needed
     uniqueFetchedCategories.sort((a, b) => a.name.compareTo(b.name));
     print(
         "getUserCategories - De-duplicated list size: ${uniqueFetchedCategories.length}");
-    // --- END De-duplication ---
 
     print(
-        "getUserCategories END - Returning ${uniqueFetchedCategories.length} unique categories:"); // Log Final Return
+        "getUserCategories END - Returning ${uniqueFetchedCategories.length} unique categories:");
     uniqueFetchedCategories
         .forEach((c) => print("  - ${c.name} (ID: ${c.id})"));
-    // Return the de-duplicated list
     return uniqueFetchedCategories;
   }
 
   /// Initializes the default categories for a user in Firestore.
-  /// Note: This is now primarily called internally by getUserCategories if needed,
-  /// or could be called explicitly on user creation.
+  /// Note: This should now be called explicitly ONCE during user creation flow.
   Future<List<UserCategory>> initializeDefaultUserCategories(
       String userId) async {
     final defaultCategories = UserCategory.createInitialCategories();
