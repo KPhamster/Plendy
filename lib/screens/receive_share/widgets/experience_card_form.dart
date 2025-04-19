@@ -11,6 +11,8 @@ import 'package:url_launcher/url_launcher.dart'; // Import url_launcher
 import 'package:font_awesome_flutter/font_awesome_flutter.dart'; // Import FontAwesome
 // UPDATED: Import the modal
 import 'package:plendy/widgets/add_category_modal.dart';
+// ADDED: Import for the Edit modal
+import 'package:plendy/widgets/edit_categories_modal.dart';
 
 // Define necessary callbacks
 typedef OnRemoveCallback = void Function(ExperienceCardData card);
@@ -62,6 +64,11 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
 
   // ADDED: Service instance
   final ExperienceService _experienceService = ExperienceService();
+
+  // --- ADDED: Constants for special dropdown values ---
+  static const String _addCategoryValue = '__add_new_category__';
+  static const String _editCategoriesValue = '__edit_categories__';
+  // --- END ADDED ---
 
   @override
   void initState() {
@@ -195,28 +202,42 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
 
   // UPDATED: Method to handle adding a new category
   Future<void> _handleAddCategory() async {
-    // Unfocus any text fields before opening modal
     FocusScope.of(context).unfocus();
-
-    // Show the modal bottom sheet
     final newCategory = await showModalBottomSheet<UserCategory>(
       context: context,
-      // Use the created modal widget
       builder: (context) => const AddCategoryModal(),
-      isScrollControlled:
-          true, // Allows the sheet to take more height if needed
-      // Optional: Customize shape, background color etc.
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+    );
+    if (newCategory != null && mounted) {
+      print("New category added: ${newCategory.name} (${newCategory.icon})");
+      // Notify parent to refresh list and pass new name to potentially select it
+      widget.onUpdate(
+          refreshCategories: true, newCategoryName: newCategory.name);
+    }
+  }
+
+  // UPDATED: Method to handle editing categories
+  Future<void> _handleEditCategories() async {
+    FocusScope.of(context).unfocus();
+    // Show the EditCategoriesModal
+    final bool? categoriesChanged = await showModalBottomSheet<bool>(
+      context: context,
+      builder: (context) => const EditCategoriesModal(), // Show the new modal
+      isScrollControlled: true,
+      // Add shape etc. if desired, similar to Add modal
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
     );
 
-    if (newCategory != null && mounted) {
-      print("New category added: ${newCategory.name} (${newCategory.icon})");
-
-      // Notify the parent screen to refresh the category list and pass the new name
-      widget.onUpdate(
-          refreshCategories: true, newCategoryName: newCategory.name);
+    if (categoriesChanged == true && mounted) {
+      print("Categories potentially changed in Edit modal, refreshing list.");
+      // Notify parent to just refresh the list
+      widget.onUpdate(refreshCategories: true);
+      // Note: We don't need to explicitly select a category here
     }
   }
 
@@ -464,8 +485,9 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                             uniqueCategoriesByName.values.toList();
                         // --- END De-duplication ---
 
-                        // Build items from the unique list
+                        // Build items
                         return [
+                          // Map actual categories
                           ...uniqueCategoryList.map((category) {
                             return DropdownMenuItem<String>(
                               value: category.name,
@@ -479,9 +501,14 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                               ),
                             );
                           }).toList(),
-                          // Add the special "Add New Category" item
+                          // Separator (optional)
+                          const DropdownMenuItem<String?>(
+                            enabled: false, // Make separator non-selectable
+                            child: Divider(height: 0),
+                          ),
+                          // Add New Category item
                           DropdownMenuItem<String?>(
-                            value: null,
+                            value: _addCategoryValue, // Use constant
                             child: Row(
                               children: [
                                 Icon(Icons.add, size: 18, color: Colors.blue),
@@ -491,23 +518,36 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                               ],
                             ),
                           ),
+                          // Edit Categories item
+                          DropdownMenuItem<String?>(
+                            value: _editCategoriesValue, // Use constant
+                            child: Row(
+                              children: [
+                                Icon(Icons.edit,
+                                    size: 18, color: Colors.orange),
+                                SizedBox(width: 8),
+                                Text('Edit Categories',
+                                    style: TextStyle(color: Colors.orange)),
+                              ],
+                            ),
+                          ),
                         ];
                       }(),
                       onChanged: (value) {
-                        if (value == null) {
-                          // "Add New Category" was selected
-                          _handleAddCategory(); // Call the handler
+                        // Check for special values first
+                        if (value == _addCategoryValue) {
+                          _handleAddCategory();
+                        } else if (value == _editCategoriesValue) {
+                          _handleEditCategories();
                         } else {
-                          // A regular category was selected
+                          // Regular category selected
                           widget.cardData.selectedcategory = value;
                           setState(() {}); // Rebuild for prefix icon
-                          widget.onUpdate(
-                              refreshCategories:
-                                  false); // Notify parent, no refresh needed
+                          widget.onUpdate(refreshCategories: false);
                         }
                       },
                       validator: (value) {
-                        // Validator needs to check against the actual selected name
+                        // Validator checks the actual data, not the dropdown value
                         if (widget.cardData.selectedcategory == null ||
                             widget.cardData.selectedcategory!.isEmpty) {
                           return 'Please select a category';
