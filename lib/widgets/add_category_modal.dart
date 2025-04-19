@@ -3,7 +3,9 @@ import 'package:plendy/models/user_category.dart';
 import 'package:plendy/services/experience_service.dart';
 
 class AddCategoryModal extends StatefulWidget {
-  const AddCategoryModal({super.key});
+  final UserCategory? categoryToEdit;
+
+  const AddCategoryModal({super.key, this.categoryToEdit});
 
   @override
   State<AddCategoryModal> createState() => _AddCategoryModalState();
@@ -15,6 +17,8 @@ class _AddCategoryModalState extends State<AddCategoryModal> {
   final ExperienceService _experienceService = ExperienceService();
   String _selectedIcon = '';
   bool _isLoading = false;
+
+  bool get _isEditing => widget.categoryToEdit != null;
 
   // Expanded list of emojis for selection
   final List<String> _emojiOptions = [
@@ -96,8 +100,13 @@ class _AddCategoryModalState extends State<AddCategoryModal> {
   @override
   void initState() {
     super.initState();
-    // Pre-select the first emoji
-    if (_emojiOptions.isNotEmpty) {
+    if (_isEditing) {
+      _nameController.text = widget.categoryToEdit!.name;
+      _selectedIcon = widget.categoryToEdit!.icon;
+      if (!_emojiOptions.contains(_selectedIcon)) {
+        _selectedIcon = _emojiOptions.isNotEmpty ? _emojiOptions.first : '';
+      }
+    } else if (_emojiOptions.isNotEmpty) {
       _selectedIcon = _emojiOptions.first;
     }
   }
@@ -118,18 +127,30 @@ class _AddCategoryModalState extends State<AddCategoryModal> {
       final icon = _selectedIcon;
 
       try {
-        // Add the category using the service
-        final newCategory =
-            await _experienceService.addUserCategory(name, icon);
+        UserCategory resultCategory;
+        if (_isEditing) {
+          final updatedCategory = widget.categoryToEdit!.copyWith(
+            name: name,
+            icon: icon,
+          );
+          await _experienceService.updateUserCategory(updatedCategory);
+          resultCategory = updatedCategory;
+          print("Category updated: ${resultCategory.name}");
+        } else {
+          resultCategory = await _experienceService.addUserCategory(name, icon);
+          print("Category added: ${resultCategory.name}");
+        }
+
         if (mounted) {
-          // Pop the modal and return the newly created category
-          Navigator.of(context).pop(newCategory);
+          Navigator.of(context).pop(resultCategory);
         }
       } catch (e) {
-        print("Error adding category: $e");
+        print("Error saving category: $e");
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Error adding category: ${e.toString()}')),
+            SnackBar(
+                content: Text(
+                    'Error ${_isEditing ? "updating" : "adding"} category: ${e.toString()}')),
           );
           setState(() {
             _isLoading = false;
@@ -137,7 +158,6 @@ class _AddCategoryModalState extends State<AddCategoryModal> {
         }
       }
     } else if (_selectedIcon.isEmpty) {
-      // Should not happen with pre-selection, but handle just in case
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please select an icon.')),
       );
@@ -146,7 +166,6 @@ class _AddCategoryModalState extends State<AddCategoryModal> {
 
   @override
   Widget build(BuildContext context) {
-    // Calculate padding for bottom sheet content to avoid keyboard overlap
     final bottomPadding = MediaQuery.of(context).viewInsets.bottom;
 
     return Padding(
@@ -154,49 +173,49 @@ class _AddCategoryModalState extends State<AddCategoryModal> {
         left: 16.0,
         right: 16.0,
         top: 20.0,
-        bottom: bottomPadding + 20.0, // Adjust bottom padding for keyboard
+        bottom: bottomPadding + 20.0,
       ),
       child: Form(
         key: _formKey,
         child: Column(
-          mainAxisSize: MainAxisSize.min, // Important for bottom sheet
+          mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text('Create a New Category',
+                Text(_isEditing ? 'Edit Category' : 'Create a New Category',
                     style: Theme.of(context).textTheme.titleLarge),
                 IconButton(
                   icon: const Icon(Icons.close),
-                  onPressed: () => Navigator.of(context).pop(), // Dismiss modal
+                  onPressed: () => Navigator.of(context).pop(),
                   tooltip: 'Cancel',
                 ),
               ],
             ),
             TextFormField(
               controller: _nameController,
-              decoration: const InputDecoration(
-                labelText: 'Name your new category',
+              decoration: InputDecoration(
+                labelText: _isEditing
+                    ? 'Edit category name'
+                    : 'Name your new category',
                 border: OutlineInputBorder(),
               ),
               validator: (value) {
                 if (value == null || value.trim().isEmpty) {
                   return 'Please enter a category name';
                 }
-                // Optional: Add check for existing category name (service layer handles it too)
                 return null;
               },
             ),
             const SizedBox(height: 16),
             Text('Select Icon', style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 8),
-            // Simple Emoji Grid
             SizedBox(
               height: 300,
               child: GridView.builder(
                 gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 6, // Adjust column count
+                  crossAxisCount: 6,
                   crossAxisSpacing: 8,
                   mainAxisSpacing: 8,
                 ),
@@ -223,8 +242,7 @@ class _AddCategoryModalState extends State<AddCategoryModal> {
                       alignment: Alignment.center,
                       child: Text(
                         emoji,
-                        style:
-                            const TextStyle(fontSize: 24), // Adjust emoji size
+                        style: const TextStyle(fontSize: 24),
                       ),
                     ),
                   );
@@ -244,7 +262,11 @@ class _AddCategoryModalState extends State<AddCategoryModal> {
                             strokeWidth: 3, color: Colors.white),
                       )
                     : const Icon(Icons.save),
-                label: Text(_isLoading ? 'Saving...' : 'Save Category'),
+                label: Text(_isLoading
+                    ? 'Saving...'
+                    : _isEditing
+                        ? 'Update Category'
+                        : 'Save Category'),
                 onPressed: _isLoading ? null : _saveCategory,
                 style: ElevatedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 12),

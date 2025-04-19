@@ -111,22 +111,28 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
   }
 
   Future<void> _editCategory(UserCategory category) async {
-    // TODO: Implement editing logic
-    // This might involve showing another modal (like AddCategoryModal but pre-filled)
-    // or navigating to a dedicated edit screen.
-    print("Placeholder: Edit category '${category.name}'");
-    // Example: Show AddCategoryModal pre-filled for editing
-    /*
+    // Show the AddCategoryModal, passing the category to edit
     final updatedCategory = await showModalBottomSheet<UserCategory>(
       context: context,
-      builder: (context) => AddCategoryModal(categoryToEdit: category), // Pass category to edit
+      // Pass the category to the modal
+      builder: (context) => AddCategoryModal(categoryToEdit: category),
       isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
     );
+
+    // Check if the modal returned an updated category
     if (updatedCategory != null && mounted) {
-      _categoriesChanged = true;
-      _loadCategories(); // Refresh list after edit
+      // No need to call updateUserCategory here, as AddCategoryModal handles it
+      _categoriesChanged = true; // Mark that changes happened
+      _loadCategories(); // Refresh the list in this modal
+
+      // Show success message
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('"${updatedCategory.name}" category updated.')),
+      );
     }
-    */
   }
 
   Future<void> _addNewCategory() async {
