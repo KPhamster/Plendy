@@ -70,6 +70,11 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
   static const String _editCategoriesValue = '__edit_categories__';
   // --- END ADDED ---
 
+  // --- ADDED: Constants for special dialog actions ---
+  static const String _dialogActionAdd = '__add__';
+  static const String _dialogActionEdit = '__edit__';
+  // --- END ADDED ---
+
   @override
   void initState() {
     super.initState();
@@ -240,6 +245,132 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
       // Note: We don't need to explicitly select a category here
     }
   }
+
+  // --- UPDATED: Function to show the category selection dialog ---
+  Future<void> _showCategorySelectionDialog() async {
+    FocusScope.of(context).unfocus(); // Dismiss keyboard
+
+    final uniqueCategoriesByName = <String, UserCategory>{};
+    for (var category in widget.userCategories) {
+      uniqueCategoriesByName[category.name] = category;
+    }
+    final uniqueCategoryList = uniqueCategoriesByName.values.toList();
+    uniqueCategoryList.sort((a, b) => a.name.compareTo(b.name));
+
+    final String? selectedValue = await showDialog<String>(
+      context: context,
+      builder: (BuildContext context) {
+        // Use a standard Dialog for more layout control
+        return Dialog(
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16.0)),
+          child: ConstrainedBox(
+            // Limit the dialog height to make the list scrollable
+            constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(context).size.height * 0.8),
+            child: Column(
+              mainAxisSize: MainAxisSize.min, // Important for Column height
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Title Padding
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+                  child: Text(
+                    'Select Category',
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                ),
+                // Scrollable List Area
+                Expanded(
+                  child: ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: uniqueCategoryList.length,
+                    itemBuilder: (context, index) {
+                      final category = uniqueCategoryList[index];
+                      final bool isSelected =
+                          category.name == widget.cardData.selectedcategory;
+                      return ListTile(
+                        leading: Text(category.icon,
+                            style: const TextStyle(fontSize: 20)),
+                        title: Text(category.name),
+                        trailing: isSelected
+                            ? const Icon(Icons.check, color: Colors.blue)
+                            : null,
+                        onTap: () {
+                          Navigator.pop(
+                              context, category.name); // Return category name
+                        },
+                        // Visual density can make items feel slightly shorter
+                        visualDensity: VisualDensity.compact,
+                      );
+                    },
+                  ),
+                ),
+                // Separator
+                const Divider(height: 1),
+                // Fixed Bottom Action Buttons
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 8.0, vertical: 8.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      TextButton.icon(
+                        icon:
+                            Icon(Icons.add, size: 20, color: Colors.blue[700]),
+                        label: Text('Add New Category',
+                            style: TextStyle(color: Colors.blue[700])),
+                        onPressed: () {
+                          Navigator.pop(context, _dialogActionAdd);
+                        },
+                        style: TextButton.styleFrom(
+                            alignment: Alignment.centerLeft,
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 12)),
+                      ),
+                      TextButton.icon(
+                        icon: Icon(Icons.edit,
+                            size: 20, color: Colors.orange[700]),
+                        label: Text('Edit Categories',
+                            style: TextStyle(color: Colors.orange[700])),
+                        onPressed: () {
+                          Navigator.pop(context, _dialogActionEdit);
+                        },
+                        style: TextButton.styleFrom(
+                            alignment: Alignment.centerLeft,
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 12)),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    // --- Handle the dialog result ---
+    if (selectedValue != null) {
+      if (selectedValue == _dialogActionAdd) {
+        // User selected Add New
+        _handleAddCategory(); // This already handles refresh if needed
+      } else if (selectedValue == _dialogActionEdit) {
+        // User selected Edit
+        _handleEditCategories(); // This already handles refresh if needed
+      } else {
+        // User selected an actual category
+        if (widget.cardData.selectedcategory != selectedValue) {
+          setState(() {
+            widget.cardData.selectedcategory = selectedValue;
+          });
+          widget.onUpdate(refreshCategories: false);
+        }
+      }
+    }
+  }
+  // --- END UPDATED FUNCTION ---
 
   // Build method - Logic from _buildExperienceCard goes here
   @override
@@ -468,93 +599,73 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                     ),
                     SizedBox(height: 16),
 
-                    // UPDATED: Category selection Dropdown
-                    DropdownButtonFormField<String?>(
-                      value: widget.cardData.selectedcategory,
-                      decoration: InputDecoration(
-                        labelText: 'Category',
-                        border: OutlineInputBorder(),
+                    // --- REPLACED Dropdown with a Button ---
+                    Text('Category',
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            color: Colors.grey[600])), // Label like text field
+                    const SizedBox(height: 4),
+                    OutlinedButton(
+                      onPressed: _showCategorySelectionDialog,
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 15), // Adjust padding for height
+                        shape: RoundedRectangleBorder(
+                          borderRadius:
+                              BorderRadius.circular(8.0), // Match field style
+                        ),
+                        side: BorderSide(
+                            color: Colors.grey), // Match field border
+                        alignment: Alignment.centerLeft, // Align content left
                       ),
-                      items: () {
-                        // --- ADDED: De-duplicate categories by name ---
-                        final uniqueCategoriesByName = <String, UserCategory>{};
-                        for (var category in widget.userCategories) {
-                          uniqueCategoriesByName[category.name] = category;
-                        }
-                        final uniqueCategoryList =
-                            uniqueCategoriesByName.values.toList();
-                        // --- END De-duplication ---
-
-                        // Build items
-                        return [
-                          // Map actual categories
-                          ...uniqueCategoryList.map((category) {
-                            return DropdownMenuItem<String>(
-                              value: category.name,
-                              child: Row(
-                                children: [
-                                  Text(category.icon,
-                                      style: TextStyle(fontSize: 18)),
-                                  SizedBox(width: 8),
-                                  Text(category.name),
-                                ],
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment
+                            .spaceBetween, // Space between content and arrow
+                        children: [
+                          // Display selected category icon and name
+                          Row(
+                            children: [
+                              Text(_getIconForSelectedCategory(),
+                                  style: const TextStyle(fontSize: 18)),
+                              const SizedBox(width: 8),
+                              Text(
+                                widget.cardData.selectedcategory ??
+                                    'Select Category',
+                                style: TextStyle(
+                                  // Ensure text color matches default button text color or form field color
+                                  color: widget.cardData.selectedcategory !=
+                                          null
+                                      ? Theme.of(context)
+                                          .textTheme
+                                          .bodyLarge
+                                          ?.color
+                                      : Colors.grey[
+                                          600], // Hint color if nothing selected
+                                ),
                               ),
-                            );
-                          }).toList(),
-                          // Separator (optional)
-                          const DropdownMenuItem<String?>(
-                            enabled: false, // Make separator non-selectable
-                            child: Divider(height: 0),
+                            ],
                           ),
-                          // Add New Category item
-                          DropdownMenuItem<String?>(
-                            value: _addCategoryValue, // Use constant
-                            child: Row(
-                              children: [
-                                Icon(Icons.add, size: 18, color: Colors.blue),
-                                SizedBox(width: 8),
-                                Text('Add New Category',
-                                    style: TextStyle(color: Colors.blue)),
-                              ],
-                            ),
-                          ),
-                          // Edit Categories item
-                          DropdownMenuItem<String?>(
-                            value: _editCategoriesValue, // Use constant
-                            child: Row(
-                              children: [
-                                Icon(Icons.edit,
-                                    size: 18, color: Colors.orange),
-                                SizedBox(width: 8),
-                                Text('Edit Categories',
-                                    style: TextStyle(color: Colors.orange)),
-                              ],
-                            ),
-                          ),
-                        ];
-                      }(),
-                      onChanged: (value) {
-                        // Check for special values first
-                        if (value == _addCategoryValue) {
-                          _handleAddCategory();
-                        } else if (value == _editCategoriesValue) {
-                          _handleEditCategories();
-                        } else {
-                          // Regular category selected
-                          widget.cardData.selectedcategory = value;
-                          setState(() {}); // Rebuild for prefix icon
-                          widget.onUpdate(refreshCategories: false);
-                        }
-                      },
-                      validator: (value) {
-                        // Validator checks the actual data, not the dropdown value
-                        if (widget.cardData.selectedcategory == null ||
-                            widget.cardData.selectedcategory!.isEmpty) {
-                          return 'Please select a category';
-                        }
-                        return null;
-                      },
+                          // Dropdown arrow indicator
+                          const Icon(Icons.arrow_drop_down, color: Colors.grey),
+                        ],
+                      ),
                     ),
+                    // You might need a way to show validation errors if category is required
+                    // This could involve a separate Text widget below the button
+                    // that appears if widget.cardData.selectedcategory is null during form validation.
+                    // For now, relying on parent form validation.
+                    /* Example Validation Message Display:
+                    if (widget.formKey.currentState?.validate() == false && widget.cardData.selectedcategory == null) 
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8.0, left: 12.0),
+                        child: Text(
+                          'Please select a category',
+                          style: TextStyle(color: Theme.of(context).colorScheme.error, fontSize: 12),
+                        ),
+                      ), 
+                    */
+                    // --- END REPLACEMENT ---
+
                     SizedBox(height: 16),
 
                     // Yelp URL
