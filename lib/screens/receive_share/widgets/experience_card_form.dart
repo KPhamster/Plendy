@@ -21,6 +21,7 @@ typedef OnSelectSavedExperienceCallback = Future<void> Function(
 typedef OnUpdateCallback = void Function({
   // Modified to accept optional flag
   bool refreshCategories, // Flag to indicate category list needs refresh
+  String? newCategoryName, // Optional new category name
 });
 
 class ExperienceCardForm extends StatefulWidget {
@@ -211,15 +212,11 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
     );
 
     if (newCategory != null && mounted) {
-      // New category was added successfully by the modal
       print("New category added: ${newCategory.name} (${newCategory.icon})");
 
-      // Update the selected category in the current card
-      // No need for setState here as the parent will rebuild
-      widget.cardData.selectedcategory = newCategory.name;
-
-      // Notify the parent screen to refresh the category list and rebuild
-      widget.onUpdate(refreshCategories: true);
+      // Notify the parent screen to refresh the category list and pass the new name
+      widget.onUpdate(
+          refreshCategories: true, newCategoryName: newCategory.name);
     }
   }
 

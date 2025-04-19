@@ -244,28 +244,28 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   }
 
   // RENAMED: Method to load user categories
-  void _loadUserCategories() {
-    // Use renamed service method
+  // UPDATED Return Type
+  Future<void> _loadUserCategories() {
     _userCategoriesFuture = _experienceService.getUserCategories();
-    _userCategoriesFuture!.then((categories) {
+    // Return the future that completes after setting state or handling error
+    return _userCategoriesFuture!.then((categories) {
       if (mounted) {
         setState(() {
           _userCategories = categories; // RENAMED state variable
-          // Update card defaults if needed
-          _updateCardDefaultCategoriesIfNeeded(
-              categories); // RENAMED helper call
+          _updateCardDefaultCategoriesIfNeeded(categories);
         });
       }
     }).catchError((error) {
       print("Error loading user categories: $error");
       if (mounted) {
         setState(() {
-          // Use renamed class and static method
-          _userCategories = UserCategory.createInitialCategories(); // RENAMED
+          _userCategories = UserCategory.createInitialCategories();
         });
         _showSnackBar(
             context, "Error loading your custom categories. Using defaults.");
       }
+      // Optionally rethrow or handle error further if needed
+      // throw error;
     });
   }
 
@@ -2234,13 +2234,34 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                               // UPDATED onUpdate handling:
                                               onUpdate: (
                                                   {bool refreshCategories =
-                                                      false}) {
+                                                      false,
+                                                  String? newCategoryName}) {
                                                 if (refreshCategories) {
                                                   // Reload categories and trigger rebuild
-                                                  _loadUserCategories();
+                                                  _loadUserCategories()
+                                                      .then((_) {
+                                                    // Ensure widget is still mounted after async operation
+                                                    if (newCategoryName !=
+                                                            null &&
+                                                        mounted) {
+                                                      // Update the specific card AFTER the list is updated
+                                                      // and trigger a rebuild to reflect the change
+                                                      setState(() {
+                                                        card.selectedcategory =
+                                                            newCategoryName;
+                                                      });
+                                                      print(
+                                                          "Selected category for card ${card.id} set to: $newCategoryName");
+                                                      // Optional: If provider needs notifying externally
+                                                      // context.read<ReceiveShareProvider>().notifyCardChanged(card);
+                                                    }
+                                                  });
                                                 } else {
-                                                  // Just trigger rebuild for other updates
-                                                  setState(() {});
+                                                  // Just trigger rebuild for other updates if needed
+                                                  if (mounted) {
+                                                    // Check mount status for safety
+                                                    setState(() {});
+                                                  }
                                                 }
                                               },
                                               formKey: card.formKey,
