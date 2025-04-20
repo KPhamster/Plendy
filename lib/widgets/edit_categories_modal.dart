@@ -3,6 +3,9 @@ import 'package:plendy/models/user_category.dart';
 import 'package:plendy/services/experience_service.dart';
 import 'package:plendy/widgets/add_category_modal.dart';
 
+// UPDATED: Enum for sort order
+enum CategorySortOrder { manual, mostRecent, alphabetical }
+
 class EditCategoriesModal extends StatefulWidget {
   const EditCategoriesModal({super.key});
 
@@ -12,9 +15,14 @@ class EditCategoriesModal extends StatefulWidget {
 
 class _EditCategoriesModalState extends State<EditCategoriesModal> {
   final ExperienceService _experienceService = ExperienceService();
-  List<UserCategory> _categories = [];
+  List<UserCategory> _categories =
+      []; // Now holds the current display/manual order
+  List<UserCategory> _fetchedCategories = []; // Holds original fetched order
   bool _isLoading = false;
   bool _categoriesChanged = false; // Track if any changes were made
+
+  // UPDATED: State for sorting (default to manual)
+  CategorySortOrder _sortOrder = CategorySortOrder.manual;
 
   @override
   void initState() {
@@ -38,10 +46,12 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
 
       if (mounted) {
         setState(() {
-          _categories = categories;
+          _fetchedCategories =
+              List.from(categories); // Store the original fetched order
           _isLoading = false;
           print(
               "_loadCategories END - Set state with fetched categories."); // Log State Set
+          _applySort(); // Apply initial sort order (manual will copy from fetched)
         });
       }
     } catch (error) {
@@ -53,11 +63,42 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
         setState(() {
           _isLoading = false;
           _categories = [];
+          _fetchedCategories = [];
           print(
               "_loadCategories END - Set state with empty categories after error."); // Log Error State Set
         });
       }
     }
+  }
+
+  // UPDATED: Function to apply the current sort order
+  void _applySort() {
+    print("Applying sort order: $_sortOrder");
+    setState(() {
+      if (_sortOrder == CategorySortOrder.alphabetical) {
+        // Start with a copy of the original fetched order for sorting
+        List<UserCategory> sortedList = List.from(_fetchedCategories);
+        sortedList.sort(
+            (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+        _categories = sortedList; // Update the display list
+      } else if (_sortOrder == CategorySortOrder.mostRecent) {
+        // Start with a copy of the original fetched order for sorting
+        List<UserCategory> sortedList = List.from(_fetchedCategories);
+        sortedList.sort((a, b) {
+          final tsA = a.lastUsedTimestamp;
+          final tsB = b.lastUsedTimestamp;
+          if (tsA == null && tsB == null) return 0;
+          if (tsA == null) return 1;
+          if (tsB == null) return -1;
+          return tsB.compareTo(tsA);
+        });
+        _categories = sortedList; // Update the display list
+      } else {
+        // Manual / Default: Use the fetched list directly (already sorted by index)
+        _categories = List.from(_fetchedCategories);
+      }
+      print("Display categories count after sort: ${_categories.length}");
+    });
   }
 
   Future<void> _deleteCategory(UserCategory category) async {
@@ -126,7 +167,7 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
     if (updatedCategory != null && mounted) {
       // No need to call updateUserCategory here, as AddCategoryModal handles it
       _categoriesChanged = true; // Mark that changes happened
-      _loadCategories(); // Refresh the list in this modal
+      _loadCategories(); // Refresh the list in this modal (will re-apply sort)
 
       // Show success message
       ScaffoldMessenger.of(context).showSnackBar(
@@ -149,14 +190,14 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
     if (newCategory != null && mounted) {
       // If a new category was added, mark changes and refresh the list
       _categoriesChanged = true;
-      _loadCategories();
+      _loadCategories(); // Refresh the list (will re-apply sort)
     }
   }
 
   @override
   Widget build(BuildContext context) {
     print(
-        "EditCategoriesModal BUILD START - Current category count: ${_categories.length}"); // Log Build Start
+        "EditCategoriesModal BUILD START - Current category count: ${_categories.length}"); // Log Build Start (use _categories)
     final bottomPadding = MediaQuery.of(context).viewInsets.bottom;
     // Calculate a max height (e.g., 70% of screen height)
     final screenHeight = MediaQuery.of(context).size.height;
@@ -189,10 +230,43 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
                   child: Text('Edit Categories',
                       style: Theme.of(context).textTheme.titleLarge),
                 ),
+                // UPDATED: Sorting Menu Button
+                PopupMenuButton<CategorySortOrder>(
+                  // Change icon based on sort order?
+                  icon: _sortOrder == CategorySortOrder.manual
+                      ? const Icon(Icons
+                          .drag_handle) // Indicate manual order allows dragging
+                      : const Icon(Icons.sort),
+                  tooltip: "Sort Categories",
+                  onSelected: (CategorySortOrder result) {
+                    if (_sortOrder != result) {
+                      setState(() {
+                        _sortOrder = result;
+                      });
+                      _applySort(); // Apply the selected sort
+                    }
+                  },
+                  itemBuilder: (BuildContext context) =>
+                      <PopupMenuEntry<CategorySortOrder>>[
+                    // UPDATED: Menu items
+                    const PopupMenuItem<CategorySortOrder>(
+                      value: CategorySortOrder.manual,
+                      child: Text('Manual / Default'),
+                    ),
+                    const PopupMenuItem<CategorySortOrder>(
+                      value: CategorySortOrder.mostRecent,
+                      child: Text('Sort by Most Recent'),
+                    ),
+                    const PopupMenuItem<CategorySortOrder>(
+                      value: CategorySortOrder.alphabetical,
+                      child: Text('Sort Alphabetically'),
+                    ),
+                  ],
+                ),
                 IconButton(
                   icon: const Icon(Icons.close),
                   onPressed: () =>
-                      Navigator.of(context).pop(_categoriesChanged),
+                      _handleClose(), // UPDATED: Use helper to handle close
                   tooltip: 'Close',
                 ),
               ],
@@ -205,12 +279,15 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
                   ? const Center(child: CircularProgressIndicator())
                   : _categories.isEmpty
                       ? const Center(child: Text('No categories found.'))
-                      : ListView.builder(
-                          // ListView will scroll within the Expanded area
+                      // UPDATED: Use ReorderableListView.builder
+                      : ReorderableListView.builder(
+                          // buildDefaultDragHandles: false, // We use a custom handle
                           itemCount: _categories.length,
                           itemBuilder: (context, index) {
                             final category = _categories[index];
+                            // IMPORTANT: Each item MUST have a unique Key
                             return ListTile(
+                              key: ValueKey(category.id),
                               leading: Text(category.icon,
                                   style: const TextStyle(fontSize: 24)),
                               title: Text(category.name),
@@ -233,9 +310,42 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
                                         ? null
                                         : () => _deleteCategory(category),
                                   ),
+                                  // ADDED: Drag Handle
+                                  ReorderableDragStartListener(
+                                    index: index,
+                                    child: const Icon(Icons.drag_handle,
+                                        color: Colors.grey, size: 24),
+                                  ),
                                 ],
                               ),
                             );
+                          },
+                          onReorder: (int oldIndex, int newIndex) {
+                            setState(() {
+                              // Adjust index if item is moved down in the list
+                              if (newIndex > oldIndex) {
+                                newIndex -= 1;
+                              }
+                              // Remove item from old position and insert into new position
+                              final UserCategory item =
+                                  _categories.removeAt(oldIndex);
+                              _categories.insert(newIndex, item);
+
+                              // IMPORTANT: Set sort order to manual after any reorder
+                              _sortOrder = CategorySortOrder.manual;
+                              _categoriesChanged =
+                                  true; // Mark that changes were made
+
+                              // ADDED: Update orderIndex property in the local list
+                              for (int i = 0; i < _categories.length; i++) {
+                                // Use copyWith to update the object immutably
+                                _categories[i] =
+                                    _categories[i].copyWith(orderIndex: i);
+                              }
+
+                              print(
+                                  "Categories reordered. Set sortOrder to manual.");
+                            });
                           },
                         ),
             ),
@@ -258,5 +368,66 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
         ),
       ),
     );
+  }
+
+  // ADDED: Helper function to handle closing and potentially saving order
+  Future<void> _handleClose() async {
+    bool shouldSaveChanges =
+        _categoriesChanged && _sortOrder == CategorySortOrder.manual;
+    print(
+        "Closing EditCategoriesModal. Should save changes: $shouldSaveChanges");
+
+    if (shouldSaveChanges) {
+      setState(() {
+        _isLoading = true;
+      }); // Show loading indicator
+      try {
+        // Prepare data for batch update
+        final List<Map<String, dynamic>> updates = [];
+        for (int i = 0; i < _categories.length; i++) {
+          // Ensure category has an ID and index before adding to update
+          if (_categories[i].id.isNotEmpty &&
+              _categories[i].orderIndex != null) {
+            updates.add({
+              'id': _categories[i].id,
+              'orderIndex':
+                  _categories[i].orderIndex!, // Use ! as we updated it
+            });
+          } else {
+            print(
+                "Warning: Skipping category with missing id or index: ${_categories[i].name}");
+          }
+        }
+
+        print("Attempting to save order for ${updates.length} categories.");
+        await _experienceService.updateCategoryOrder(updates);
+        print("Category order saved successfully.");
+        if (mounted) {
+          Navigator.of(context)
+              .pop(true); // Indicate changes were made and saved
+        }
+      } catch (e) {
+        print("Error saving category order: $e");
+        if (mounted) {
+          // Show error message
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text("Error saving category order: $e")),
+          );
+          // Optionally, don't pop or pop indicating failure?
+          // For now, we still pop but indicate no changes were successfully saved (original _categoriesChanged state)
+          Navigator.of(context)
+              .pop(_categoriesChanged && false); // Force false if save failed
+        }
+      } finally {
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+          }); // Hide loading indicator
+        }
+      }
+    } else {
+      // No changes to save, just pop
+      Navigator.of(context).pop(_categoriesChanged);
+    }
   }
 }
