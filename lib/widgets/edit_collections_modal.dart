@@ -1,85 +1,85 @@
 import 'package:flutter/material.dart';
-import 'package:plendy/models/user_category.dart';
+import 'package:plendy/models/user_collection.dart';
 import 'package:plendy/services/experience_service.dart';
-import 'package:plendy/widgets/add_category_modal.dart';
+import 'package:plendy/widgets/add_collection_modal.dart';
 
 // UPDATED: Enum for sort order (used as parameter, not state)
-enum CategorySortType { mostRecent, alphabetical }
+enum CollectionSortType { mostRecent, alphabetical }
 
-class EditCategoriesModal extends StatefulWidget {
-  const EditCategoriesModal({super.key});
+class EditCollectionsModal extends StatefulWidget {
+  const EditCollectionsModal({super.key});
 
   @override
-  State<EditCategoriesModal> createState() => _EditCategoriesModalState();
+  State<EditCollectionsModal> createState() => _EditCollectionsModalState();
 }
 
-class _EditCategoriesModalState extends State<EditCategoriesModal> {
+class _EditCollectionsModalState extends State<EditCollectionsModal> {
   final ExperienceService _experienceService = ExperienceService();
-  List<UserCategory> _categories =
+  List<UserCollection> _collections =
       []; // Now holds the current display/manual order
-  List<UserCategory> _fetchedCategories = []; // Holds original fetched order
+  List<UserCollection> _fetchedCollections = []; // Holds original fetched order
   bool _isLoading = false;
-  bool _categoriesChanged =
+  bool _collectionsChanged =
       false; // Track if *any* change to order/content occurred
 
   @override
   void initState() {
     super.initState();
-    _loadCategories();
+    _loadCollections();
   }
 
-  Future<void> _loadCategories() async {
+  Future<void> _loadCollections() async {
     if (!mounted) return;
-    print("_loadCategories START - Setting isLoading=true"); // Log Start
+    print("_loadCollections START - Setting isLoading=true"); // Log Start
     setState(() {
       _isLoading = true;
     });
     try {
       print(
-          "_loadCategories - Calling _experienceService.getUserCategories..."); // Log Before Call
-      final categories = await _experienceService.getUserCategories();
+          "_loadCollections - Calling _experienceService.getUserCollections..."); // Log Before Call
+      final collections = await _experienceService.getUserCollections();
       print(
-          "_loadCategories - Received ${categories.length} categories from service:"); // Log Received
-      categories.forEach((c) => print("  - ${c.name} (ID: ${c.id})"));
+          "_loadCollections - Received ${collections.length} collections from service:"); // Log Received
+      collections.forEach((c) => print("  - ${c.name} (ID: ${c.id})"));
 
       if (mounted) {
         setState(() {
-          _fetchedCategories =
-              List.from(categories); // Store the original fetched order
-          // Initialize _categories with the fetched order (already sorted by index)
-          _categories = List.from(_fetchedCategories);
+          _fetchedCollections =
+              List.from(collections); // Store the original fetched order
+          // Initialize _collections with the fetched order (already sorted by index)
+          _collections = List.from(_fetchedCollections);
           _isLoading = false;
           print(
-              "_loadCategories END - Set state with fetched categories."); // Log State Set
-          // No initial sort application needed, _categories starts with saved order
+              "_loadCollections END - Set state with fetched collections."); // Log State Set
+          // No initial sort application needed, _collections starts with saved order
         });
       }
     } catch (error) {
-      print("_loadCategories ERROR: $error"); // Log Error
+      print("_loadCollections ERROR: $error"); // Log Error
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error loading categories: $error')),
+          SnackBar(content: Text('Error loading collections: $error')),
         );
         setState(() {
           _isLoading = false;
-          _categories = [];
-          _fetchedCategories = [];
+          _collections = [];
+          _fetchedCollections = [];
           print(
-              "_loadCategories END - Set state with empty categories after error."); // Log Error State Set
+              "_loadCollections END - Set state with empty collections after error."); // Log Error State Set
         });
       }
     }
   }
 
   // UPDATED: Function now takes sort type and applies it permanently
-  void _applySort(CategorySortType sortType) {
+  void _applySort(CollectionSortType sortType) {
     print("Applying sort permanently: $sortType");
     setState(() {
-      if (sortType == CategorySortType.alphabetical) {
-        _categories.sort(
+      if (sortType == CollectionSortType.alphabetical) {
+        _collections.sort(
             (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-      } else if (sortType == CategorySortType.mostRecent) {
-        _categories.sort((a, b) {
+      } else if (sortType == CollectionSortType.mostRecent) {
+        _collections.sort((a, b) {
           final tsA = a.lastUsedTimestamp;
           final tsB = b.lastUsedTimestamp;
           if (tsA == null && tsB == null) return 0;
@@ -91,30 +91,30 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
 
       // IMPORTANT: Update orderIndex locally after sorting
       _updateLocalOrderIndices();
-      _categoriesChanged = true; // Mark that changes were made
+      _collectionsChanged = true; // Mark that changes were made
       print(
-          "Category sorted via menu, _categoriesChanged set to true."); // Log flag set
+          "Collection sorted via menu, _collectionsChanged set to true."); // Log flag set
 
-      print("Display categories count after sort: ${_categories.length}");
+      print("Display collections count after sort: ${_collections.length}");
     });
   }
 
   // ADDED: Helper to update local orderIndex properties
   void _updateLocalOrderIndices() {
-    for (int i = 0; i < _categories.length; i++) {
-      _categories[i] = _categories[i].copyWith(orderIndex: i);
+    for (int i = 0; i < _collections.length; i++) {
+      _collections[i] = _collections[i].copyWith(orderIndex: i);
     }
     print("Updated local order indices.");
   }
 
-  Future<void> _deleteCategory(UserCategory category) async {
+  Future<void> _deleteCollection(UserCollection collection) async {
     // Confirmation Dialog
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Delete Category?'),
+        title: const Text('Delete Collection?'),
         content: Text(
-            'Are you sure you want to delete the "${category.name}" category? This cannot be undone.'),
+            'Are you sure you want to delete the "${collection.name}" collection? This cannot be undone.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
@@ -133,23 +133,23 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
         _isLoading = true; // Indicate loading during delete
       });
       try {
-        await _experienceService.deleteUserCategory(category.id);
+        await _experienceService.deleteUserCollection(collection.id);
         // Ensure flag is set *before* loading, as load might reset list
-        _categoriesChanged = true;
+        _collectionsChanged = true;
         print(
-            "Category deleted, _categoriesChanged set to true."); // Log flag set
-        _loadCategories(); // Refresh the list immediately after delete
+            "Collection deleted, _collectionsChanged set to true."); // Log flag set
+        _loadCollections(); // Refresh the list immediately after delete
         // Show success message
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('"${category.name}" category deleted.')),
+            SnackBar(content: Text('"${collection.name}" collection deleted.')),
           );
         }
       } catch (e) {
-        print("Error deleting category: $e");
+        print("Error deleting collection: $e");
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Error deleting category: $e')),
+            SnackBar(content: Text('Error deleting collection: $e')),
           );
           setState(() {
             _isLoading = false; // Reset loading state on error
@@ -159,57 +159,60 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
     }
   }
 
-  Future<void> _editCategory(UserCategory category) async {
-    // Show the AddCategoryModal, passing the category to edit
-    final updatedCategory = await showModalBottomSheet<UserCategory>(
+  Future<void> _editCollection(UserCollection collection) async {
+    // Show the AddCollectionModal, passing the collection to edit
+    final updatedCollection = await showModalBottomSheet<UserCollection>(
       context: context,
-      // Pass the category to the modal
-      builder: (context) => AddCategoryModal(categoryToEdit: category),
+      // Pass the collection to the modal
+      builder: (context) => AddCollectionModal(collectionToEdit: collection),
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
     );
 
-    // Check if the modal returned an updated category
-    if (updatedCategory != null && mounted) {
-      // No need to call updateUserCategory here, as AddCategoryModal handles it
+    // Check if the modal returned an updated collection
+    if (updatedCollection != null && mounted) {
+      // No need to call updateUserCollection here, as AddCollectionModal handles it
       // Ensure flag is set *before* loading
-      _categoriesChanged = true;
-      print("Category edited, _categoriesChanged set to true."); // Log flag set
-      _loadCategories(); // Refresh the list in this modal (will re-apply sort)
+      _collectionsChanged = true;
+      print(
+          "Collection edited, _collectionsChanged set to true."); // Log flag set
+      _loadCollections(); // Refresh the list in this modal (will re-apply sort)
 
       // Show success message
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('"${updatedCategory.name}" category updated.')),
+        SnackBar(
+            content: Text('"${updatedCollection.name}" collection updated.')),
       );
     }
   }
 
-  Future<void> _addNewCategory() async {
-    // Show the existing AddCategoryModal
-    final newCategory = await showModalBottomSheet<UserCategory>(
+  Future<void> _addNewCollection() async {
+    // Show the existing AddCollectionModal
+    final newCollection = await showModalBottomSheet<UserCollection>(
       context: context,
-      builder: (context) => const AddCategoryModal(),
+      builder: (context) => const AddCollectionModal(),
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
     );
 
-    if (newCategory != null && mounted) {
-      // If a new category was added, mark changes and refresh the list
+    if (newCollection != null && mounted) {
+      // If a new collection was added, mark changes and refresh the list
       // Ensure flag is set *before* loading
-      _categoriesChanged = true;
-      print("Category added, _categoriesChanged set to true."); // Log flag set
-      _loadCategories(); // Refresh the list (will re-apply sort)
+      _collectionsChanged = true;
+      print(
+          "Collection added, _collectionsChanged set to true."); // Log flag set
+      _loadCollections(); // Refresh the list (will re-apply sort)
     }
   }
 
   @override
   Widget build(BuildContext context) {
     print(
-        "EditCategoriesModal BUILD START - Current category count: ${_categories.length}"); // Log Build Start (use _categories)
+        "EditCollectionsModal BUILD START - Current collection count: ${_collections.length}"); // Log Build Start (use _collections)
     final bottomPadding = MediaQuery.of(context).viewInsets.bottom;
     // Calculate a max height (e.g., 70% of screen height)
     final screenHeight = MediaQuery.of(context).size.height;
@@ -239,27 +242,27 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
                 Padding(
                   padding:
                       const EdgeInsets.only(left: 8.0, top: 8.0, bottom: 8.0),
-                  child: Text('Edit Categories',
+                  child: Text('Edit Collections',
                       style: Theme.of(context).textTheme.titleLarge),
                 ),
                 // UPDATED: Sorting Menu Button
-                PopupMenuButton<CategorySortType>(
+                PopupMenuButton<CollectionSortType>(
                   // Use standard sort icon
                   icon: const Icon(Icons.sort),
-                  tooltip: "Sort Categories",
-                  onSelected: (CategorySortType result) {
+                  tooltip: "Sort Collections",
+                  onSelected: (CollectionSortType result) {
                     // Directly apply the selected sort permanently
                     _applySort(result);
                   },
                   itemBuilder: (BuildContext context) =>
-                      <PopupMenuEntry<CategorySortType>>[
+                      <PopupMenuEntry<CollectionSortType>>[
                     // UPDATED: Menu items (Removed Manual)
-                    const PopupMenuItem<CategorySortType>(
-                      value: CategorySortType.mostRecent,
+                    const PopupMenuItem<CollectionSortType>(
+                      value: CollectionSortType.mostRecent,
                       child: Text('Sort by Most Recent'),
                     ),
-                    const PopupMenuItem<CategorySortType>(
-                      value: CategorySortType.alphabetical,
+                    const PopupMenuItem<CollectionSortType>(
+                      value: CollectionSortType.alphabetical,
                       child: Text('Sort Alphabetically'),
                     ),
                   ],
@@ -276,40 +279,40 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
             const SizedBox(height: 8),
             // Scrollable List Area (Uses Expanded)
             Expanded(
-              child: _isLoading && _categories.isEmpty
+              child: _isLoading && _collections.isEmpty
                   ? const Center(child: CircularProgressIndicator())
-                  : _categories.isEmpty
-                      ? const Center(child: Text('No categories found.'))
+                  : _collections.isEmpty
+                      ? const Center(child: Text('No collections found.'))
                       // UPDATED: Use ReorderableListView.builder
                       : ReorderableListView.builder(
                           // buildDefaultDragHandles: false, // We use a custom handle
-                          itemCount: _categories.length,
+                          itemCount: _collections.length,
                           itemBuilder: (context, index) {
-                            final category = _categories[index];
+                            final collection = _collections[index];
                             // IMPORTANT: Each item MUST have a unique Key
                             return ListTile(
-                              key: ValueKey(category.id),
-                              leading: Text(category.icon,
+                              key: ValueKey(collection.id),
+                              leading: Text(collection.icon,
                                   style: const TextStyle(fontSize: 24)),
-                              title: Text(category.name),
+                              title: Text(collection.name),
                               trailing: Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
                                   IconButton(
                                     icon: Icon(Icons.edit_outlined,
                                         color: Colors.blue[700], size: 20),
-                                    tooltip: 'Edit ${category.name}',
+                                    tooltip: 'Edit ${collection.name}',
                                     onPressed: _isLoading
                                         ? null
-                                        : () => _editCategory(category),
+                                        : () => _editCollection(collection),
                                   ),
                                   IconButton(
                                     icon: Icon(Icons.delete_outline,
                                         color: Colors.red[700], size: 20),
-                                    tooltip: 'Delete ${category.name}',
+                                    tooltip: 'Delete ${collection.name}',
                                     onPressed: _isLoading
                                         ? null
-                                        : () => _deleteCategory(category),
+                                        : () => _deleteCollection(collection),
                                   ),
                                   // ADDED: Drag Handle
                                   ReorderableDragStartListener(
@@ -328,34 +331,34 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
                                 newIndex -= 1;
                               }
                               // Remove item from old position and insert into new position
-                              final UserCategory item =
-                                  _categories.removeAt(oldIndex);
-                              _categories.insert(newIndex, item);
+                              final UserCollection item =
+                                  _collections.removeAt(oldIndex);
+                              _collections.insert(newIndex, item);
 
                               // Update orderIndex property in the local list
                               _updateLocalOrderIndices(); // Use helper
 
-                              _categoriesChanged =
+                              _collectionsChanged =
                                   true; // Mark that changes were made
                               print(
-                                  "Category reordered, _categoriesChanged set to true."); // Log flag set
+                                  "Collection reordered, _collectionsChanged set to true."); // Log flag set
 
                               // Update orderIndex property in the local list
                               _updateLocalOrderIndices(); // Use helper
 
-                              print("Categories reordered.");
+                              print("Collections reordered.");
                             });
                           },
                         ),
             ),
             const SizedBox(height: 16),
-            // Add New Category Button (Fixed Bottom)
+            // Add New Collection Button (Fixed Bottom)
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
                 icon: const Icon(Icons.add),
-                label: const Text('Add New Category'),
-                onPressed: _isLoading ? null : _addNewCategory,
+                label: const Text('Add New Collection'),
+                onPressed: _isLoading ? null : _addNewCollection,
                 style: ElevatedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 12),
                 ),
@@ -372,9 +375,9 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
   // ADDED: Helper function to handle closing and potentially saving order
   Future<void> _handleClose() async {
     // UPDATED: Save if any changes were flagged
-    bool shouldSaveChanges = _categoriesChanged;
+    bool shouldSaveChanges = _collectionsChanged;
     print(
-        "Closing EditCategoriesModal. Should save changes: $shouldSaveChanges");
+        "Closing EditCollectionsModal. Should save changes: $shouldSaveChanges");
 
     if (shouldSaveChanges) {
       setState(() {
@@ -383,39 +386,39 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
       try {
         // Prepare data for batch update
         final List<Map<String, dynamic>> updates = [];
-        for (int i = 0; i < _categories.length; i++) {
-          // Ensure category has an ID and index before adding to update
-          if (_categories[i].id.isNotEmpty &&
-              _categories[i].orderIndex != null) {
+        for (int i = 0; i < _collections.length; i++) {
+          // Ensure collection has an ID and index before adding to update
+          if (_collections[i].id.isNotEmpty &&
+              _collections[i].orderIndex != null) {
             updates.add({
-              'id': _categories[i].id,
+              'id': _collections[i].id,
               'orderIndex':
-                  _categories[i].orderIndex!, // Use ! as we updated it
+                  _collections[i].orderIndex!, // Use ! as we updated it
             });
           } else {
             print(
-                "Warning: Skipping category with missing id or index: ${_categories[i].name}");
+                "Warning: Skipping collection with missing id or index: ${_collections[i].name}");
           }
         }
 
-        print("Attempting to save order for ${updates.length} categories.");
-        await _experienceService.updateCategoryOrder(updates);
-        print("Category order saved successfully.");
+        print("Attempting to save order for ${updates.length} collections.");
+        await _experienceService.updateCollectionOrder(updates);
+        print("Collection order saved successfully.");
         if (mounted) {
           Navigator.of(context)
               .pop(true); // Indicate changes were made and saved
         }
       } catch (e) {
-        print("Error saving category order: $e");
+        print("Error saving collection order: $e");
         if (mounted) {
           // Show error message
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text("Error saving category order: $e")),
+            SnackBar(content: Text("Error saving collection order: $e")),
           );
           // Optionally, don't pop or pop indicating failure?
-          // For now, we still pop but indicate no changes were successfully saved (original _categoriesChanged state)
+          // For now, we still pop but indicate no changes were successfully saved (original _collectionsChanged state)
           Navigator.of(context)
-              .pop(_categoriesChanged && false); // Force false if save failed
+              .pop(_collectionsChanged && false); // Force false if save failed
         }
       } finally {
         if (mounted) {
@@ -426,7 +429,7 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
       }
     } else {
       // No changes to save, just pop
-      Navigator.of(context).pop(_categoriesChanged);
+      Navigator.of(context).pop(_collectionsChanged);
     }
   }
 }
