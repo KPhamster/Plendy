@@ -3,8 +3,8 @@ import 'package:plendy/models/user_category.dart';
 import 'package:plendy/services/experience_service.dart';
 import 'package:plendy/widgets/add_category_modal.dart';
 
-// UPDATED: Enum for sort order
-enum CategorySortOrder { manual, mostRecent, alphabetical }
+// UPDATED: Enum for sort order (used as parameter, not state)
+enum CategorySortType { mostRecent, alphabetical }
 
 class EditCategoriesModal extends StatefulWidget {
   const EditCategoriesModal({super.key});
@@ -19,10 +19,8 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
       []; // Now holds the current display/manual order
   List<UserCategory> _fetchedCategories = []; // Holds original fetched order
   bool _isLoading = false;
-  bool _categoriesChanged = false; // Track if any changes were made
-
-  // UPDATED: State for sorting (default to manual)
-  CategorySortOrder _sortOrder = CategorySortOrder.manual;
+  bool _categoriesChanged =
+      false; // Track if *any* change to order/content occurred
 
   @override
   void initState() {
@@ -48,10 +46,12 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
         setState(() {
           _fetchedCategories =
               List.from(categories); // Store the original fetched order
+          // Initialize _categories with the fetched order (already sorted by index)
+          _categories = List.from(_fetchedCategories);
           _isLoading = false;
           print(
               "_loadCategories END - Set state with fetched categories."); // Log State Set
-          _applySort(); // Apply initial sort order (manual will copy from fetched)
+          // No initial sort application needed, _categories starts with saved order
         });
       }
     } catch (error) {
@@ -71,20 +71,15 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
     }
   }
 
-  // UPDATED: Function to apply the current sort order
-  void _applySort() {
-    print("Applying sort order: $_sortOrder");
+  // UPDATED: Function now takes sort type and applies it permanently
+  void _applySort(CategorySortType sortType) {
+    print("Applying sort permanently: $sortType");
     setState(() {
-      if (_sortOrder == CategorySortOrder.alphabetical) {
-        // Start with a copy of the original fetched order for sorting
-        List<UserCategory> sortedList = List.from(_fetchedCategories);
-        sortedList.sort(
+      if (sortType == CategorySortType.alphabetical) {
+        _categories.sort(
             (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-        _categories = sortedList; // Update the display list
-      } else if (_sortOrder == CategorySortOrder.mostRecent) {
-        // Start with a copy of the original fetched order for sorting
-        List<UserCategory> sortedList = List.from(_fetchedCategories);
-        sortedList.sort((a, b) {
+      } else if (sortType == CategorySortType.mostRecent) {
+        _categories.sort((a, b) {
           final tsA = a.lastUsedTimestamp;
           final tsB = b.lastUsedTimestamp;
           if (tsA == null && tsB == null) return 0;
@@ -92,13 +87,24 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
           if (tsB == null) return -1;
           return tsB.compareTo(tsA);
         });
-        _categories = sortedList; // Update the display list
-      } else {
-        // Manual / Default: Use the fetched list directly (already sorted by index)
-        _categories = List.from(_fetchedCategories);
       }
+
+      // IMPORTANT: Update orderIndex locally after sorting
+      _updateLocalOrderIndices();
+      _categoriesChanged = true; // Mark that changes were made
+      print(
+          "Category sorted via menu, _categoriesChanged set to true."); // Log flag set
+
       print("Display categories count after sort: ${_categories.length}");
     });
+  }
+
+  // ADDED: Helper to update local orderIndex properties
+  void _updateLocalOrderIndices() {
+    for (int i = 0; i < _categories.length; i++) {
+      _categories[i] = _categories[i].copyWith(orderIndex: i);
+    }
+    print("Updated local order indices.");
   }
 
   Future<void> _deleteCategory(UserCategory category) async {
@@ -128,9 +134,11 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
       });
       try {
         await _experienceService.deleteUserCategory(category.id);
-        _categoriesChanged = true; // Mark that changes were made
-        // Refresh the list immediately after delete
-        _loadCategories();
+        // Ensure flag is set *before* loading, as load might reset list
+        _categoriesChanged = true;
+        print(
+            "Category deleted, _categoriesChanged set to true."); // Log flag set
+        _loadCategories(); // Refresh the list immediately after delete
         // Show success message
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -166,7 +174,9 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
     // Check if the modal returned an updated category
     if (updatedCategory != null && mounted) {
       // No need to call updateUserCategory here, as AddCategoryModal handles it
-      _categoriesChanged = true; // Mark that changes happened
+      // Ensure flag is set *before* loading
+      _categoriesChanged = true;
+      print("Category edited, _categoriesChanged set to true."); // Log flag set
       _loadCategories(); // Refresh the list in this modal (will re-apply sort)
 
       // Show success message
@@ -189,7 +199,9 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
 
     if (newCategory != null && mounted) {
       // If a new category was added, mark changes and refresh the list
+      // Ensure flag is set *before* loading
       _categoriesChanged = true;
+      print("Category added, _categoriesChanged set to true."); // Log flag set
       _loadCategories(); // Refresh the list (will re-apply sort)
     }
   }
@@ -231,34 +243,23 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
                       style: Theme.of(context).textTheme.titleLarge),
                 ),
                 // UPDATED: Sorting Menu Button
-                PopupMenuButton<CategorySortOrder>(
-                  // Change icon based on sort order?
-                  icon: _sortOrder == CategorySortOrder.manual
-                      ? const Icon(Icons
-                          .drag_handle) // Indicate manual order allows dragging
-                      : const Icon(Icons.sort),
+                PopupMenuButton<CategorySortType>(
+                  // Use standard sort icon
+                  icon: const Icon(Icons.sort),
                   tooltip: "Sort Categories",
-                  onSelected: (CategorySortOrder result) {
-                    if (_sortOrder != result) {
-                      setState(() {
-                        _sortOrder = result;
-                      });
-                      _applySort(); // Apply the selected sort
-                    }
+                  onSelected: (CategorySortType result) {
+                    // Directly apply the selected sort permanently
+                    _applySort(result);
                   },
                   itemBuilder: (BuildContext context) =>
-                      <PopupMenuEntry<CategorySortOrder>>[
-                    // UPDATED: Menu items
-                    const PopupMenuItem<CategorySortOrder>(
-                      value: CategorySortOrder.manual,
-                      child: Text('Manual / Default'),
-                    ),
-                    const PopupMenuItem<CategorySortOrder>(
-                      value: CategorySortOrder.mostRecent,
+                      <PopupMenuEntry<CategorySortType>>[
+                    // UPDATED: Menu items (Removed Manual)
+                    const PopupMenuItem<CategorySortType>(
+                      value: CategorySortType.mostRecent,
                       child: Text('Sort by Most Recent'),
                     ),
-                    const PopupMenuItem<CategorySortOrder>(
-                      value: CategorySortOrder.alphabetical,
+                    const PopupMenuItem<CategorySortType>(
+                      value: CategorySortType.alphabetical,
                       child: Text('Sort Alphabetically'),
                     ),
                   ],
@@ -331,20 +332,18 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
                                   _categories.removeAt(oldIndex);
                               _categories.insert(newIndex, item);
 
-                              // IMPORTANT: Set sort order to manual after any reorder
-                              _sortOrder = CategorySortOrder.manual;
+                              // Update orderIndex property in the local list
+                              _updateLocalOrderIndices(); // Use helper
+
                               _categoriesChanged =
                                   true; // Mark that changes were made
-
-                              // ADDED: Update orderIndex property in the local list
-                              for (int i = 0; i < _categories.length; i++) {
-                                // Use copyWith to update the object immutably
-                                _categories[i] =
-                                    _categories[i].copyWith(orderIndex: i);
-                              }
-
                               print(
-                                  "Categories reordered. Set sortOrder to manual.");
+                                  "Category reordered, _categoriesChanged set to true."); // Log flag set
+
+                              // Update orderIndex property in the local list
+                              _updateLocalOrderIndices(); // Use helper
+
+                              print("Categories reordered.");
                             });
                           },
                         ),
@@ -372,8 +371,8 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
 
   // ADDED: Helper function to handle closing and potentially saving order
   Future<void> _handleClose() async {
-    bool shouldSaveChanges =
-        _categoriesChanged && _sortOrder == CategorySortOrder.manual;
+    // UPDATED: Save if any changes were flagged
+    bool shouldSaveChanges = _categoriesChanged;
     print(
         "Closing EditCategoriesModal. Should save changes: $shouldSaveChanges");
 
