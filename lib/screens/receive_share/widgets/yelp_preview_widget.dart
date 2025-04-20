@@ -511,7 +511,7 @@ class _YelpPreviewWidgetState extends State<YelpPreviewWidget> {
                 }
 
                 print(
-                    '🖼️ PHOTO WIDGET: Search approach failed, using collection-based fallback');
+                    '🖼️ PHOTO WIDGET: Search approach failed, using category-based fallback');
                 final String businessSeed =
                     _createPhotoSeed(businessName, location);
                 final String photoUrl =
@@ -529,7 +529,7 @@ class _YelpPreviewWidgetState extends State<YelpPreviewWidget> {
           );
         }
 
-        print('🖼️ PHOTO WIDGET: Using collection-based fallback');
+        print('🖼️ PHOTO WIDGET: Using category-based fallback');
         final String businessSeed = _createPhotoSeed(businessName, location);
         final String photoUrl =
             _getBusinessPhotoUrl(businessName, businessSeed);
@@ -644,7 +644,7 @@ class _YelpPreviewWidgetState extends State<YelpPreviewWidget> {
   String _getBusinessPhotoUrl(String businessName, String seed) {
     final String businessNameLower = businessName.toLowerCase();
     int seedNumber = int.tryParse(seed) ?? 0;
-    String collection = 'business';
+    String category = 'business';
 
     if (businessNameLower.contains('restaurant') ||
         businessNameLower.contains('grill') ||
@@ -652,22 +652,22 @@ class _YelpPreviewWidgetState extends State<YelpPreviewWidget> {
         businessNameLower.contains('kitchen') ||
         businessNameLower.contains('cafe') ||
         businessNameLower.contains('coffee')) {
-      collection = 'restaurant';
+      category = 'restaurant';
     } else if (businessNameLower.contains('bar') ||
         businessNameLower.contains('pub') ||
         businessNameLower.contains('lounge')) {
-      collection = 'bar';
+      category = 'bar';
     } else if (businessNameLower.contains('shop') ||
         businessNameLower.contains('store') ||
         businessNameLower.contains('market')) {
-      collection = 'retail';
+      category = 'retail';
     } else if (businessNameLower.contains('hotel') ||
         businessNameLower.contains('inn') ||
         businessNameLower.contains('suites')) {
-      collection = 'hotel';
+      category = 'hotel';
     }
 
-    Map<String, List<String>> collectionImages = {
+    Map<String, List<String>> categoryImages = {
       'restaurant': [
         'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=800&h=400&fit=crop',
         'https://images.unsplash.com/photo-1552566626-52f8b828add9?w=800&h=400&fit=crop',
@@ -706,7 +706,7 @@ class _YelpPreviewWidgetState extends State<YelpPreviewWidget> {
     };
 
     List<String> images =
-        collectionImages[collection] ?? collectionImages['business']!;
+        categoryImages[category] ?? categoryImages['business']!;
     int imageIndex = seedNumber % images.length;
     return images[imageIndex];
   }

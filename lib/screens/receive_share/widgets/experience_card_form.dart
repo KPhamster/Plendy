@@ -2,17 +2,17 @@ import 'package:flutter/material.dart';
 import 'package:plendy/screens/receive_share_screen.dart'; // For ExperienceCardData
 import 'package:plendy/models/experience.dart'
     show Location; // ONLY import Location
-import 'package:plendy/models/user_collection.dart'; // RENAMED Import
+import 'package:plendy/models/user_category.dart'; // RENAMED Import
 import 'package:plendy/screens/location_picker_screen.dart'; // For Location Picker
-import 'package:plendy/services/experience_service.dart'; // ADDED for adding collection
+import 'package:plendy/services/experience_service.dart'; // ADDED for adding category
 import 'package:plendy/services/google_maps_service.dart'; // If needed for location updates
 import 'package:plendy/widgets/google_maps_widget.dart'; // If needed
 import 'package:url_launcher/url_launcher.dart'; // Import url_launcher
 import 'package:font_awesome_flutter/font_awesome_flutter.dart'; // Import FontAwesome
 // UPDATED: Import the modal
-import 'package:plendy/widgets/add_collection_modal.dart';
+import 'package:plendy/widgets/add_category_modal.dart';
 // ADDED: Import for the Edit modal
-import 'package:plendy/widgets/edit_collections_modal.dart';
+import 'package:plendy/widgets/edit_categories_modal.dart';
 
 // Define necessary callbacks
 typedef OnRemoveCallback = void Function(ExperienceCardData card);
@@ -22,15 +22,15 @@ typedef OnSelectSavedExperienceCallback = Future<void> Function(
     ExperienceCardData card);
 typedef OnUpdateCallback = void Function({
   // Modified to accept optional flag
-  bool refreshCollections, // Flag to indicate collection list needs refresh
-  String? newCollectionName, // Optional new collection name
+  bool refreshCategories, // Flag to indicate category list needs refresh
+  String? newCategoryName, // Optional new category name
 });
 
 class ExperienceCardForm extends StatefulWidget {
   final ExperienceCardData cardData;
   final bool isFirstCard; // To potentially hide remove button
   final bool canRemove; // Explicit flag to control remove button visibility
-  final List<UserCollection> userCollections; // RENAMED
+  final List<UserCategory> userCategories; // RENAMED
   final OnRemoveCallback onRemove;
   final OnLocationSelectCallback onLocationSelect;
   final OnSelectSavedExperienceCallback onSelectSavedExperience;
@@ -42,7 +42,7 @@ class ExperienceCardForm extends StatefulWidget {
     required this.cardData,
     required this.isFirstCard,
     required this.canRemove,
-    required this.userCollections, // RENAMED
+    required this.userCategories, // RENAMED
     required this.onRemove,
     required this.onLocationSelect,
     required this.onSelectSavedExperience,
@@ -66,8 +66,8 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
   final ExperienceService _experienceService = ExperienceService();
 
   // --- ADDED: Constants for special dropdown values ---
-  static const String _addCollectionValue = '__add_new_collection__';
-  static const String _editCollectionsValue = '__edit_collections__';
+  static const String _addCategoryValue = '__add_new_category__';
+  static const String _editCategoriesValue = '__edit_categories__';
   // --- END ADDED ---
 
   // --- ADDED: Constants for special dialog actions ---
@@ -111,8 +111,8 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
         _isExpanded = widget.cardData.isExpanded;
       });
     }
-    if (widget.cardData.selectedcollection !=
-        oldWidget.cardData.selectedcollection) {
+    if (widget.cardData.selectedcategory !=
+        oldWidget.cardData.selectedcategory) {
       _triggerRebuild();
     }
 
@@ -190,48 +190,47 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
     }
   }
 
-  // RENAMED: Helper to find icon for selected collection
-  String _getIconForSelectedCollection() {
+  // RENAMED: Helper to find icon for selected category
+  String _getIconForSelectedCategory() {
     // Use renamed field
-    final selectedName = widget.cardData.selectedcollection;
+    final selectedName = widget.cardData.selectedcategory;
     if (selectedName == null) {
       return '❓'; // Default icon
     }
     // Use renamed parameter and class
-    final matchingCollection = widget.userCollections.firstWhere(
-      (collection) => collection.name == selectedName,
-      orElse: () => UserCollection(id: '', name: '', icon: '❓'), // Fallback
+    final matchingCategory = widget.userCategories.firstWhere(
+      (category) => category.name == selectedName,
+      orElse: () => UserCategory(id: '', name: '', icon: '❓'), // Fallback
     );
-    return matchingCollection.icon;
+    return matchingCategory.icon;
   }
 
-  // UPDATED: Method to handle adding a new collection
-  Future<void> _handleAddCollection() async {
+  // UPDATED: Method to handle adding a new category
+  Future<void> _handleAddCategory() async {
     FocusScope.of(context).unfocus();
-    final newCollection = await showModalBottomSheet<UserCollection>(
+    final newCategory = await showModalBottomSheet<UserCategory>(
       context: context,
-      builder: (context) => const AddCollectionModal(),
+      builder: (context) => const AddCategoryModal(),
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
     );
-    if (newCollection != null && mounted) {
-      print(
-          "New collection added: ${newCollection.name} (${newCollection.icon})");
+    if (newCategory != null && mounted) {
+      print("New category added: ${newCategory.name} (${newCategory.icon})");
       // Notify parent to refresh list and pass new name to potentially select it
       widget.onUpdate(
-          refreshCollections: true, newCollectionName: newCollection.name);
+          refreshCategories: true, newCategoryName: newCategory.name);
     }
   }
 
-  // UPDATED: Method to handle editing collections
-  Future<void> _handleEditCollections() async {
+  // UPDATED: Method to handle editing categories
+  Future<void> _handleEditCategories() async {
     FocusScope.of(context).unfocus();
-    // Show the EditCollectionsModal
-    final bool? collectionsChanged = await showModalBottomSheet<bool>(
+    // Show the EditCategoriesModal
+    final bool? categoriesChanged = await showModalBottomSheet<bool>(
       context: context,
-      builder: (context) => const EditCollectionsModal(), // Show the new modal
+      builder: (context) => const EditCategoriesModal(), // Show the new modal
       isScrollControlled: true,
       // Add shape etc. if desired, similar to Add modal
       shape: const RoundedRectangleBorder(
@@ -239,23 +238,23 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
       ),
     );
 
-    if (collectionsChanged == true && mounted) {
-      print("Collections potentially changed in Edit modal, refreshing list.");
+    if (categoriesChanged == true && mounted) {
+      print("Categories potentially changed in Edit modal, refreshing list.");
       // Notify parent to just refresh the list
-      widget.onUpdate(refreshCollections: true);
-      // Note: We don't need to explicitly select a collection here
+      widget.onUpdate(refreshCategories: true);
+      // Note: We don't need to explicitly select a category here
     }
   }
 
-  // --- UPDATED: Function to show the collection selection dialog ---
-  Future<void> _showCollectionSelectionDialog() async {
+  // --- UPDATED: Function to show the category selection dialog ---
+  Future<void> _showCategorieselectionDialog() async {
     FocusScope.of(context).unfocus(); // Dismiss keyboard
 
-    final uniqueCollectionsByName = <String, UserCollection>{};
-    for (var collection in widget.userCollections) {
-      uniqueCollectionsByName[collection.name] = collection;
+    final uniqueCategoriesByName = <String, UserCategory>{};
+    for (var category in widget.userCategories) {
+      uniqueCategoriesByName[category.name] = category;
     }
-    final uniqueCollectionList = uniqueCollectionsByName.values.toList();
+    final uniqueCategoryList = uniqueCategoriesByName.values.toList();
 
     final String? selectedValue = await showDialog<String>(
       context: context,
@@ -276,7 +275,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                 Padding(
                   padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
                   child: Text(
-                    'Select Collection',
+                    'Select Category',
                     style: Theme.of(context).textTheme.titleLarge,
                   ),
                 ),
@@ -284,21 +283,21 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                 Expanded(
                   child: ListView.builder(
                     shrinkWrap: true,
-                    itemCount: uniqueCollectionList.length,
+                    itemCount: uniqueCategoryList.length,
                     itemBuilder: (context, index) {
-                      final collection = uniqueCollectionList[index];
+                      final category = uniqueCategoryList[index];
                       final bool isSelected =
-                          collection.name == widget.cardData.selectedcollection;
+                          category.name == widget.cardData.selectedcategory;
                       return ListTile(
-                        leading: Text(collection.icon,
+                        leading: Text(category.icon,
                             style: const TextStyle(fontSize: 20)),
-                        title: Text(collection.name),
+                        title: Text(category.name),
                         trailing: isSelected
                             ? const Icon(Icons.check, color: Colors.blue)
                             : null,
                         onTap: () {
-                          Navigator.pop(context,
-                              collection.name); // Return collection name
+                          Navigator.pop(
+                              context, category.name); // Return category name
                         },
                         // Visual density can make items feel slightly shorter
                         visualDensity: VisualDensity.compact,
@@ -318,7 +317,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                       TextButton.icon(
                         icon:
                             Icon(Icons.add, size: 20, color: Colors.blue[700]),
-                        label: Text('Add New Collection',
+                        label: Text('Add New Category',
                             style: TextStyle(color: Colors.blue[700])),
                         onPressed: () {
                           Navigator.pop(context, _dialogActionAdd);
@@ -331,7 +330,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                       TextButton.icon(
                         icon: Icon(Icons.edit,
                             size: 20, color: Colors.orange[700]),
-                        label: Text('Edit Collections',
+                        label: Text('Edit Categories',
                             style: TextStyle(color: Colors.orange[700])),
                         onPressed: () {
                           Navigator.pop(context, _dialogActionEdit);
@@ -355,17 +354,17 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
     if (selectedValue != null) {
       if (selectedValue == _dialogActionAdd) {
         // User selected Add New
-        _handleAddCollection(); // This already handles refresh if needed
+        _handleAddCategory(); // This already handles refresh if needed
       } else if (selectedValue == _dialogActionEdit) {
         // User selected Edit
-        _handleEditCollections(); // This already handles refresh if needed
+        _handleEditCategories(); // This already handles refresh if needed
       } else {
-        // User selected an actual collection
-        if (widget.cardData.selectedcollection != selectedValue) {
+        // User selected an actual category
+        if (widget.cardData.selectedcategory != selectedValue) {
           setState(() {
-            widget.cardData.selectedcollection = selectedValue;
+            widget.cardData.selectedcategory = selectedValue;
           });
-          widget.onUpdate(refreshCollections: false);
+          widget.onUpdate(refreshCategories: false);
         }
       }
     }
@@ -406,7 +405,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                   FocusScope.of(context).unfocus();
                 }
                 widget.onUpdate(
-                    refreshCollections:
+                    refreshCategories:
                         false); // Notify parent, no refresh needed
               },
               child: Padding(
@@ -548,7 +547,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                   widget.cardData.locationEnabled =
                                       value; // Update model
                                   widget.onUpdate(
-                                      refreshCollections:
+                                      refreshCategories:
                                           false); // Notify parent, no refresh needed
                                 },
                                 activeColor: Colors.blue,
@@ -579,7 +578,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                   titleController.clear();
                                   // Listener will call _triggerRebuild
                                   widget.onUpdate(
-                                      refreshCollections:
+                                      refreshCategories:
                                           false); // Notify parent, no refresh needed
                                 },
                               )
@@ -600,12 +599,12 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                     SizedBox(height: 16),
 
                     // --- REPLACED Dropdown with a Button ---
-                    Text('Collection',
+                    Text('Category',
                         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                             color: Colors.grey[600])), // Label like text field
                     const SizedBox(height: 4),
                     OutlinedButton(
-                      onPressed: _showCollectionSelectionDialog,
+                      onPressed: _showCategorieselectionDialog,
                       style: OutlinedButton.styleFrom(
                         padding: const EdgeInsets.symmetric(
                             horizontal: 12,
@@ -622,18 +621,18 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                         mainAxisAlignment: MainAxisAlignment
                             .spaceBetween, // Space between content and arrow
                         children: [
-                          // Display selected collection icon and name
+                          // Display selected category icon and name
                           Row(
                             children: [
-                              Text(_getIconForSelectedCollection(),
+                              Text(_getIconForSelectedCategory(),
                                   style: const TextStyle(fontSize: 18)),
                               const SizedBox(width: 8),
                               Text(
-                                widget.cardData.selectedcollection ??
-                                    'Select Collection',
+                                widget.cardData.selectedcategory ??
+                                    'Select Category',
                                 style: TextStyle(
                                   // Ensure text color matches default button text color or form field color
-                                  color: widget.cardData.selectedcollection !=
+                                  color: widget.cardData.selectedcategory !=
                                           null
                                       ? Theme.of(context)
                                           .textTheme
@@ -650,16 +649,16 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                         ],
                       ),
                     ),
-                    // You might need a way to show validation errors if collection is required
+                    // You might need a way to show validation errors if category is required
                     // This could involve a separate Text widget below the button
-                    // that appears if widget.cardData.selectedcollection is null during form validation.
+                    // that appears if widget.cardData.selectedcategory is null during form validation.
                     // For now, relying on parent form validation.
                     /* Example Validation Message Display:
-                    if (widget.formKey.currentState?.validate() == false && widget.cardData.selectedcollection == null) 
+                    if (widget.formKey.currentState?.validate() == false && widget.cardData.selectedcategory == null) 
                       Padding(
                         padding: const EdgeInsets.only(top: 8.0, left: 12.0),
                         child: Text(
-                          'Please select a collection',
+                          'Please select a category',
                           style: TextStyle(color: Theme.of(context).colorScheme.error, fontSize: 12),
                         ),
                       ), 
@@ -692,7 +691,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                 InkWell(
                                   onTap: () {
                                     yelpUrlController.clear();
-                                    widget.onUpdate(refreshCollections: false);
+                                    widget.onUpdate(refreshCategories: false);
                                   },
                                   child: Padding(
                                     padding: const EdgeInsets.symmetric(
@@ -756,7 +755,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                               InkWell(
                                 onTap: () {
                                   websiteController.clear();
-                                  widget.onUpdate(refreshCollections: false);
+                                  widget.onUpdate(refreshCategories: false);
                                 },
                                 child: Padding(
                                   padding: const EdgeInsets.symmetric(
@@ -835,16 +834,16 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                         prefixIcon: Icon(Icons.notes),
                         alignLabelWithHint:
                             true, // Align label top-left for multi-line
-                        suffixIcon: widget
-                                .cardData.notesController.text.isNotEmpty
-                            ? IconButton(
-                                icon: Icon(Icons.clear, size: 18),
-                                onPressed: () {
-                                  widget.cardData.notesController.clear();
-                                  widget.onUpdate(refreshCollections: false);
-                                },
-                              )
-                            : null,
+                        suffixIcon:
+                            widget.cardData.notesController.text.isNotEmpty
+                                ? IconButton(
+                                    icon: Icon(Icons.clear, size: 18),
+                                    onPressed: () {
+                                      widget.cardData.notesController.clear();
+                                      widget.onUpdate(refreshCategories: false);
+                                    },
+                                  )
+                                : null,
                       ),
                       keyboardType: TextInputType.multiline,
                       minLines: 3, // Start with 3 lines height
@@ -852,7 +851,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                       // No validator needed as it's optional
                       onChanged: (value) {
                         // Trigger rebuild if suffix icon logic depends on it
-                        widget.onUpdate(refreshCollections: false);
+                        widget.onUpdate(refreshCategories: false);
                       },
                     ),
                   ],
