@@ -77,13 +77,13 @@ class _SelectSavedExperienceScreenState
           final notesLower = exp.additionalNotes?.toLowerCase() ?? '';
           final addressLower = exp.location.address?.toLowerCase() ?? '';
           final cityLower = exp.location.city?.toLowerCase() ?? '';
-          final categoryLower = exp.category.toLowerCase();
+          final collectionLower = exp.collection.toLowerCase();
 
           return nameLower.contains(query) ||
               notesLower.contains(query) ||
               addressLower.contains(query) ||
               cityLower.contains(query) ||
-              categoryLower.contains(query);
+              collectionLower.contains(query);
         }).toList();
       }
     });
