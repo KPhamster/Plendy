@@ -3,6 +3,8 @@ import '../models/experience.dart';
 import '../models/user_category.dart';
 import '../services/auth_service.dart';
 import '../services/experience_service.dart';
+import '../widgets/add_category_modal.dart';
+import '../widgets/edit_categories_modal.dart';
 
 class CollectionsScreen extends StatefulWidget {
   CollectionsScreen({super.key});
@@ -11,9 +13,13 @@ class CollectionsScreen extends StatefulWidget {
   State<CollectionsScreen> createState() => _CollectionsScreenState();
 }
 
-class _CollectionsScreenState extends State<CollectionsScreen> {
+class _CollectionsScreenState extends State<CollectionsScreen>
+    with SingleTickerProviderStateMixin {
   final _authService = AuthService();
   final _experienceService = ExperienceService();
+
+  late TabController _tabController;
+  int _currentTabIndex = 0;
 
   bool _isLoading = true;
   List<UserCategory> _categories = [];
@@ -24,7 +30,27 @@ class _CollectionsScreenState extends State<CollectionsScreen> {
   void initState() {
     super.initState();
     _userEmail = _authService.currentUser?.email ?? 'Guest';
+    _tabController = TabController(length: 3, vsync: this);
+    _tabController.addListener(() {
+      if (_tabController.indexIsChanging) {
+        setState(() {
+          _currentTabIndex = _tabController.index;
+        });
+      } else {
+        if (_currentTabIndex != _tabController.index) {
+          setState(() {
+            _currentTabIndex = _tabController.index;
+          });
+        }
+      }
+    });
     _loadData();
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadData() async {
@@ -59,6 +85,42 @@ class _CollectionsScreenState extends State<CollectionsScreen> {
     }
   }
 
+  Future<void> _showAddCategoryModal() async {
+    final result = await showModalBottomSheet<UserCategory>(
+      context: context,
+      builder: (_) => const AddCategoryModal(),
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+    );
+
+    if (result != null) {
+      print("AddCategoryModal returned a category, refreshing data...");
+      _loadData();
+    } else {
+      print("AddCategoryModal closed without adding.");
+    }
+  }
+
+  Future<void> _showEditCategoriesModal() async {
+    final result = await showModalBottomSheet<bool>(
+      context: context,
+      builder: (_) => const EditCategoriesModal(),
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+    );
+
+    if (result == true) {
+      print("EditCategoriesModal returned true, refreshing data...");
+      _loadData();
+    } else {
+      print("EditCategoriesModal closed or returned false (no changes saved).");
+    }
+  }
+
   int _getExperienceCountForCategory(UserCategory category) {
     return _experiences.where((exp) => exp.category == category.name).length;
   }
@@ -80,12 +142,6 @@ class _CollectionsScreenState extends State<CollectionsScreen> {
           ),
           title: Text(category.name),
           subtitle: Text('$count ${count == 1 ? "experience" : "experiences"}'),
-          trailing: IconButton(
-            icon: const Icon(Icons.more_vert),
-            onPressed: () {
-              print('Options pressed for ${category.name}');
-            },
-          ),
           onTap: () {
             print('Tapped on ${category.name}');
           },
@@ -96,30 +152,43 @@ class _CollectionsScreenState extends State<CollectionsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return DefaultTabController(
-      length: 3,
-      child: Scaffold(
-        appBar: AppBar(
-          title: const Text('Collection'),
-          bottom: const TabBar(
-            tabs: [
-              Tab(text: 'Categories'),
-              Tab(text: 'Experiences'),
-              Tab(text: 'Content'),
-            ],
-          ),
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Collection'),
+        actions: [
+          if (_currentTabIndex == 0)
+            IconButton(
+              icon: const Icon(Icons.edit_outlined),
+              tooltip: 'Edit Categories',
+              onPressed: _showEditCategoriesModal,
+            ),
+        ],
+        bottom: TabBar(
+          controller: _tabController,
+          tabs: const [
+            Tab(text: 'Categories'),
+            Tab(text: 'Experiences'),
+            Tab(text: 'Content'),
+          ],
         ),
-        body: _isLoading
-            ? const Center(child: CircularProgressIndicator())
-            : TabBarView(
-                children: [
-                  _buildCategoriesList(),
-                  Center(
-                      child: Text('Experiences Tab Content for $_userEmail')),
-                  Center(child: Text('Content Tab Content for $_userEmail')),
-                ],
-              ),
       ),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : TabBarView(
+              controller: _tabController,
+              children: [
+                _buildCategoriesList(),
+                Center(child: Text('Experiences Tab Content for $_userEmail')),
+                Center(child: Text('Content Tab Content for $_userEmail')),
+              ],
+            ),
+      floatingActionButton: _currentTabIndex == 0
+          ? FloatingActionButton(
+              onPressed: _showAddCategoryModal,
+              tooltip: 'Add Category',
+              child: const Icon(Icons.add),
+            )
+          : null,
     );
   }
 }
