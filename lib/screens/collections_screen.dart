@@ -121,6 +121,65 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     }
   }
 
+  Future<void> _showEditSingleCategoryModal(UserCategory category) async {
+    final result = await showModalBottomSheet<UserCategory>(
+      context: context,
+      builder: (_) => AddCategoryModal(categoryToEdit: category),
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+    );
+
+    if (result != null) {
+      print("AddCategoryModal (for edit) returned, refreshing data...");
+      _loadData();
+    } else {
+      print("AddCategoryModal (for edit) closed without saving.");
+    }
+  }
+
+  Future<void> _showDeleteCategoryConfirmation(UserCategory category) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Category?'),
+        content: Text(
+            'Are you sure you want to delete the "${category.name}" category? Associated experiences will NOT be deleted but will lose this category tag. This cannot be undone.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Delete', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true && mounted) {
+      try {
+        await _experienceService.deleteUserCategory(category.id);
+        print('Category "${category.name}" deleted successfully.');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('"${category.name}" category deleted.')),
+          );
+          _loadData();
+        }
+      } catch (e) {
+        print("Error deleting category: $e");
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Error deleting category: $e')),
+          );
+        }
+      }
+    }
+  }
+
   int _getExperienceCountForCategory(UserCategory category) {
     return _experiences.where((exp) => exp.category == category.name).length;
   }
@@ -142,6 +201,36 @@ class _CollectionsScreenState extends State<CollectionsScreen>
           ),
           title: Text(category.name),
           subtitle: Text('$count ${count == 1 ? "experience" : "experiences"}'),
+          trailing: PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert),
+            tooltip: 'Category Options',
+            onSelected: (String result) {
+              switch (result) {
+                case 'edit':
+                  _showEditSingleCategoryModal(category);
+                  break;
+                case 'delete':
+                  _showDeleteCategoryConfirmation(category);
+                  break;
+              }
+            },
+            itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
+              const PopupMenuItem<String>(
+                value: 'edit',
+                child: ListTile(
+                  leading: Icon(Icons.edit_outlined),
+                  title: Text('Edit'),
+                ),
+              ),
+              const PopupMenuItem<String>(
+                value: 'delete',
+                child: ListTile(
+                  leading: Icon(Icons.delete_outline, color: Colors.red),
+                  title: Text('Delete', style: TextStyle(color: Colors.red)),
+                ),
+              ),
+            ],
+          ),
           onTap: () {
             print('Tapped on ${category.name}');
           },
