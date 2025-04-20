@@ -311,7 +311,9 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
                                         ? null
                                         : () => _deleteCategory(category),
                                   ),
-                                  // ADDED: Drag Handle
+                                  // Add some spacing before the drag handle
+                                  const SizedBox(width: 20),
+                                  // Moved Drag Handle to the end of the Row
                                   ReorderableDragStartListener(
                                     index: index,
                                     child: const Icon(Icons.drag_handle,
