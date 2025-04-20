@@ -4,7 +4,7 @@ import '../models/experience.dart';
 import '../models/review.dart';
 import '../models/comment.dart';
 import '../models/reel.dart';
-import '../models/user_category.dart';
+import '../models/user_collection.dart';
 
 /// Service for managing Experience-related operations
 class ExperienceService {
@@ -24,90 +24,90 @@ class ExperienceService {
   // User-related operations
   String? get _currentUserId => _auth.currentUser?.uid;
 
-  // Helper to get the path to a user's custom categories sub-collection
-  CollectionReference _userCategoriesCollection(String userId) =>
-      _usersCollection.doc(userId).collection('categories');
+  // Helper to get the path to a user's custom collections sub-collection
+  CollectionReference _userCollectionsCollection(String userId) =>
+      _usersCollection.doc(userId).collection('collections');
 
-  // ======= User Category Operations =======
+  // ======= User Collection Operations =======
 
-  /// Fetches the user's custom categories.
-  /// Categories are sorted by orderIndex, then by name.
-  Future<List<UserCategory>> getUserCategories() async {
+  /// Fetches the user's custom collections.
+  /// Collections are sorted by orderIndex, then by name.
+  Future<List<UserCollection>> getUserCollections() async {
     final userId = _currentUserId;
-    print("getUserCategories START - User: $userId"); // Log Start
+    print("getUserCollections START - User: $userId"); // Log Start
     if (userId == null) {
-      print("getUserCategories END - No user, returning static defaults.");
+      print("getUserCollections END - No user, returning static defaults.");
       // Sort defaults alphabetically for consistency when not logged in
-      var defaults = UserCategory.createInitialCategories();
+      var defaults = UserCollection.createInitialCollections();
       defaults.sort((a, b) => a.name.compareTo(b.name));
       return defaults;
     }
 
-    final collectionRef = _userCategoriesCollection(userId);
+    final collectionRef = _userCollectionsCollection(userId);
     // UPDATED: Sort by orderIndex first (nulls handled by Firestore or considered last),
     // then by name for consistent ordering of items with the same/no index.
     final snapshot =
         await collectionRef.orderBy('orderIndex').orderBy('name').get();
 
-    List<UserCategory> fetchedCategories =
-        snapshot.docs.map((doc) => UserCategory.fromFirestore(doc)).toList();
+    List<UserCollection> fetchedCollections =
+        snapshot.docs.map((doc) => UserCollection.fromFirestore(doc)).toList();
     print(
-        "getUserCategories - Fetched ${fetchedCategories.length} from Firestore:"); // Log Fetched Raw
-    fetchedCategories.forEach((c) => print("  - ${c.name} (ID: ${c.id})"));
+        "getUserCollections - Fetched ${fetchedCollections.length} from Firestore:"); // Log Fetched Raw
+    fetchedCollections.forEach((c) => print("  - ${c.name} (ID: ${c.id})"));
 
     // De-duplicate the fetched list based on name
-    final uniqueCategoriesByName = <String, UserCategory>{};
-    for (var category in fetchedCategories) {
-      final nameLower = category.name.toLowerCase();
-      uniqueCategoriesByName.putIfAbsent(nameLower, () => category);
+    final uniqueCollectionsByName = <String, UserCollection>{};
+    for (var collection in fetchedCollections) {
+      final nameLower = collection.name.toLowerCase();
+      uniqueCollectionsByName.putIfAbsent(nameLower, () => collection);
     }
-    final uniqueFetchedCategories = uniqueCategoriesByName.values.toList();
-    uniqueFetchedCategories.sort((a, b) => a.name.compareTo(b.name));
+    final uniqueFetchedCollections = uniqueCollectionsByName.values.toList();
+    uniqueFetchedCollections.sort((a, b) => a.name.compareTo(b.name));
     print(
-        "getUserCategories - De-duplicated list size: ${uniqueFetchedCategories.length}");
+        "getUserCollections - De-duplicated list size: ${uniqueFetchedCollections.length}");
 
     // Sort the unique list based on the original fetched order (which is now sorted by Firestore)
-    final finalCategories = uniqueFetchedCategories.toList();
-    finalCategories.sort((a, b) {
+    final finalCollections = uniqueFetchedCollections.toList();
+    finalCollections.sort((a, b) {
       // Find original index in the Firestore-sorted snapshot
-      final indexA = fetchedCategories.indexWhere((c) => c.id == a.id);
-      final indexB = fetchedCategories.indexWhere((c) => c.id == b.id);
+      final indexA = fetchedCollections.indexWhere((c) => c.id == a.id);
+      final indexB = fetchedCollections.indexWhere((c) => c.id == b.id);
       // If either wasn't found (shouldn't happen), fallback to name sort
       if (indexA == -1 || indexB == -1) return a.name.compareTo(b.name);
       return indexA.compareTo(indexB);
     });
 
     print(
-        "getUserCategories END - Returning ${finalCategories.length} unique categories (sorted by index/name):");
-    finalCategories.forEach(
+        "getUserCollections END - Returning ${finalCollections.length} unique collections (sorted by index/name):");
+    finalCollections.forEach(
         (c) => print("  - ${c.name} (ID: ${c.id}, Index: ${c.orderIndex})"));
-    return finalCategories;
+    return finalCollections;
   }
 
-  /// Initializes the default categories for a user in Firestore.
+  /// Initializes the default collections for a user in Firestore.
   /// Note: This should now be called explicitly ONCE during user creation flow.
-  Future<List<UserCategory>> initializeDefaultUserCategories(
+  Future<List<UserCollection>> initializeDefaultUserCollections(
       String userId) async {
-    final defaultCategories = UserCategory.createInitialCategories();
+    final defaultCollections = UserCollection.createInitialCollections();
     // Sort defaults alphabetically before assigning index
-    defaultCategories.sort((a, b) => a.name.compareTo(b.name));
+    defaultCollections.sort((a, b) => a.name.compareTo(b.name));
     final batch = _firestore.batch();
-    final collectionRef = _userCategoriesCollection(userId);
-    List<UserCategory> createdCategories = [];
+    final collectionRef = _userCollectionsCollection(userId);
+    List<UserCollection> createdCollections = [];
 
-    print("INITIALIZING default categories for user $userId.");
+    print("INITIALIZING default collections for user $userId.");
 
     // UPDATED: Assign sequential orderIndex during initialization
-    for (int i = 0; i < defaultCategories.length; i++) {
-      final category = defaultCategories[i];
+    for (int i = 0; i < defaultCollections.length; i++) {
+      final collection = defaultCollections[i];
       final docRef = collectionRef.doc();
-      final data = category.toMap();
+      final data = collection.toMap();
       data['orderIndex'] = i; // Assign index
       batch.set(docRef, data);
-      createdCategories.add(UserCategory(
+      createdCollections.add(UserCollection(
           id: docRef.id,
-          name: category.name,
-          icon: category.icon,
+          name: collection.name,
+          icon: collection.icon,
           orderIndex: i // Include index in returned object
           ));
     }
@@ -115,29 +115,29 @@ class ExperienceService {
     try {
       await batch.commit();
       print(
-          "Successfully initialized ${createdCategories.length} default categories for user $userId.");
-      return createdCategories;
+          "Successfully initialized ${createdCollections.length} default collections for user $userId.");
+      return createdCollections;
     } catch (e) {
-      print("Error during default category initialization batch commit: $e");
-      // Don't return potentially partially saved categories
-      throw Exception("Failed to initialize default categories: $e");
+      print("Error during default collection initialization batch commit: $e");
+      // Don't return potentially partially saved collections
+      throw Exception("Failed to initialize default collections: $e");
     }
   }
 
-  /// Adds a new custom category for the current user.
-  Future<UserCategory> addUserCategory(String name, String icon) async {
+  /// Adds a new custom collection for the current user.
+  Future<UserCollection> addUserCollection(String name, String icon) async {
     final userId = _currentUserId;
     if (userId == null) {
       throw Exception('User not authenticated');
     }
 
-    final collectionRef = _userCategoriesCollection(userId);
+    final collectionRef = _userCollectionsCollection(userId);
 
     // Optional: Check if a type with the same name already exists
     final existing =
         await collectionRef.where('name', isEqualTo: name).limit(1).get();
     if (existing.docs.isNotEmpty) {
-      throw Exception('A category with this name already exists.');
+      throw Exception('A collection with this name already exists.');
     }
 
     // ADDED: Determine the next order index
@@ -148,16 +148,16 @@ class ExperienceService {
           .limit(1)
           .get();
       if (querySnapshot.docs.isNotEmpty) {
-        final lastCategory =
-            UserCategory.fromFirestore(querySnapshot.docs.first);
-        if (lastCategory.orderIndex != null) {
-          nextOrderIndex = lastCategory.orderIndex! + 1;
+        final lastCollection =
+            UserCollection.fromFirestore(querySnapshot.docs.first);
+        if (lastCollection.orderIndex != null) {
+          nextOrderIndex = lastCollection.orderIndex! + 1;
         }
       }
     } catch (e) {
       print(
           "Warning: Could not determine next orderIndex, defaulting to 0. Error: $e");
-      // Default to 0 if query fails or no categories exist yet
+      // Default to 0 if query fails or no collections exist yet
     }
     print("Assigning next orderIndex: $nextOrderIndex");
 
@@ -168,7 +168,7 @@ class ExperienceService {
       'lastUsedTimestamp': null // Explicitly null initially
     };
     final docRef = await collectionRef.add(data);
-    return UserCategory(
+    return UserCollection(
         id: docRef.id,
         name: name,
         icon: icon,
@@ -176,91 +176,92 @@ class ExperienceService {
         lastUsedTimestamp: null);
   }
 
-  /// Updates an existing custom category for the current user.
-  Future<void> updateUserCategory(UserCategory category) async {
+  /// Updates an existing custom collection for the current user.
+  Future<void> updateUserCollection(UserCollection collection) async {
     final userId = _currentUserId;
     if (userId == null) {
       throw Exception('User not authenticated');
     }
     // Add check: Ensure the user owns this type? (Maybe not needed if path includes userId)
-    await _userCategoriesCollection(userId)
-        .doc(category.id)
-        .update(category.toMap());
+    await _userCollectionsCollection(userId)
+        .doc(collection.id)
+        .update(collection.toMap());
   }
 
-  /// Deletes a custom category for the current user.
-  Future<void> deleteUserCategory(String categoryId) async {
+  /// Deletes a custom collection for the current user.
+  Future<void> deleteUserCollection(String collectionId) async {
     final userId = _currentUserId;
     if (userId == null) {
       throw Exception('User not authenticated');
     }
     // Add check: Ensure the user owns this type?
-    await _userCategoriesCollection(userId).doc(categoryId).delete();
+    await _userCollectionsCollection(userId).doc(collectionId).delete();
     // Consider what happens to Experiences using this type. Reassign? Mark as 'Other'?
   }
 
-  // ADDED: Method to update only the last used timestamp for a category
-  Future<void> updateCategoryLastUsedTimestamp(String categoryId) async {
+  // ADDED: Method to update only the last used timestamp for a collection
+  Future<void> updateCollectionLastUsedTimestamp(String collectionId) async {
     final userId = _currentUserId;
     if (userId == null) {
       // Decide if this should throw or just return silently
-      print("Cannot update category timestamp: User not authenticated");
+      print("Cannot update collection timestamp: User not authenticated");
       return;
       // Alternatively: throw Exception('User not authenticated');
     }
     try {
-      await _userCategoriesCollection(userId)
-          .doc(categoryId)
+      await _userCollectionsCollection(userId)
+          .doc(collectionId)
           .update({'lastUsedTimestamp': FieldValue.serverTimestamp()});
-      print("Updated lastUsedTimestamp for category $categoryId");
+      print("Updated lastUsedTimestamp for collection $collectionId");
     } catch (e) {
-      print("Error updating lastUsedTimestamp for category $categoryId: $e");
+      print(
+          "Error updating lastUsedTimestamp for collection $collectionId: $e");
       // Decide if error should be propagated
       // rethrow;
     }
   }
 
-  // ADDED: Method to update the orderIndex for multiple categories
-  Future<void> updateCategoryOrder(
-      List<Map<String, dynamic>> categoryOrderUpdates) async {
+  // ADDED: Method to update the orderIndex for multiple collections
+  Future<void> updateCollectionOrder(
+      List<Map<String, dynamic>> collectionOrderUpdates) async {
     final userId = _currentUserId;
     if (userId == null) {
       throw Exception('User not authenticated');
     }
-    if (categoryOrderUpdates.isEmpty) {
-      print("No category order updates to perform.");
+    if (collectionOrderUpdates.isEmpty) {
+      print("No collection order updates to perform.");
       return;
     }
 
-    final collectionRef = _userCategoriesCollection(userId);
+    final collectionRef = _userCollectionsCollection(userId);
     final batch = _firestore.batch();
     int updatedCount = 0;
 
-    for (final updateData in categoryOrderUpdates) {
-      final categoryId = updateData['id'] as String?;
+    for (final updateData in collectionOrderUpdates) {
+      final collectionId = updateData['id'] as String?;
       final orderIndex = updateData['orderIndex'] as int?;
 
-      if (categoryId != null && orderIndex != null) {
-        final docRef = collectionRef.doc(categoryId);
+      if (collectionId != null && orderIndex != null) {
+        final docRef = collectionRef.doc(collectionId);
         batch.update(docRef, {'orderIndex': orderIndex});
         updatedCount++;
       } else {
         print(
-            "Warning: Skipping invalid category order update data: $updateData");
+            "Warning: Skipping invalid collection order update data: $updateData");
       }
     }
 
     if (updatedCount > 0) {
       try {
         await batch.commit();
-        print("Successfully updated orderIndex for $updatedCount categories.");
+        print("Successfully updated orderIndex for $updatedCount collections.");
       } catch (e) {
-        print("Error committing category order update batch: $e");
+        print("Error committing collection order update batch: $e");
         // Consider rethrowing or specific error handling
-        throw Exception("Failed to save category order: $e");
+        throw Exception("Failed to save collection order: $e");
       }
     } else {
-      print("No valid category order updates found in the provided list.");
+      print("No valid collection order updates found in the provided list.");
     }
   }
 
@@ -322,13 +323,13 @@ class ExperienceService {
     return snapshot.docs.map((doc) => Experience.fromFirestore(doc)).toList();
   }
 
-  /// Get experiences by category
-  Future<List<Experience>> getExperiencesByCategory(
-    String categoryName, {
+  /// Get experiences by collection
+  Future<List<Experience>> getExperiencesByCollection(
+    String collectionName, {
     int limit = 20,
   }) async {
     final snapshot = await _experiencesCollection
-        .where('category', isEqualTo: categoryName)
+        .where('collection', isEqualTo: collectionName)
         .orderBy('plendyRating', descending: true)
         .limit(limit)
         .get();

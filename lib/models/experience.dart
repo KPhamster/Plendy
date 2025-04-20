@@ -116,7 +116,7 @@ class Experience {
   final String name;
   final String description;
   final Location location;
-  final String category; // RENAMED
+  final String collection; // RENAMED
 
   // External ratings and links
   final String? yelpUrl;
@@ -154,7 +154,7 @@ class Experience {
       required this.name,
       required this.description,
       required this.location,
-      required this.category, // RENAMED
+      required this.collection, // RENAMED
       this.yelpUrl,
       this.yelpRating,
       this.yelpReviewCount,
@@ -187,7 +187,7 @@ class Experience {
       name: data['name'] ?? '',
       description: data['description'] ?? '',
       location: Location.fromMap(data['location'] ?? {}),
-      category: data['category'] ?? 'Other', // RENAMED field in Firestore
+      collection: data['collection'] ?? 'Other', // RENAMED field in Firestore
       yelpUrl: data['yelpUrl'],
       yelpRating: _parseRating(data['yelpRating']),
       yelpReviewCount: data['yelpReviewCount'],
@@ -219,7 +219,7 @@ class Experience {
       'name': name,
       'description': description,
       'location': location.toMap(),
-      'category': category, // RENAMED field for Firestore
+      'collection': collection, // RENAMED field for Firestore
       'yelpUrl': yelpUrl,
       'yelpRating': yelpRating,
       'yelpReviewCount': yelpReviewCount,
@@ -250,7 +250,7 @@ class Experience {
     String? name,
     String? description,
     Location? location,
-    String? category, // RENAMED
+    String? collection, // RENAMED
     String? yelpUrl,
     double? yelpRating,
     int? yelpReviewCount,
@@ -278,7 +278,7 @@ class Experience {
       name: name ?? this.name,
       description: description ?? this.description,
       location: location ?? this.location,
-      category: category ?? this.category, // RENAMED
+      collection: collection ?? this.collection, // RENAMED
       yelpUrl: yelpUrl ?? this.yelpUrl,
       yelpRating: yelpRating ?? this.yelpRating,
       yelpReviewCount: yelpReviewCount ?? this.yelpReviewCount,
