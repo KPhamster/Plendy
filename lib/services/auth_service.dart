@@ -27,15 +27,15 @@ class AuthService {
       if (credential.user != null) {
         await _userService.saveUserEmail(credential.user!.uid, email);
 
-        // Initialize default categories for new user
+        // Initialize default collections for new user
         try {
           await _experienceService
-              .initializeDefaultUserCategories(credential.user!.uid);
+              .initializeDefaultUserCollections(credential.user!.uid);
           print(
-              "Default categories initialized for new user: ${credential.user!.uid}");
+              "Default collections initialized for new user: ${credential.user!.uid}");
         } catch (e) {
-          print("Error initializing default categories: $e");
-          // Don't rethrow - allow registration to succeed even if category init fails
+          print("Error initializing default collections: $e");
+          // Don't rethrow - allow registration to succeed even if collection init fails
         }
       }
 
@@ -78,16 +78,16 @@ class AuthService {
         await _userService.saveUserEmail(
             userCredential.user!.uid, userCredential.user!.email!);
 
-        // Check if this is a new user and initialize default categories if needed
+        // Check if this is a new user and initialize default collections if needed
         if (userCredential.additionalUserInfo?.isNewUser == true) {
           try {
             await _experienceService
-                .initializeDefaultUserCategories(userCredential.user!.uid);
+                .initializeDefaultUserCollections(userCredential.user!.uid);
             print(
-                "Default categories initialized for new Google user: ${userCredential.user!.uid}");
+                "Default collections initialized for new Google user: ${userCredential.user!.uid}");
           } catch (e) {
-            print("Error initializing default categories: $e");
-            // Don't rethrow - allow sign-in to succeed even if category init fails
+            print("Error initializing default collections: $e");
+            // Don't rethrow - allow sign-in to succeed even if collection init fails
           }
         }
       }
