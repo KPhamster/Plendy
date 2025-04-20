@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 import '../services/sharing_service.dart';
-import 'bookmarks_screen.dart';
+import 'collections_screen.dart';
 import 'profile_screen.dart';
 
 class MainScreen extends StatefulWidget {
@@ -14,7 +14,7 @@ class MainScreen extends StatefulWidget {
 class _MainScreenState extends State<MainScreen> {
   int _selectedIndex = 0;
   final SharingService _sharingService = SharingService();
-  
+
   // Define the screens list
   late final List<Widget> _screens;
 
@@ -22,18 +22,18 @@ class _MainScreenState extends State<MainScreen> {
   void initState() {
     super.initState();
     _screens = [
-      BookmarksScreen(),
+      CollectionsScreen(),
       ProfileScreen(),
     ];
   }
-  
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    
+
     // Set the context in the sharing service
     _sharingService.setContext(context);
-    
+
     // Listen for shared files
     _sharingService.sharedFiles.addListener(() {
       final sharedFiles = _sharingService.sharedFiles.value;
@@ -42,7 +42,7 @@ class _MainScreenState extends State<MainScreen> {
       }
     });
   }
-  
+
   @override
   void dispose() {
     // Clean up the sharing service listener
@@ -55,13 +55,13 @@ class _MainScreenState extends State<MainScreen> {
       _selectedIndex = index;
     });
   }
-  
+
   // Handle shared files
   void _handleSharedFiles(List<SharedMediaFile> sharedFiles) {
     // Navigate to the dedicated receive share screen
     _sharingService.showReceiveShareScreen(context, sharedFiles);
   }
-  
+
   // This method is removed as we're now using the dedicated screen
 
   @override
@@ -74,8 +74,8 @@ class _MainScreenState extends State<MainScreen> {
       bottomNavigationBar: BottomNavigationBar(
         items: const <BottomNavigationBarItem>[
           BottomNavigationBarItem(
-            icon: Icon(Icons.bookmark),
-            label: 'Bookmarks',
+            icon: Icon(Icons.collections_bookmark_outlined),
+            label: 'Collections',
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.person),
@@ -85,7 +85,8 @@ class _MainScreenState extends State<MainScreen> {
         currentIndex: _selectedIndex,
         selectedItemColor: Colors.blue,
         onTap: _onItemTapped,
+        type: BottomNavigationBarType.fixed,
       ),
     );
   }
-} 
+}

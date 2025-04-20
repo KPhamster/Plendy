@@ -1,22 +1,22 @@
 import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
 
-class BookmarksScreen extends StatelessWidget {
+class CollectionsScreen extends StatelessWidget {
   final _authService = AuthService();
 
-  BookmarksScreen({super.key});
+  CollectionsScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
     final userEmail = _authService.currentUser?.email ?? 'Guest';
-    
+
     return Scaffold(
       appBar: AppBar(
-        title: Text('Bookmarks'),
+        title: Text('Collections'),
       ),
       body: Center(
-        child: Text('yo what\'s up $userEmail'),
+        child: Text('yo what\'s up $userEmail - Welcome to Collections'),
       ),
     );
   }
-} 
+}
