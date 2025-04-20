@@ -338,27 +338,27 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         if (isDifferent) {
           // Only process if the content is actually different
           print('🔄 STREAM LISTENER: Processing DIFFERENT stream content.');
-        // Use provider to reset cards
-        context.read<ReceiveShareProvider>().resetExperienceCards();
-        setState(() {
-          _currentSharedFiles = value; // Update with the latest files
-          // Reset UI state NOT related to cards
-          _businessDataCache.clear(); // Clear cache for new content
-          _yelpPreviewFutures.clear();
-          // Process the new content
+          // Use provider to reset cards
+          context.read<ReceiveShareProvider>().resetExperienceCards();
+          setState(() {
+            _currentSharedFiles = value; // Update with the latest files
+            // Reset UI state NOT related to cards
+            _businessDataCache.clear(); // Clear cache for new content
+            _yelpPreviewFutures.clear();
+            // Process the new content
             _processSharedContent(_currentSharedFiles);
-          // Show a notification
-          _showSnackBar(context, "New content received!");
-        });
+            // Show a notification
+            _showSnackBar(context, "New content received!");
+          });
 
           // Reset intent only if processed (and not iOS)
-        if (!Platform.isIOS) {
-          ReceiveSharingIntent.instance.reset();
-          print("SHARE DEBUG: Stream - Intent stream processed and reset.");
-        } else {
-          print(
-              "SHARE DEBUG: On iOS - not resetting intent to ensure it persists");
-        }
+          if (!Platform.isIOS) {
+            ReceiveSharingIntent.instance.reset();
+            print("SHARE DEBUG: Stream - Intent stream processed and reset.");
+          } else {
+            print(
+                "SHARE DEBUG: On iOS - not resetting intent to ensure it persists");
+          }
         } else {
           print(
               '🔄 STREAM LISTENER: Content is the same as current. Ignoring stream event.');
@@ -1651,6 +1651,15 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
           // RENAMED: Use selectedcategory
           final String categoryNameToSave = card.selectedcategory!;
+          // UPDATED: Get the full category object using try-catch
+          UserCategory? selectedCategoryObject;
+          try {
+            selectedCategoryObject = _userCategories
+                .firstWhere((cat) => cat.name == categoryNameToSave);
+          } catch (e) {
+            // StateError if not found, assign null
+            selectedCategoryObject = null;
+          }
 
           if (card.existingExperienceId == null ||
               card.existingExperienceId!.isEmpty) {
@@ -1715,6 +1724,20 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               errors.add(
                   'Could not update "${card.titleController.text}" (not found).');
             }
+          }
+          // ADDED: Update timestamp for the selected category AFTER successful save/update
+          if (selectedCategoryObject != null) {
+            try {
+              await _experienceService
+                  .updateCategoryLastUsedTimestamp(selectedCategoryObject.id);
+            } catch (e) {
+              // Log error but don't stop the overall process
+              print(
+                  "Error updating timestamp for category ${selectedCategoryObject.id}: $e");
+            }
+          } else {
+            print(
+                "Warning: Could not find category object for '${categoryNameToSave}' to update timestamp.");
           }
         } catch (e) {
           print('Error processing card "${card.titleController.text}": $e');
@@ -2082,34 +2105,34 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                   // Now _userCategories should be populated
 
                   return Column(
-                children: [
-                  Expanded(
-                    child: SingleChildScrollView(
+                    children: [
+                      Expanded(
+                        child: SingleChildScrollView(
                           padding: const EdgeInsets.only(bottom: 80),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
                               // Preview section
-                          if (_currentSharedFiles.isEmpty)
-                            const Padding(
-                              padding: EdgeInsets.all(16.0),
-                              child: Center(
+                              if (_currentSharedFiles.isEmpty)
+                                const Padding(
+                                  padding: EdgeInsets.all(16.0),
+                                  child: Center(
                                       child:
                                           Text('No shared content received')),
-                            )
-                          else
+                                )
+                              else
                                 // REMOVED Outer Padding around ListView
                                 ListView.builder(
                                   padding: EdgeInsets
                                       .zero, // Ensure ListView itself has no padding
-                                shrinkWrap: true,
-                                physics: const NeverScrollableScrollPhysics(),
+                                  shrinkWrap: true,
+                                  physics: const NeverScrollableScrollPhysics(),
                                   itemCount: _currentSharedFiles.length,
-                                itemBuilder: (context, index) {
-                                  final file = _currentSharedFiles[index];
-                                  final firstCard = experienceCards.isNotEmpty
-                                      ? experienceCards.first
-                                      : null;
+                                  itemBuilder: (context, index) {
+                                    final file = _currentSharedFiles[index];
+                                    final firstCard = experienceCards.isNotEmpty
+                                        ? experienceCards.first
+                                        : null;
 
                                     // --- ADDED: Conditional Padding Logic ---
                                     bool isInstagram = false;
@@ -2134,7 +2157,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                         vertical: verticalPadding,
                                       ),
                                       child: Card(
-                                    elevation: 2.0,
+                                        elevation: 2.0,
                                         // SET margin based on type
                                         margin: isInstagram
                                             ? EdgeInsets.zero
@@ -2148,11 +2171,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                         clipBehavior: isInstagram
                                             ? Clip.antiAlias
                                             : Clip.none,
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        if (firstCard != null)
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            if (firstCard != null)
                                               _buildMediaPreview(
                                                   file, firstCard)
                                             else
@@ -2161,78 +2184,78 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                                   file, ExperienceCardData()),
                                           ],
                                         ),
-                                    ),
-                                  );
-                                },
-                            ),
+                                      ),
+                                    );
+                                  },
+                                ),
 
-                          // Experience association form section
-                          Padding(
+                              // Experience association form section
+                              Padding(
                                 padding: const EdgeInsets.symmetric(
                                     horizontal: 16.0),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                if (experienceCards.isNotEmpty)
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    if (experienceCards.isNotEmpty)
                                       // --- Restored Title Placeholder ---
-                                  Padding(
-                                    padding: const EdgeInsets.only(
-                                        top: 16.0, bottom: 8.0),
-                                    child: Text(
-                                        experienceCards.length > 1
-                                            ? 'Associated Experiences'
-                                            : 'Associate Experience',
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .titleLarge),
-                                  )
+                                      Padding(
+                                        padding: const EdgeInsets.only(
+                                            top: 16.0, bottom: 8.0),
+                                        child: Text(
+                                            experienceCards.length > 1
+                                                ? 'Associated Experiences'
+                                                : 'Associate Experience',
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .titleLarge),
+                                      )
                                     // --- End Title Placeholder ---
                                     else
                                       // --- Restored No Cards Title ---
-                                  const Padding(
-                                      padding: EdgeInsets.only(
-                                          top: 16.0, bottom: 8.0),
+                                      const Padding(
+                                          padding: EdgeInsets.only(
+                                              top: 16.0, bottom: 8.0),
                                           child: Text(
                                               "No Experience Card")), // <<< ADDED COMMA HERE
                                     // --- End No Cards Title ---
 
-                                const SizedBox(height: 8),
+                                    const SizedBox(height: 8),
 
-                                if (experienceCards.isEmpty)
+                                    if (experienceCards.isEmpty)
                                       // --- Restored Error Placeholder ---
                                       const Center(
-                                      child: Padding(
+                                          child: Padding(
                                         padding: EdgeInsets.symmetric(
-                                        vertical: 20.0),
-                                    child: Text(
-                                        "Error: No experience card available.",
+                                            vertical: 20.0),
+                                        child: Text(
+                                            "Error: No experience card available.",
                                             style:
                                                 TextStyle(color: Colors.red)),
-                                  ))
+                                      ))
                                     // --- End Error Placeholder ---
-                                else
-                                  ListView.builder(
-                                      padding: EdgeInsets.zero,
-                                      shrinkWrap: true,
-                                      physics:
-                                          const NeverScrollableScrollPhysics(),
-                                      itemCount: experienceCards.length,
-                                      itemBuilder: (context, i) {
-                                        final card = experienceCards[i];
+                                    else
+                                      ListView.builder(
+                                          padding: EdgeInsets.zero,
+                                          shrinkWrap: true,
+                                          physics:
+                                              const NeverScrollableScrollPhysics(),
+                                          itemCount: experienceCards.length,
+                                          itemBuilder: (context, i) {
+                                            final card = experienceCards[i];
                                             // ADDED Key based on the category list to force rebuild
-                                        return ExperienceCardForm(
+                                            return ExperienceCardForm(
                                               key: ObjectKey(
                                                   _userCategories), // Key changes when list instance changes
-                                          cardData: card,
-                                          isFirstCard: i == 0,
+                                              cardData: card,
+                                              isFirstCard: i == 0,
                                               canRemove:
                                                   experienceCards.length > 1,
                                               userCategories: _userCategories,
-                                          onRemove: _removeExperienceCard,
+                                              onRemove: _removeExperienceCard,
                                               onLocationSelect:
                                                   _showLocationPicker,
-                                          onSelectSavedExperience:
-                                              _selectSavedExperienceForCard,
+                                              onSelectSavedExperience:
+                                                  _selectSavedExperienceForCard,
                                               // UPDATED onUpdate handling:
                                               onUpdate: (
                                                   {bool refreshCategories =
@@ -2290,100 +2313,100 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                                 }
                                               },
                                               formKey: card.formKey,
-                                        );
-                                      }),
+                                            );
+                                          }),
 
                                     // Add another experience button
                                     // --- Restored _isSpecialUrl check ---
-                                if (!_isSpecialUrl(_currentSharedFiles
-                                        .isNotEmpty
+                                    if (!_isSpecialUrl(_currentSharedFiles
+                                            .isNotEmpty
                                         ? _extractFirstUrl(_currentSharedFiles
                                                 .first.path) ??
-                                        ''
+                                            ''
                                         : ''))
                                       // --- End Restored Check ---
                                       // --- Restored Button Placeholder ---
-                                  Padding(
-                                    padding: const EdgeInsets.only(
+                                      Padding(
+                                        padding: const EdgeInsets.only(
                                             top: 12.0, bottom: 16.0),
-                                    child: Center(
-                                      child: OutlinedButton.icon(
-                                        icon: const Icon(Icons.add),
-                                        label: const Text(
-                                            'Add Another Experience'),
-                                        onPressed: _addExperienceCard,
-                                        style: OutlinedButton.styleFrom(
+                                        child: Center(
+                                          child: OutlinedButton.icon(
+                                            icon: const Icon(Icons.add),
+                                            label: const Text(
+                                                'Add Another Experience'),
+                                            onPressed: _addExperienceCard,
+                                            style: OutlinedButton.styleFrom(
                                               padding:
                                                   const EdgeInsets.symmetric(
                                                       vertical: 12,
                                                       horizontal: 24),
-                                          side: BorderSide(
-                                              color: Theme.of(context)
-                                                  .colorScheme
+                                              side: BorderSide(
+                                                  color: Theme.of(context)
+                                                      .colorScheme
                                                       .primary),
+                                            ),
+                                          ),
                                         ),
-                                      ),
-                                    ),
                                       )
                                     // --- End Button Placeholder ---
                                     ,
-                              ],
-                            ),
+                                  ],
+                                ),
+                              ),
+                            ],
                           ),
-                        ],
+                        ),
                       ),
-                    ),
-                  ),
-                  // Action buttons (Save/Cancel) - Fixed at the bottom
+                      // Action buttons (Save/Cancel) - Fixed at the bottom
                       // --- Restored Buttons Container ---
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 16.0, vertical: 12.0),
-                    decoration: BoxDecoration(
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16.0, vertical: 12.0),
+                        decoration: BoxDecoration(
                           color: Theme.of(context).cardColor,
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.1),
-                          spreadRadius: 0,
-                          blurRadius: 4,
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.1),
+                              spreadRadius: 0,
+                              blurRadius: 4,
                               offset: const Offset(0, -2),
+                            ),
+                          ],
                         ),
-                      ],
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        OutlinedButton(
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            OutlinedButton(
                               onPressed: widget.onCancel,
-                          child: const Text('Cancel'),
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: Colors.grey[700],
-                          ),
-                        ),
-                        ElevatedButton.icon(
-                          onPressed: _isSaving ? null : _saveExperience,
-                          icon: _isSaving
-                              ? Container(
-                                  width: 20,
-                                  height: 20,
-                                  padding: const EdgeInsets.all(2.0),
-                                  child: const CircularProgressIndicator(
-                                      strokeWidth: 3, color: Colors.white),
-                                )
-                              : const Icon(Icons.save),
+                              child: const Text('Cancel'),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: Colors.grey[700],
+                              ),
+                            ),
+                            ElevatedButton.icon(
+                              onPressed: _isSaving ? null : _saveExperience,
+                              icon: _isSaving
+                                  ? Container(
+                                      width: 20,
+                                      height: 20,
+                                      padding: const EdgeInsets.all(2.0),
+                                      child: const CircularProgressIndicator(
+                                          strokeWidth: 3, color: Colors.white),
+                                    )
+                                  : const Icon(Icons.save),
                               label: Text(_isSaving
                                   ? 'Saving...'
                                   : 'Save Experience(s)'),
-                          style: ElevatedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 24, vertical: 12),
-                          ),
+                              style: ElevatedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 24, vertical: 12),
+                              ),
+                            ),
+                          ],
                         ),
-                      ],
-                    ),
                       )
                       // --- End Buttons Container ---
-                ],
+                    ],
                   );
                 },
               ),
@@ -2461,8 +2484,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     if (extractedUrl != null) {
       // Check if it's a special one (Yelp/Maps)
       if (_isSpecialUrl(extractedUrl)) {
-      // Build the appropriate special URL preview
-      return _buildUrlPreview(extractedUrl, card);
+        // Build the appropriate special URL preview
+        return _buildUrlPreview(extractedUrl, card);
       }
       // --- ADDED: Explicit check for Instagram ---
       else if (extractedUrl.contains('instagram.com')) {

@@ -6,15 +6,19 @@ class UserCategory extends Equatable {
   final String id; // Document ID from Firestore
   final String name;
   final String icon; // Emoji or identifier for an icon
+  final Timestamp? lastUsedTimestamp;
+  final int? orderIndex;
 
   const UserCategory({
     required this.id,
     required this.name,
     required this.icon,
+    this.lastUsedTimestamp,
+    this.orderIndex,
   });
 
   @override
-  List<Object?> get props => [id, name, icon];
+  List<Object?> get props => [id, name, icon, lastUsedTimestamp, orderIndex];
 
   /// Creates a UserCategory from a Firestore document.
   factory UserCategory.fromFirestore(DocumentSnapshot doc) {
@@ -23,6 +27,8 @@ class UserCategory extends Equatable {
       id: doc.id,
       name: data['name'] ?? 'Unknown',
       icon: data['icon'] ?? '❓', // Default icon if missing
+      lastUsedTimestamp: data['lastUsedTimestamp'] as Timestamp?,
+      orderIndex: data['orderIndex'] as int?,
     );
   }
 
@@ -31,6 +37,8 @@ class UserCategory extends Equatable {
     return {
       'name': name,
       'icon': icon,
+      'lastUsedTimestamp': lastUsedTimestamp,
+      'orderIndex': orderIndex,
       // Consider adding 'createdAt', 'updatedAt' timestamps if needed for management.
     };
   }
@@ -40,11 +48,19 @@ class UserCategory extends Equatable {
     String? id,
     String? name,
     String? icon,
+    Timestamp? lastUsedTimestamp,
+    bool setLastUsedTimestampNull = false,
+    int? orderIndex,
+    bool setOrderIndexNull = false,
   }) {
     return UserCategory(
       id: id ?? this.id,
       name: name ?? this.name,
       icon: icon ?? this.icon,
+      lastUsedTimestamp: setLastUsedTimestampNull
+          ? null
+          : lastUsedTimestamp ?? this.lastUsedTimestamp,
+      orderIndex: setOrderIndexNull ? null : orderIndex ?? this.orderIndex,
     );
   }
 
@@ -71,6 +87,8 @@ class UserCategory extends Equatable {
         id: '', // No ID yet
         name: entry.key,
         icon: entry.value,
+        lastUsedTimestamp: null,
+        orderIndex: null,
       );
     }).toList();
   }

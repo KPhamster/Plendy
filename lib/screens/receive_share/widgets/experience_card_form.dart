@@ -255,7 +255,6 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
       uniqueCategoriesByName[category.name] = category;
     }
     final uniqueCategoryList = uniqueCategoriesByName.values.toList();
-    uniqueCategoryList.sort((a, b) => a.name.compareTo(b.name));
 
     final String? selectedValue = await showDialog<String>(
       context: context,
