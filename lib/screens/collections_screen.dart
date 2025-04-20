@@ -180,6 +180,69 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     }
   }
 
+  // ADDED: Helper to update local orderIndex properties
+  void _updateLocalOrderIndices() {
+    for (int i = 0; i < _categories.length; i++) {
+      // Create a new UserCategory instance with the updated index
+      // Directly modifying the object in the list might not trigger updates
+      // if UserCategory relies on equatable/identity.
+      _categories[i] = _categories[i].copyWith(orderIndex: i);
+    }
+    print("Updated local category order indices.");
+  }
+
+  // ADDED: Method to save the new category order to Firestore
+  Future<void> _saveCategoryOrder() async {
+    // Show loading indicator during save
+    // We might want a more subtle indicator than the main screen one
+    // but for now, let's signal activity.
+    setState(() => _isLoading = true);
+
+    final List<Map<String, dynamic>> updates = [];
+    for (final category in _categories) {
+      if (category.id.isNotEmpty && category.orderIndex != null) {
+        updates.add({
+          'id': category.id,
+          'orderIndex': category.orderIndex!,
+        });
+      } else {
+        print(
+            "Warning: Skipping category in save order with missing id or index: ${category.name}");
+      }
+    }
+
+    if (updates.isEmpty) {
+      print("No valid category updates to save.");
+      setState(() => _isLoading = false);
+      return;
+    }
+
+    try {
+      print("Attempting to save order for ${updates.length} categories.");
+      await _experienceService.updateCategoryOrder(updates);
+      print("Category order saved successfully.");
+      if (mounted) {
+        // Optionally show a success message (might be too noisy)
+        // ScaffoldMessenger.of(context).showSnackBar(
+        //   const SnackBar(content: Text('Category order saved.'), duration: Duration(seconds: 1)),
+        // );
+        // No need to call _loadData here if we are confident the local state is correct
+        // and the save was successful. We just turn off the indicator.
+        setState(() => _isLoading = false);
+      }
+    } catch (e) {
+      print("Error saving category order: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Error saving category order: $e")),
+        );
+        // If save failed, reload data to revert to the last known good state
+        setState(() => _isLoading = false);
+        _loadData();
+      }
+    }
+  }
+
   int _getExperienceCountForCategory(UserCategory category) {
     return _experiences.where((exp) => exp.category == category.name).length;
   }
@@ -189,12 +252,13 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       return const Center(child: Text('No categories found.'));
     }
 
-    return ListView.builder(
+    return ReorderableListView.builder(
       itemCount: _categories.length,
       itemBuilder: (context, index) {
         final category = _categories[index];
         final count = _getExperienceCountForCategory(category);
         return ListTile(
+          key: ValueKey(category.id),
           leading: Text(
             category.icon,
             style: const TextStyle(fontSize: 24),
@@ -235,6 +299,21 @@ class _CollectionsScreenState extends State<CollectionsScreen>
             print('Tapped on ${category.name}');
           },
         );
+      },
+      onReorder: (int oldIndex, int newIndex) {
+        setState(() {
+          if (newIndex > oldIndex) {
+            newIndex -= 1;
+          }
+          final UserCategory item = _categories.removeAt(oldIndex);
+          _categories.insert(newIndex, item);
+
+          _updateLocalOrderIndices();
+
+          print("Categories reordered locally. Triggering save.");
+
+          _saveCategoryOrder();
+        });
       },
     );
   }
