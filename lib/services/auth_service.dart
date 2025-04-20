@@ -27,15 +27,15 @@ class AuthService {
       if (credential.user != null) {
         await _userService.saveUserEmail(credential.user!.uid, email);
 
-        // Initialize default collections for new user
+        // Initialize default categories for new user
         try {
           await _experienceService
-              .initializeDefaultUserCollections(credential.user!.uid);
+              .initializeDefaultUserCategories(credential.user!.uid);
           print(
-              "Default collections initialized for new user: ${credential.user!.uid}");
+              "Default categories initialized for new user: ${credential.user!.uid}");
         } catch (e) {
-          print("Error initializing default collections: $e");
-          // Don't rethrow - allow registration to succeed even if collection init fails
+          print("Error initializing default categories: $e");
+          // Don't rethrow - allow registration to succeed even if category init fails
         }
       }
 
@@ -78,16 +78,16 @@ class AuthService {
         await _userService.saveUserEmail(
             userCredential.user!.uid, userCredential.user!.email!);
 
-        // Check if this is a new user and initialize default collections if needed
+        // Check if this is a new user and initialize default categories if needed
         if (userCredential.additionalUserInfo?.isNewUser == true) {
           try {
             await _experienceService
-                .initializeDefaultUserCollections(userCredential.user!.uid);
+                .initializeDefaultUserCategories(userCredential.user!.uid);
             print(
-                "Default collections initialized for new Google user: ${userCredential.user!.uid}");
+                "Default categories initialized for new Google user: ${userCredential.user!.uid}");
           } catch (e) {
-            print("Error initializing default collections: $e");
-            // Don't rethrow - allow sign-in to succeed even if collection init fails
+            print("Error initializing default categories: $e");
+            // Don't rethrow - allow sign-in to succeed even if category init fails
           }
         }
       }

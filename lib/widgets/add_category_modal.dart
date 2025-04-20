@@ -1,24 +1,24 @@
 import 'package:flutter/material.dart';
-import 'package:plendy/models/user_collection.dart';
+import 'package:plendy/models/user_category.dart';
 import 'package:plendy/services/experience_service.dart';
 
-class AddCollectionModal extends StatefulWidget {
-  final UserCollection? collectionToEdit;
+class AddCategoryModal extends StatefulWidget {
+  final UserCategory? categoryToEdit;
 
-  const AddCollectionModal({super.key, this.collectionToEdit});
+  const AddCategoryModal({super.key, this.categoryToEdit});
 
   @override
-  State<AddCollectionModal> createState() => _AddCollectionModalState();
+  State<AddCategoryModal> createState() => _AddCategoryModalState();
 }
 
-class _AddCollectionModalState extends State<AddCollectionModal> {
+class _AddCategoryModalState extends State<AddCategoryModal> {
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final ExperienceService _experienceService = ExperienceService();
   String _selectedIcon = '';
   bool _isLoading = false;
 
-  bool get _isEditing => widget.collectionToEdit != null;
+  bool get _isEditing => widget.categoryToEdit != null;
 
   // Expanded list of emojis for selection
   final List<String> _emojiOptions = [
@@ -101,8 +101,8 @@ class _AddCollectionModalState extends State<AddCollectionModal> {
   void initState() {
     super.initState();
     if (_isEditing) {
-      _nameController.text = widget.collectionToEdit!.name;
-      _selectedIcon = widget.collectionToEdit!.icon;
+      _nameController.text = widget.categoryToEdit!.name;
+      _selectedIcon = widget.categoryToEdit!.icon;
       if (!_emojiOptions.contains(_selectedIcon)) {
         _selectedIcon = _emojiOptions.isNotEmpty ? _emojiOptions.first : '';
       }
@@ -117,7 +117,7 @@ class _AddCollectionModalState extends State<AddCollectionModal> {
     super.dispose();
   }
 
-  Future<void> _saveCollection() async {
+  Future<void> _saveCategory() async {
     if (_formKey.currentState!.validate() && _selectedIcon.isNotEmpty) {
       setState(() {
         _isLoading = true;
@@ -127,31 +127,30 @@ class _AddCollectionModalState extends State<AddCollectionModal> {
       final icon = _selectedIcon;
 
       try {
-        UserCollection resultCollection;
+        UserCategory resultCategory;
         if (_isEditing) {
-          final updatedCollection = widget.collectionToEdit!.copyWith(
+          final updatedCategory = widget.categoryToEdit!.copyWith(
             name: name,
             icon: icon,
           );
-          await _experienceService.updateUserCollection(updatedCollection);
-          resultCollection = updatedCollection;
-          print("Collection updated: ${resultCollection.name}");
+          await _experienceService.updateUserCategory(updatedCategory);
+          resultCategory = updatedCategory;
+          print("Category updated: ${resultCategory.name}");
         } else {
-          resultCollection =
-              await _experienceService.addUserCollection(name, icon);
-          print("Collection added: ${resultCollection.name}");
+          resultCategory = await _experienceService.addUserCategory(name, icon);
+          print("Category added: ${resultCategory.name}");
         }
 
         if (mounted) {
-          Navigator.of(context).pop(resultCollection);
+          Navigator.of(context).pop(resultCategory);
         }
       } catch (e) {
-        print("Error saving collection: $e");
+        print("Error saving category: $e");
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
                 content: Text(
-                    'Error ${_isEditing ? "updating" : "adding"} collection: ${e.toString()}')),
+                    'Error ${_isEditing ? "updating" : "adding"} category: ${e.toString()}')),
           );
           setState(() {
             _isLoading = false;
@@ -185,7 +184,7 @@ class _AddCollectionModalState extends State<AddCollectionModal> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(_isEditing ? 'Edit Collection' : 'Create a New Collection',
+                Text(_isEditing ? 'Edit Category' : 'Create a New Category',
                     style: Theme.of(context).textTheme.titleLarge),
                 IconButton(
                   icon: const Icon(Icons.close),
@@ -198,13 +197,13 @@ class _AddCollectionModalState extends State<AddCollectionModal> {
               controller: _nameController,
               decoration: InputDecoration(
                 labelText: _isEditing
-                    ? 'Edit collection name'
-                    : 'Name your new collection',
+                    ? 'Edit category name'
+                    : 'Name your new category',
                 border: OutlineInputBorder(),
               ),
               validator: (value) {
                 if (value == null || value.trim().isEmpty) {
-                  return 'Please enter a collection name';
+                  return 'Please enter a category name';
                 }
                 return null;
               },
@@ -266,9 +265,9 @@ class _AddCollectionModalState extends State<AddCollectionModal> {
                 label: Text(_isLoading
                     ? 'Saving...'
                     : _isEditing
-                        ? 'Update Collection'
-                        : 'Save Collection'),
-                onPressed: _isLoading ? null : _saveCollection,
+                        ? 'Update Category'
+                        : 'Save Category'),
+                onPressed: _isLoading ? null : _saveCategory,
                 style: ElevatedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 12),
                 ),

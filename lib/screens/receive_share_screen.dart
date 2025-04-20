@@ -13,7 +13,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:provider/provider.dart'; // Import Provider
 import '../providers/receive_share_provider.dart'; // Import the provider
 import '../models/experience.dart';
-import '../models/user_collection.dart'; // RENAMED Import
+import '../models/user_category.dart'; // RENAMED Import
 import '../services/experience_service.dart';
 import '../services/google_maps_service.dart';
 import '../widgets/google_maps_widget.dart';
@@ -53,8 +53,8 @@ class ExperienceCardData {
   // Focus nodes
   final FocusNode titleFocusNode = FocusNode();
 
-  // Collection selection
-  String? selectedcollection; // RENAMED
+  // Category selection
+  String? selectedcategory; // RENAMED
 
   // Rating
   double rating = 0.0; // Added (or use double? rating)
@@ -85,11 +85,11 @@ class ExperienceCardData {
   // --- END ADDED ---
 
   // Constructor can set initial values if needed
-  // Set default collection name
+  // Set default category name
   ExperienceCardData() {
-    // Initialize with the name of the first default collection, or 'Other'
-    selectedcollection = UserCollection.defaultCollections.keys.isNotEmpty
-        ? UserCollection.defaultCollections.keys.first
+    // Initialize with the name of the first default category, or 'Other'
+    selectedcategory = UserCategory.defaultCategories.keys.isNotEmpty
+        ? UserCategory.defaultCategories.keys.first
         : 'Other';
   }
 
@@ -166,10 +166,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   // Flag to track if a chain was detected from URL structure
   bool _chainDetectedFromUrl = false;
 
-  // RENAMED: State for user collections
-  Future<List<UserCollection>>? _userCollectionsFuture; // RENAMED
-  List<UserCollection> _userCollections =
-      []; // RENAMED Cache the loaded collections
+  // RENAMED: State for user Categories
+  Future<List<UserCategory>>? _userCategoriesFuture; // RENAMED
+  List<UserCategory> _userCategories =
+      []; // RENAMED Cache the loaded Categories
 
   @override
   void initState() {
@@ -180,8 +180,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     // Register observer for app lifecycle events
     WidgetsBinding.instance.addObserver(this);
 
-    // RENAMED: Fetch user collections
-    _loadUserCollections();
+    // RENAMED: Fetch user Categories
+    _loadUserCategories();
 
     // Access provider - DO NOT listen here, just need read access
     // final provider = context.read<ReceiveShareProvider>();
@@ -243,47 +243,47 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     });
   }
 
-  // RENAMED: Method to load user collections
+  // RENAMED: Method to load user Categories
   // UPDATED Return Type
-  Future<void> _loadUserCollections() {
-    _userCollectionsFuture = _experienceService.getUserCollections();
+  Future<void> _loadUserCategories() {
+    _userCategoriesFuture = _experienceService.getUserCategories();
     // Return the future that completes after setting state or handling error
-    return _userCollectionsFuture!.then((collections) {
+    return _userCategoriesFuture!.then((Categories) {
       if (mounted) {
         setState(() {
-          _userCollections = collections; // RENAMED state variable
-          _updateCardDefaultCollectionsIfNeeded(collections);
+          _userCategories = Categories; // RENAMED state variable
+          _updateCardDefaultCategoriesIfNeeded(Categories);
         });
       }
     }).catchError((error) {
-      print("Error loading user collections: $error");
+      print("Error loading user Categories: $error");
       if (mounted) {
         setState(() {
-          _userCollections = UserCollection.createInitialCollections();
+          _userCategories = UserCategory.createInitialCategories();
         });
         _showSnackBar(
-            context, "Error loading your custom collections. Using defaults.");
+            context, "Error loading your custom Categories. Using defaults.");
       }
       // Optionally rethrow or handle error further if needed
       // throw error;
     });
   }
 
-  // RENAMED: Helper to ensure card default collection exists in loaded list
-  void _updateCardDefaultCollectionsIfNeeded(
-      List<UserCollection> loadedCollections) {
+  // RENAMED: Helper to ensure card default category exists in loaded list
+  void _updateCardDefaultCategoriesIfNeeded(
+      List<UserCategory> loadedCategories) {
     final provider = context.read<ReceiveShareProvider>();
-    if (provider.experienceCards.isEmpty || loadedCollections.isEmpty) return;
+    if (provider.experienceCards.isEmpty || loadedCategories.isEmpty) return;
 
-    final firstLoadedCollectionName = loadedCollections.first.name;
+    final firstLoadedCategoryName = loadedCategories.first.name;
 
     for (var card in provider.experienceCards) {
       // Check against renamed field
-      if (!loadedCollections.any((c) => c.name == card.selectedcollection)) {
+      if (!loadedCategories.any((c) => c.name == card.selectedcategory)) {
         print(
-            "Card default collection '${card.selectedcollection}' not found in loaded list. Resetting to '$firstLoadedCollectionName'.");
+            "Card default category '${card.selectedcategory}' not found in loaded list. Resetting to '$firstLoadedCategoryName'.");
         // Use renamed field
-        card.selectedcollection = firstLoadedCollectionName;
+        card.selectedcategory = firstLoadedCategoryName;
       }
     }
     // If direct update was used, trigger rebuild:
@@ -382,8 +382,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     if (state == AppLifecycleState.resumed) {
       print("SHARE DEBUG: App resumed - recreating intent listener");
       _setupIntentListener();
-      // RENAMED: Reload user collections
-      _loadUserCollections();
+      // RENAMED: Reload user Categories
+      _loadUserCategories();
     }
   }
 
@@ -1582,9 +1582,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     final provider = context.read<ReceiveShareProvider>();
     final experienceCards = provider.experienceCards;
 
-    // RENAMED: Check if collections are loaded
-    if (_userCollections.isEmpty) {
-      _showSnackBar(context, 'Collections not loaded yet. Please wait.');
+    // RENAMED: Check if Categories are loaded
+    if (_userCategories.isEmpty) {
+      _showSnackBar(context, 'Categories not loaded yet. Please wait.');
       return;
     }
     // --- END ADDED ---
@@ -1595,9 +1595,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         allValid = false;
         break;
       }
-      // RENAMED: Validate selected collection name is set
-      if (card.selectedcollection == null || card.selectedcollection!.isEmpty) {
-        _showSnackBar(context, 'Please select a collection for each card.');
+      // RENAMED: Validate selected category name is set
+      if (card.selectedcategory == null || card.selectedcategory!.isEmpty) {
+        _showSnackBar(context, 'Please select a category for each card.');
         allValid = false;
         break;
       }
@@ -1649,16 +1649,16 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
           final String notes = card.notesController.text.trim();
 
-          // RENAMED: Use selectedcollection
-          final String collectionNameToSave = card.selectedcollection!;
-          // UPDATED: Get the full collection object using try-catch
-          UserCollection? selectedCollectionObject;
+          // RENAMED: Use selectedcategory
+          final String categoryNameToSave = card.selectedcategory!;
+          // UPDATED: Get the full category object using try-catch
+          UserCategory? selectedCategoryObject;
           try {
-            selectedCollectionObject = _userCollections
-                .firstWhere((cat) => cat.name == collectionNameToSave);
+            selectedCategoryObject = _userCategories
+                .firstWhere((cat) => cat.name == categoryNameToSave);
           } catch (e) {
             // StateError if not found, assign null
-            selectedCollectionObject = null;
+            selectedCategoryObject = null;
           }
 
           if (card.existingExperienceId == null ||
@@ -1671,7 +1671,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                   notes.isNotEmpty ? notes : 'Created from shared content',
               location: locationToSave,
               // RENAMED
-              collection: collectionNameToSave,
+              category: categoryNameToSave,
               yelpUrl: card.yelpUrlController.text.isNotEmpty
                   ? card.yelpUrlController.text.trim()
                   : null,
@@ -1702,7 +1702,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                 name: card.titleController.text,
                 location: locationToSave,
                 // RENAMED
-                collection: collectionNameToSave,
+                category: categoryNameToSave,
                 yelpUrl: card.yelpUrlController.text.isNotEmpty
                     ? card.yelpUrlController.text.trim()
                     : null,
@@ -1725,19 +1725,19 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                   'Could not update "${card.titleController.text}" (not found).');
             }
           }
-          // ADDED: Update timestamp for the selected collection AFTER successful save/update
-          if (selectedCollectionObject != null) {
+          // ADDED: Update timestamp for the selected category AFTER successful save/update
+          if (selectedCategoryObject != null) {
             try {
-              await _experienceService.updateCollectionLastUsedTimestamp(
-                  selectedCollectionObject.id);
+              await _experienceService
+                  .updateCategoryLastUsedTimestamp(selectedCategoryObject.id);
             } catch (e) {
               // Log error but don't stop the overall process
               print(
-                  "Error updating timestamp for collection ${selectedCollectionObject.id}: $e");
+                  "Error updating timestamp for category ${selectedCategoryObject.id}: $e");
             }
           } else {
             print(
-                "Warning: Could not find collection object for '${collectionNameToSave}' to update timestamp.");
+                "Warning: Could not find category object for '${categoryNameToSave}' to update timestamp.");
           }
         } catch (e) {
           print('Error processing card "${card.titleController.text}": $e');
@@ -2088,21 +2088,21 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                   ],
                 ),
               )
-            // RENAMED: FutureBuilder for User Collections
-            : FutureBuilder<List<UserCollection>>(
-                future: _userCollectionsFuture, // RENAMED future
+            // RENAMED: FutureBuilder for User Categories
+            : FutureBuilder<List<UserCategory>>(
+                future: _userCategoriesFuture, // RENAMED future
                 builder: (context, snapshot) {
                   if (snapshot.connectionState == ConnectionState.waiting) {
                     return const Center(child: CircularProgressIndicator());
                   }
                   if (snapshot.hasError) {
-                    // Already handled error in _loadUserCollections, show the UI with defaults
+                    // Already handled error in _loadUserCategories, show the UI with defaults
                     print(
                         "FutureBuilder Error (already handled): ${snapshot.error}");
-                    // Proceed to build UI with potentially default collections loaded in _userCollections
+                    // Proceed to build UI with potentially default Categories loaded in _userCategories
                   }
                   // snapshot.hasData or error handled (defaults loaded)
-                  // Now _userCollections should be populated
+                  // Now _userCategories should be populated
 
                   return Column(
                     children: [
@@ -2242,15 +2242,15 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                           itemCount: experienceCards.length,
                                           itemBuilder: (context, i) {
                                             final card = experienceCards[i];
-                                            // ADDED Key based on the collection list to force rebuild
+                                            // ADDED Key based on the category list to force rebuild
                                             return ExperienceCardForm(
                                               key: ObjectKey(
-                                                  _userCollections), // Key changes when list instance changes
+                                                  _userCategories), // Key changes when list instance changes
                                               cardData: card,
                                               isFirstCard: i == 0,
                                               canRemove:
                                                   experienceCards.length > 1,
-                                              userCollections: _userCollections,
+                                              userCategories: _userCategories,
                                               onRemove: _removeExperienceCard,
                                               onLocationSelect:
                                                   _showLocationPicker,
@@ -2258,55 +2258,55 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                                   _selectSavedExperienceForCard,
                                               // UPDATED onUpdate handling:
                                               onUpdate: (
-                                                  {bool refreshCollections =
+                                                  {bool refreshCategories =
                                                       false,
-                                                  String? newCollectionName}) {
+                                                  String? newCategoryName}) {
                                                 print(
-                                                    "onUpdate called: refreshCollections=$refreshCollections, newCollectionName=$newCollectionName"); // Log entry
-                                                if (refreshCollections) {
+                                                    "onUpdate called: refreshCategories=$refreshCategories, newCategoryName=$newCategoryName"); // Log entry
+                                                if (refreshCategories) {
                                                   print(
-                                                      "  Refreshing collections...");
-                                                  _loadUserCollections()
+                                                      "  Refreshing Categories...");
+                                                  _loadUserCategories()
                                                       .then((_) {
                                                     print(
-                                                        "  _loadUserCollections finished.");
+                                                        "  _loadUserCategories finished.");
                                                     if (mounted) {
                                                       print(
                                                           "  Component is mounted.");
-                                                      // Log BEFORE potential state update for newCollectionName
+                                                      // Log BEFORE potential state update for newCategoryName
                                                       print(
-                                                          "  _userCollections length BEFORE setState: ${_userCollections.length}");
-                                                      if (newCollectionName !=
+                                                          "  _userCategories length BEFORE setState: ${_userCategories.length}");
+                                                      if (newCategoryName !=
                                                           null) {
                                                         // Find the card associated with this specific form instance
                                                         // Note: This relies on the closure capturing the correct 'card'
                                                         print(
-                                                            "  Attempting to set selected collection for card ${card.id} to: $newCollectionName");
+                                                            "  Attempting to set selected category for card ${card.id} to: $newCategoryName");
                                                         setState(() {
-                                                          card.selectedcollection =
-                                                              newCollectionName;
+                                                          card.selectedcategory =
+                                                              newCategoryName;
                                                           print(
-                                                              "  setState called for newCollectionName selection.");
+                                                              "  setState called for newCategoryName selection.");
                                                         });
                                                       } else {
                                                         // If only refresh was requested (e.g., after Edit modal)
-                                                        // We still need setState to trigger rebuild with the new list loaded by _loadUserCollections
+                                                        // We still need setState to trigger rebuild with the new list loaded by _loadUserCategories
                                                         print(
                                                             "  Only refresh requested, calling setState to update list.");
                                                         setState(() {});
                                                       }
                                                       // Log AFTER state update
                                                       print(
-                                                          "  _userCollections length AFTER setState: ${_userCollections.length}");
+                                                          "  _userCategories length AFTER setState: ${_userCategories.length}");
                                                     } else {
                                                       print(
-                                                          "  Component is NOT mounted after _loadUserCollections.");
+                                                          "  Component is NOT mounted after _loadUserCategories.");
                                                     }
                                                   });
                                                 } else {
                                                   // Just trigger rebuild for other updates if needed
                                                   print(
-                                                      "onUpdate: Non-collection update, calling setState.");
+                                                      "onUpdate: Non-category update, calling setState.");
                                                   if (mounted) {
                                                     setState(() {});
                                                   }
