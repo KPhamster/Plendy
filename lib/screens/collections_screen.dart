@@ -433,10 +433,83 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       itemCount: _experiences.length,
       itemBuilder: (context, index) {
         final experience = _experiences[index];
+        // Find the matching category icon
+        final categoryIcon = _categories
+            .firstWhere((cat) => cat.name == experience.category,
+                orElse: () => UserCategory(
+                    id: '',
+                    name: '',
+                    icon: '❓') // Default icon if category not found
+                )
+            .icon;
+
+        // Get the full address
+        final fullAddress = experience.location.address;
+        // Get the first image URL or null
+        final imageUrl = experience.location.photoUrl;
+
         return ListTile(
-          // TODO: Add leading image if available?
+          leading: SizedBox(
+            width: 56, // Define width for the leading image container
+            height: 56, // Define height for the leading image container
+            child: ClipRRect(
+              // Clip the image to a rounded rectangle
+              borderRadius: BorderRadius.circular(8.0),
+              child: imageUrl != null
+                  ? Image.network(
+                      imageUrl,
+                      fit: BoxFit.cover,
+                      // Optional: Add loading/error builders
+                      loadingBuilder: (context, child, loadingProgress) {
+                        if (loadingProgress == null) return child;
+                        return Center(
+                            child: CircularProgressIndicator(strokeWidth: 2.0));
+                      },
+                      errorBuilder: (context, error, stackTrace) {
+                        return Container(
+                          color: Colors.grey[200],
+                          child: Icon(Icons.broken_image, color: Colors.grey),
+                        );
+                      },
+                    )
+                  : Container(
+                      // Placeholder if no image URL
+                      color: Colors.grey[300],
+                      child: Icon(Icons.image_not_supported,
+                          color: Colors.grey[600]),
+                    ),
+            ),
+          ),
           title: Text(experience.name),
-          subtitle: Text(experience.category),
+          subtitle: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (fullAddress != null && fullAddress.isNotEmpty)
+                Text(
+                  fullAddress, // Use full address
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              Text(
+                '$categoryIcon ${experience.category}',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              // ADDED: Display notes if available
+              if (experience.additionalNotes != null &&
+                  experience.additionalNotes!.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4.0), // Add some spacing
+                  child: Text(
+                    experience.additionalNotes!,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          fontStyle:
+                              FontStyle.italic, // Optional: Italicize notes
+                        ),
+                    maxLines: 2, // Limit notes length in list view
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+            ],
+          ),
           // TODO: Add onTap to navigate to experience details
           onTap: () {
             print('Tapped on Experience: ${experience.name}');
