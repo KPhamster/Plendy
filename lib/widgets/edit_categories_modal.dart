@@ -4,7 +4,7 @@ import 'package:plendy/services/experience_service.dart';
 import 'package:plendy/widgets/add_category_modal.dart';
 
 // UPDATED: Enum for sort order (used as parameter, not state)
-enum CategoriesortType { mostRecent, alphabetical }
+enum CategorySortType { mostRecent, alphabetical }
 
 class EditCategoriesModal extends StatefulWidget {
   const EditCategoriesModal({super.key});
@@ -72,13 +72,13 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
   }
 
   // UPDATED: Function now takes sort type and applies it permanently
-  void _applySort(CategoriesortType sortType) {
+  void _applySort(CategorySortType sortType) {
     print("Applying sort permanently: $sortType");
     setState(() {
-      if (sortType == CategoriesortType.alphabetical) {
+      if (sortType == CategorySortType.alphabetical) {
         _Categories.sort(
             (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-      } else if (sortType == CategoriesortType.mostRecent) {
+      } else if (sortType == CategorySortType.mostRecent) {
         _Categories.sort((a, b) {
           final tsA = a.lastUsedTimestamp;
           final tsB = b.lastUsedTimestamp;
@@ -243,23 +243,23 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
                       style: Theme.of(context).textTheme.titleLarge),
                 ),
                 // UPDATED: Sorting Menu Button
-                PopupMenuButton<CategoriesortType>(
+                PopupMenuButton<CategorySortType>(
                   // Use standard sort icon
                   icon: const Icon(Icons.sort),
                   tooltip: "Sort Categories",
-                  onSelected: (CategoriesortType result) {
+                  onSelected: (CategorySortType result) {
                     // Directly apply the selected sort permanently
                     _applySort(result);
                   },
                   itemBuilder: (BuildContext context) =>
-                      <PopupMenuEntry<CategoriesortType>>[
+                      <PopupMenuEntry<CategorySortType>>[
                     // UPDATED: Menu items (Removed Manual)
-                    const PopupMenuItem<CategoriesortType>(
-                      value: CategoriesortType.mostRecent,
+                    const PopupMenuItem<CategorySortType>(
+                      value: CategorySortType.mostRecent,
                       child: Text('Sort by Most Recent'),
                     ),
-                    const PopupMenuItem<CategoriesortType>(
-                      value: CategoriesortType.alphabetical,
+                    const PopupMenuItem<CategorySortType>(
+                      value: CategorySortType.alphabetical,
                       child: Text('Sort Alphabetically'),
                     ),
                   ],

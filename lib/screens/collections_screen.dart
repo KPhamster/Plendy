@@ -4,7 +4,10 @@ import '../models/user_category.dart';
 import '../services/auth_service.dart';
 import '../services/experience_service.dart';
 import '../widgets/add_category_modal.dart';
-import '../widgets/edit_categories_modal.dart';
+import '../widgets/edit_categories_modal.dart' show CategorySortType;
+
+// ADDED: Enum for experience view modes
+enum _ExperienceViewMode { list, detailed }
 
 class CollectionsScreen extends StatefulWidget {
   CollectionsScreen({super.key});
@@ -20,6 +23,9 @@ class _CollectionsScreenState extends State<CollectionsScreen>
 
   late TabController _tabController;
   int _currentTabIndex = 0;
+
+  // ADDED: State variable for experience view mode
+  _ExperienceViewMode _experiencesViewMode = _ExperienceViewMode.list;
 
   bool _isLoading = true;
   List<UserCategory> _categories = [];
@@ -100,24 +106,6 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       _loadData();
     } else {
       print("AddCategoryModal closed without adding.");
-    }
-  }
-
-  Future<void> _showEditCategoriesModal() async {
-    final result = await showModalBottomSheet<bool>(
-      context: context,
-      builder: (_) => const EditCategoriesModal(),
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-    );
-
-    if (result == true) {
-      print("EditCategoriesModal returned true, refreshing data...");
-      _loadData();
-    } else {
-      print("EditCategoriesModal closed or returned false (no changes saved).");
     }
   }
 
@@ -243,6 +231,20 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     }
   }
 
+  // ADDED: Main widget builder for the Experiences tab content
+  Widget _buildExperiencesTabContent() {
+    // Loading and empty states handled within the specific view builders
+    switch (_experiencesViewMode) {
+      case _ExperienceViewMode.list:
+        return _buildExperiencesListView();
+      case _ExperienceViewMode.detailed:
+        // Placeholder for the detailed view
+        return const Center(
+          child: Text('Detailed View (coming soon)'),
+        );
+    }
+  }
+
   int _getExperienceCountForCategory(UserCategory category) {
     return _experiences.where((exp) => exp.category == category.name).length;
   }
@@ -318,6 +320,36 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     );
   }
 
+  // ADDED: Method to apply sorting and save the new order
+  Future<void> _applySortAndSave(CategorySortType sortType) async {
+    print("Applying sort: $sortType");
+    setState(() {
+      if (sortType == CategorySortType.alphabetical) {
+        _categories.sort(
+            (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+      } else if (sortType == CategorySortType.mostRecent) {
+        _categories.sort((a, b) {
+          // Handle null timestamps gracefully during sort
+          final tsA = a.lastUsedTimestamp;
+          final tsB = b.lastUsedTimestamp;
+          if (tsA == null && tsB == null) {
+            // If both null, maintain relative order based on name for stability
+            return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+          }
+          if (tsA == null) return 1; // Treat null as oldest
+          if (tsB == null) return -1; // Treat null as oldest
+          return tsB.compareTo(tsA); // Sort descending (most recent first)
+        });
+      }
+
+      // Update local indices based on the new sort order
+      _updateLocalOrderIndices();
+    });
+
+    // Persist the newly assigned order indices
+    await _saveCategoryOrder();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -325,10 +357,41 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         title: const Text('Collection'),
         actions: [
           if (_currentTabIndex == 0)
+            PopupMenuButton<CategorySortType>(
+              icon: const Icon(Icons.sort),
+              tooltip: 'Sort Categories',
+              onSelected: (CategorySortType result) {
+                _applySortAndSave(result);
+              },
+              itemBuilder: (BuildContext context) =>
+                  <PopupMenuEntry<CategorySortType>>[
+                const PopupMenuItem<CategorySortType>(
+                  value: CategorySortType.mostRecent,
+                  child: Text('Sort by Most Recent'),
+                ),
+                const PopupMenuItem<CategorySortType>(
+                  value: CategorySortType.alphabetical,
+                  child: Text('Sort Alphabetically'),
+                ),
+              ],
+            ),
+          if (_currentTabIndex == 1)
             IconButton(
-              icon: const Icon(Icons.edit_outlined),
-              tooltip: 'Edit Categories',
-              onPressed: _showEditCategoriesModal,
+              icon: Icon(
+                _experiencesViewMode == _ExperienceViewMode.list
+                    ? Icons
+                        .view_module_outlined // Icon for switching to detailed
+                    : Icons.view_list_outlined, // Icon for switching to list
+              ),
+              tooltip: 'Toggle Experience View',
+              onPressed: () {
+                setState(() {
+                  _experiencesViewMode =
+                      _experiencesViewMode == _ExperienceViewMode.list
+                          ? _ExperienceViewMode.detailed
+                          : _ExperienceViewMode.list;
+                });
+              },
             ),
         ],
         bottom: TabBar(
@@ -346,7 +409,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
               controller: _tabController,
               children: [
                 _buildCategoriesList(),
-                Center(child: Text('Experiences Tab Content for $_userEmail')),
+                _buildExperiencesTabContent(),
                 Center(child: Text('Content Tab Content for $_userEmail')),
               ],
             ),
@@ -357,6 +420,30 @@ class _CollectionsScreenState extends State<CollectionsScreen>
               child: const Icon(Icons.add),
             )
           : null,
+    );
+  }
+
+  // ADDED: Widget builder for the Experience List View
+  Widget _buildExperiencesListView() {
+    if (_experiences.isEmpty) {
+      return const Center(child: Text('No experiences found. Add some!'));
+    }
+
+    return ListView.builder(
+      itemCount: _experiences.length,
+      itemBuilder: (context, index) {
+        final experience = _experiences[index];
+        return ListTile(
+          // TODO: Add leading image if available?
+          title: Text(experience.name),
+          subtitle: Text(experience.category),
+          // TODO: Add onTap to navigate to experience details
+          onTap: () {
+            print('Tapped on Experience: ${experience.name}');
+            // Navigation logic will go here later
+          },
+        );
+      },
     );
   }
 }
