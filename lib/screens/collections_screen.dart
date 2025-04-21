@@ -6,8 +6,8 @@ import '../services/experience_service.dart';
 import '../widgets/add_category_modal.dart';
 import '../widgets/edit_categories_modal.dart' show CategorySortType;
 
-// ADDED: Enum for experience view modes
-enum _ExperienceViewMode { list, detailed }
+// ADDED: Enum for experience sort types
+enum ExperienceSortType { mostRecent, alphabetical }
 
 class CollectionsScreen extends StatefulWidget {
   CollectionsScreen({super.key});
@@ -24,12 +24,11 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   late TabController _tabController;
   int _currentTabIndex = 0;
 
-  // ADDED: State variable for experience view mode
-  _ExperienceViewMode _experiencesViewMode = _ExperienceViewMode.list;
-
   bool _isLoading = true;
   List<UserCategory> _categories = [];
   List<Experience> _experiences = [];
+  // ADDED: State variable for experience sort type
+  ExperienceSortType _experienceSortType = ExperienceSortType.mostRecent;
   String? _userEmail;
 
   @override
@@ -78,6 +77,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
           _experiences = experiences;
           _isLoading = false;
         });
+        _applyExperienceSort(); // Apply initial sort after loading
       }
     } catch (e) {
       if (mounted) {
@@ -231,20 +231,6 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     }
   }
 
-  // ADDED: Main widget builder for the Experiences tab content
-  Widget _buildExperiencesTabContent() {
-    // Loading and empty states handled within the specific view builders
-    switch (_experiencesViewMode) {
-      case _ExperienceViewMode.list:
-        return _buildExperiencesListView();
-      case _ExperienceViewMode.detailed:
-        // Placeholder for the detailed view
-        return const Center(
-          child: Text('Detailed View (coming soon)'),
-        );
-    }
-  }
-
   int _getExperienceCountForCategory(UserCategory category) {
     return _experiences.where((exp) => exp.category == category.name).length;
   }
@@ -350,6 +336,24 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     await _saveCategoryOrder();
   }
 
+  // ADDED: Method to apply sorting to the experiences list
+  void _applyExperienceSort() {
+    print("Applying experience sort: $_experienceSortType");
+    setState(() {
+      if (_experienceSortType == ExperienceSortType.alphabetical) {
+        _experiences.sort(
+            (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+      } else if (_experienceSortType == ExperienceSortType.mostRecent) {
+        _experiences.sort((a, b) {
+          // Sort descending by creation date (most recent first)
+          return b.createdAt.compareTo(a.createdAt);
+        });
+      }
+      // Add other sort types here if needed
+    });
+    print("Experiences sorted.");
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -376,22 +380,27 @@ class _CollectionsScreenState extends State<CollectionsScreen>
               ],
             ),
           if (_currentTabIndex == 1)
-            IconButton(
-              icon: Icon(
-                _experiencesViewMode == _ExperienceViewMode.list
-                    ? Icons
-                        .view_module_outlined // Icon for switching to detailed
-                    : Icons.view_list_outlined, // Icon for switching to list
-              ),
-              tooltip: 'Toggle Experience View',
-              onPressed: () {
+            PopupMenuButton<ExperienceSortType>(
+              icon: const Icon(Icons.sort),
+              tooltip: 'Sort Experiences',
+              onSelected: (ExperienceSortType result) {
                 setState(() {
-                  _experiencesViewMode =
-                      _experiencesViewMode == _ExperienceViewMode.list
-                          ? _ExperienceViewMode.detailed
-                          : _ExperienceViewMode.list;
+                  _experienceSortType = result;
                 });
+                _applyExperienceSort(); // Apply the selected sort
               },
+              itemBuilder: (BuildContext context) =>
+                  <PopupMenuEntry<ExperienceSortType>>[
+                const PopupMenuItem<ExperienceSortType>(
+                  value: ExperienceSortType.mostRecent,
+                  child: Text('Sort by Most Recent'),
+                ),
+                const PopupMenuItem<ExperienceSortType>(
+                  value: ExperienceSortType.alphabetical,
+                  child: Text('Sort Alphabetically'),
+                ),
+                // Add other sort options here
+              ],
             ),
         ],
         bottom: TabBar(
@@ -409,7 +418,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
               controller: _tabController,
               children: [
                 _buildCategoriesList(),
-                _buildExperiencesTabContent(),
+                _buildExperiencesListView(),
                 Center(child: Text('Content Tab Content for $_userEmail')),
               ],
             ),
@@ -510,6 +519,22 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                 ),
             ],
           ),
+          // ADDED: Trailing widget for media count
+          trailing: (experience.sharedMediaPaths != null &&
+                  experience.sharedMediaPaths!.isNotEmpty)
+              ? CircleAvatar(
+                  radius: 12, // Small radius for the bubble
+                  backgroundColor: Theme.of(context).colorScheme.primary,
+                  child: Text(
+                    experience.sharedMediaPaths!.length.toString(),
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onPrimary,
+                      fontSize: 10, // Small font size
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                )
+              : null, // Show nothing if no shared media
           // TODO: Add onTap to navigate to experience details
           onTap: () {
             print('Tapped on Experience: ${experience.name}');
