@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_typeahead/flutter_typeahead.dart';
 import '../models/experience.dart';
 import '../models/user_category.dart';
 import '../services/auth_service.dart';
@@ -20,6 +21,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     with SingleTickerProviderStateMixin {
   final _authService = AuthService();
   final _experienceService = ExperienceService();
+  final TextEditingController _searchController = TextEditingController();
 
   late TabController _tabController;
   int _currentTabIndex = 0;
@@ -30,6 +32,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   // ADDED: State variable for experience sort type
   ExperienceSortType _experienceSortType = ExperienceSortType.mostRecent;
   String? _userEmail;
+  // ADDED: State variable to track the selected category in the first tab
+  UserCategory? _selectedCategory;
 
   @override
   void initState() {
@@ -55,6 +59,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   @override
   void dispose() {
     _tabController.dispose();
+    _searchController.dispose();
     super.dispose();
   }
 
@@ -76,6 +81,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
           _categories = categories;
           _experiences = experiences;
           _isLoading = false;
+          _selectedCategory = null; // Reset selected category on reload
         });
         _applyExperienceSort(); // Apply initial sort after loading
       }
@@ -284,7 +290,11 @@ class _CollectionsScreenState extends State<CollectionsScreen>
             ],
           ),
           onTap: () {
-            print('Tapped on ${category.name}');
+            // MODIFIED: Set the selected category to show its experiences
+            setState(() {
+              _selectedCategory = category;
+            });
+            print('Tapped on ${category.name}, showing experiences.');
           },
         );
       },
@@ -354,6 +364,17 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     print("Experiences sorted.");
   }
 
+  // ADDED: Function to get search suggestions
+  Future<List<Experience>> _getExperienceSuggestions(String pattern) async {
+    if (pattern.isEmpty) {
+      return [];
+    }
+    // Simple case-insensitive search on the name
+    return _experiences
+        .where((exp) => exp.name.toLowerCase().contains(pattern.toLowerCase()))
+        .toList();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -414,15 +435,74 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
-          : TabBarView(
-              controller: _tabController,
+          : Column(
               children: [
-                _buildCategoriesList(),
-                _buildExperiencesListView(),
-                Center(child: Text('Content Tab Content for $_userEmail')),
+                // ADDED: Search Bar Area
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 12.0, vertical: 15.0),
+                  child: TypeAheadField<Experience>(
+                    builder: (context, controller, focusNode) {
+                      return TextField(
+                        controller: controller,
+                        focusNode: focusNode,
+                        decoration: InputDecoration(
+                          labelText: 'Search Experiences by Title',
+                          prefixIcon: const Icon(Icons.search),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(25.0),
+                          ),
+                          suffixIcon: IconButton(
+                            icon: const Icon(Icons.clear),
+                            tooltip: 'Clear Search',
+                            onPressed: () {
+                              controller.clear();
+                              _searchController.clear();
+                              setState(() {});
+                            },
+                          ),
+                        ),
+                      );
+                    },
+                    suggestionsCallback: (pattern) async {
+                      return await _getExperienceSuggestions(pattern);
+                    },
+                    itemBuilder: (context, suggestion) {
+                      return ListTile(
+                        leading: const Icon(Icons.history),
+                        title: Text(suggestion.name),
+                      );
+                    },
+                    onSelected: (suggestion) {
+                      print('Selected experience: ${suggestion.name}');
+                      _searchController.clear();
+                      FocusScope.of(context).unfocus();
+                    },
+                    emptyBuilder: (context) => const Padding(
+                      padding: EdgeInsets.all(8.0),
+                      child: Text('No experiences found.',
+                          style: TextStyle(color: Colors.grey)),
+                    ),
+                  ),
+                ),
+                // Existing TabBarView wrapped in Expanded
+                Expanded(
+                  child: TabBarView(
+                    controller: _tabController,
+                    children: [
+                      // MODIFIED: Conditionally show category list or category experiences
+                      _selectedCategory == null
+                          ? _buildCategoriesList()
+                          : _buildCategoryExperiencesList(_selectedCategory!),
+                      _buildExperiencesListView(),
+                      Center(
+                          child: Text('Content Tab Content for $_userEmail')),
+                    ],
+                  ),
+                ),
               ],
             ),
-      floatingActionButton: _currentTabIndex == 0
+      floatingActionButton: _currentTabIndex == 0 && _selectedCategory == null
           ? FloatingActionButton(
               onPressed: _showAddCategoryModal,
               tooltip: 'Add Category',
@@ -432,116 +512,183 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     );
   }
 
-  // ADDED: Widget builder for the Experience List View
+  // REFACTORED: Extracted list item builder for reuse
+  Widget _buildExperienceListItem(Experience experience) {
+    // Find the matching category icon
+    final categoryIcon = _categories
+        .firstWhere((cat) => cat.name == experience.category,
+            orElse: () =>
+                UserCategory(id: '', name: '', icon: '❓') // Default icon
+            )
+        .icon;
+
+    // Get the full address
+    final fullAddress = experience.location.address;
+    // Get the first image URL or null
+    final imageUrl = experience.location.photoUrl;
+
+    return ListTile(
+      key: ValueKey(experience.id), // Use experience ID as key
+      leading: SizedBox(
+        width: 56, // Define width for the leading image container
+        height: 56, // Define height for the leading image container
+        child: ClipRRect(
+          // Clip the image to a rounded rectangle
+          borderRadius: BorderRadius.circular(8.0),
+          child: imageUrl != null
+              ? Image.network(
+                  imageUrl,
+                  fit: BoxFit.cover,
+                  // Optional: Add loading/error builders
+                  loadingBuilder: (context, child, loadingProgress) {
+                    if (loadingProgress == null) return child;
+                    return Center(
+                        child: CircularProgressIndicator(strokeWidth: 2.0));
+                  },
+                  errorBuilder: (context, error, stackTrace) {
+                    return Container(
+                      color: Colors.grey[200],
+                      child: Icon(Icons.broken_image, color: Colors.grey),
+                    );
+                  },
+                )
+              : Container(
+                  // Placeholder if no image URL
+                  color: Colors.grey[300],
+                  child:
+                      Icon(Icons.image_not_supported, color: Colors.grey[600]),
+                ),
+        ),
+      ),
+      title: Text(experience.name),
+      subtitle: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (fullAddress != null && fullAddress.isNotEmpty)
+            Text(
+              fullAddress, // Use full address
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          Text(
+            '$categoryIcon ${experience.category}',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          // ADDED: Display notes if available
+          if (experience.additionalNotes != null &&
+              experience.additionalNotes!.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 4.0), // Add some spacing
+              child: Text(
+                experience.additionalNotes!,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      fontStyle: FontStyle.italic, // Optional: Italicize notes
+                    ),
+                maxLines: 2, // Limit notes length in list view
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+        ],
+      ),
+      // ADDED: Trailing widget for media count
+      trailing: (experience.sharedMediaPaths != null &&
+              experience.sharedMediaPaths!.isNotEmpty)
+          ? CircleAvatar(
+              radius: 12, // Small radius for the bubble
+              backgroundColor: Theme.of(context).colorScheme.primary,
+              child: Text(
+                experience.sharedMediaPaths!.length.toString(),
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onPrimary,
+                  fontSize: 10, // Small font size
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            )
+          : null, // Show nothing if no shared media
+      // TODO: Add onTap to navigate to experience details
+      onTap: () {
+        print('Tapped on Experience: ${experience.name}');
+        // Navigation logic will go here later
+      },
+    );
+  }
+
+  // MODIFIED: Widget builder for the Experience List View uses the refactored item builder
   Widget _buildExperiencesListView() {
     if (_experiences.isEmpty) {
       return const Center(child: Text('No experiences found. Add some!'));
     }
 
+    // Use the refactored item builder
     return ListView.builder(
       itemCount: _experiences.length,
       itemBuilder: (context, index) {
-        final experience = _experiences[index];
-        // Find the matching category icon
-        final categoryIcon = _categories
-            .firstWhere((cat) => cat.name == experience.category,
-                orElse: () => UserCategory(
-                    id: '',
-                    name: '',
-                    icon: '❓') // Default icon if category not found
-                )
-            .icon;
+        return _buildExperienceListItem(_experiences[index]);
+      },
+    );
+  }
 
-        // Get the full address
-        final fullAddress = experience.location.address;
-        // Get the first image URL or null
-        final imageUrl = experience.location.photoUrl;
+  // ADDED: Widget to display experiences for a specific category
+  Widget _buildCategoryExperiencesList(UserCategory category) {
+    final categoryExperiences = _experiences
+        .where((exp) => exp.category == category.name)
+        .toList(); // Filter experiences
 
-        return ListTile(
-          leading: SizedBox(
-            width: 56, // Define width for the leading image container
-            height: 56, // Define height for the leading image container
-            child: ClipRRect(
-              // Clip the image to a rounded rectangle
-              borderRadius: BorderRadius.circular(8.0),
-              child: imageUrl != null
-                  ? Image.network(
-                      imageUrl,
-                      fit: BoxFit.cover,
-                      // Optional: Add loading/error builders
-                      loadingBuilder: (context, child, loadingProgress) {
-                        if (loadingProgress == null) return child;
-                        return Center(
-                            child: CircularProgressIndicator(strokeWidth: 2.0));
-                      },
-                      errorBuilder: (context, error, stackTrace) {
-                        return Container(
-                          color: Colors.grey[200],
-                          child: Icon(Icons.broken_image, color: Colors.grey),
-                        );
-                      },
-                    )
-                  : Container(
-                      // Placeholder if no image URL
-                      color: Colors.grey[300],
-                      child: Icon(Icons.image_not_supported,
-                          color: Colors.grey[600]),
-                    ),
-            ),
-          ),
-          title: Text(experience.name),
-          subtitle: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+    // Apply the current experience sort order to this sublist
+    // Note: This creates a sorted copy, doesn't modify the original _experiences
+    if (_experienceSortType == ExperienceSortType.alphabetical) {
+      categoryExperiences
+          .sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    } else if (_experienceSortType == ExperienceSortType.mostRecent) {
+      categoryExperiences.sort((a, b) {
+        return b.createdAt.compareTo(a.createdAt);
+      });
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Header row with back button and category name
+        Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: Row(
             children: [
-              if (fullAddress != null && fullAddress.isNotEmpty)
-                Text(
-                  fullAddress, // Use full address
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              Text(
-                '$categoryIcon ${experience.category}',
-                style: Theme.of(context).textTheme.bodySmall,
+              IconButton(
+                icon: const Icon(Icons.arrow_back),
+                tooltip: 'Back to Categories',
+                onPressed: () {
+                  setState(() {
+                    _selectedCategory = null; // Go back to category list
+                  });
+                },
               ),
-              // ADDED: Display notes if available
-              if (experience.additionalNotes != null &&
-                  experience.additionalNotes!.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(top: 4.0), // Add some spacing
-                  child: Text(
-                    experience.additionalNotes!,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          fontStyle:
-                              FontStyle.italic, // Optional: Italicize notes
-                        ),
-                    maxLines: 2, // Limit notes length in list view
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
+              const SizedBox(width: 8),
+              Text(
+                '${category.icon} ${category.name}',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+              const Spacer(), // Pushes sort button to the right if added later
+              // Optional: Add a sort button specific to this view if needed
+              // PopupMenuButton<ExperienceSortType>(...)
             ],
           ),
-          // ADDED: Trailing widget for media count
-          trailing: (experience.sharedMediaPaths != null &&
-                  experience.sharedMediaPaths!.isNotEmpty)
-              ? CircleAvatar(
-                  radius: 12, // Small radius for the bubble
-                  backgroundColor: Theme.of(context).colorScheme.primary,
+        ),
+        const Divider(height: 1),
+        // List of experiences for this category
+        Expanded(
+          child: categoryExperiences.isEmpty
+              ? Center(
                   child: Text(
-                    experience.sharedMediaPaths!.length.toString(),
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.onPrimary,
-                      fontSize: 10, // Small font size
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                )
-              : null, // Show nothing if no shared media
-          // TODO: Add onTap to navigate to experience details
-          onTap: () {
-            print('Tapped on Experience: ${experience.name}');
-            // Navigation logic will go here later
-          },
-        );
-      },
+                      'No experiences found in the "${category.name}" category.'))
+              : ListView.builder(
+                  itemCount: categoryExperiences.length,
+                  itemBuilder: (context, index) {
+                    // Use the refactored item builder
+                    return _buildExperienceListItem(categoryExperiences[index]);
+                  },
+                ),
+        ),
+      ],
     );
   }
 }

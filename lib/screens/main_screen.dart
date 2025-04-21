@@ -75,7 +75,7 @@ class _MainScreenState extends State<MainScreen> {
         items: const <BottomNavigationBarItem>[
           BottomNavigationBarItem(
             icon: Icon(Icons.collections_bookmark_outlined),
-            label: 'Collections',
+            label: 'Collection',
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.person),
