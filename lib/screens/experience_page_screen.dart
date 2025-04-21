@@ -8,6 +8,7 @@ import '../models/user_category.dart'; // Import UserCategory
 // ADDED: Import GoogleMapsService
 import '../services/google_maps_service.dart';
 import 'dart:convert';
+import 'package:url_launcher/url_launcher.dart'; // ADDED: Import url_launcher
 
 // Convert to StatefulWidget
 class ExperiencePageScreen extends StatefulWidget {
@@ -327,10 +328,13 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen> {
             // Build details section based on loading/error state
             _buildDynamicDetailsSection(context),
             const Divider(),
+            // ADDED: Quick Actions Section
+            _buildQuickActionsSection(
+                context, _placeDetailsData, widget.experience.location),
+            const Divider(),
             const Padding(
               padding: EdgeInsets.all(16.0),
-              child: Text(
-                  '// TODO: Add Quick Actions, Tabs...'), // Updated placeholder
+              child: Text('// TODO: Add Tabs...'), // Updated placeholder
             )
           ],
         ),
@@ -437,7 +441,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen> {
         return 'Not specified'; // Changed from Not available
       // Handle String 'true'/'false' in case toString() was used in getDetail
       if (reservableValue is String) {
-        if (reservableValue.toLowerCase() == 'true') return 'Takes reservations';
+        if (reservableValue.toLowerCase() == 'true')
+          return 'Takes reservations';
         if (reservableValue.toLowerCase() == 'false') return 'No reservations';
       }
       if (reservableValue is bool) {
@@ -770,4 +775,147 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen> {
     );
   }
   // --- End Expandable Hours Widget ---
+
+  // --- ADDED: Quick Actions Section Widgets ---
+
+  // Builds the row containing the quick action buttons
+  Widget _buildQuickActionsSection(
+      BuildContext context,
+      Map<String, dynamic>? placeDetails, // Use fetched details
+      Location location // Use experience location for coordinates
+      ) {
+    // Safely get phone number and website from details
+    final String? phoneNumber = placeDetails?['nationalPhoneNumber'];
+    final String? websiteUri = placeDetails?['websiteUri'];
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12.0, horizontal: 8.0),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceAround,
+        children: [
+          _buildActionItem(
+            context,
+            Icons.star_outline,
+            'Add Review',
+            () {
+              // TODO: Navigate to Add Review Screen/Modal
+              print('Add Review tapped');
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                    content:
+                        Text('Add Review functionality not yet implemented.')),
+              );
+            },
+          ),
+          _buildActionItem(
+            context,
+            Icons.phone_outlined,
+            'Call Venue',
+            // Disable button if no phone number
+            phoneNumber != null && phoneNumber.isNotEmpty
+                ? () => _launchPhoneCall(phoneNumber)
+                : null, // Pass null if no number
+          ),
+          _buildActionItem(
+            context,
+            Icons.language_outlined,
+            'Website',
+            // Disable button if no website URI
+            websiteUri != null && websiteUri.isNotEmpty
+                ? () => _launchUrl(websiteUri)
+                : null, // Pass null if no URI
+          ),
+          _buildActionItem(
+            context,
+            Icons.directions_outlined,
+            'Directions',
+            () => _launchDirections(location),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Builds a single tappable action item (icon + label)
+  Widget _buildActionItem(
+      BuildContext context, IconData icon, String label, VoidCallback? onTap) {
+    final bool enabled = onTap != null;
+    final Color iconColor =
+        enabled ? Theme.of(context).primaryColor : Colors.grey;
+    final Color labelColor = enabled ? Colors.black87 : Colors.grey;
+
+    return InkWell(
+      onTap: onTap, // onTap will be null if disabled
+      borderRadius: BorderRadius.circular(8.0),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: iconColor, size: 28),
+            const SizedBox(height: 4),
+            Text(
+              label,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: labelColor,
+                  ),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // --- Helper methods for launching URLs ---
+
+  Future<void> _launchUrl(String urlString) async {
+    final Uri uri = Uri.parse(urlString);
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+      print('Could not launch $uri');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open website: $urlString')),
+        );
+      }
+    }
+  }
+
+  Future<void> _launchPhoneCall(String phoneNumber) async {
+    // Format as tel: URI, removing non-digit characters
+    final Uri phoneUri = Uri(
+        scheme: 'tel', path: phoneNumber.replaceAll(RegExp(r'[^0-9+]'), ''));
+    if (!await launchUrl(phoneUri)) {
+      print('Could not launch $phoneUri');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not call $phoneNumber')),
+        );
+      }
+    }
+  }
+
+  Future<void> _launchDirections(Location location) async {
+    // Construct Google Maps directions URL (cross-platform)
+    final lat = location.latitude;
+    final lng = location.longitude;
+    // Using address as destination query if available, otherwise lat/lng
+    String query = (location.address != null && location.address!.isNotEmpty)
+        ? Uri.encodeComponent(location.address!)
+        : '$lat,$lng';
+
+    final Uri mapUri =
+        Uri.parse('https://www.google.com/maps/dir/?api=1&destination=$query');
+
+    if (!await launchUrl(mapUri, mode: LaunchMode.externalApplication)) {
+      print('Could not launch $mapUri');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open map directions.')),
+        );
+      }
+    }
+  }
+
+  // --- End Helper methods ---
 }
