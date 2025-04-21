@@ -9,6 +9,18 @@ import '../models/user_category.dart'; // Import UserCategory
 import '../services/google_maps_service.dart';
 import 'dart:convert';
 import 'package:url_launcher/url_launcher.dart'; // ADDED: Import url_launcher
+// TODO: Import Review/Comment models if needed for display
+import '../models/review.dart';
+import '../models/comment.dart';
+import '../services/experience_service.dart'; // For fetching reviews/comments
+// REMOVED: FontAwesome import (no longer needed for Yelp icon)
+// import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+// RE-ADDED: Import Instagram Preview Widget
+import 'receive_share/widgets/instagram_preview_widget.dart';
+// REMOVED: Dio import (no longer needed for thumbnail fetching)
+// import 'package:dio/dio.dart';
+// REMOVED: Dotenv import (no longer needed for credentials)
+// import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 // Convert to StatefulWidget
 class ExperiencePageScreen extends StatefulWidget {
@@ -25,24 +37,60 @@ class ExperiencePageScreen extends StatefulWidget {
   State<ExperiencePageScreen> createState() => _ExperiencePageScreenState();
 }
 
-class _ExperiencePageScreenState extends State<ExperiencePageScreen> {
-  // TODO: Define state variables for PlaceDetails and loading state
-  // PlaceDetails? _placeDetails;
+// ADDED: SingleTickerProviderStateMixin for TabController
+class _ExperiencePageScreenState extends State<ExperiencePageScreen>
+    with SingleTickerProviderStateMixin {
+  // Place Details State
   bool _isLoadingDetails = true;
   String? _errorLoadingDetails;
-  // ADDED: State for hours expansion
+  Map<String, dynamic>? _placeDetailsData;
+
+  // Tab Controller State
+  late TabController _tabController;
+  bool _isLoadingReviews = true;
+  bool _isLoadingComments = true;
+  List<Review> _reviews = [];
+  List<Comment> _comments = [];
+  // TODO: Add state for comment count if fetching separately
+  int _commentCount = 0; // Placeholder
+
+  // Hours Expansion State
   bool _isHoursExpanded = false;
 
-  // TODO: Instantiate your PlacesService
-  // final _placesService = PlacesService();
-  // ADDED: Instantiate GoogleMapsService
+  // Services
   final _googleMapsService = GoogleMapsService();
+  final _experienceService = ExperienceService(); // ADDED
+  // REMOVED: Dio instance
+  // final _dio = Dio();
+
+  // REMOVED: Instagram Credentials
+  // String? _instagramAppId;
+  // String? _instagramClientToken;
+
+  // REMOVED: Thumbnail Cache
+  // final Map<String, String?> _thumbnailCache = {};
 
   @override
   void initState() {
     super.initState();
+    _tabController =
+        TabController(length: 3, vsync: this); // Initialize TabController
+    // REMOVED: Call to load Instagram credentials
+    // _loadInstagramCredentials();
     _fetchPlaceDetails();
+    _fetchReviews(); // Fetch reviews on init
+    _fetchComments(); // Fetch comments on init
+    // TODO: Fetch comment count if needed
   }
+
+  @override
+  void dispose() {
+    _tabController.dispose(); // Dispose TabController
+    super.dispose();
+  }
+
+  // REMOVED: Function to load Instagram credentials
+  // void _loadInstagramCredentials() { ... }
 
   // Method to fetch place details
   Future<void> _fetchPlaceDetails() async {
@@ -108,8 +156,61 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen> {
     }
   }
 
-  // Simulated place details data (replace with actual PlaceDetails model instance)
-  Map<String, dynamic>? _placeDetailsData;
+  // ADDED: Method to fetch reviews
+  Future<void> _fetchReviews() async {
+    setState(() {
+      _isLoadingReviews = true;
+    });
+    try {
+      final reviews = await _experienceService
+          .getReviewsForExperience(widget.experience.id);
+      if (mounted) {
+        setState(() {
+          _reviews = reviews;
+          _isLoadingReviews = false;
+        });
+      }
+    } catch (e) {
+      print("Error fetching reviews: $e");
+      if (mounted) {
+        setState(() {
+          _isLoadingReviews = false;
+          // Optionally show error message in the tab
+        });
+      }
+    }
+  }
+
+  // ADDED: Method to fetch comments
+  Future<void> _fetchComments() async {
+    setState(() {
+      _isLoadingComments = true;
+    });
+    try {
+      // Fetch only top-level comments for the count/list initially
+      final comments = await _experienceService
+          .getCommentsForExperience(widget.experience.id);
+      if (mounted) {
+        setState(() {
+          _comments = comments;
+          _commentCount = comments.length; // Update count based on fetched list
+          _isLoadingComments = false;
+        });
+      }
+    } catch (e) {
+      print("Error fetching comments: $e");
+      if (mounted) {
+        setState(() {
+          _isLoadingComments = false;
+          // Optionally show error message in the tab
+        });
+      }
+    }
+  }
+
+  // REMOVED: Helper to fetch Instagram Thumbnail
+  // Future<String?> _fetchInstagramThumbnailUrl(String reelUrl) async { ... }
+  // --- END Instagram Thumbnail Helper ---
 
   // Helper method to build the header section (now uses widget.experience)
   Widget _buildHeader(BuildContext context, Experience experience) {
@@ -332,10 +433,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen> {
             _buildQuickActionsSection(
                 context, _placeDetailsData, widget.experience.location),
             const Divider(),
-            const Padding(
-              padding: EdgeInsets.all(16.0),
-              child: Text('// TODO: Add Tabs...'), // Updated placeholder
-            )
+            // ADDED: Tabbed Content Section
+            _buildTabbedContentSection(context),
           ],
         ),
       ),
@@ -775,6 +874,147 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen> {
     );
   }
   // --- End Expandable Hours Widget ---
+
+  // --- ADDED: Tabbed Content Section Widgets ---
+
+  Widget _buildTabbedContentSection(BuildContext context) {
+    // Calculate counts
+    // Filter media paths for Instagram URLs to get the count
+    final instagramMediaPaths = (widget.experience.sharedMediaPaths ?? [])
+        .where((path) => path.toLowerCase().contains('instagram.com'))
+        .toList();
+    final mediaCount = instagramMediaPaths.length; // Count only Instagram posts
+    final reviewCount = _isLoadingReviews
+        ? '...'
+        : _reviews.length.toString(); // Show loading indicator or count
+    final commentCount = _isLoadingComments
+        ? '...'
+        : _commentCount.toString(); // Show loading indicator or count
+
+    // Define a fixed height for the TabBarView content area
+    const double tabContentHeight = 400.0; // Adjust as needed
+
+    return Column(
+      children: [
+        TabBar(
+          controller: _tabController,
+          labelColor: Theme.of(context).primaryColor,
+          unselectedLabelColor: Colors.grey[600],
+          indicatorColor: Theme.of(context).primaryColor,
+          tabs: [
+            Tab(
+              // Use an Instagram icon or keep the generic one
+              icon: Icon(Icons
+                  .photo_library_outlined), // Or Icons.camera_alt_outlined etc.
+              text: 'Media ($mediaCount)', // Updated count
+            ),
+            Tab(
+              icon: Icon(Icons.star_border_outlined),
+              text: 'Reviews ($reviewCount)',
+            ),
+            Tab(
+              icon: Icon(Icons.comment_outlined),
+              text: 'Comments ($commentCount)',
+            ),
+          ],
+        ),
+        SizedBox(
+          height: tabContentHeight,
+          child: TabBarView(
+            controller: _tabController,
+            children: [
+              // Pass all paths, filtering happens inside _buildMediaTab
+              _buildMediaTab(context, widget.experience.sharedMediaPaths),
+              _buildReviewsTab(context),
+              _buildCommentsTab(context),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  // Builds the Media Tab as a List of Instagram Previews
+  Widget _buildMediaTab(BuildContext context, List<String>? mediaPaths) {
+    // Filter for Instagram URLs
+    final instagramUrls = (mediaPaths ?? [])
+        .where((path) => path.toLowerCase().contains('instagram.com'))
+        .toList();
+
+    if (instagramUrls.isEmpty) {
+      return const Center(
+          child: Text('No Instagram posts shared for this experience.'));
+    }
+
+    // Display InstagramPreviewWidgets in a ListView
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(
+          vertical: 8.0, horizontal: 16.0), // Add some padding
+      itemCount: instagramUrls.length,
+      itemBuilder: (context, index) {
+        final url = instagramUrls[index];
+        // Return the InstagramPreviewWidget for each URL
+        // Add padding below each widget for spacing
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 16.0),
+          child: InstagramPreviewWidget(
+            url: url,
+            // Pass the existing _launchUrl helper method
+            launchUrlCallback: _launchUrl,
+          ),
+        );
+      },
+    );
+  }
+
+  // Builds the Reviews Tab ListView
+  Widget _buildReviewsTab(BuildContext context) {
+    if (_isLoadingReviews) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_reviews.isEmpty) {
+      return const Center(child: Text('No reviews yet.'));
+    }
+
+    return ListView.builder(
+      itemCount: _reviews.length,
+      itemBuilder: (context, index) {
+        final review = _reviews[index];
+        // TODO: Create a proper ReviewListItem widget
+        return ListTile(
+          leading: CircleAvatar(child: Text(review.rating.toStringAsFixed(1))),
+          title: Text(review.content),
+          subtitle: Text(
+              'By: ${review.userName ?? review.userId} - ${review.createdAt.toLocal()}'),
+        );
+      },
+    );
+  }
+
+  // Builds the Comments Tab ListView
+  Widget _buildCommentsTab(BuildContext context) {
+    if (_isLoadingComments) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_comments.isEmpty) {
+      return const Center(child: Text('No comments yet.'));
+    }
+
+    return ListView.builder(
+      itemCount: _comments.length,
+      itemBuilder: (context, index) {
+        final comment = _comments[index];
+        // TODO: Create a proper CommentListItem widget
+        return ListTile(
+          title: Text(comment.content),
+          subtitle: Text(
+              'By: ${comment.userName ?? comment.userId} - ${comment.createdAt.toLocal()}'),
+        );
+      },
+    );
+  }
+
+  // --- End Tabbed Content Widgets ---
 
   // --- ADDED: Quick Actions Section Widgets ---
 
