@@ -381,7 +381,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       appBar: AppBar(
         title: const Text('Collection'),
         actions: [
-          if (_currentTabIndex == 0)
+          if (_currentTabIndex == 0 && _selectedCategory == null)
             PopupMenuButton<CategorySortType>(
               icon: const Icon(Icons.sort),
               tooltip: 'Sort Categories',
@@ -424,14 +424,6 @@ class _CollectionsScreenState extends State<CollectionsScreen>
               ],
             ),
         ],
-        bottom: TabBar(
-          controller: _tabController,
-          tabs: const [
-            Tab(text: 'Categories'),
-            Tab(text: 'Experiences'),
-            Tab(text: 'Content'),
-          ],
-        ),
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
@@ -440,14 +432,14 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                 // ADDED: Search Bar Area
                 Padding(
                   padding: const EdgeInsets.symmetric(
-                      horizontal: 12.0, vertical: 15.0),
+                      horizontal: 12.0, vertical: 4.0),
                   child: TypeAheadField<Experience>(
                     builder: (context, controller, focusNode) {
                       return TextField(
                         controller: controller,
                         focusNode: focusNode,
                         decoration: InputDecoration(
-                          labelText: 'Search Experiences by Title',
+                          labelText: 'Search your experiences',
                           prefixIcon: const Icon(Icons.search),
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(25.0),
@@ -458,6 +450,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                             onPressed: () {
                               controller.clear();
                               _searchController.clear();
+                              FocusScope.of(context).unfocus();
                               setState(() {});
                             },
                           ),
@@ -484,6 +477,19 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                           style: TextStyle(color: Colors.grey)),
                     ),
                   ),
+                ),
+                // ADDED: TabBar placed here in the body's Column
+                TabBar(
+                  controller: _tabController,
+                  tabs: const [
+                    Tab(text: 'Categories'),
+                    Tab(text: 'Experiences'),
+                    Tab(text: 'Content'),
+                  ],
+                  // Optional: Style the TabBar if needed when outside AppBar
+                  // labelColor: Theme.of(context).primaryColor,
+                  // unselectedLabelColor: Colors.grey,
+                  // indicatorColor: Theme.of(context).primaryColor,
                 ),
                 // Existing TabBarView wrapped in Expanded
                 Expanded(
