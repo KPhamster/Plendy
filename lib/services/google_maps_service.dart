@@ -1376,6 +1376,72 @@ class GoogleMapsService {
     return apiKey;
   }
 
+  /// Fetches detailed place information using the Places API (New).
+  ///
+  /// Returns a Map containing the fetched data, or null if an error occurs.
+  Future<Map<String, dynamic>?> fetchPlaceDetailsData(String placeId) async {
+    // Ensure API key is available
+    final apiKey = _getApiKey();
+    if (apiKey.isEmpty) {
+      print('❌ PLACES DETAILS (v1): No API key available');
+      return null;
+    }
+
+    // Define the fields to request using FieldMask syntax
+    const String fieldMask =
+        'id,displayName,formattedAddress,addressComponents,location,websiteUri,nationalPhoneNumber,regularOpeningHours,businessStatus,reservable,parkingOptions,editorialSummary,rating,userRatingCount,priceLevel,photos';
+
+    final url = 'https://places.googleapis.com/v1/places/$placeId';
+
+    print('📍 PLACES DETAILS (v1): Requesting details for Place ID: $placeId');
+    print(
+        '📍 PLACES DETAILS (v1): URL: ${url.replaceAll(apiKey, "<API_KEY>")}');
+    print('📍 PLACES DETAILS (v1): FieldMask: $fieldMask');
+
+    try {
+      final response = await _dio.get(
+        url,
+        options: Options(
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Goog-Api-Key': apiKey,
+            'X-Goog-FieldMask': fieldMask,
+          },
+          // Set a reasonable timeout
+          sendTimeout: Duration(seconds: 10),
+          receiveTimeout: Duration(seconds: 10),
+        ),
+      );
+
+      print(
+          '📍 PLACES DETAILS (v1): Response Status Code: ${response.statusCode}');
+
+      if (response.statusCode == 200) {
+        final data = response.data;
+        // Log small part of response for verification
+        // print('📍 PLACES DETAILS (v1): Response Data: ${jsonEncode(data).substring(0, min(300, jsonEncode(data).length))}...');
+        print(
+            '📍 PLACES DETAILS (v1): Successfully fetched details for ${data?['displayName']?['text']}');
+        return data as Map<String, dynamic>;
+      } else {
+        print(
+            '❌ PLACES DETAILS (v1): API Error - Status Code: ${response.statusCode}, Response: ${response.data}');
+        return null;
+      }
+    } on DioException catch (e) {
+      // Handle Dio specific errors (timeouts, network issues, etc.)
+      print('❌ PLACES DETAILS (v1): DioException - ${e.type}: ${e.message}');
+      if (e.response != null) {
+        print(
+            '❌ PLACES DETAILS (v1): DioException Response: ${e.response?.data}');
+      }
+      return null;
+    } catch (e) {
+      print('❌ PLACES DETAILS (v1): Generic Exception - $e');
+      return null;
+    }
+  }
+
   /// Search for places near the given coordinates
   Future<List<Map<String, dynamic>>> searchNearbyPlaces(
       double latitude, double longitude,
