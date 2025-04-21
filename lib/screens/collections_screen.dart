@@ -470,11 +470,23 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                     onSelected: (suggestion) {
                       print('Selected experience: ${suggestion.name}');
                       // ADDED: Navigate to the experience page
+
+                      // Find the matching category for the selected experience
+                      final category = _categories.firstWhere(
+                          (cat) => cat.name == suggestion.category,
+                          orElse: () => UserCategory(
+                              id: '',
+                              name: suggestion.category,
+                              icon: '❓') // Fallback
+                          );
+
                       Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (context) =>
-                              ExperiencePageScreen(experience: suggestion),
+                          builder: (context) => ExperiencePageScreen(
+                            experience: suggestion,
+                            category: category, // Pass the found category
+                          ),
                         ),
                       );
                       _searchController.clear();
@@ -624,10 +636,21 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       onTap: () {
         print('Tapped on Experience: ${experience.name}');
         // ADDED: Navigation logic to the ExperiencePageScreen
+
+        // Find the matching category for the tapped experience
+        final category = _categories.firstWhere(
+            (cat) => cat.name == experience.category,
+            orElse: () => UserCategory(
+                id: '', name: experience.category, icon: '❓') // Fallback
+            );
+
         Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (context) => ExperiencePageScreen(experience: experience),
+            builder: (context) => ExperiencePageScreen(
+              experience: experience,
+              category: category, // Pass the found category
+            ),
           ),
         );
       },
