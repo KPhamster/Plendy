@@ -6,6 +6,7 @@ import '../services/auth_service.dart';
 import '../services/experience_service.dart';
 import '../widgets/add_category_modal.dart';
 import '../widgets/edit_categories_modal.dart' show CategorySortType;
+import 'experience_page_screen.dart';
 
 // ADDED: Enum for experience sort types
 enum ExperienceSortType { mostRecent, alphabetical }
@@ -468,6 +469,14 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                     },
                     onSelected: (suggestion) {
                       print('Selected experience: ${suggestion.name}');
+                      // ADDED: Navigate to the experience page
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) =>
+                              ExperiencePageScreen(experience: suggestion),
+                        ),
+                      );
                       _searchController.clear();
                       FocusScope.of(context).unfocus();
                     },
@@ -614,7 +623,13 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       // TODO: Add onTap to navigate to experience details
       onTap: () {
         print('Tapped on Experience: ${experience.name}');
-        // Navigation logic will go here later
+        // ADDED: Navigation logic to the ExperiencePageScreen
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => ExperiencePageScreen(experience: experience),
+          ),
+        );
       },
     );
   }
