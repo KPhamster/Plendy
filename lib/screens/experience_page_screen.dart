@@ -332,6 +332,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
 
                               // Rating
                               Row(
+                                mainAxisAlignment: MainAxisAlignment
+                                    .center, // Center the rating row
                                 children: [
                                   RatingBarIndicator(
                                     rating: experience
@@ -340,7 +342,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                                       Icons.star,
                                       color: Colors.amber,
                                     ),
-                                    unratedColor: Colors.white.withOpacity(0.4),
+                                    unratedColor: Colors.white.withOpacity(0.7),
                                     itemCount: 5,
                                     itemSize: 24.0,
                                     direction: Axis.horizontal,
@@ -673,26 +675,85 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     print('  - Reservable: $formattedReservable');
     print('  - Parking: $formattedParking');
 
+    // Get Yelp URL (handle null)
+    final String? yelpUrl = experience.yelpUrl;
+
     return Container(
       color: Colors.grey[100],
       padding: const EdgeInsets.all(16.0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Modified Category Row to include buttons on the right
           Padding(
             padding: const EdgeInsets.only(bottom: 8.0),
             child: Row(
               children: [
-                Text(
-                  widget.category.icon, // Use widget.category
-                  style: const TextStyle(fontSize: 20),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  widget.category.name, // Use widget.category
-                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                        color: Colors.black87,
+                // Category Icon and Name (wrapped in Expanded)
+                Expanded(
+                  child: Row(
+                    children: [
+                      Text(
+                        widget.category.icon, // Use widget.category
+                        style: const TextStyle(fontSize: 20),
                       ),
+                      const SizedBox(width: 8),
+                      Text(
+                        widget.category.name, // Use widget.category
+                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                              color: Colors.black87,
+                            ),
+                        overflow: TextOverflow.ellipsis, // Prevent overflow
+                      ),
+                    ],
+                  ),
+                ),
+
+                // Buttons on the right
+                // Yelp Button (Icon Only)
+                ActionChip(
+                  avatar: Icon(
+                    FontAwesomeIcons.yelp,
+                    color: yelpUrl != null && yelpUrl.isNotEmpty
+                        ? const Color(0xFFd32323) // Yelp Red
+                        : Colors.grey,
+                    size: 18,
+                  ),
+                  label: const SizedBox.shrink(),
+                  labelPadding: EdgeInsets.zero,
+                  onPressed: yelpUrl != null && yelpUrl.isNotEmpty
+                      ? () => _launchUrl(yelpUrl)
+                      : null,
+                  tooltip: yelpUrl != null && yelpUrl.isNotEmpty
+                      ? 'Open Yelp Page'
+                      : 'Yelp URL not available',
+                  backgroundColor: Colors.white,
+                  shape: StadiumBorder(
+                      side: BorderSide(color: Colors.grey.shade300)),
+                  materialTapTargetSize:
+                      MaterialTapTargetSize.shrinkWrap, // Reduce tap area
+                  padding: const EdgeInsets.all(4), // Adjust padding
+                ),
+                const SizedBox(width: 4), // Smaller spacing between buttons
+
+                // Google Maps Button (Icon Only)
+                ActionChip(
+                  avatar: Icon(
+                    Icons.map_outlined, // map icon
+                    color: Theme.of(context).primaryColor,
+                    size: 18,
+                  ),
+                  label: const SizedBox.shrink(),
+                  labelPadding: EdgeInsets.zero,
+                  onPressed: () =>
+                      _launchMapLocation(_currentExperience.location),
+                  tooltip: 'View on Map',
+                  backgroundColor: Colors.white,
+                  shape: StadiumBorder(
+                      side: BorderSide(color: Colors.grey.shade300)),
+                  materialTapTargetSize:
+                      MaterialTapTargetSize.shrinkWrap, // Reduce tap area
+                  padding: const EdgeInsets.all(4), // Adjust padding
                 ),
               ],
             ),
@@ -1383,6 +1444,38 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   }
 
   // --- End Helper methods ---
+
+  // --- ADDED: Helper method to launch map location --- //
+  Future<void> _launchMapLocation(Location location) async {
+    final String mapUrl;
+    // Prioritize Place ID if available
+    if (location.placeId != null && location.placeId!.isNotEmpty) {
+      // Use the Google Maps search API with place_id format
+      // Use displayName if available, otherwise fall back to name from the experience
+      final placeName = location.displayName ?? _currentExperience.name;
+      mapUrl =
+          'https://www.google.com/maps/search/?api=1&query=${Uri.encodeComponent(placeName)}&query_place_id=${location.placeId}';
+      print('🗺️ Launching Map with Place ID: $mapUrl');
+    } else {
+      // Fallback to coordinate-based URL
+      final lat = location.latitude;
+      final lng = location.longitude;
+      mapUrl = 'https://www.google.com/maps/search/?api=1&query=$lat,$lng';
+      print('🗺️ Launching Map with Coordinates: $mapUrl');
+    }
+
+    final Uri mapUri = Uri.parse(mapUrl);
+
+    if (!await launchUrl(mapUri, mode: LaunchMode.externalApplication)) {
+      print('Could not launch $mapUri');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open map location.')),
+        );
+      }
+    }
+  }
+  // --- END: Helper method to launch map location --- //
 
   // ADDED: Method to refresh experience data
   Future<void> _refreshExperienceData() async {
