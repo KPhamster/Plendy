@@ -16,13 +16,19 @@ import '../services/experience_service.dart'; // For fetching reviews/comments
 // REMOVED: FontAwesome import (no longer needed for Yelp icon)
 // import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 // RE-ADDED: Import Instagram Preview Widget
-import 'receive_share/widgets/instagram_preview_widget.dart';
+import 'receive_share/widgets/instagram_preview_widget.dart'
+    as instagram_widget;
 // REMOVED: Dio import (no longer needed for thumbnail fetching)
 // import 'package:dio/dio.dart';
 // REMOVED: Dotenv import (no longer needed for credentials)
 // import 'package:flutter_dotenv/flutter_dotenv.dart';
 // ADDED: Import the new fullscreen screen
 import 'media_fullscreen_screen.dart';
+// UPDATED: Import the renamed widget
+import 'receive_share/widgets/instagram_preview_widget.dart'
+    as instagram_widget;
+// ADDED: Import for FontAwesomeIcons
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 
 // Convert to StatefulWidget
 class ExperiencePageScreen extends StatefulWidget {
@@ -55,6 +61,9 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   List<Comment> _comments = [];
   // TODO: Add state for comment count if fetching separately
   int _commentCount = 0; // Placeholder
+
+  // ADDED: State map for media expansion
+  final Map<int, bool> _mediaExpansionStates = {};
 
   // Hours Expansion State
   bool _isHoursExpanded = false;
@@ -1014,11 +1023,56 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                       margin: EdgeInsets.zero,
                       elevation: 2.0,
                       clipBehavior: Clip.antiAlias,
-                      child: InstagramPreviewWidget(
+                      child: instagram_widget.InstagramWebView(
                         url: url,
+                        // Calculate height based on parent's state, defaulting to false if key doesn't exist
+                        height: (_mediaExpansionStates[index] ?? false)
+                            ? 1200.0
+                            : 840.0, // Adjusted expanded height
                         launchUrlCallback: _launchUrl,
-                        collapsedHeight: 840.0, // Keep your specific height
+                        // Add required callbacks (can be empty if not needed)
+                        onWebViewCreated: (controller) {},
+                        onPageFinished: (url) {},
                       ),
+                    ),
+                    // Add spacing before buttons
+                    const SizedBox(height: 8),
+                    // Buttons Row - managed by this parent screen
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        // Changed to IconButton for Instagram link
+                        IconButton(
+                          icon: const Icon(FontAwesomeIcons.instagram),
+                          color: const Color(0xFFE1306C), // Instagram color
+                          iconSize: 24, // Adjust size as needed
+                          tooltip: 'Open in Instagram',
+                          constraints:
+                              const BoxConstraints(), // Remove extra padding
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12), // Add some horizontal padding
+                          onPressed: () => _launchUrl(url),
+                        ),
+                        const SizedBox(width: 16), // Increased spacing slightly
+                        IconButton(
+                          icon: Icon((_mediaExpansionStates[index] ?? false)
+                              ? Icons.fullscreen_exit
+                              : Icons.fullscreen),
+                          iconSize: 24, // Match Instagram icon size
+                          color: Colors.blue, // Keep blue color
+                          tooltip: (_mediaExpansionStates[index] ?? false)
+                              ? 'Collapse'
+                              : 'Expand',
+                          constraints: const BoxConstraints(),
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          onPressed: () {
+                            setState(() {
+                              _mediaExpansionStates[index] =
+                                  !(_mediaExpansionStates[index] ?? false);
+                            });
+                          },
+                        ),
+                      ],
                     ),
                   ],
                 ),

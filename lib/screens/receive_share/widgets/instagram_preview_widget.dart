@@ -2,26 +2,31 @@ import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'dart:io'; // For Platform checks
 
-class InstagramPreviewWidget extends StatefulWidget {
+// Renamed class to reflect its focus
+class InstagramWebView extends StatefulWidget {
   final String url;
-  final Future<void> Function(String) launchUrlCallback;
-  final double collapsedHeight;
+  final double height; // Requires a specific height from the parent
+  final Function(WebViewController) onWebViewCreated;
+  final Function(String) onPageFinished; // Callback when page finishes
+  final Future<void> Function(String)
+      launchUrlCallback; // For internal navigation
 
-  const InstagramPreviewWidget({
+  const InstagramWebView({
     super.key,
     required this.url,
+    required this.height,
+    required this.onWebViewCreated,
+    required this.onPageFinished,
     required this.launchUrlCallback,
-    this.collapsedHeight = 400.0,
   });
 
   @override
-  _InstagramPreviewWidgetState createState() => _InstagramPreviewWidgetState();
+  _InstagramWebViewState createState() => _InstagramWebViewState();
 }
 
-class _InstagramPreviewWidgetState extends State<InstagramPreviewWidget> {
+class _InstagramWebViewState extends State<InstagramWebView> {
   late final WebViewController controller;
-  bool isLoading = true;
-  bool isExpanded = false; // Track whether the preview is expanded
+  bool isLoading = true; // Still manage internal loading indicator
 
   @override
   void initState() {
@@ -29,9 +34,8 @@ class _InstagramPreviewWidgetState extends State<InstagramPreviewWidget> {
     _initWebViewController();
   }
 
-  // Method to simulate a tap in the embed container
+  // Method to simulate a tap (might still be useful for auto-play)
   void _simulateEmbedTap() {
-    // Calculate center of content window
     controller.runJavaScript('''
       (function() {
         try {
@@ -95,6 +99,7 @@ class _InstagramPreviewWidgetState extends State<InstagramPreviewWidget> {
 
   void _initWebViewController() {
     controller = WebViewController();
+    widget.onWebViewCreated(controller); // Pass controller to parent
 
     controller
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
@@ -103,9 +108,7 @@ class _InstagramPreviewWidgetState extends State<InstagramPreviewWidget> {
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
       ..setNavigationDelegate(
         NavigationDelegate(
-          onProgress: (int progress) {
-            // Progress is reported during page load
-          },
+          onProgress: (int progress) {},
           onPageStarted: (String url) {
             if (mounted) {
               setState(() {
@@ -114,48 +117,30 @@ class _InstagramPreviewWidgetState extends State<InstagramPreviewWidget> {
             }
           },
           onPageFinished: (String url) {
-            // Try to manually process Instagram embeds
-            controller.runJavaScript('''
-              console.log('Page finished loading');
-
-              // Add tap detection to log when the user taps
-              document.addEventListener('click', function(e) {
-                console.log('Tapped!!!');
-                console.log('Tap target:', e.target);
-              }, true);
-
-              document.addEventListener('touchstart', function(e) {
-                console.log('Tapped!!! (touchstart)');
-                console.log('Touch target:', e.target);
-              }, true);
-            ''').then((_) {
-              // Set loading to false after a short delay to ensure embed is processed
-              Future.delayed(Duration(milliseconds: 1500), () {
-                if (mounted) {
-                  setState(() {
-                    isLoading = false;
-                  });
-
-                  // Auto-simulate a tap in the center of the embed after loading
-                  Future.delayed(Duration(milliseconds: 500), () {
-                    _simulateEmbedTap();
-
-                    // Try again after a longer delay in case the first attempt doesn't work
-                    Future.delayed(Duration(seconds: 2), () {
-                      if (mounted) {
-                        _simulateEmbedTap();
-                      }
-                    });
-                  });
-                }
-              });
+            widget.onPageFinished(url); // Notify parent
+            // Set loading to false after a short delay to allow rendering
+            Future.delayed(const Duration(milliseconds: 0), () {
+              if (mounted) {
+                setState(() {
+                  isLoading = false;
+                });
+                // RE-ADD: Simulate tap after loading
+                Future.delayed(
+                    const Duration(milliseconds: 0), _simulateEmbedTap);
+                // Optionally add the second delayed call too if needed
+                // Future.delayed(const Duration(seconds: 2500), () {
+                //   if (mounted) {
+                //     _simulateEmbedTap();
+                //   }
+                // });
+              }
             });
           },
           onWebResourceError: (WebResourceError error) {
             print("WebView Error: ${error.description}");
             if (mounted) {
               setState(() {
-                isLoading = false;
+                isLoading = false; // Stop loading on error
               });
             }
           },
@@ -164,8 +149,7 @@ class _InstagramPreviewWidgetState extends State<InstagramPreviewWidget> {
             if (!request.url.contains('instagram.com') &&
                 !request.url.contains('cdn.instagram.com') &&
                 !request.url.contains('cdninstagram.com')) {
-              widget.launchUrlCallback(
-                  request.url); // Use callback to launch external URLs
+              widget.launchUrlCallback(request.url);
               return NavigationDecision.prevent;
             }
             return NavigationDecision.navigate;
@@ -175,43 +159,29 @@ class _InstagramPreviewWidgetState extends State<InstagramPreviewWidget> {
       ..loadHtmlString(_generateInstagramEmbedHtml(widget.url));
   }
 
-  // Clean Instagram URL for proper embedding
+  // Clean Instagram URL (keep this helper)
   String _cleanInstagramUrl(String url) {
-    // Try to parse the URL
     try {
-      // Parse URL
       Uri uri = Uri.parse(url);
-
-      // Get base path without query parameters
       String cleanUrl = '${uri.scheme}://${uri.host}${uri.path}';
-
-      // Ensure trailing slash if needed
       if (!cleanUrl.endsWith('/')) {
         cleanUrl = '$cleanUrl/';
       }
-
       return cleanUrl;
     } catch (e) {
-      // If parsing fails, try basic string manipulation
       if (url.contains('?')) {
         url = url.split('?')[0];
       }
-
-      // Ensure trailing slash if needed
       if (!url.endsWith('/')) {
         url = '$url/';
       }
-
       return url;
     }
   }
 
-  // Generate HTML for embedding Instagram content
+  // Generate HTML (keep this helper)
   String _generateInstagramEmbedHtml(String url) {
-    // Clean the URL to ensure proper embedding
     final String cleanUrl = _cleanInstagramUrl(url);
-
-    // Create an Instagram embed with tap detection
     return '''
       <!DOCTYPE html>
       <html>
@@ -320,126 +290,42 @@ class _InstagramPreviewWidgetState extends State<InstagramPreviewWidget> {
 
   @override
   Widget build(BuildContext context) {
-    // Define the container height based on expansion state and the new parameter
-    final double containerHeight = isExpanded ? 1200 : widget.collapsedHeight;
+    // Use the height passed by the parent
+    final double containerHeight = widget.height;
 
-    return Column(
-      mainAxisSize: MainAxisSize.min,
+    // Removed the Column and Buttons Row
+    return Stack(
+      alignment: Alignment.center,
       children: [
-        GestureDetector(
-          onTap: () {
-            setState(() {
-              isExpanded = !isExpanded; // Toggle expansion state
-            });
-          },
-          child: Stack(
-            alignment: Alignment.center,
-            children: [
-              Container(
-                height: containerHeight, // Use dynamic height based on state
-                width: double.infinity,
-                decoration: BoxDecoration(
-                  border: Border.all(color: Colors.grey[300]!),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: WebViewWidget(controller: controller),
-              ),
-              if (isLoading)
-                Container(
-                  width: double.infinity,
-                  height: containerHeight, // Use dynamic height based on state
-                  color: Colors.white.withOpacity(0.7),
-                  child: Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        CircularProgressIndicator(),
-                        SizedBox(height: 16),
-                        Text('Loading Instagram content...')
-                      ],
-                    ),
-                  ),
-                ),
-              // No tap to expand indicator
-            ],
+        Container(
+          height: containerHeight,
+          width: double.infinity,
+          decoration: BoxDecoration(
+            border: Border.all(color: Colors.grey[300]!),
+            borderRadius: BorderRadius.circular(8),
           ),
+          child: WebViewWidget(controller: controller),
         ),
-        SizedBox(height: 8),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            OutlinedButton.icon(
-              icon: Icon(Icons.open_in_new),
-              label: Text('Open in Instagram'),
-              onPressed: () =>
-                  widget.launchUrlCallback(widget.url), // Use callback
-              style: OutlinedButton.styleFrom(
-                foregroundColor: Color(0xFFE1306C),
+        if (isLoading)
+          Container(
+            width: double.infinity,
+            height: containerHeight,
+            color: Colors.white.withOpacity(0.7),
+            child: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircularProgressIndicator(),
+                  SizedBox(height: 16),
+                  Text('Loading Instagram content...')
+                ],
               ),
             ),
-            SizedBox(width: 8),
-            OutlinedButton.icon(
-              icon: Icon(isExpanded ? Icons.fullscreen_exit : Icons.fullscreen),
-              label: Text(isExpanded ? 'Collapse' : 'Expand'),
-              onPressed: () {
-                setState(() {
-                  isExpanded = !isExpanded;
-                });
-              },
-              style: OutlinedButton.styleFrom(
-                foregroundColor: Colors.blue,
-              ),
-            ),
-          ],
-        ),
-        SizedBox(height: 8),
+          ),
       ],
     );
   }
 
+  // Removed unused helper methods (_isInstagramReel, _extractInstagramId)
   // <<< HELPER METHODS >>>
-
-  // Check if URL is an Instagram reel
-  bool _isInstagramReel(String url) {
-    return url.contains('instagram.com/reel') ||
-        url.contains('instagram.com/reels') ||
-        (url.contains('instagram.com/p') &&
-            (url.contains('?img_index=') ||
-                url.contains('video_index=') ||
-                url.contains('media_index=') ||
-                url.contains('?igsh=')));
-  }
-
-  // Extract content ID from Instagram URL
-  String _extractInstagramId(String url) {
-    // Try to extract the content ID from the URL
-    try {
-      // Remove query parameters if present
-      String cleanUrl = url;
-      if (url.contains('?')) {
-        cleanUrl = url.split('?')[0];
-      }
-
-      // Split the URL by slashes
-      List<String> pathSegments = cleanUrl.split('/');
-
-      // Instagram URLs usually have the content ID as one of the last segments
-      // For reels: instagram.com/reel/{content_id}
-      if (pathSegments.length > 2) {
-        for (int i = pathSegments.length - 1; i >= 0; i--) {
-          if (pathSegments[i].isNotEmpty &&
-              pathSegments[i] != 'instagram.com' &&
-              pathSegments[i] != 'reel' &&
-              pathSegments[i] != 'p' &&
-              !pathSegments[i].startsWith('http')) {
-            return pathSegments[i];
-          }
-        }
-      }
-
-      return 'Instagram Content';
-    } catch (e) {
-      return 'Instagram Content';
-    }
-  }
 }

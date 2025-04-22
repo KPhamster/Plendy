@@ -31,6 +31,8 @@ import 'package:geocoding/geocoding.dart' as geocoding;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'receive_share/widgets/experience_card_form.dart';
 import 'package:plendy/screens/select_saved_experience_screen.dart';
+import 'receive_share/widgets/instagram_preview_widget.dart'
+    as instagram_widget;
 
 // Enum to track the source of the shared content
 enum ShareType { none, yelp, maps, instagram, genericUrl, image, video, file }
@@ -166,8 +168,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   // Flag to track if a chain was detected from URL structure
   bool _chainDetectedFromUrl = false;
 
+  // ADDED: State map for preview expansion
+  final Map<int, bool> _previewExpansionStates = {};
+
   // RENAMED: State for user Categories
-  Future<List<UserCategory>>? _userCategoriesFuture; // RENAMED
+  Future<List<UserCategory>>? _userCategoriesFuture;
   List<UserCategory> _userCategories =
       []; // RENAMED Cache the loaded Categories
 
@@ -2055,7 +2060,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                 ? _extractFirstUrl(_currentSharedFiles.first.path) ?? ''
                 : '') // Check if first file content contains a special URL
             ? const Text('Save Shared Content')
-            : const Text('Save to Experiences'),
+            : const Text('Save Shared Media'),
         leading: IconButton(
           // Use leading for the cancel/back action
           icon: Icon(Platform.isIOS ? Icons.arrow_back_ios : Icons.arrow_back),
@@ -2177,11 +2182,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                           children: [
                                             if (firstCard != null)
                                               _buildMediaPreview(
-                                                  file, firstCard)
+                                                  file, firstCard, index)
                                             else
-                                              // Fallback if no cards exist
+                                              // Fallback: Pass index here too
                                               _buildMediaPreview(
-                                                  file, ExperienceCardData()),
+                                                  file, null, index),
                                           ],
                                         ),
                                       ),
@@ -2203,8 +2208,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                             top: 16.0, bottom: 8.0),
                                         child: Text(
                                             experienceCards.length > 1
-                                                ? 'Associated Experiences'
-                                                : 'Associate Experience',
+                                                ? 'Save to Experiences'
+                                                : 'Save to Experience',
                                             style: Theme.of(context)
                                                 .textTheme
                                                 .titleLarge),
@@ -2449,7 +2454,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   }
 
   // Modify _buildMediaPreview if it needs access to provider
-  Widget _buildMediaPreview(SharedMediaFile file, ExperienceCardData card) {
+  Widget _buildMediaPreview(
+      SharedMediaFile file, ExperienceCardData? card, int index) {
     // Access provider if needed for previews, e.g., for Yelp/Maps
     // final provider = context.read<ReceiveShareProvider>(); // Read needed? Only if passing methods
 
@@ -2463,7 +2469,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       case SharedMediaType.text:
       case SharedMediaType
             .url: // Handle URL type like text for preview building
-        return _buildTextPreview(file, card); // Pass card data from provider
+        // Pass index to buildTextPreview
+        return _buildTextPreview(file, card, index);
       case SharedMediaType.file:
       default:
         // Assuming _buildFilePreview doesn't need provider data directly
@@ -2471,8 +2478,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     }
   }
 
-  // Modify _buildTextPreview if it needs provider access
-  Widget _buildTextPreview(SharedMediaFile file, ExperienceCardData card) {
+  // Modify _buildTextPreview to accept index
+  Widget _buildTextPreview(
+      SharedMediaFile file, ExperienceCardData? card, int index) {
     // final provider = context.read<ReceiveShareProvider>(); // Not needed directly here now
 
     String textContent = file.path; // Path contains the text or URL
@@ -2483,31 +2491,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     // Check if we extracted a URL
     if (extractedUrl != null) {
       // Check if it's a special one (Yelp/Maps)
-      if (_isSpecialUrl(extractedUrl)) {
-        // Build the appropriate special URL preview
-        return _buildUrlPreview(extractedUrl, card);
-      }
-      // --- ADDED: Explicit check for Instagram ---
-      else if (extractedUrl.contains('instagram.com')) {
-        // Build the Instagram preview
-        // Note: _buildUrlPreview handles the routing to InstagramPreviewWidget
-        return _buildUrlPreview(extractedUrl, card);
-      }
-      // --- END ADDED ---
-      else {
-        // It's a generic URL, potentially show a generic preview or just the text
-        // Let's use _buildUrlPreview which has a generic fallback
-        return _buildUrlPreview(extractedUrl, card);
-        // OR Fallback to plain text:
-        /* return Container(
-          padding: const EdgeInsets.all(16.0),
-          child: Text(
-            textContent, // Show original shared content if URL isn't special
-            maxLines: 5, // Limit lines for preview
-            overflow: TextOverflow.ellipsis,
-          ),
-        ); */
-      }
+      // Pass index to buildUrlPreview
+      return _buildUrlPreview(extractedUrl, card, index);
     } else {
       // No URL extracted, display the original text content
       return Container(
@@ -2523,12 +2508,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
   // Modify _buildUrlPreview to accept and use card data
   // This method already handles routing to InstagramPreviewWidget
-  Widget _buildUrlPreview(String url, ExperienceCardData card) {
+  Widget _buildUrlPreview(String url, ExperienceCardData? card, int index) {
     // Access provider only if needed for actions, not just data access
     // final provider = context.read<ReceiveShareProvider>();
 
-    // Special handling for Yelp URLs
-    if (url.contains('yelp.com/biz') || url.contains('yelp.to/')) {
+    // Special handling for Yelp URLs (ensure card is not null)
+    if (card != null &&
+        (url.contains('yelp.com/biz') || url.contains('yelp.to/'))) {
       return YelpPreviewWidget(
         yelpUrl: url,
         card: card, // Pass the card data
@@ -2558,9 +2544,66 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     // Special handling for Instagram URLs
     if (url.contains('instagram.com')) {
-      return InstagramPreviewWidget(
-        url: url,
-        launchUrlCallback: _launchUrl,
+      // Determine expansion state for this specific preview
+      final bool isExpanded = _previewExpansionStates[index] ?? false;
+      // Determine height based on expansion
+      final double height = isExpanded
+          ? 1200.0
+          : 400.0; // Default collapsed height for receive screen
+
+      // Build Column with WebView and Buttons
+      return Column(
+        mainAxisSize:
+            MainAxisSize.min, // Prevent column from taking excessive space
+        children: [
+          // The WebView
+          instagram_widget.InstagramWebView(
+            url: url,
+            height: height, // Pass calculated height
+            launchUrlCallback: _launchUrl,
+            onWebViewCreated: (controller) {},
+            onPageFinished: (url) {},
+          ),
+          // Spacing
+          const SizedBox(height: 8),
+          // Buttons specific to ReceiveShareScreen
+          Row(
+            // Space buttons out, pushing Expand to the right
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              // Spacer to help center the Instagram button
+              const SizedBox(width: 48), // Approx width of an IconButton
+              // Instagram Button (Centered)
+              IconButton(
+                icon: const Icon(FontAwesomeIcons.instagram),
+                color: const Color(0xFFE1306C),
+                iconSize: 32, // Increased size
+                tooltip: 'Open in Instagram',
+                constraints: const BoxConstraints(),
+                padding:
+                    EdgeInsets.zero, // Remove padding if centering with Spacer
+                onPressed: () => _launchUrl(url),
+              ),
+              // Expand/Collapse Button (Right side)
+              IconButton(
+                icon:
+                    Icon(isExpanded ? Icons.fullscreen_exit : Icons.fullscreen),
+                iconSize: 24,
+                color: Colors.blue,
+                tooltip: isExpanded ? 'Collapse' : 'Expand',
+                constraints: const BoxConstraints(),
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                onPressed: () {
+                  setState(() {
+                    _previewExpansionStates[index] = !isExpanded;
+                  });
+                },
+              ),
+            ],
+          ),
+          // Optional extra spacing below buttons if needed
+          const SizedBox(height: 8),
+        ],
       );
     }
 
