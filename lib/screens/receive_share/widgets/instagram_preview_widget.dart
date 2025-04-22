@@ -5,11 +5,13 @@ import 'dart:io'; // For Platform checks
 class InstagramPreviewWidget extends StatefulWidget {
   final String url;
   final Future<void> Function(String) launchUrlCallback;
+  final double collapsedHeight;
 
   const InstagramPreviewWidget({
     super.key,
     required this.url,
     required this.launchUrlCallback,
+    this.collapsedHeight = 400.0,
   });
 
   @override
@@ -318,8 +320,8 @@ class _InstagramPreviewWidgetState extends State<InstagramPreviewWidget> {
 
   @override
   Widget build(BuildContext context) {
-    // Define the container height based on expansion state
-    final double containerHeight = isExpanded ? 1200 : 400;
+    // Define the container height based on expansion state and the new parameter
+    final double containerHeight = isExpanded ? 1200 : widget.collapsedHeight;
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -390,6 +392,7 @@ class _InstagramPreviewWidgetState extends State<InstagramPreviewWidget> {
             ),
           ],
         ),
+        SizedBox(height: 8),
       ],
     );
   }
