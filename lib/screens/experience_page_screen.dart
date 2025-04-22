@@ -949,18 +949,49 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     // Display InstagramPreviewWidgets in a ListView
     return ListView.builder(
       padding: const EdgeInsets.symmetric(
-          vertical: 8.0, horizontal: 16.0), // Add some padding
+          vertical: 8.0, horizontal: 16.0), // Overall list padding
       itemCount: instagramUrls.length,
       itemBuilder: (context, index) {
         final url = instagramUrls[index];
-        // Return the InstagramPreviewWidget for each URL
-        // Add padding below each widget for spacing
+        // Use a Column to place the number above the card
         return Padding(
-          padding: const EdgeInsets.only(bottom: 16.0),
-          child: InstagramPreviewWidget(
-            url: url,
-            // Pass the existing _launchUrl helper method
-            launchUrlCallback: _launchUrl,
+          // Add padding below each item for vertical spacing
+          padding: const EdgeInsets.only(bottom: 24.0),
+          child: Column(
+            crossAxisAlignment:
+                CrossAxisAlignment.center, // Center items horizontally
+            children: [
+              // Display the number inside a bubble
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8.0),
+                child: CircleAvatar(
+                  // Wrap number in a CircleAvatar
+                  radius: 14, // Adjust size as needed
+                  backgroundColor: Theme.of(context)
+                      .primaryColor
+                      .withOpacity(0.8), // Bubble color
+                  child: Text(
+                    '${index + 1}', // Removed the period
+                    style: TextStyle(
+                      fontSize: 14.0, // Adjust font size for bubble
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white, // Text color inside bubble
+                    ),
+                  ),
+                ),
+              ),
+              // The Card containing the preview
+              Card(
+                margin: EdgeInsets.zero, // No margin for the card itself
+                elevation: 2.0,
+                clipBehavior: Clip.antiAlias,
+                child: InstagramPreviewWidget(
+                  url: url,
+                  launchUrlCallback: _launchUrl,
+                  collapsedHeight: 840.0,
+                ),
+              ),
+            ],
           ),
         );
       },
