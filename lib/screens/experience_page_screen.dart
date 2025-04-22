@@ -48,6 +48,12 @@ class ExperiencePageScreen extends StatefulWidget {
 // ADDED: SingleTickerProviderStateMixin for TabController
 class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     with SingleTickerProviderStateMixin {
+  // ADDED: Local state for the experience data
+  late Experience _currentExperience;
+  bool _isLoadingExperience = false; // Loading state for refresh
+  // ADDED: Flag to indicate data change for popping result
+  bool _didDataChange = false;
+
   // Place Details State
   bool _isLoadingDetails = true;
   String? _errorLoadingDetails;
@@ -61,9 +67,6 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   List<Comment> _comments = [];
   // TODO: Add state for comment count if fetching separately
   int _commentCount = 0; // Placeholder
-
-  // ADDED: State map for media expansion
-  final Map<int, bool> _mediaExpansionStates = {};
 
   // Hours Expansion State
   bool _isHoursExpanded = false;
@@ -84,6 +87,9 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   @override
   void initState() {
     super.initState();
+    // Initialize local state with initial experience data
+    _currentExperience = widget.experience;
+
     _tabController =
         TabController(length: 3, vsync: this); // Initialize TabController
     // REMOVED: Call to load Instagram credentials
@@ -106,7 +112,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   // Method to fetch place details
   Future<void> _fetchPlaceDetails() async {
     // Ensure we have a placeId to fetch details
-    final placeId = widget.experience.location.placeId;
+    final placeId = _currentExperience.location.placeId;
     if (placeId == null || placeId.isEmpty) {
       if (mounted) {
         setState(() {
@@ -174,7 +180,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     });
     try {
       final reviews = await _experienceService
-          .getReviewsForExperience(widget.experience.id);
+          .getReviewsForExperience(_currentExperience.id);
       if (mounted) {
         setState(() {
           _reviews = reviews;
@@ -200,7 +206,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     try {
       // Fetch only top-level comments for the count/list initially
       final comments = await _experienceService
-          .getCommentsForExperience(widget.experience.id);
+          .getCommentsForExperience(_currentExperience.id);
       if (mounted) {
         setState(() {
           _comments = comments;
@@ -403,25 +409,6 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
               ),
             ),
           ),
-
-          // 4. Back Button (Positioned top-left)
-          Positioned(
-            top: MediaQuery.of(context)
-                .padding
-                .top, // Consider status bar height
-            left: 8.0,
-            child: Container(
-              decoration: BoxDecoration(
-                color: Colors.black.withOpacity(0.3),
-                shape: BoxShape.circle,
-              ),
-              margin: const EdgeInsets.all(4.0), // Margin around the circle
-              child: BackButton(
-                color: Colors.white, // Make sure back button is visible
-                onPressed: () => Navigator.of(context).pop(),
-              ),
-            ),
-          ),
         ],
       ),
     );
@@ -429,24 +416,60 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Pass experience from widget to header builder
-            _buildHeader(context, widget.experience),
-            const Divider(),
-            // Build details section based on loading/error state
-            _buildDynamicDetailsSection(context),
-            const Divider(),
-            // ADDED: Quick Actions Section
-            _buildQuickActionsSection(
-                context, _placeDetailsData, widget.experience.location),
-            const Divider(),
-            // ADDED: Tabbed Content Section
-            _buildTabbedContentSection(context),
-          ],
+    // Show loading indicator while refreshing experience data
+    if (_isLoadingExperience) {
+      return Scaffold(
+        appBar: AppBar(), // Basic AppBar
+        body: const Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    // Wrap main Scaffold with WillPopScope
+    return WillPopScope(
+      onWillPop: () async {
+        Navigator.of(context).pop(_didDataChange);
+        return false;
+      },
+      child: Scaffold(
+        // Revert AppBar to be transparent and behind body
+        extendBodyBehindAppBar: true,
+        appBar: AppBar(
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          leading: Container(
+            // Keep custom leading button
+            margin: const EdgeInsets.all(8.0),
+            decoration: BoxDecoration(
+              color: Colors.black.withOpacity(0.3),
+              shape: BoxShape.circle,
+            ),
+            child: BackButton(
+              color: Colors.white,
+              // Pop with the change status - Handled by WillPopScope + this button
+              onPressed: () => Navigator.of(context).pop(_didDataChange),
+            ),
+          ),
+          // Remove the explicit title added in the previous step
+          title: null,
+        ),
+        body: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Pass _currentExperience to header builder
+              _buildHeader(context, _currentExperience),
+              const Divider(),
+              // Build details section based on loading/error state
+              _buildDynamicDetailsSection(context),
+              const Divider(),
+              // ADDED: Quick Actions Section
+              _buildQuickActionsSection(
+                  context, _placeDetailsData, _currentExperience.location),
+              const Divider(),
+              // ADDED: Tabbed Content Section
+              _buildTabbedContentSection(context),
+            ],
+          ),
         ),
       ),
     );
@@ -475,7 +498,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     }
 
     // If loaded successfully, build the details section with data
-    return _buildDetailsSection(context, widget.experience, _placeDetailsData);
+    return _buildDetailsSection(context, _currentExperience, _placeDetailsData);
   }
 
   // Helper method to build a single row in the details section
@@ -891,7 +914,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   Widget _buildTabbedContentSection(BuildContext context) {
     // Calculate counts
     // Filter media paths for Instagram URLs to get the count
-    final instagramMediaPaths = (widget.experience.sharedMediaPaths ?? [])
+    final instagramMediaPaths = (_currentExperience.sharedMediaPaths ?? [])
         .where((path) => path.toLowerCase().contains('instagram.com'))
         .toList();
     final mediaCount = instagramMediaPaths.length; // Count only Instagram posts
@@ -935,7 +958,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
             controller: _tabController,
             children: [
               // Pass all paths, filtering happens inside _buildMediaTab
-              _buildMediaTab(context, widget.experience.sharedMediaPaths),
+              _buildMediaTab(context, _currentExperience.sharedMediaPaths),
               _buildReviewsTab(context),
               _buildCommentsTab(context),
             ],
@@ -945,6 +968,72 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     );
   }
 
+  // ADDED: Function to handle media path deletion with confirmation
+  Future<void> _deleteMediaPath(String urlToDelete) async {
+    final bool? confirm = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Confirm Deletion'),
+          content:
+              const Text('Are you sure you want to remove this media item?'),
+          actions: <Widget>[
+            TextButton(
+              child: const Text('Cancel'),
+              onPressed: () => Navigator.of(context).pop(false), // Return false
+            ),
+            TextButton(
+              child: const Text('Delete'),
+              style: TextButton.styleFrom(foregroundColor: Colors.red),
+              onPressed: () => Navigator.of(context).pop(true), // Return true
+            ),
+          ],
+        );
+      },
+    );
+
+    // Proceed only if confirmed (confirm == true)
+    if (confirm == true) {
+      try {
+        // Create a mutable copy and remove the URL
+        final List<String> updatedPaths =
+            List<String>.from(_currentExperience.sharedMediaPaths ?? []);
+        bool removed = updatedPaths.remove(urlToDelete);
+
+        if (removed) {
+          // Create the updated experience object
+          Experience updatedExperience = _currentExperience.copyWith(
+            sharedMediaPaths: updatedPaths,
+            updatedAt: DateTime.now(), // Update timestamp
+          );
+
+          // Update in the backend
+          await _experienceService.updateExperience(updatedExperience);
+
+          // Refresh the local state
+          await _refreshExperienceData();
+          // Set flag to signal change on pop
+          setState(() {
+            _didDataChange = true;
+          });
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Media item removed.')),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Error: Media item not found.')),
+          );
+        }
+      } catch (e) {
+        print("Error deleting media path: $e");
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error removing media item: $e')),
+        );
+      }
+    }
+  }
+
   // Builds the Media Tab, now including a fullscreen button
   Widget _buildMediaTab(BuildContext context, List<String>? mediaPaths) {
     // Filter for Instagram URLs first
@@ -952,7 +1041,11 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
         .where((path) => path.toLowerCase().contains('instagram.com'))
         .toList();
 
-    if (instagramUrls.isEmpty) {
+    // Reverse the list to show most recently added first
+    final reversedInstagramUrls = instagramUrls.reversed.toList();
+
+    // Use the reversed list for checking emptiness
+    if (reversedInstagramUrls.isEmpty) {
       return const Center(
           child: Text('No Instagram posts shared for this experience.'));
     }
@@ -973,16 +1066,29 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                 padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 textStyle: TextStyle(fontSize: 13),
               ),
-              onPressed: () {
-                Navigator.push(
+              onPressed: () async {
+                // Make onPressed async
+                // Navigate and wait for result
+                final result = await Navigator.push(
                   context,
                   MaterialPageRoute(
                     builder: (context) => MediaFullscreenScreen(
-                      instagramUrls: instagramUrls, // Pass the filtered list
-                      launchUrlCallback: _launchUrl, // Pass the callback
+                      instagramUrls: reversedInstagramUrls,
+                      launchUrlCallback: _launchUrl,
+                      // Pass _currentExperience and service
+                      experience: _currentExperience,
+                      experienceService: _experienceService,
                     ),
                   ),
                 );
+                // Refresh data if fullscreen indicated deletion
+                if (result == true && mounted) {
+                  await _refreshExperienceData();
+                  // Set flag to signal change on pop
+                  setState(() {
+                    _didDataChange = true;
+                  });
+                }
               },
             ),
           ),
@@ -992,9 +1098,11 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
           child: ListView.builder(
             // Removed vertical padding, handled by Column/Button padding
             padding: const EdgeInsets.symmetric(horizontal: 16.0),
-            itemCount: instagramUrls.length,
+            // Use the reversed list length
+            itemCount: reversedInstagramUrls.length,
             itemBuilder: (context, index) {
-              final url = instagramUrls[index];
+              // Use the reversed list to get URL
+              final url = reversedInstagramUrls[index];
               // Use a Column to place the number above the card
               return Padding(
                 padding: const EdgeInsets.only(bottom: 24.0),
@@ -1009,6 +1117,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                         backgroundColor:
                             Theme.of(context).primaryColor.withOpacity(0.8),
                         child: Text(
+                          // Display index sequentially starting from 1
                           '${index + 1}',
                           style: TextStyle(
                             fontSize: 14.0,
@@ -1025,10 +1134,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                       clipBehavior: Clip.antiAlias,
                       child: instagram_widget.InstagramWebView(
                         url: url,
-                        // Calculate height based on parent's state, defaulting to false if key doesn't exist
-                        height: (_mediaExpansionStates[index] ?? false)
-                            ? 1200.0
-                            : 840.0, // Adjusted expanded height
+                        height: 840.0, // Use fixed height
                         launchUrlCallback: _launchUrl,
                         // Add required callbacks (can be empty if not needed)
                         onWebViewCreated: (controller) {},
@@ -1037,42 +1143,44 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                     ),
                     // Add spacing before buttons
                     const SizedBox(height: 8),
-                    // Buttons Row - managed by this parent screen
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        // Changed to IconButton for Instagram link
-                        IconButton(
-                          icon: const Icon(FontAwesomeIcons.instagram),
-                          color: const Color(0xFFE1306C), // Instagram color
-                          iconSize: 24, // Adjust size as needed
-                          tooltip: 'Open in Instagram',
-                          constraints:
-                              const BoxConstraints(), // Remove extra padding
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 12), // Add some horizontal padding
-                          onPressed: () => _launchUrl(url),
-                        ),
-                        const SizedBox(width: 16), // Increased spacing slightly
-                        IconButton(
-                          icon: Icon((_mediaExpansionStates[index] ?? false)
-                              ? Icons.fullscreen_exit
-                              : Icons.fullscreen),
-                          iconSize: 24, // Match Instagram icon size
-                          color: Colors.blue, // Keep blue color
-                          tooltip: (_mediaExpansionStates[index] ?? false)
-                              ? 'Collapse'
-                              : 'Expand',
-                          constraints: const BoxConstraints(),
-                          padding: const EdgeInsets.symmetric(horizontal: 12),
-                          onPressed: () {
-                            setState(() {
-                              _mediaExpansionStates[index] =
-                                  !(_mediaExpansionStates[index] ?? false);
-                            });
-                          },
-                        ),
-                      ],
+                    // Buttons Row - REFRACTORED to use Stack for centering
+                    SizedBox(
+                      height:
+                          48, // Provide height constraint for Stack alignment
+                      child: Stack(
+                        children: [
+                          // Instagram Button (Centered)
+                          Align(
+                            alignment: Alignment.center, // Alignment(0.0, 0.0)
+                            child: IconButton(
+                              icon: const Icon(FontAwesomeIcons.instagram),
+                              color: const Color(0xFFE1306C), // Instagram color
+                              iconSize: 32, // Standard size
+                              tooltip: 'Open in Instagram',
+                              constraints: const BoxConstraints(),
+                              padding: EdgeInsets.zero,
+                              onPressed: () => _launchUrl(url),
+                            ),
+                          ),
+                          // Delete Button (Right Edge)
+                          Align(
+                            alignment:
+                                Alignment.centerRight, // Alignment(1.0, 0.0)
+                            child: IconButton(
+                              icon: const Icon(Icons.delete_outline),
+                              iconSize: 24,
+                              color: Colors.red[700],
+                              tooltip: 'Delete Media',
+                              constraints: const BoxConstraints(),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal:
+                                      12), // Keep some padding from edge
+                              onPressed: () =>
+                                  _deleteMediaPath(url), // Call delete function
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ],
                 ),
@@ -1275,4 +1383,36 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   }
 
   // --- End Helper methods ---
+
+  // ADDED: Method to refresh experience data
+  Future<void> _refreshExperienceData() async {
+    if (!mounted) return;
+    setState(() {
+      _isLoadingExperience = true;
+    });
+    try {
+      final updatedExperience =
+          await _experienceService.getExperience(_currentExperience.id);
+      if (mounted && updatedExperience != null) {
+        setState(() {
+          _currentExperience = updatedExperience;
+        });
+      }
+      // Handle case where experience is not found after deletion (optional)
+      // else if (mounted) { Navigator.of(context).pop(); // Or show error }
+    } catch (e) {
+      print("Error refreshing experience data: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to refresh experience data: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingExperience = false;
+        });
+      }
+    }
+  }
 }

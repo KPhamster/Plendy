@@ -467,7 +467,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                         title: Text(suggestion.name),
                       );
                     },
-                    onSelected: (suggestion) {
+                    onSelected: (suggestion) async {
                       print('Selected experience: ${suggestion.name}');
                       // ADDED: Navigate to the experience page
 
@@ -480,7 +480,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                               icon: '❓') // Fallback
                           );
 
-                      Navigator.push(
+                      // Await result and refresh if needed
+                      final result = await Navigator.push<bool>(
                         context,
                         MaterialPageRoute(
                           builder: (context) => ExperiencePageScreen(
@@ -491,6 +492,10 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                       );
                       _searchController.clear();
                       FocusScope.of(context).unfocus();
+                      // Refresh if deletion occurred
+                      if (result == true && mounted) {
+                        _loadData();
+                      }
                     },
                     emptyBuilder: (context) => const Padding(
                       padding: EdgeInsets.all(8.0),
@@ -617,23 +622,10 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         ],
       ),
       // ADDED: Trailing widget for media count
-      trailing: (experience.sharedMediaPaths != null &&
-              experience.sharedMediaPaths!.isNotEmpty)
-          ? CircleAvatar(
-              radius: 12, // Small radius for the bubble
-              backgroundColor: Theme.of(context).colorScheme.primary,
-              child: Text(
-                experience.sharedMediaPaths!.length.toString(),
-                style: TextStyle(
-                  color: Theme.of(context).colorScheme.onPrimary,
-                  fontSize: 10, // Small font size
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            )
-          : null, // Show nothing if no shared media
+      trailing: _buildInstagramCountWidget(experience),
       // TODO: Add onTap to navigate to experience details
-      onTap: () {
+      onTap: () async {
+        // Make onTap async
         print('Tapped on Experience: ${experience.name}');
         // ADDED: Navigation logic to the ExperiencePageScreen
 
@@ -644,7 +636,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                 id: '', name: experience.category, icon: '❓') // Fallback
             );
 
-        Navigator.push(
+        // Await result and refresh if needed
+        final result = await Navigator.push<bool>(
           context,
           MaterialPageRoute(
             builder: (context) => ExperiencePageScreen(
@@ -653,8 +646,43 @@ class _CollectionsScreenState extends State<CollectionsScreen>
             ),
           ),
         );
+        // Refresh if deletion occurred
+        if (result == true && mounted) {
+          _loadData();
+        }
       },
     );
+  }
+
+  // ADDED: Helper widget to build the Instagram link count bubble
+  Widget? _buildInstagramCountWidget(Experience experience) {
+    if (experience.sharedMediaPaths == null ||
+        experience.sharedMediaPaths!.isEmpty) {
+      return null; // No media, show nothing
+    }
+
+    // Filter for Instagram links
+    final instagramLinks = experience.sharedMediaPaths!
+        .where((path) => path.toLowerCase().contains('instagram.com'))
+        .toList();
+
+    // Only show the bubble if there are Instagram links
+    if (instagramLinks.isNotEmpty) {
+      return CircleAvatar(
+        radius: 12, // Small radius for the bubble
+        backgroundColor: Theme.of(context).colorScheme.primary,
+        child: Text(
+          instagramLinks.length.toString(),
+          style: TextStyle(
+            color: Theme.of(context).colorScheme.onPrimary,
+            fontSize: 10, // Small font size
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      );
+    }
+
+    return null; // No Instagram links, show nothing
   }
 
   // MODIFIED: Widget builder for the Experience List View uses the refactored item builder
