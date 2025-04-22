@@ -21,6 +21,8 @@ import 'receive_share/widgets/instagram_preview_widget.dart';
 // import 'package:dio/dio.dart';
 // REMOVED: Dotenv import (no longer needed for credentials)
 // import 'package:flutter_dotenv/flutter_dotenv.dart';
+// ADDED: Import the new fullscreen screen
+import 'media_fullscreen_screen.dart';
 
 // Convert to StatefulWidget
 class ExperiencePageScreen extends StatefulWidget {
@@ -934,9 +936,9 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     );
   }
 
-  // Builds the Media Tab as a List of Instagram Previews
+  // Builds the Media Tab, now including a fullscreen button
   Widget _buildMediaTab(BuildContext context, List<String>? mediaPaths) {
-    // Filter for Instagram URLs
+    // Filter for Instagram URLs first
     final instagramUrls = (mediaPaths ?? [])
         .where((path) => path.toLowerCase().contains('instagram.com'))
         .toList();
@@ -946,55 +948,85 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
           child: Text('No Instagram posts shared for this experience.'));
     }
 
-    // Display InstagramPreviewWidgets in a ListView
-    return ListView.builder(
-      padding: const EdgeInsets.symmetric(
-          vertical: 8.0, horizontal: 16.0), // Overall list padding
-      itemCount: instagramUrls.length,
-      itemBuilder: (context, index) {
-        final url = instagramUrls[index];
-        // Use a Column to place the number above the card
-        return Padding(
-          // Add padding below each item for vertical spacing
-          padding: const EdgeInsets.only(bottom: 24.0),
-          child: Column(
-            crossAxisAlignment:
-                CrossAxisAlignment.center, // Center items horizontally
-            children: [
-              // Display the number inside a bubble
-              Padding(
-                padding: const EdgeInsets.only(bottom: 8.0),
-                child: CircleAvatar(
-                  // Wrap number in a CircleAvatar
-                  radius: 14, // Adjust size as needed
-                  backgroundColor: Theme.of(context)
-                      .primaryColor
-                      .withOpacity(0.8), // Bubble color
-                  child: Text(
-                    '${index + 1}', // Removed the period
-                    style: TextStyle(
-                      fontSize: 14.0, // Adjust font size for bubble
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white, // Text color inside bubble
+    // Return a Column containing the button and the list
+    return Column(
+      children: [
+        // Fullscreen Button
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 16.0),
+          child: Align(
+            alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              icon: const Icon(Icons.fullscreen, size: 20.0),
+              label: const Text('View Fullscreen'),
+              style: TextButton.styleFrom(
+                // Optional: Adjust text style/padding
+                padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                textStyle: TextStyle(fontSize: 13),
+              ),
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => MediaFullscreenScreen(
+                      instagramUrls: instagramUrls, // Pass the filtered list
+                      launchUrlCallback: _launchUrl, // Pass the callback
                     ),
                   ),
-                ),
-              ),
-              // The Card containing the preview
-              Card(
-                margin: EdgeInsets.zero, // No margin for the card itself
-                elevation: 2.0,
-                clipBehavior: Clip.antiAlias,
-                child: InstagramPreviewWidget(
-                  url: url,
-                  launchUrlCallback: _launchUrl,
-                  collapsedHeight: 840.0,
-                ),
-              ),
-            ],
+                );
+              },
+            ),
           ),
-        );
-      },
+        ),
+        // The scrollable list (needs Expanded to fill remaining space)
+        Expanded(
+          child: ListView.builder(
+            // Removed vertical padding, handled by Column/Button padding
+            padding: const EdgeInsets.symmetric(horizontal: 16.0),
+            itemCount: instagramUrls.length,
+            itemBuilder: (context, index) {
+              final url = instagramUrls[index];
+              // Use a Column to place the number above the card
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 24.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    // Display the number inside a bubble
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8.0),
+                      child: CircleAvatar(
+                        radius: 14,
+                        backgroundColor:
+                            Theme.of(context).primaryColor.withOpacity(0.8),
+                        child: Text(
+                          '${index + 1}',
+                          style: TextStyle(
+                            fontSize: 14.0,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ),
+                    // The Card containing the preview
+                    Card(
+                      margin: EdgeInsets.zero,
+                      elevation: 2.0,
+                      clipBehavior: Clip.antiAlias,
+                      child: InstagramPreviewWidget(
+                        url: url,
+                        launchUrlCallback: _launchUrl,
+                        collapsedHeight: 840.0, // Keep your specific height
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 
