@@ -325,29 +325,88 @@ class ExperienceService {
   }
 
   /// Adds new media paths to an existing PublicExperience document's allMediaPaths field.
-  /// Uses arrayUnion to avoid duplicates.
-  Future<bool> addMediaToPublicExperience(
-      String publicExperienceId, List<String> newMediaPaths) async {
-    if (publicExperienceId.isEmpty || newMediaPaths.isEmpty) {
+  /// Optionally updates the yelpUrl if it's currently null/empty and a new one is provided.
+  /// Uses arrayUnion for media paths to avoid duplicates.
+  Future<bool> updatePublicExperienceMediaAndMaybeYelp(
+      String publicExperienceId, List<String> newMediaPaths,
+      {String? newYelpUrl} // Optional Yelp URL from the card
+      ) async {
+    if (publicExperienceId.isEmpty) {
       print(
-          "addMediaToPublicExperience: Invalid arguments (ID empty: ${publicExperienceId.isEmpty}, paths empty: ${newMediaPaths.isEmpty})");
+          "updatePublicExperienceMediaAndMaybeYelp: Invalid arguments (ID empty)");
       return false;
     }
-    try {
+
+    // Prepare the data map for the update operation
+    Map<String, dynamic> updateData = {};
+
+    // Always add new media paths if provided
+    if (newMediaPaths.isNotEmpty) {
       print(
-          "addMediaToPublicExperience: Adding ${newMediaPaths.length} paths to public experience ID: $publicExperienceId");
-      await _publicExperiencesCollection.doc(publicExperienceId).update({
-        'allMediaPaths': FieldValue.arrayUnion(newMediaPaths),
-        // Optionally update an 'updatedAt' timestamp here as well
-        // 'updatedAt': FieldValue.serverTimestamp(),
-      });
+          "updatePublicExperienceMediaAndMaybeYelp: Preparing to add ${newMediaPaths.length} paths to public experience ID: $publicExperienceId");
+      updateData['allMediaPaths'] = FieldValue.arrayUnion(newMediaPaths);
+    } else {
       print(
-          "addMediaToPublicExperience: Successfully updated public experience ID: $publicExperienceId");
-      return true;
-    } catch (e) {
+          "updatePublicExperienceMediaAndMaybeYelp: No new media paths provided for public experience ID: $publicExperienceId");
+    }
+
+    // Optional: Update updatedAt timestamp
+    // updateData['updatedAt'] = FieldValue.serverTimestamp();
+
+    // If there are updates to perform, run the transaction
+    if (updateData.isNotEmpty ||
+        (newYelpUrl != null && newYelpUrl.isNotEmpty)) {
+      try {
+        // Use a transaction to safely check the current yelpUrl before updating
+        await _firestore.runTransaction((transaction) async {
+          final docRef = _publicExperiencesCollection.doc(publicExperienceId);
+          final snapshot = await transaction.get(docRef);
+
+          if (!snapshot.exists) {
+            print(
+                "updatePublicExperienceMediaAndMaybeYelp: Document $publicExperienceId does not exist.");
+            throw FirebaseException(
+                plugin: 'cloud_firestore', code: 'not-found');
+          }
+
+          final currentData = snapshot.data() as Map<String, dynamic>?;
+          final currentYelpUrl = currentData?['yelpUrl'] as String?;
+
+          // Conditionally add yelpUrl to the updateData if needed
+          if (newYelpUrl != null && newYelpUrl.isNotEmpty) {
+            if (currentYelpUrl == null || currentYelpUrl.isEmpty) {
+              print(
+                  "updatePublicExperienceMediaAndMaybeYelp: Current Yelp URL is empty, updating with new URL: $newYelpUrl");
+              updateData['yelpUrl'] = newYelpUrl;
+            } else {
+              print(
+                  "updatePublicExperienceMediaAndMaybeYelp: Current Yelp URL already exists ('$currentYelpUrl'), not overwriting.");
+            }
+          }
+
+          // Perform the actual update only if there's something to update
+          if (updateData.isNotEmpty) {
+            print(
+                "updatePublicExperienceMediaAndMaybeYelp: Applying updates: ${updateData.keys.join(', ')}");
+            transaction.update(docRef, updateData);
+          } else {
+            print(
+                "updatePublicExperienceMediaAndMaybeYelp: No fields needed updating after check.");
+          }
+        });
+
+        print(
+            "updatePublicExperienceMediaAndMaybeYelp: Successfully processed updates for public experience ID: $publicExperienceId");
+        return true;
+      } catch (e) {
+        print(
+            "Error updating media/yelp for public experience ID '$publicExperienceId': $e");
+        return false; // Indicate failure
+      }
+    } else {
       print(
-          "Error adding media to public experience ID '$publicExperienceId': $e");
-      return false; // Indicate failure
+          "updatePublicExperienceMediaAndMaybeYelp: No updates to perform for ID: $publicExperienceId");
+      return true; // Nothing to do, considered successful
     }
   }
 

@@ -1767,8 +1767,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               // UPDATE Public Experience (add media paths)
               print(
                   "SAVE_DEBUG: Found existing Public Experience ID: ${existingPublicExp.id}. Adding media paths.");
-              await _experienceService.addMediaToPublicExperience(
-                  existingPublicExp.id, newMediaPaths);
+              await _experienceService.updatePublicExperienceMediaAndMaybeYelp(
+                existingPublicExp.id,
+                newMediaPaths,
+                newYelpUrl: cardYelpUrl.isNotEmpty
+                    ? cardYelpUrl
+                    : null, // Pass the card's Yelp URL
+              );
             }
           } else {
             print(
