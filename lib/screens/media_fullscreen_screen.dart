@@ -35,8 +35,6 @@ class _MediaFullscreenScreenState extends State<MediaFullscreenScreen> {
     super.initState();
     // Initialize local list from widget property
     _localInstagramUrls = List<String>.from(widget.instagramUrls);
-    // Reverse the list to show most recently added first
-    _localInstagramUrls = _localInstagramUrls.reversed.toList();
   }
 
   Future<void> _confirmAndDelete(String urlToDelete) async {
