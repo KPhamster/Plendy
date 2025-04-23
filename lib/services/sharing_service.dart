@@ -6,6 +6,10 @@ import 'dart:io' show Platform;
 import '../screens/receive_share_screen.dart';
 import 'package:provider/provider.dart';
 import '../providers/receive_share_provider.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import '../models/share_permission.dart';
+import '../models/enums/share_enums.dart';
 
 class SharingService {
   static final SharingService _instance = SharingService._internal();
@@ -24,6 +28,16 @@ class SharingService {
 
   ValueListenable<List<SharedMediaFile>?> get sharedFiles =>
       _sharedFilesController;
+
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+
+  // Collection reference for share permissions
+  CollectionReference get _sharePermissionsCollection =>
+      _firestore.collection('share_permissions');
+
+  // Helper to get the current user's ID
+  String? get _currentUserId => _auth.currentUser?.uid;
 
   void init() {
     if (_isInitialized) {
@@ -155,4 +169,130 @@ class SharingService {
       ),
     );
   }
+
+  /// Shares an item (Experience or UserCategory) with another user.
+  ///
+  /// If a share already exists for this item and user, it updates the access level.
+  /// Otherwise, it creates a new share permission.
+  Future<void> shareItem({
+    required String itemId,
+    required ShareableItemType itemType,
+    required String ownerUserId, // The ID of the user who owns the item
+    required String sharedWithUserId, // The ID of the user to share with
+    required ShareAccessLevel accessLevel, // The access level to grant
+  }) async {
+    final currentUserId = _currentUserId;
+    if (currentUserId == null) {
+      throw Exception('User not authenticated');
+    }
+    // Optional: Add check if currentUserId == ownerUserId?
+
+    final now = Timestamp.now();
+
+    // Check if a permission already exists for this specific item and user combination
+    final existingQuery = await _sharePermissionsCollection
+        .where('itemId', isEqualTo: itemId)
+        .where('sharedWithUserId', isEqualTo: sharedWithUserId)
+        .limit(1)
+        .get();
+
+    if (existingQuery.docs.isNotEmpty) {
+      // Update existing permission
+      final existingDocId = existingQuery.docs.first.id;
+      print(
+          'Updating existing share permission $existingDocId for item $itemId with user $sharedWithUserId');
+      await _sharePermissionsCollection.doc(existingDocId).update({
+        'accessLevel': _accessLevelToString(accessLevel),
+        'updatedAt': now, // Use Timestamp.now() for update
+      });
+    } else {
+      // Create new permission
+      print(
+          'Creating new share permission for item $itemId with user $sharedWithUserId');
+      final newPermission = SharePermission(
+        id: '', // Firestore generates the ID
+        itemId: itemId,
+        itemType: itemType,
+        ownerUserId: ownerUserId,
+        sharedWithUserId: sharedWithUserId,
+        accessLevel: accessLevel,
+        createdAt: now,
+        updatedAt: now,
+      );
+      final data = newPermission.toMap();
+      // Ensure timestamps are set correctly for creation
+      data['createdAt'] = FieldValue.serverTimestamp();
+      data['updatedAt'] = FieldValue.serverTimestamp();
+
+      await _sharePermissionsCollection.add(data);
+    }
+  }
+
+  /// Retrieves all items shared *with* the specified user.
+  Future<List<SharePermission>> getSharedItemsForUser(String userId) async {
+    final snapshot = await _sharePermissionsCollection
+        .where('sharedWithUserId', isEqualTo: userId)
+        // Optional: Order by createdAt or updatedAt?
+        .orderBy('createdAt', descending: true)
+        .get();
+
+    return snapshot.docs
+        .map((doc) => SharePermission.fromFirestore(doc))
+        .toList();
+  }
+
+  /// Retrieves all permissions granted *for* a specific item.
+  Future<List<SharePermission>> getPermissionsForItem(String itemId) async {
+    final snapshot = await _sharePermissionsCollection
+        .where('itemId', isEqualTo: itemId)
+        .get();
+
+    return snapshot.docs
+        .map((doc) => SharePermission.fromFirestore(doc))
+        .toList();
+  }
+
+  /// Retrieves a specific permission for a user and item combination.
+  /// Returns null if no permission exists.
+  Future<SharePermission?> getPermissionForUserAndItem({
+    required String userId,
+    required String itemId,
+  }) async {
+    final snapshot = await _sharePermissionsCollection
+        .where('sharedWithUserId', isEqualTo: userId)
+        .where('itemId', isEqualTo: itemId)
+        .limit(1)
+        .get();
+
+    if (snapshot.docs.isEmpty) {
+      return null;
+    }
+    return SharePermission.fromFirestore(snapshot.docs.first);
+  }
+
+  /// Updates the access level of an existing share permission.
+  Future<void> updatePermissionAccessLevel({
+    required String permissionId,
+    required ShareAccessLevel newAccessLevel,
+  }) async {
+    // Optional: Add check to ensure current user is the owner of the item?
+    await _sharePermissionsCollection.doc(permissionId).update({
+      'accessLevel': _accessLevelToString(newAccessLevel),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  /// Removes a share permission (unshares the item).
+  Future<void> removeShare(String permissionId) async {
+    // Optional: Add check to ensure current user is the owner or the shared user?
+    await _sharePermissionsCollection.doc(permissionId).delete();
+  }
+
+  // Helper to convert ShareAccessLevel enum to string for Firestore
+  String _accessLevelToString(ShareAccessLevel level) {
+    return level == ShareAccessLevel.edit ? 'edit' : 'view';
+  }
+
+  // Consider adding methods to fetch the actual shared Experience/UserCategory objects
+  // based on the SharePermission list, potentially combining data.
 }

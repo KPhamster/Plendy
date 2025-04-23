@@ -265,7 +265,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       print("Error loading user Categories: $error");
       if (mounted) {
         setState(() {
-          _userCategories = UserCategory.createInitialCategories();
+          // Use empty list instead of defaults on error
+          _userCategories = [];
+          // _userCategories = UserCategory.createInitialCategories(); // Needs ownerId
         });
         _showSnackBar(
             context, "Error loading your custom Categories. Using defaults.");

@@ -39,11 +39,9 @@ class ExperienceService {
     final userId = _currentUserId;
     print("getUserCategories START - User: $userId"); // Log Start
     if (userId == null) {
-      print("getUserCategories END - No user, returning static defaults.");
-      // Sort defaults alphabetically for consistency when not logged in
-      var defaults = UserCategory.createInitialCategories();
-      defaults.sort((a, b) => a.name.compareTo(b.name));
-      return defaults;
+      print("getUserCategories END - No user, returning empty list.");
+      // Return empty list instead of defaults for non-logged-in users
+      return [];
     }
 
     final collectionRef = _userCategoriesCollection(userId);
@@ -91,7 +89,8 @@ class ExperienceService {
   /// Note: This should now be called explicitly ONCE during user creation flow.
   Future<List<UserCategory>> initializeDefaultUserCategories(
       String userId) async {
-    final defaultCategories = UserCategory.createInitialCategories();
+    // Pass userId to createInitialCategories
+    final defaultCategories = UserCategory.createInitialCategories(userId);
     // Sort defaults alphabetically before assigning index
     defaultCategories.sort((a, b) => a.name.compareTo(b.name));
     final batch = _firestore.batch();
@@ -111,6 +110,7 @@ class ExperienceService {
           id: docRef.id,
           name: category.name,
           icon: category.icon,
+          ownerUserId: userId,
           orderIndex: i // Include index in returned object
           ));
     }
@@ -175,6 +175,7 @@ class ExperienceService {
         id: docRef.id,
         name: name,
         icon: icon,
+        ownerUserId: userId,
         orderIndex: nextOrderIndex, // Return with index
         lastUsedTimestamp: null);
   }
