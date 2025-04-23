@@ -5,6 +5,7 @@ import '../models/review.dart';
 import '../models/comment.dart';
 import '../models/reel.dart';
 import '../models/user_category.dart';
+import '../models/public_experience.dart';
 
 /// Service for managing Experience-related operations
 class ExperienceService {
@@ -20,6 +21,8 @@ class ExperienceService {
       _firestore.collection('comments');
   CollectionReference get _reelsCollection => _firestore.collection('reels');
   CollectionReference get _usersCollection => _firestore.collection('users');
+  CollectionReference get _publicExperiencesCollection =>
+      _firestore.collection('public_experiences');
 
   // User-related operations
   String? get _currentUserId => _auth.currentUser?.uid;
@@ -261,6 +264,90 @@ class ExperienceService {
       }
     } else {
       print("No valid category order updates found in the provided list.");
+    }
+  }
+
+  // ======= Public Experience Operations =======
+
+  /// Finds a single PublicExperience document by its Google Place ID.
+  /// Returns null if no matching document is found.
+  Future<PublicExperience?> findPublicExperienceByPlaceId(
+      String placeId) async {
+    if (placeId.isEmpty) {
+      print("findPublicExperienceByPlaceId: Provided placeId is empty.");
+      return null;
+    }
+    try {
+      print("findPublicExperienceByPlaceId: Searching for placeId: $placeId");
+      final snapshot = await _publicExperiencesCollection
+          .where('placeID', isEqualTo: placeId)
+          .limit(1)
+          .get();
+
+      if (snapshot.docs.isNotEmpty) {
+        final doc = snapshot.docs.first;
+        print(
+            "findPublicExperienceByPlaceId: Found existing public experience with ID: ${doc.id}");
+        return PublicExperience.fromFirestore(doc);
+      } else {
+        print(
+            "findPublicExperienceByPlaceId: No existing public experience found for placeId: $placeId");
+        return null;
+      }
+    } catch (e) {
+      print("Error finding public experience by placeId '$placeId': $e");
+      // Depending on desired behavior, could rethrow or return null
+      return null;
+    }
+  }
+
+  /// Creates a new PublicExperience document in Firestore.
+  Future<String?> createPublicExperience(
+      PublicExperience publicExperience) async {
+    try {
+      print(
+          "createPublicExperience: Attempting to create public experience for placeId: ${publicExperience.placeID}");
+      // We don't store the ID within the document data itself
+      final data = publicExperience.toMap();
+      // Optionally add created/updated timestamps if needed for public experiences
+      // data['createdAt'] = FieldValue.serverTimestamp();
+      // data['updatedAt'] = FieldValue.serverTimestamp();
+
+      final docRef = await _publicExperiencesCollection.add(data);
+      print(
+          "createPublicExperience: Successfully created public experience with ID: ${docRef.id}");
+      return docRef.id;
+    } catch (e) {
+      print(
+          "Error creating public experience for placeId '${publicExperience.placeID}': $e");
+      return null; // Indicate failure
+    }
+  }
+
+  /// Adds new media paths to an existing PublicExperience document's allMediaPaths field.
+  /// Uses arrayUnion to avoid duplicates.
+  Future<bool> addMediaToPublicExperience(
+      String publicExperienceId, List<String> newMediaPaths) async {
+    if (publicExperienceId.isEmpty || newMediaPaths.isEmpty) {
+      print(
+          "addMediaToPublicExperience: Invalid arguments (ID empty: ${publicExperienceId.isEmpty}, paths empty: ${newMediaPaths.isEmpty})");
+      return false;
+    }
+    try {
+      print(
+          "addMediaToPublicExperience: Adding ${newMediaPaths.length} paths to public experience ID: $publicExperienceId");
+      await _publicExperiencesCollection.doc(publicExperienceId).update({
+        'allMediaPaths': FieldValue.arrayUnion(newMediaPaths),
+        // Optionally update an 'updatedAt' timestamp here as well
+        // 'updatedAt': FieldValue.serverTimestamp(),
+      });
+      print(
+          "addMediaToPublicExperience: Successfully updated public experience ID: $publicExperienceId");
+      return true;
+    } catch (e) {
+      print(
+          "Error adding media to public experience ID '$publicExperienceId': $e");
+      return false; // Indicate failure
     }
   }
 

@@ -33,6 +33,7 @@ import 'package:plendy/screens/select_saved_experience_screen.dart';
 import 'receive_share/widgets/instagram_preview_widget.dart'
     as instagram_widget;
 import 'main_screen.dart'; // Add this import
+import '../models/public_experience.dart'; // ADDED Import
 
 // Enum to track the source of the shared content
 enum ShareType { none, yelp, maps, instagram, genericUrl, image, video, file }
@@ -352,8 +353,6 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             _yelpPreviewFutures.clear();
             // Process the new content
             _processSharedContent(_currentSharedFiles);
-            // Show a notification
-            _showSnackBar(context, "New content received!");
           });
 
           // Reset intent only if processed (and not iOS)
@@ -594,9 +593,6 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
         // Fill the form with the retrieved data
         _fillFormWithGoogleMapsData(location, placeName, websiteUrl, url);
-
-        // Show success message
-        _showSnackBar(context, 'Location added from Google Maps');
       } else {
         print('🗺️ MAPS ERROR: Failed to extract location data from URL');
         // Show error message if desired
@@ -1641,6 +1637,21 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           print(
               "SAVE_DEBUG: Processing card ${card.id}. ExistingExperienceId: ${card.existingExperienceId}");
 
+          // --- Extract necessary info for both Experience and PublicExperience ---
+          final String placeId = card.selectedLocation?.placeId ?? '';
+          final Location? cardLocation = card.selectedLocation;
+          final String cardTitle = card.titleController.text;
+          final String cardYelpUrl = card.yelpUrlController.text.trim();
+          final String cardWebsite = card.websiteController.text.trim();
+          final String notes = card.notesController.text.trim();
+          final String categoryNameToSave = card.selectedcategory!;
+
+          // Validate Place ID for Public Experience logic
+          bool canProcessPublicExperience =
+              placeId.isNotEmpty && cardLocation != null;
+          print(
+              "SAVE_DEBUG: Can process Public Experience (PlaceID: '$placeId'): $canProcessPublicExperience");
+
           final Location defaultLocation = Location(
             latitude: 0.0,
             longitude: 0.0,
@@ -1648,14 +1659,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           );
 
           final Location locationToSave =
-              (card.locationEnabled && card.selectedLocation != null)
-                  ? card.selectedLocation!
+              (card.locationEnabled && cardLocation != null)
+                  ? cardLocation
                   : defaultLocation;
 
-          final String notes = card.notesController.text.trim();
-
           // RENAMED: Use selectedcategory
-          final String categoryNameToSave = card.selectedcategory!;
+          // final String categoryNameToSave = card.selectedcategory!;
           // UPDATED: Get the full category object using try-catch
           UserCategory? selectedCategoryObject;
           try {
@@ -1666,70 +1675,107 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             selectedCategoryObject = null;
           }
 
+          // --- Handle User's Private Experience (Create or Update) --- START ---
           if (card.existingExperienceId == null ||
               card.existingExperienceId!.isEmpty) {
             // CREATE NEW EXPERIENCE
             Experience newExperience = Experience(
               id: '',
-              name: card.titleController.text,
+              name: cardTitle,
               description:
                   notes.isNotEmpty ? notes : 'Created from shared content',
               location: locationToSave,
-              // RENAMED
               category: categoryNameToSave,
-              yelpUrl: card.yelpUrlController.text.isNotEmpty
-                  ? card.yelpUrlController.text.trim()
-                  : null,
-              website: card.websiteController.text.isNotEmpty
-                  ? card.websiteController.text.trim()
-                  : null,
+              yelpUrl: cardYelpUrl.isNotEmpty ? cardYelpUrl : null,
+              website: cardWebsite.isNotEmpty ? cardWebsite : null,
               additionalNotes: notes.isNotEmpty ? notes : null,
-              sharedMediaPaths: newMediaPaths,
+              sharedMediaPaths:
+                  newMediaPaths, // These are the *current* shared paths
               createdAt: now,
               updatedAt: now,
             );
-
+            print("SAVE_DEBUG: Creating new Experience: ${newExperience.name}");
             await _experienceService.createExperience(newExperience);
             successCount++;
           } else {
             // UPDATE EXISTING EXPERIENCE
+            print(
+                "SAVE_DEBUG: Updating existing Experience ID: ${card.existingExperienceId}");
             Experience? existingExperience = await _experienceService
                 .getExperience(card.existingExperienceId!);
 
             if (existingExperience != null) {
               final Set<String> combinedPathsSet = {
                 ...?existingExperience.sharedMediaPaths,
-                ...newMediaPaths
+                ...newMediaPaths // Combine existing with *current* shared paths
               };
               final List<String> updatedMediaPaths = combinedPathsSet.toList();
 
               Experience updatedExperience = existingExperience.copyWith(
-                name: card.titleController.text,
+                name: cardTitle,
                 location: locationToSave,
-                // RENAMED
                 category: categoryNameToSave,
-                yelpUrl: card.yelpUrlController.text.isNotEmpty
-                    ? card.yelpUrlController.text.trim()
-                    : null,
-                website: card.websiteController.text.isNotEmpty
-                    ? card.websiteController.text.trim()
-                    : null,
+                yelpUrl: cardYelpUrl.isNotEmpty ? cardYelpUrl : null,
+                website: cardWebsite.isNotEmpty ? cardWebsite : null,
                 description:
                     notes.isNotEmpty ? notes : existingExperience.description,
                 additionalNotes: notes.isNotEmpty ? notes : null,
-                sharedMediaPaths: updatedMediaPaths,
+                sharedMediaPaths: updatedMediaPaths, // Use combined paths
                 updatedAt: now,
               );
-
+              print(
+                  "SAVE_DEBUG: Updating Experience: ${updatedExperience.name}");
               await _experienceService.updateExperience(updatedExperience);
               updateCount++;
             } else {
               print(
                   'Error: Could not find existing experience with ID: ${card.existingExperienceId}');
-              errors.add(
-                  'Could not update "${card.titleController.text}" (not found).');
+              errors.add('Could not update "$cardTitle" (not found).');
             }
           }
+          // --- Handle User's Private Experience (Create or Update) --- END ---
+
+          // --- Handle Public Experience (Create or Update Media) --- START ---
+          if (canProcessPublicExperience) {
+            print(
+                "SAVE_DEBUG: Processing Public Experience logic for PlaceID: $placeId");
+            // Find existing public experience by placeId
+            PublicExperience? existingPublicExp =
+                await _experienceService.findPublicExperienceByPlaceId(placeId);
+
+            if (existingPublicExp == null) {
+              // CREATE Public Experience
+              print(
+                  "SAVE_DEBUG: No existing Public Experience found. Creating new one.");
+              // Use location's display name for public experience name
+              String publicName = cardLocation.getPlaceName();
+
+              PublicExperience newPublicExperience = PublicExperience(
+                id: '', // ID will be generated by Firestore
+                name: publicName,
+                location: cardLocation,
+                placeID: placeId,
+                yelpUrl: cardYelpUrl.isNotEmpty ? cardYelpUrl : null,
+                website: cardWebsite.isNotEmpty ? cardWebsite : null,
+                allMediaPaths:
+                    newMediaPaths, // Start with the current shared paths
+              );
+              print("SAVE_DEBUG: Creating Public Experience: $publicName");
+              await _experienceService
+                  .createPublicExperience(newPublicExperience);
+            } else {
+              // UPDATE Public Experience (add media paths)
+              print(
+                  "SAVE_DEBUG: Found existing Public Experience ID: ${existingPublicExp.id}. Adding media paths.");
+              await _experienceService.addMediaToPublicExperience(
+                  existingPublicExp.id, newMediaPaths);
+            }
+          } else {
+            print(
+                "SAVE_DEBUG: Skipping Public Experience logic due to missing PlaceID or Location.");
+          }
+          // --- Handle Public Experience (Create or Update Media) --- END ---
+
           // ADDED: Update timestamp for the selected category AFTER successful save/update
           if (selectedCategoryObject != null) {
             try {
@@ -2044,10 +2090,6 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             card.id, // Use the card's unique ID to find it
             selectedExperience,
           );
-
-      // Optionally show confirmation
-      _showSnackBar(context, 'Linked to "${selectedExperience.name}"');
-
       // Trigger a rebuild to show updated card form details
       // This setState might not be strictly necessary if the provider update
       // triggers the ExperienceCardForm rebuild correctly via context.watch,
