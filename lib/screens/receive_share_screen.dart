@@ -23,7 +23,6 @@ import 'dart:async';
 import 'package:http/http.dart' as http;
 import 'receive_share/widgets/yelp_preview_widget.dart';
 import 'receive_share/widgets/maps_preview_widget.dart';
-import 'receive_share/widgets/instagram_preview_widget.dart';
 import 'receive_share/widgets/generic_url_preview_widget.dart';
 import 'receive_share/widgets/image_preview_widget.dart';
 import 'package:flutter/services.dart';
@@ -33,6 +32,7 @@ import 'receive_share/widgets/experience_card_form.dart';
 import 'package:plendy/screens/select_saved_experience_screen.dart';
 import 'receive_share/widgets/instagram_preview_widget.dart'
     as instagram_widget;
+import 'main_screen.dart'; // Add this import
 
 // Enum to track the source of the shared content
 enum ShareType { none, yelp, maps, instagram, genericUrl, image, video, file }
@@ -1767,7 +1767,14 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
       _showSnackBar(context, message);
 
-      widget.onCancel();
+      // widget.onCancel(); // OLD: Call the cancel callback
+      // Navigator.pop(context); // OLD: Explicitly pop the current screen
+      // NEW: Navigate to MainScreen and remove all routes until
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (context) => const MainScreen()),
+        (Route<dynamic> route) => false, // Remove all routes
+      );
     } catch (e) {
       print('Error saving experiences: $e');
       _showSnackBar(context, 'Error saving experiences: $e');
