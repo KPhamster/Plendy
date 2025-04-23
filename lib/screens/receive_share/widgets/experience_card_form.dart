@@ -200,7 +200,11 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
     // Use renamed parameter and class
     final matchingCategory = widget.userCategories.firstWhere(
       (category) => category.name == selectedName,
-      orElse: () => UserCategory(id: '', name: '', icon: '❓'), // Fallback
+      orElse: () => UserCategory(
+          id: '',
+          name: '',
+          icon: '❓',
+          ownerUserId: ''), // Fallback with ownerUserId
     );
     return matchingCategory.icon;
   }

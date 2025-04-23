@@ -477,7 +477,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                           orElse: () => UserCategory(
                               id: '',
                               name: suggestion.category,
-                              icon: '❓') // Fallback
+                              icon: '❓',
+                              ownerUserId: '') // Fallback
                           );
 
                       // Await result and refresh if needed
@@ -550,7 +551,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     final categoryIcon = _categories
         .firstWhere((cat) => cat.name == experience.category,
             orElse: () =>
-                UserCategory(id: '', name: '', icon: '❓') // Default icon
+                UserCategory(id: '', name: '', icon: '❓', ownerUserId: '') // Default icon
             )
         .icon;
 
@@ -633,7 +634,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         final category = _categories.firstWhere(
             (cat) => cat.name == experience.category,
             orElse: () => UserCategory(
-                id: '', name: experience.category, icon: '❓') // Fallback
+                id: '', name: experience.category, icon: '❓', ownerUserId: '') // Fallback
             );
 
         // Await result and refresh if needed
