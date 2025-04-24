@@ -652,16 +652,15 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
 
         // The body is the NestedScrollView, wrapped with AnnotatedRegion
         body: AnnotatedRegion<SystemUiOverlayStyle>(
-          // Conditionally set the style based on scroll position
+          // Only control icon brightness based on scroll position
           value: _isStatusBarLight
               ? SystemUiOverlayStyle.light.copyWith(
-                  statusBarColor: Colors.transparent,
+                  // Use default transparent background
                   statusBarIconBrightness: Brightness.light,
                   statusBarBrightness: Brightness.dark, // For iOS
                 )
               : SystemUiOverlayStyle.dark.copyWith(
-                  statusBarColor:
-                      Colors.transparent, // Keep background transparent
+                  // Use default transparent background
                   statusBarIconBrightness: Brightness.dark,
                   statusBarBrightness: Brightness.light, // For iOS
                 ),
@@ -1822,21 +1821,15 @@ class _SliverAppBarDelegate extends SliverPersistentHeaderDelegate {
   @override
   Widget build(
       BuildContext context, double shrinkOffset, bool overlapsContent) {
-    // Get status bar height
-    final double statusBarHeight = MediaQuery.of(context).padding.top;
-
-    // Wrap in Column to add padding above TabBar
-    return Column(
-      children: [
-        // Space for status bar
-        SizedBox(height: statusBarHeight * 0.7),
-        // Container for TabBar background and the TabBar itself
-        Container(
-          color: Theme.of(context)
-              .scaffoldBackgroundColor, // Background for TabBar area
-          child: _tabBar,
-        ),
-      ],
+    // Return a container that fills the delegate's space
+    return Container(
+      color: Theme.of(context)
+          .scaffoldBackgroundColor, // Background for the whole pinned area
+      // Align the TabBar to the bottom of this container
+      child: Align(
+        alignment: Alignment.bottomCenter,
+        child: _tabBar, // Place the actual TabBar here
+      ),
     );
   }
 
