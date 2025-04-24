@@ -990,6 +990,15 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
             formattedParking, // Use pre-formatted value
             showLabel: false, // HIDE label
           ),
+          // --- ADDED Notes Row ---
+          _buildDetailRow(
+            context,
+            Icons.notes, // CHANGED Icon to match modal
+            'Notes',
+            experience.additionalNotes, // Use the field directly
+            showLabel: false, // HIDE label
+          ),
+          // --- END Notes Row ---
         ],
       ),
     );
