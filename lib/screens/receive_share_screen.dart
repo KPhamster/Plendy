@@ -34,6 +34,8 @@ import 'receive_share/widgets/instagram_preview_widget.dart'
     as instagram_widget;
 import 'main_screen.dart'; // Add this import
 import '../models/public_experience.dart'; // ADDED Import
+// ADDED: Import AuthService
+import '../services/auth_service.dart';
 
 // Enum to track the source of the shared content
 enum ShareType { none, yelp, maps, instagram, genericUrl, image, video, file }
@@ -128,6 +130,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   final ExperienceService _experienceService = ExperienceService();
   final GoogleMapsService _mapsService = GoogleMapsService();
   final SharingService _sharingService = SharingService();
+  // ADDED: AuthService instance
+  final AuthService _authService = AuthService();
 
   // Remove local experience card list - managed by Provider now
   // List<ExperienceCardData> _experienceCards = [];
@@ -1595,6 +1599,14 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     }
     // --- END ADDED ---
 
+    // ADDED: Get current user ID
+    final String? currentUserId = _authService.currentUser?.uid;
+    if (currentUserId == null) {
+      _showSnackBar(
+          context, 'Error: Could not identify user. Please log in again.');
+      return;
+    }
+
     bool allValid = true;
     for (var card in experienceCards) {
       if (!card.formKey.currentState!.validate()) {
@@ -1698,6 +1710,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                   newMediaPaths, // These are the *current* shared paths
               createdAt: now,
               updatedAt: now,
+              // Initialize editor list with the current user
+              editorUserIds: [currentUserId],
             );
             print("SAVE_DEBUG: Creating new Experience: ${newExperience.name}");
             await _experienceService.createExperience(newExperience);

@@ -29,6 +29,10 @@ import 'receive_share/widgets/instagram_preview_widget.dart'
     as instagram_widget;
 // ADDED: Import for FontAwesomeIcons
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+// ADDED: Import AuthService (adjust path if necessary)
+import '../services/auth_service.dart';
+// ADDED: Import the new edit modal (we will create this file next)
+import '../widgets/edit_experience_modal.dart';
 
 // Convert to StatefulWidget
 class ExperiencePageScreen extends StatefulWidget {
@@ -74,8 +78,16 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   // Services
   final _googleMapsService = GoogleMapsService();
   final _experienceService = ExperienceService(); // ADDED
+  // ADDED: AuthService instance
+  final _authService = AuthService();
   // REMOVED: Dio instance
   // final _dio = Dio();
+
+  // ADDED: State for current user ID and categories
+  String? _currentUserId;
+  bool _isLoadingAuth = true;
+  List<UserCategory> _userCategories = [];
+  bool _isLoadingCategories = false; // Separate loading for categories
 
   // REMOVED: Instagram Credentials
   // String? _instagramAppId;
@@ -97,6 +109,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     _fetchPlaceDetails();
     _fetchReviews(); // Fetch reviews on init
     _fetchComments(); // Fetch comments on init
+    _loadCurrentUserAndCategories(); // Fetch current user and categories
     // TODO: Fetch comment count if needed
   }
 
@@ -228,6 +241,137 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   // REMOVED: Helper to fetch Instagram Thumbnail
   // Future<String?> _fetchInstagramThumbnailUrl(String reelUrl) async { ... }
   // --- END Instagram Thumbnail Helper ---
+
+  // ADDED: Method to fetch current user ID and categories
+  Future<void> _loadCurrentUserAndCategories() async {
+    if (!mounted) return;
+    setState(() {
+      _isLoadingAuth = true;
+      _isLoadingCategories = true;
+    });
+    try {
+      final userId = _authService.currentUser?.uid;
+      if (mounted) {
+        setState(() {
+          _currentUserId = userId;
+          _isLoadingAuth = false;
+        });
+      }
+    } catch (e) {
+      print("Error getting current user ID: $e");
+      if (mounted) {
+        setState(() {
+          _isLoadingAuth = false; // Stop loading even on error
+        });
+        // Optionally show error
+      }
+    }
+
+    try {
+      // Fetch categories only if user ID was obtained (or handle public categories)
+      if (_currentUserId != null) {
+        final categories = await _experienceService.getUserCategories();
+        if (mounted) {
+          setState(() {
+            _userCategories = categories;
+            _isLoadingCategories = false;
+          });
+        }
+      } else {
+        // Handle case where user ID is null (e.g., fetch public categories or leave empty)
+        if (mounted) {
+          setState(() {
+            _isLoadingCategories = false;
+          });
+        }
+      }
+    } catch (e) {
+      print("Error loading user categories: $e");
+      if (mounted) {
+        setState(() {
+          _isLoadingCategories = false; // Stop loading even on error
+        });
+        // Optionally show error
+      }
+    }
+  }
+
+  // ADDED: Helper to determine if the current user can edit
+  bool _canEditExperience() {
+    if (_isLoadingAuth || _currentUserId == null) {
+      return false; // Can't edit if loading or not logged in
+    }
+    // Check if current user is the owner
+    // return _currentExperience.ownerUserId == _currentUserId; // OLD Check
+    // NEW Check: See if current user ID is in the list of editors
+    return _currentExperience.editorUserIds.contains(_currentUserId);
+    // TODO: Add logic here later to check SharePermission for edit access
+    // if (isOwner) return true;
+    // else { Check share permissions... }
+  }
+
+  // ADDED: Method stub to show the edit modal
+  Future<void> _showEditExperienceModal() async {
+    if (!_canEditExperience() || _isLoadingCategories) {
+      print(
+          "Cannot edit: User doesn't have permission or categories not loaded.");
+      return; // Prevent opening if not allowed or categories loading
+    }
+
+    final result = await showModalBottomSheet<Experience?>(
+      context: context,
+      isScrollControlled: true, // Important for keyboard handling
+      shape: const RoundedRectangleBorder(
+        // Optional: Rounded corners
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) {
+        // Pass the current experience and loaded categories
+        return EditExperienceModal(
+          experience: _currentExperience,
+          userCategories: _userCategories,
+        );
+      },
+    );
+
+    // Handle the result from the modal
+    if (result != null && mounted) {
+      print("Edit modal returned updated experience. Saving...");
+      // Optimistic update locally first? Or wait for save? Let's wait.
+      setState(() {
+        _isLoadingExperience = true; // Show loading indicator
+      });
+      try {
+        // Save the updated experience using the service
+        await _experienceService.updateExperience(result);
+
+        // Refresh the full experience data on the screen
+        await _refreshExperienceData(); // This handles setting loading state
+
+        // Set flag for popping result
+        setState(() {
+          _didDataChange = true;
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Experience updated successfully!')),
+        );
+      } catch (e) {
+        print("Error saving updated experience: $e");
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Error saving changes: $e')),
+          );
+          // Revert loading state if save fails
+          setState(() {
+            _isLoadingExperience = false;
+          });
+        }
+      }
+    } else {
+      print("Edit modal was cancelled or returned null.");
+    }
+  }
 
   // Helper method to build the header section (now uses widget.experience)
   Widget _buildHeader(BuildContext context, Experience experience) {
@@ -545,21 +689,21 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     // Helper to safely get data from the details map
     dynamic getDetail(String key) {
       // ADDED: Log what we are looking for and if the map exists
-      print(
-          '  🔍 getDetail: Looking for key "$key". placeDetails is ${placeDetails == null ? 'NULL' : 'NOT NULL'}');
+      // print(
+      //     '  🔍 getDetail: Looking for key "$key". placeDetails is ${placeDetails == null ? 'NULL' : 'NOT NULL'}');
 
       if (placeDetails == null) return null;
 
       final value = placeDetails[key];
       // ADDED: Log the found value (or lack thereof)
-      print(
-          '  🔍 getDetail: Found value for "$key": ${value == null ? 'NULL' : value.runtimeType}');
+      // print(
+      //     '  🔍 getDetail: Found value for "$key": ${value == null ? 'NULL' : value.runtimeType}');
 
       // Basic check for nested text field (like editorialSummary)
       if (key == 'editorialSummary' &&
           value is Map &&
           value.containsKey('text')) {
-        print('  🔍 getDetail: Extracted text for editorialSummary');
+        // print('  🔍 getDetail: Extracted text for editorialSummary');
         return value['text'] as String?;
       }
 
@@ -570,8 +714,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     // Basic formatting for boolean reservable field
     String formatReservable(dynamic reservableValue) {
       // ADDED: Log input to formatter
-      print(
-          '    🔄 formatReservable: Input value: $reservableValue (${reservableValue?.runtimeType})');
+      // print(
+      //     '    🔄 formatReservable: Input value: $reservableValue (${reservableValue?.runtimeType})');
       if (reservableValue == null)
         return 'Not specified'; // Changed from Not available
       // Handle String 'true'/'false' in case toString() was used in getDetail
@@ -583,17 +727,17 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       if (reservableValue is bool) {
         return reservableValue ? 'Takes reservations' : 'No reservations';
       }
-      print('    ⚠️ formatReservable: Unexpected type, returning raw.');
+      // print('    ⚠️ formatReservable: Unexpected type, returning raw.');
       return reservableValue.toString(); // Fallback
     }
 
     // Formatting for Hours
     String formatHours(dynamic hoursValue) {
       // ADDED: Log input to formatter
-      print('    🔄 formatHours: Input value type: ${hoursValue?.runtimeType}');
+      // print('    🔄 formatHours: Input value type: ${hoursValue?.runtimeType}');
       // Check if data is available and is a Map
       if (hoursValue == null || hoursValue is! Map) {
-        print('    ⚠️ formatHours: Input is null or not a Map.');
+        // print('    ⚠️ formatHours: Input is null or not a Map.');
         return 'Not available';
       }
 
@@ -603,19 +747,19 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
           (hoursValue['weekdayDescriptions'] as List).isNotEmpty) {
         final descriptions =
             (hoursValue['weekdayDescriptions'] as List).join('\n');
-        print('    ✅ formatHours: Using weekdayDescriptions.');
+        // print('    ✅ formatHours: Using weekdayDescriptions.');
         return descriptions;
       }
 
       // Fallback: Check openNow status if available
       if (hoursValue.containsKey('openNow') && hoursValue['openNow'] is bool) {
         final isOpen = hoursValue['openNow'] as bool;
-        print('    ✅ formatHours: Using openNow status ($isOpen).');
+        // print('    ✅ formatHours: Using openNow status ($isOpen).');
         return isOpen
             ? 'Open now (details unavailable)'
             : 'Closed now (details unavailable)';
       }
-      print('    ⚠️ formatHours: No useful hour info found in Map.');
+      // print('    ⚠️ formatHours: No useful hour info found in Map.');
       // If no useful info found
       return 'Hours details unavailable';
     }
@@ -623,11 +767,11 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     // Formatting for Parking
     String formatParking(dynamic parkingValue) {
       // ADDED: Log input to formatter
-      print(
-          '    🔄 formatParking: Input value type: ${parkingValue?.runtimeType}');
+      // print(
+      //     '    🔄 formatParking: Input value type: ${parkingValue?.runtimeType}');
       // Check if data is available and is a Map
       if (parkingValue == null || parkingValue is! Map) {
-        print('    ⚠️ formatParking: Input is null or not a Map.');
+        // print('    ⚠️ formatParking: Input is null or not a Map.');
         return 'Not specified';
       }
 
@@ -649,13 +793,13 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       });
 
       if (options.isEmpty) {
-        print(
-            '    ⚠️ formatParking: No specific parking options found in Map.');
+        // print(
+        //     '    ⚠️ formatParking: No specific parking options found in Map.');
         return 'Parking details not specified';
       }
 
       final result = options.join(', ');
-      print('    ✅ formatParking: Formatted result: $result');
+      // print('    ✅ formatParking: Formatted result: $result');
       return result;
     }
 
@@ -668,15 +812,17 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     final formattedParking = formatParking(getDetail('parkingOptions'));
 
     // ADDED: Log formatted values before building UI
-    print('ℹ️ Building Details Section with Formatted Data:');
-    print('  - Description: $formattedDescription');
-    print('  - Hours: $formattedHours');
-    print('  - Status: $formattedStatus');
-    print('  - Reservable: $formattedReservable');
-    print('  - Parking: $formattedParking');
+    // print('ℹ️ Building Details Section with Formatted Data:');
+    // print('  - Description: $formattedDescription');
+    // print('  - Hours: $formattedHours');
+    // print('  - Status: $formattedStatus');
+    // print('  - Reservable: $formattedReservable');
+    // print('  - Parking: $formattedParking');
 
     // Get Yelp URL (handle null)
     final String? yelpUrl = experience.yelpUrl;
+    // Determine if edit is allowed
+    final bool canEdit = _canEditExperience();
 
     return Container(
       color: Colors.grey[100],
@@ -755,6 +901,57 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                       MaterialTapTargetSize.shrinkWrap, // Reduce tap area
                   padding: const EdgeInsets.all(4), // Adjust padding
                 ),
+                const SizedBox(width: 4), // Spacing
+
+                // --- ADDED Share Button ---
+                ActionChip(
+                  avatar: Icon(
+                    Icons.share_outlined,
+                    color: Colors.blue, // Or another appropriate color
+                    size: 18,
+                  ),
+                  label: const SizedBox.shrink(),
+                  labelPadding: EdgeInsets.zero,
+                  onPressed: () {
+                    // TODO: Implement Share functionality
+                    print('Share button tapped');
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                          content:
+                              Text('Share functionality not implemented yet.')),
+                    );
+                  },
+                  tooltip: 'Share Experience',
+                  backgroundColor: Colors.white,
+                  shape: StadiumBorder(
+                      side: BorderSide(color: Colors.grey.shade300)),
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  padding: const EdgeInsets.all(4),
+                ),
+                const SizedBox(width: 4), // Spacing
+
+                // --- ADDED Edit Button ---
+                ActionChip(
+                  avatar: Icon(
+                    Icons.edit_outlined,
+                    color: canEdit
+                        ? Colors.orange[700]
+                        : Colors.grey, // Dynamic color
+                    size: 18,
+                  ),
+                  label: const SizedBox.shrink(),
+                  labelPadding: EdgeInsets.zero,
+                  // Call _showEditExperienceModal only if canEdit is true
+                  onPressed: canEdit ? _showEditExperienceModal : null,
+                  tooltip:
+                      canEdit ? 'Edit Experience' : 'Cannot Edit (View Only)',
+                  backgroundColor: Colors.white,
+                  shape: StadiumBorder(
+                      side: BorderSide(color: Colors.grey.shade300)),
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  padding: const EdgeInsets.all(4),
+                ),
+                // --- END Added Buttons ---
               ],
             ),
           ),
