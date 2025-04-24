@@ -242,15 +242,22 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
         website: _cardData.websiteController.text.trim().isNotEmpty
             ? _cardData.websiteController.text.trim()
             : null,
-        // Decide how to handle description vs notes
-        description: _cardData.notesController.text
-            .trim(), // Use notes as description? Or keep separate?
-        additionalNotes: _cardData.notesController.text.trim().isNotEmpty
-            ? _cardData.notesController.text.trim()
-            : null, // Or separate logic
+        // Keep original description (don't overwrite with notes)
+        // description: _cardData.notesController.text.trim(),
+        // Explicitly set additionalNotes based on whether the text is empty
+        additionalNotes: _cardData.notesController.text.trim().isEmpty
+            ? null
+            : _cardData.notesController.text.trim(),
         updatedAt: DateTime.now(), // Update timestamp
         // Keep other fields like sharedMediaPaths, ownerUserId, createdAt etc. from original
       );
+
+      // --- DEBUG PRINTS ---
+      print(
+          "EDIT MODAL SAVE: Notes Controller Text: '${_cardData.notesController.text.trim()}'");
+      print(
+          "EDIT MODAL SAVE: updatedExperience.additionalNotes: ${updatedExperience.additionalNotes}");
+      // --- END DEBUG PRINTS ---
 
       Navigator.of(context).pop(updatedExperience); // Return the updated object
     } else {
