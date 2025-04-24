@@ -117,6 +117,7 @@ class Experience {
   final String description;
   final Location location;
   final String category; // RENAMED
+  final List<String> editorUserIds;
 
   // External ratings and links
   final String? yelpUrl;
@@ -149,34 +150,36 @@ class Experience {
   final String? sharedMediaType; // Added for shared content
   final String? additionalNotes; // Added for user notes
 
-  Experience(
-      {required this.id,
-      required this.name,
-      required this.description,
-      required this.location,
-      required this.category, // RENAMED
-      this.yelpUrl,
-      this.yelpRating,
-      this.yelpReviewCount,
-      this.googleUrl,
-      this.googleRating,
-      this.googleReviewCount,
-      this.plendyRating = 0.0,
-      this.plendyReviewCount = 0,
-      this.imageUrls = const [],
-      this.reelIds = const [],
-      this.followerIds = const [],
-      this.rating = 0.0, // Added
-      required this.createdAt,
-      required this.updatedAt,
-      this.website,
-      this.phoneNumber,
-      this.openingHours,
-      this.tags,
-      this.priceRange,
-      this.sharedMediaPaths, // Added
-      this.sharedMediaType, // Added
-      this.additionalNotes});
+  Experience({
+    required this.id,
+    required this.name,
+    required this.description,
+    required this.location,
+    required this.category, // RENAMED
+    this.yelpUrl,
+    this.yelpRating,
+    this.yelpReviewCount,
+    this.googleUrl,
+    this.googleRating,
+    this.googleReviewCount,
+    this.plendyRating = 0.0,
+    this.plendyReviewCount = 0,
+    this.imageUrls = const [],
+    this.reelIds = const [],
+    this.followerIds = const [],
+    this.rating = 0.0, // Added
+    required this.createdAt,
+    required this.updatedAt,
+    this.website,
+    this.phoneNumber,
+    this.openingHours,
+    this.tags,
+    this.priceRange,
+    this.sharedMediaPaths, // Added
+    this.sharedMediaType, // Added
+    this.additionalNotes,
+    required this.editorUserIds,
+  });
 
   /// Creates an Experience from a Firestore document
   factory Experience.fromFirestore(DocumentSnapshot doc) {
@@ -210,6 +213,7 @@ class Experience {
       sharedMediaPaths: _parseStringList(data['sharedMediaPaths']), // Added
       sharedMediaType: data['sharedMediaType'], // Added
       additionalNotes: data['additionalNotes'], // Added
+      editorUserIds: _parseStringList(data['editorUserIds']),
     );
   }
 
@@ -220,6 +224,7 @@ class Experience {
       'description': description,
       'location': location.toMap(),
       'category': category, // RENAMED field for Firestore
+      'editorUserIds': editorUserIds,
       'yelpUrl': yelpUrl,
       'yelpRating': yelpRating,
       'yelpReviewCount': yelpReviewCount,
@@ -272,6 +277,7 @@ class Experience {
     List<String>? sharedMediaPaths, // Added
     String? sharedMediaType, // Added
     String? additionalNotes, // Added
+    List<String>? editorUserIds,
   }) {
     return Experience(
       id: id,
@@ -301,6 +307,7 @@ class Experience {
       sharedMediaPaths: sharedMediaPaths ?? this.sharedMediaPaths, // Added
       sharedMediaType: sharedMediaType ?? this.sharedMediaType, // Added
       additionalNotes: additionalNotes ?? this.additionalNotes, // Added
+      editorUserIds: editorUserIds ?? this.editorUserIds,
     );
   }
 
