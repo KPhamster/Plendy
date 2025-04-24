@@ -156,7 +156,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     // Show new snackbar
     _activeSnackBar = ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
+      SnackBar(
+        content: Text(message),
+        duration: Duration(seconds: 1), // Set duration to 1 second
+      ),
     );
   }
 
