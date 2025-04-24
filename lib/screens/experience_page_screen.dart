@@ -33,6 +33,8 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../services/auth_service.dart';
 // ADDED: Import the new edit modal (we will create this file next)
 import '../widgets/edit_experience_modal.dart';
+// ADDED: Import for SystemUiOverlayStyle
+import 'package:flutter/services.dart';
 
 // Convert to StatefulWidget
 class ExperiencePageScreen extends StatefulWidget {
@@ -89,6 +91,12 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   List<UserCategory> _userCategories = [];
   bool _isLoadingCategories = false; // Separate loading for categories
 
+  // --- ADDED: Scroll controller and status bar state ---
+  late ScrollController _scrollController;
+  bool _isStatusBarLight = true; // Start with light icons
+  final double _headerHeight = 320.0; // Match the header height
+  // --- END ADDED ---
+
   // REMOVED: Instagram Credentials
   // String? _instagramAppId;
   // String? _instagramClientToken;
@@ -106,6 +114,12 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
         TabController(length: 3, vsync: this); // Initialize TabController
     // REMOVED: Call to load Instagram credentials
     // _loadInstagramCredentials();
+
+    // --- ADDED: Initialize ScrollController and add listener ---
+    _scrollController = ScrollController();
+    _scrollController.addListener(_scrollListener);
+    // --- END ADDED ---
+
     _fetchPlaceDetails();
     _fetchReviews(); // Fetch reviews on init
     _fetchComments(); // Fetch comments on init
@@ -113,9 +127,35 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     // TODO: Fetch comment count if needed
   }
 
+  // --- ADDED: Scroll Listener ---
+  void _scrollListener() {
+    // Calculate a threshold. E.g., when header is mostly scrolled off.
+    // Adjust kToolbarHeight based on actual visual needs.
+    final threshold =
+        _headerHeight - kToolbarHeight - MediaQuery.of(context).padding.top;
+    final offset = _scrollController.offset;
+
+    if (offset > threshold && _isStatusBarLight) {
+      // Scrolled past threshold, need dark icons
+      setState(() {
+        _isStatusBarLight = false;
+      });
+    } else if (offset <= threshold && !_isStatusBarLight) {
+      // Scrolled back up above threshold, need light icons
+      setState(() {
+        _isStatusBarLight = true;
+      });
+    }
+  }
+  // --- END ADDED ---
+
   @override
   void dispose() {
     _tabController.dispose(); // Dispose TabController
+    // --- ADDED: Remove listener and dispose controller ---
+    _scrollController.removeListener(_scrollListener);
+    _scrollController.dispose();
+    // --- END ADDED ---
     super.dispose();
   }
 
@@ -425,6 +465,28 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
             ),
           ),
 
+          // --- ADDED: Positioned Back Button ---
+          Positioned(
+            // Position accounting for status bar height + padding
+            top: MediaQuery.of(context).padding.top + 8.0,
+            left: 8.0,
+            child: Container(
+              // Copied from SliverAppBar leading
+              margin:
+                  const EdgeInsets.all(0), // No margin needed when positioned
+              decoration: BoxDecoration(
+                color: Colors.black
+                    .withOpacity(0.4), // Slightly darker for visibility?
+                shape: BoxShape.circle,
+              ),
+              child: BackButton(
+                color: Colors.white,
+                onPressed: () => Navigator.of(context).pop(_didDataChange),
+              ),
+            ),
+          ),
+          // --- END: Positioned Back Button ---
+
           // 3. Content (Positioned to add padding)
           Positioned(
             bottom: 0,
@@ -570,6 +632,14 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       );
     }
 
+    // Calculate tab counts (moved from _buildTabbedContentSection)
+    final instagramMediaPaths = (_currentExperience.sharedMediaPaths ?? [])
+        .where((path) => path.toLowerCase().contains('instagram.com'))
+        .toList();
+    final mediaCount = instagramMediaPaths.length;
+    final reviewCount = _isLoadingReviews ? '...' : _reviews.length.toString();
+    final commentCount = _isLoadingComments ? '...' : _commentCount.toString();
+
     // Wrap main Scaffold with WillPopScope
     return WillPopScope(
       onWillPop: () async {
@@ -577,44 +647,87 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
         return false;
       },
       child: Scaffold(
-        // Revert AppBar to be transparent and behind body
-        extendBodyBehindAppBar: true,
-        appBar: AppBar(
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          leading: Container(
-            // Keep custom leading button
-            margin: const EdgeInsets.all(8.0),
-            decoration: BoxDecoration(
-              color: Colors.black.withOpacity(0.3),
-              shape: BoxShape.circle,
+        // No AppBar needed here anymore
+        // appBar: AppBar(...),
+
+        // The body is the NestedScrollView, wrapped with AnnotatedRegion
+        body: AnnotatedRegion<SystemUiOverlayStyle>(
+          // Conditionally set the style based on scroll position
+          value: _isStatusBarLight
+              ? SystemUiOverlayStyle.light.copyWith(
+                  statusBarColor: Colors.transparent,
+                  statusBarIconBrightness: Brightness.light,
+                  statusBarBrightness: Brightness.dark, // For iOS
+                )
+              : SystemUiOverlayStyle.dark.copyWith(
+                  statusBarColor:
+                      Colors.transparent, // Keep background transparent
+                  statusBarIconBrightness: Brightness.dark,
+                  statusBarBrightness: Brightness.light, // For iOS
+                ),
+          child: NestedScrollView(
+            // --- ADDED: Attach ScrollController ---
+            controller: _scrollController,
+            // --- END ADDED ---
+            headerSliverBuilder:
+                (BuildContext context, bool innerBoxIsScrolled) {
+              // These are the slivers that show up in the "app bar" area.
+              return <Widget>[
+                // --- Header Section (remains the same) ---
+                SliverToBoxAdapter(
+                  child: _buildHeader(context, _currentExperience),
+                ),
+                // --- Details Section ---
+                SliverToBoxAdapter(
+                  child: Column(
+                    children: [
+                      const Divider(),
+                      _buildDynamicDetailsSection(context),
+                      const Divider(),
+                      _buildQuickActionsSection(context, _placeDetailsData,
+                          _currentExperience.location),
+                      const Divider(),
+                    ],
+                  ),
+                ),
+                // --- Sticky TabBar ---
+                SliverPersistentHeader(
+                  delegate: _SliverAppBarDelegate(
+                    TabBar(
+                      controller: _tabController,
+                      labelColor: Theme.of(context).primaryColor,
+                      unselectedLabelColor: Colors.grey[600],
+                      indicatorColor: Theme.of(context).primaryColor,
+                      tabs: [
+                        Tab(
+                          icon: Icon(Icons.photo_library_outlined),
+                          text: 'Media ($mediaCount)',
+                        ),
+                        Tab(
+                          icon: Icon(Icons.star_border_outlined),
+                          text: 'Reviews ($reviewCount)',
+                        ),
+                        Tab(
+                          icon: Icon(Icons.comment_outlined),
+                          text: 'Comments ($commentCount)',
+                        ),
+                      ],
+                    ),
+                  ),
+                  pinned: true, // Make the TabBar stick
+                ),
+              ];
+            },
+            // --- Body (TabBarView) ---
+            body: TabBarView(
+              controller: _tabController,
+              children: [
+                // Pass all paths, filtering happens inside _buildMediaTab
+                _buildMediaTab(context, _currentExperience.sharedMediaPaths),
+                _buildReviewsTab(context),
+                _buildCommentsTab(context),
+              ],
             ),
-            child: BackButton(
-              color: Colors.white,
-              // Pop with the change status - Handled by WillPopScope + this button
-              onPressed: () => Navigator.of(context).pop(_didDataChange),
-            ),
-          ),
-          // Remove the explicit title added in the previous step
-          title: null,
-        ),
-        body: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Pass _currentExperience to header builder
-              _buildHeader(context, _currentExperience),
-              const Divider(),
-              // Build details section based on loading/error state
-              _buildDynamicDetailsSection(context),
-              const Divider(),
-              // ADDED: Quick Actions Section
-              _buildQuickActionsSection(
-                  context, _placeDetailsData, _currentExperience.location),
-              const Divider(),
-              // ADDED: Tabbed Content Section
-              _buildTabbedContentSection(context),
-            ],
           ),
         ),
       ),
@@ -1303,159 +1416,128 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
 
   // Builds the Media Tab, now including a fullscreen button
   Widget _buildMediaTab(BuildContext context, List<String>? mediaPaths) {
-    // Filter for Instagram URLs first
     final instagramUrls = (mediaPaths ?? [])
         .where((path) => path.toLowerCase().contains('instagram.com'))
         .toList();
-
-    // Reverse the list to show most recently added first
     final reversedInstagramUrls = instagramUrls.reversed.toList();
 
-    // Use the reversed list for checking emptiness
     if (reversedInstagramUrls.isEmpty) {
       return const Center(
           child: Text('No Instagram posts shared for this experience.'));
     }
 
-    // Return a Column containing the button and the list
-    return Column(
-      children: [
-        // Fullscreen Button
-        Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 16.0),
-          child: Align(
-            alignment: Alignment.centerRight,
-            child: TextButton.icon(
-              icon: const Icon(Icons.fullscreen, size: 20.0),
-              label: const Text('View Fullscreen'),
-              style: TextButton.styleFrom(
-                // Optional: Adjust text style/padding
-                padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                textStyle: TextStyle(fontSize: 13),
-              ),
-              onPressed: () async {
-                // Make onPressed async
-                // Navigate and wait for result
-                final result = await Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => MediaFullscreenScreen(
-                      instagramUrls: reversedInstagramUrls,
-                      launchUrlCallback: _launchUrl,
-                      // Pass _currentExperience and service
-                      experience: _currentExperience,
-                      experienceService: _experienceService,
-                    ),
+    // IMPORTANT: Use a ListView directly here, not nested in Column/Expanded
+    // NestedScrollView handles the overall scrolling.
+    return ListView.builder(
+      padding: const EdgeInsets.all(16.0), // Add padding here
+      itemCount: reversedInstagramUrls.length,
+      itemBuilder: (context, index) {
+        final url = reversedInstagramUrls[index];
+        // Keep the Column for layout *within* the list item
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 24.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              // Fullscreen Button (Now inside the list item, maybe move outside?)
+              // Or maybe keep it per item if that makes sense?
+              // For now, keep it per item to minimize changes
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  icon: const Icon(Icons.fullscreen, size: 20.0),
+                  label: const Text('View Fullscreen'),
+                  style: TextButton.styleFrom(
+                    padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    textStyle: TextStyle(fontSize: 13),
                   ),
-                );
-                // Refresh data if fullscreen indicated deletion
-                if (result == true && mounted) {
-                  await _refreshExperienceData();
-                  // Set flag to signal change on pop
-                  setState(() {
-                    _didDataChange = true;
-                  });
-                }
-              },
-            ),
-          ),
-        ),
-        // The scrollable list (needs Expanded to fill remaining space)
-        Expanded(
-          child: ListView.builder(
-            // Removed vertical padding, handled by Column/Button padding
-            padding: const EdgeInsets.symmetric(horizontal: 16.0),
-            // Use the reversed list length
-            itemCount: reversedInstagramUrls.length,
-            itemBuilder: (context, index) {
-              // Use the reversed list to get URL
-              final url = reversedInstagramUrls[index];
-              // Use a Column to place the number above the card
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 24.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    // Display the number inside a bubble
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 8.0),
-                      child: CircleAvatar(
-                        radius: 14,
-                        backgroundColor:
-                            Theme.of(context).primaryColor.withOpacity(0.8),
-                        child: Text(
-                          // Display index sequentially starting from 1
-                          '${index + 1}',
-                          style: TextStyle(
-                            fontSize: 14.0,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white,
-                          ),
+                  onPressed: () async {
+                    final result = await Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => MediaFullscreenScreen(
+                          // Pass only the URL for *this* item? Or all?
+                          // Passing all for now, fullscreen can decide which to show first.
+                          instagramUrls: reversedInstagramUrls,
+                          launchUrlCallback: _launchUrl,
+                          experience: _currentExperience,
+                          experienceService: _experienceService,
                         ),
                       ),
+                    );
+                    if (result == true && mounted) {
+                      await _refreshExperienceData();
+                      setState(() {
+                        _didDataChange = true;
+                      });
+                    }
+                  },
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8.0, top: 4.0),
+                child: CircleAvatar(
+                  radius: 14,
+                  backgroundColor:
+                      Theme.of(context).primaryColor.withOpacity(0.8),
+                  child: Text(
+                    '${index + 1}',
+                    style: TextStyle(
+                      fontSize: 14.0,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
                     ),
-                    // The Card containing the preview
-                    Card(
-                      margin: EdgeInsets.zero,
-                      elevation: 2.0,
-                      clipBehavior: Clip.antiAlias,
-                      child: instagram_widget.InstagramWebView(
-                        url: url,
-                        height: 840.0, // Use fixed height
-                        launchUrlCallback: _launchUrl,
-                        // Add required callbacks (can be empty if not needed)
-                        onWebViewCreated: (controller) {},
-                        onPageFinished: (url) {},
+                  ),
+                ),
+              ),
+              Card(
+                margin: EdgeInsets.zero,
+                elevation: 2.0,
+                clipBehavior: Clip.antiAlias,
+                child: instagram_widget.InstagramWebView(
+                  url: url,
+                  height: 840.0,
+                  launchUrlCallback: _launchUrl,
+                  onWebViewCreated: (controller) {},
+                  onPageFinished: (url) {},
+                ),
+              ),
+              const SizedBox(height: 8),
+              SizedBox(
+                height: 48,
+                child: Stack(
+                  children: [
+                    Align(
+                      alignment: Alignment.center,
+                      child: IconButton(
+                        icon: const Icon(FontAwesomeIcons.instagram),
+                        color: const Color(0xFFE1306C),
+                        iconSize: 32,
+                        tooltip: 'Open in Instagram',
+                        constraints: const BoxConstraints(),
+                        padding: EdgeInsets.zero,
+                        onPressed: () => _launchUrl(url),
                       ),
                     ),
-                    // Add spacing before buttons
-                    const SizedBox(height: 8),
-                    // Buttons Row - REFRACTORED to use Stack for centering
-                    SizedBox(
-                      height:
-                          48, // Provide height constraint for Stack alignment
-                      child: Stack(
-                        children: [
-                          // Instagram Button (Centered)
-                          Align(
-                            alignment: Alignment.center, // Alignment(0.0, 0.0)
-                            child: IconButton(
-                              icon: const Icon(FontAwesomeIcons.instagram),
-                              color: const Color(0xFFE1306C), // Instagram color
-                              iconSize: 32, // Standard size
-                              tooltip: 'Open in Instagram',
-                              constraints: const BoxConstraints(),
-                              padding: EdgeInsets.zero,
-                              onPressed: () => _launchUrl(url),
-                            ),
-                          ),
-                          // Delete Button (Right Edge)
-                          Align(
-                            alignment:
-                                Alignment.centerRight, // Alignment(1.0, 0.0)
-                            child: IconButton(
-                              icon: const Icon(Icons.delete_outline),
-                              iconSize: 24,
-                              color: Colors.red[700],
-                              tooltip: 'Delete Media',
-                              constraints: const BoxConstraints(),
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal:
-                                      12), // Keep some padding from edge
-                              onPressed: () =>
-                                  _deleteMediaPath(url), // Call delete function
-                            ),
-                          ),
-                        ],
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: IconButton(
+                        icon: const Icon(Icons.delete_outline),
+                        iconSize: 24,
+                        color: Colors.red[700],
+                        tooltip: 'Delete Media',
+                        constraints: const BoxConstraints(),
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        onPressed: () => _deleteMediaPath(url),
                       ),
                     ),
                   ],
                 ),
-              );
-            },
+              ),
+            ],
           ),
-        ),
-      ],
+        );
+      },
     );
   }
 
@@ -1715,3 +1797,34 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     }
   }
 }
+
+// --- ADDED Helper class for SliverPersistentHeader (for TabBar) ---
+class _SliverAppBarDelegate extends SliverPersistentHeaderDelegate {
+  _SliverAppBarDelegate(this._tabBar);
+
+  final TabBar _tabBar;
+
+  @override
+  double get minExtent => _tabBar.preferredSize.height;
+  @override
+  double get maxExtent => _tabBar.preferredSize.height;
+
+  @override
+  Widget build(
+      BuildContext context, double shrinkOffset, bool overlapsContent) {
+    // Return the TabBar wrapped in a suitable background container
+    // Ensures the background color fills the area behind the tab bar
+    return Container(
+      color: Theme.of(context)
+          .scaffoldBackgroundColor, // Or another desired background
+      child: _tabBar,
+    );
+  }
+
+  @override
+  bool shouldRebuild(_SliverAppBarDelegate oldDelegate) {
+    // Rebuild if the TabBar instance changes
+    return _tabBar != oldDelegate._tabBar;
+  }
+}
+// --- End Helper Class ---
