@@ -2126,6 +2126,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             false, // We handle the leading button manually
         actions: [
           // Add button - only show if not special content
+          /* REMOVED: Add button logic
           if (!_isSpecialUrl(_currentSharedFiles.isNotEmpty
               ? _extractFirstUrl(_currentSharedFiles.first.path) ?? ''
               : '')) // Check if first file content contains a special URL
@@ -2135,6 +2136,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               // Use the corrected method name
               onPressed: _addExperienceCard,
             ),
+          */ // End REMOVED block
         ],
       ),
       body: SafeArea(
