@@ -306,7 +306,7 @@ class Experience {
       priceRange: priceRange ?? this.priceRange,
       sharedMediaPaths: sharedMediaPaths ?? this.sharedMediaPaths, // Added
       sharedMediaType: sharedMediaType ?? this.sharedMediaType, // Added
-      additionalNotes: additionalNotes ?? this.additionalNotes, // Added
+      additionalNotes: additionalNotes,
       editorUserIds: editorUserIds ?? this.editorUserIds,
     );
   }
