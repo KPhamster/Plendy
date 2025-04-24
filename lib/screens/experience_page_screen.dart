@@ -1805,19 +1805,38 @@ class _SliverAppBarDelegate extends SliverPersistentHeaderDelegate {
   final TabBar _tabBar;
 
   @override
-  double get minExtent => _tabBar.preferredSize.height;
+  double get minExtent =>
+      _tabBar.preferredSize.height +
+      MediaQueryData.fromView(
+              WidgetsBinding.instance.platformDispatcher.views.first)
+          .padding
+          .top;
   @override
-  double get maxExtent => _tabBar.preferredSize.height;
+  double get maxExtent =>
+      _tabBar.preferredSize.height +
+      MediaQueryData.fromView(
+              WidgetsBinding.instance.platformDispatcher.views.first)
+          .padding
+          .top;
 
   @override
   Widget build(
       BuildContext context, double shrinkOffset, bool overlapsContent) {
-    // Return the TabBar wrapped in a suitable background container
-    // Ensures the background color fills the area behind the tab bar
-    return Container(
-      color: Theme.of(context)
-          .scaffoldBackgroundColor, // Or another desired background
-      child: _tabBar,
+    // Get status bar height
+    final double statusBarHeight = MediaQuery.of(context).padding.top;
+
+    // Wrap in Column to add padding above TabBar
+    return Column(
+      children: [
+        // Space for status bar
+        SizedBox(height: statusBarHeight * 0.7),
+        // Container for TabBar background and the TabBar itself
+        Container(
+          color: Theme.of(context)
+              .scaffoldBackgroundColor, // Background for TabBar area
+          child: _tabBar,
+        ),
+      ],
     );
   }
 
