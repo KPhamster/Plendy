@@ -276,8 +276,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           _userCategories = [];
           // _userCategories = UserCategory.createInitialCategories(); // Needs ownerId
         });
-        _showSnackBar(
-            context, "Error loading your custom Categories. Using defaults.");
+        // REMOVED: Calling ScaffoldMessenger inside initState catchError is problematic
+        // _showSnackBar(
+        //     context, "Error loading your custom Categories. Using defaults.");
       }
       // Optionally rethrow or handle error further if needed
       // throw error;
