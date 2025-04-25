@@ -6,7 +6,7 @@ import '../models/experience.dart';
 import '../services/experience_service.dart';
 
 class MediaFullscreenScreen extends StatefulWidget {
-  final List<String> instagramUrls;
+  final List<SharedMediaItem> instagramUrls;
   final Future<void> Function(String) launchUrlCallback;
   final Experience experience;
   final ExperienceService experienceService;
@@ -27,14 +27,14 @@ class _MediaFullscreenScreenState extends State<MediaFullscreenScreen> {
   // State map for expansion
   final Map<String, bool> _expansionStates = {};
   // ADDED: Local mutable list for URLs and change tracking flag
-  late List<String> _localInstagramUrls;
+  late List<SharedMediaItem> _localInstagramItems;
   bool _didDataChange = false;
 
   @override
   void initState() {
     super.initState();
     // Initialize local list from widget property
-    _localInstagramUrls = List<String>.from(widget.instagramUrls);
+    _localInstagramItems = List<SharedMediaItem>.from(widget.instagramUrls);
   }
 
   Future<void> _confirmAndDelete(String urlToDelete) async {
@@ -62,9 +62,18 @@ class _MediaFullscreenScreenState extends State<MediaFullscreenScreen> {
 
     if (confirm == true) {
       try {
-        final List<String> updatedPaths =
-            List<String>.from(widget.experience.sharedMediaPaths ?? []);
-        bool removed = updatedPaths.remove(urlToDelete);
+        final List<SharedMediaItem> currentPaths = List<SharedMediaItem>.from(
+            widget.experience.sharedMediaPaths ?? []);
+
+        final indexToRemove =
+            currentPaths.indexWhere((item) => item.path == urlToDelete);
+
+        bool removed = false;
+        List<SharedMediaItem> updatedPaths = List.from(currentPaths);
+        if (indexToRemove != -1) {
+          updatedPaths.removeAt(indexToRemove);
+          removed = true;
+        }
 
         if (removed) {
           Experience updatedExperience = widget.experience.copyWith(
@@ -79,7 +88,8 @@ class _MediaFullscreenScreenState extends State<MediaFullscreenScreen> {
           // ADDED: Update local state instead of popping
           if (mounted) {
             setState(() {
-              _localInstagramUrls.remove(urlToDelete);
+              _localInstagramItems
+                  .removeWhere((item) => item.path == urlToDelete);
               _didDataChange = true; // Mark that a change occurred
             });
             ScaffoldMessenger.of(context).showSnackBar(
@@ -123,11 +133,12 @@ class _MediaFullscreenScreenState extends State<MediaFullscreenScreen> {
         body: ListView.builder(
           // Use similar padding as the tab view for consistency
           padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 16.0),
-          // MODIFIED: Use local list length
-          itemCount: _localInstagramUrls.length,
+          // MODIFIED: Use local item list length
+          itemCount: _localInstagramItems.length,
           itemBuilder: (context, index) {
-            // MODIFIED: Use local list to get URL
-            final url = _localInstagramUrls[index];
+            // MODIFIED: Get item and extract url (path)
+            final item = _localInstagramItems[index];
+            final url = item.path;
             // Replicate the Column + Number Bubble + Card structure
             return Padding(
               // ADDED: Use ValueKey based on the URL for stable identification

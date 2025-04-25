@@ -13,6 +13,17 @@ import 'dart:async'; // <-- ADDED Import for TimeoutException
 // ADDED: Enum for experience sort types
 enum ExperienceSortType { mostRecent, alphabetical, distanceFromMe }
 
+// ADDED: Enum for content sort types
+enum ContentSortType { mostRecent, alphabetical, distanceFromMe }
+
+// ADDED: Helper class to hold media item and parent experience for display/sorting
+class ContentDisplayItem {
+  final SharedMediaItem mediaItem;
+  final Experience parentExperience;
+
+  ContentDisplayItem({required this.mediaItem, required this.parentExperience});
+}
+
 class CollectionsScreen extends StatefulWidget {
   CollectionsScreen({super.key});
 
@@ -34,9 +45,13 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   List<Experience> _experiences = [];
   // ADDED: State variable for experience sort type
   ExperienceSortType _experienceSortType = ExperienceSortType.mostRecent;
+  // ADDED: State variable for content sort type
+  ContentSortType _contentSortType = ContentSortType.mostRecent;
   String? _userEmail;
   // ADDED: State variable to track the selected category in the first tab
   UserCategory? _selectedCategory;
+  // ADDED: State variable to hold flattened list of all content items
+  List<ContentDisplayItem> _allContentItems = [];
 
   @override
   void initState() {
@@ -79,15 +94,30 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         experiences = await _experienceService.getExperiencesByUser(userId);
       }
 
+      // --- ADDED: Populate _allContentItems ---
+      List<ContentDisplayItem> allContent = [];
+      for (final exp in experiences) {
+        if (exp.sharedMediaPaths != null) {
+          for (final mediaItem in exp.sharedMediaPaths!) {
+            allContent.add(ContentDisplayItem(
+                mediaItem: mediaItem, parentExperience: exp));
+          }
+        }
+      }
+      // --- END ADDED ---
+
       if (mounted) {
         setState(() {
           _categories = categories;
           _experiences = experiences;
+          _allContentItems = allContent; // Set the state variable
           _isLoading = false;
           _selectedCategory = null; // Reset selected category on reload
         });
-        _applyExperienceSort(
-            _experienceSortType); // Apply initial sort after loading
+        // Apply initial sorts after loading
+        _applyExperienceSort(_experienceSortType);
+        await _applyContentSort(
+            _contentSortType); // Apply initial content sort (await for distance)
       }
     } catch (e) {
       if (mounted) {
@@ -517,6 +547,164 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         .toList();
   }
 
+  // --- ADDED: Method to apply sorting to the content items list ---
+  Future<void> _applyContentSort(ContentSortType sortType) async {
+    print("Applying content sort: $sortType");
+    setState(() {
+      _contentSortType = sortType;
+      // Show loading only for distance sort as it's potentially slow
+      if (sortType == ContentSortType.distanceFromMe) {
+        _isLoading = true;
+      }
+    });
+
+    try {
+      if (sortType == ContentSortType.mostRecent) {
+        _allContentItems.sort((a, b) {
+          // Sort descending by media item creation date
+          return b.mediaItem.createdAt.compareTo(a.mediaItem.createdAt);
+        });
+      } else if (sortType == ContentSortType.alphabetical) {
+        _allContentItems.sort((a, b) {
+          // Sort ascending by parent experience name
+          return a.parentExperience.name
+              .toLowerCase()
+              .compareTo(b.parentExperience.name.toLowerCase());
+        });
+      } else if (sortType == ContentSortType.distanceFromMe) {
+        await _sortContentByDistance();
+      }
+    } catch (e, stackTrace) {
+      print("Error applying content sort: $e");
+      print(stackTrace);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error sorting content: $e')),
+        );
+      }
+    } finally {
+      // Ensure loading indicator is turned off and UI rebuilds
+      if (mounted && _isLoading && sortType == ContentSortType.distanceFromMe) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+    // Need setState to rebuild the list after sorting (unless isLoading was already true)
+    if (mounted && sortType != ContentSortType.distanceFromMe) {
+      setState(() {});
+    }
+    print("Content items sorted.");
+  }
+
+  // --- ADDED: Method to sort content items by distance --- ///
+  Future<void> _sortContentByDistance() async {
+    print("Attempting to sort content by distance...");
+    Position? currentPosition;
+    bool locationPermissionGranted = false;
+
+    // Much of this logic is duplicated from _sortExperiencesByDistance
+    // Consider refactoring into a shared location service/helper in the future
+    try {
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content:
+                Text('Location services are disabled. Please enable them.')));
+        return;
+      }
+
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+              content: Text(
+                  'Location permission denied. Cannot sort by distance.')));
+        }
+        return;
+      }
+
+      locationPermissionGranted = true;
+
+      print("Getting current location for content sort...");
+      currentPosition = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.medium,
+        timeLimit: Duration(seconds: 10),
+      );
+      print(
+          "Current location obtained: ${currentPosition.latitude}, ${currentPosition.longitude}");
+    } catch (e) {
+      print("Error getting current location: $e");
+      if (mounted) {
+        String message = 'Could not get current location.';
+        if (e is TimeoutException) {
+          message = 'Could not get current location: Request timed out.';
+        } else if (!locationPermissionGranted) {
+          message = 'Location permission denied. Cannot sort by distance.';
+        } else {
+          message = 'Error getting location: ${e.toString()}';
+        }
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(message)));
+      }
+      return;
+    }
+
+    if (currentPosition != null) {
+      // Create a temporary list with distances
+      List<Map<String, dynamic>> contentWithDistance = [];
+
+      for (var item in _allContentItems) {
+        double? distance;
+        final location = item.parentExperience.location;
+        if (location.latitude != 0.0 || location.longitude != 0.0) {
+          try {
+            distance = Geolocator.distanceBetween(
+              currentPosition.latitude,
+              currentPosition.longitude,
+              location.latitude,
+              location.longitude,
+            );
+          } catch (e) {
+            print(
+                "Error calculating distance for ${item.parentExperience.name}: $e");
+            distance = null;
+          }
+        } else {
+          print(
+              "Experience ${item.parentExperience.name} has no valid coordinates.");
+          distance = null;
+        }
+        contentWithDistance.add({'item': item, 'distance': distance});
+      }
+
+      // Sort the temporary list
+      contentWithDistance.sort((a, b) {
+        final distA = a['distance'] as double?;
+        final distB = b['distance'] as double?;
+
+        if (distA == null && distB == null) return 0;
+        if (distA == null) return 1;
+        if (distB == null) return -1;
+
+        return distA.compareTo(distB);
+      });
+
+      // Update the main content list
+      _allContentItems = contentWithDistance
+          .map((mapItem) => mapItem['item'] as ContentDisplayItem)
+          .toList();
+
+      print("Content items sorted by distance successfully.");
+    }
+  }
+  // --- END ADDED ---
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -562,6 +750,31 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                 const PopupMenuItem<ExperienceSortType>(
                   value: ExperienceSortType.distanceFromMe,
                   child: Text('Sort by Distance'),
+                ),
+              ],
+            ),
+          if (_currentTabIndex == 2)
+            PopupMenuButton<ContentSortType>(
+              icon: const Icon(Icons.sort),
+              tooltip: 'Sort Content',
+              onSelected: (ContentSortType result) {
+                _applyContentSort(result); // Use the new sort function
+              },
+              itemBuilder: (BuildContext context) =>
+                  <PopupMenuEntry<ContentSortType>>[
+                const PopupMenuItem<ContentSortType>(
+                  value: ContentSortType.mostRecent,
+                  child: Text('Sort by Most Recent Added'), // Clarified label
+                ),
+                const PopupMenuItem<ContentSortType>(
+                  value: ContentSortType.alphabetical,
+                  child: Text(
+                      'Sort Alphabetically (by Experience)'), // Clarified label
+                ),
+                const PopupMenuItem<ContentSortType>(
+                  value: ContentSortType.distanceFromMe,
+                  child: Text(
+                      'Sort by Distance (from Experience)'), // Clarified label
                 ),
               ],
             ),
@@ -669,8 +882,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                           ? _buildCategoriesList()
                           : _buildCategoryExperiencesList(_selectedCategory!),
                       _buildExperiencesListView(),
-                      Center(
-                          child: Text('Content Tab Content for $_userEmail')),
+                      // MODIFIED: Call builder for Content tab
+                      _buildContentTabBody(),
                     ],
                   ),
                 ),
@@ -808,7 +1021,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
 
     // Filter for Instagram links
     final instagramLinks = experience.sharedMediaPaths!
-        .where((path) => path.toLowerCase().contains('instagram.com'))
+        .where((item) => item.path.toLowerCase().contains('instagram.com'))
         .toList();
 
     // Only show the bubble if there are Instagram links
@@ -908,4 +1121,106 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       ],
     );
   }
+
+  // --- ADDED: Widget builder for the Content Tab Body --- ///
+  Widget _buildContentTabBody() {
+    if (_allContentItems.isEmpty) {
+      return const Center(
+          child: Text('No shared content found across experiences.'));
+    }
+
+    // Using GridView for a more visual layout of media
+    return GridView.builder(
+      padding: const EdgeInsets.all(8.0),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 3, // Adjust number of columns as needed
+        crossAxisSpacing: 8.0,
+        mainAxisSpacing: 8.0,
+        childAspectRatio: 1.0, // Make items square
+      ),
+      itemCount: _allContentItems.length,
+      itemBuilder: (context, index) {
+        final item = _allContentItems[index];
+        final mediaPath = item.mediaItem.path;
+        final parentExp = item.parentExperience;
+
+        // Basic check if it looks like a network URL
+        bool isNetworkUrl =
+            mediaPath.startsWith('http') || mediaPath.startsWith('https');
+
+        Widget mediaWidget;
+        if (isNetworkUrl) {
+          // Attempt to display network images
+          mediaWidget = Image.network(
+            mediaPath,
+            fit: BoxFit.cover,
+            loadingBuilder: (context, child, loadingProgress) {
+              if (loadingProgress == null) return child;
+              return const Center(
+                  child: CircularProgressIndicator(strokeWidth: 2.0));
+            },
+            errorBuilder: (context, error, stackTrace) {
+              print("Error loading image $mediaPath: $error");
+              // Fallback icon for images that fail or non-image URLs
+              return Container(
+                color: Colors.grey[200],
+                child: Icon(Icons.link, color: Colors.grey[600], size: 30),
+              );
+            },
+          );
+        } else {
+          // Placeholder for local paths or non-image URLs
+          mediaWidget = Container(
+            color: Colors.grey[300],
+            child: Icon(Icons.description,
+                color: Colors.grey[700],
+                size: 30), // Icon for general files/paths
+          );
+        }
+
+        return GestureDetector(
+          onTap: () async {
+            print('Tapped on media from Experience: ${parentExp.name}');
+
+            // Find the category for navigation (similar to other onTap)
+            final category = _categories.firstWhere(
+                (cat) => cat.name == parentExp.category,
+                orElse: () => UserCategory(
+                    id: '',
+                    name: parentExp.category,
+                    icon: '❓',
+                    ownerUserId: '') // Fallback
+                );
+
+            // Await result and refresh if needed
+            final result = await Navigator.push<bool>(
+              context,
+              MaterialPageRoute(
+                builder: (context) => ExperiencePageScreen(
+                  experience: parentExp,
+                  category: category,
+                ),
+              ),
+            );
+            // Refresh data if deletion occurred on the experience page
+            if (result == true && mounted) {
+              _loadData();
+            }
+          },
+          child: GridTile(
+            // Optional: Add a footer with experience name
+            // footer: GridTileBar(
+            //    backgroundColor: Colors.black45,
+            //    title: Text(parentExp.name, style: TextStyle(fontSize: 10), maxLines: 1, overflow: TextOverflow.ellipsis),
+            // ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(8.0),
+              child: mediaWidget,
+            ),
+          ),
+        );
+      },
+    );
+  }
+  // --- END ADDED ---
 }
