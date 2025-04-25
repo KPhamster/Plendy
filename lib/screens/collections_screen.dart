@@ -9,6 +9,11 @@ import '../widgets/edit_categories_modal.dart' show CategorySortType;
 import 'experience_page_screen.dart';
 import 'package:geolocator/geolocator.dart';
 import 'dart:async'; // <-- ADDED Import for TimeoutException
+import 'package:url_launcher/url_launcher.dart'; // ADDED for launching URLs
+import 'package:font_awesome_flutter/font_awesome_flutter.dart'; // ADDED for icons
+// ADDED: Import Instagram Preview Widget (adjust alias if needed)
+import 'receive_share/widgets/instagram_preview_widget.dart'
+    as instagram_widget;
 
 // ADDED: Enum for experience sort types
 enum ExperienceSortType { mostRecent, alphabetical, distanceFromMe }
@@ -52,6 +57,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   UserCategory? _selectedCategory;
   // ADDED: State variable to hold flattened list of all content items
   List<ContentDisplayItem> _allContentItems = [];
+  // ADDED: State map for content preview expansion
+  final Map<String, bool> _contentExpansionStates = {};
 
   @override
   void initState() {
@@ -535,6 +542,28 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     }
   }
   // --- END ADDED ---
+
+  // ADDED: Helper method for launching URLs (copied from ExperiencePageScreen)
+  Future<void> _launchUrl(String urlString) async {
+    // Ensure URL starts with http/https for launchUrl
+    String launchableUrl = urlString;
+    if (!launchableUrl.startsWith('http://') &&
+        !launchableUrl.startsWith('https://')) {
+      // Assume https if no scheme provided
+      launchableUrl = 'https://' + launchableUrl;
+      print("Prepended 'https://' to URL: $launchableUrl");
+    }
+
+    final Uri uri = Uri.parse(launchableUrl);
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+      print('Could not launch $uri');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open link: $urlString')),
+        );
+      }
+    }
+  }
 
   // ADDED: Function to get search suggestions
   Future<List<Experience>> _getExperienceSuggestions(String pattern) async {
@@ -1124,47 +1153,60 @@ class _CollectionsScreenState extends State<CollectionsScreen>
 
   // --- ADDED: Widget builder for the Content Tab Body --- ///
   Widget _buildContentTabBody() {
+    // Use instance member _allContentItems
     if (_allContentItems.isEmpty) {
       return const Center(
           child: Text('No shared content found across experiences.'));
     }
 
-    // Using GridView for a more visual layout of media
-    return GridView.builder(
-      padding: const EdgeInsets.all(8.0),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 3, // Adjust number of columns as needed
-        crossAxisSpacing: 8.0,
-        mainAxisSpacing: 8.0,
-        childAspectRatio: 1.0, // Make items square
-      ),
+    // MODIFIED: Use ListView.builder instead of GridView.builder
+    return ListView.builder(
+      // padding: const EdgeInsets.all(4.0), // Removed grid padding
+      // Add padding similar to fullscreen list
+      padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 16.0),
+      // gridDelegate: ..., // Removed gridDelegate
       itemCount: _allContentItems.length,
       itemBuilder: (context, index) {
         final item = _allContentItems[index];
         final mediaPath = item.mediaItem.path;
         final parentExp = item.parentExperience;
 
-        // Basic check if it looks like a network URL
+        final isExpanded = _contentExpansionStates[mediaPath] ?? false;
+        final bool isInstagramUrl =
+            mediaPath.toLowerCase().contains('instagram.com');
+
         bool isNetworkUrl =
             mediaPath.startsWith('http') || mediaPath.startsWith('https');
 
         Widget mediaWidget;
-        if (isNetworkUrl) {
-          // Attempt to display network images
+        if (isInstagramUrl) {
+          // Use InstagramWebView for Instagram URLs
+          mediaWidget = instagram_widget.InstagramWebView(
+            url: mediaPath,
+            // MODIFIED: Adjust height for list view (similar to fullscreen/exp page)
+            height: isExpanded ? 1200 : 840,
+            launchUrlCallback: _launchUrl,
+            onWebViewCreated: (_) {},
+            onPageFinished: (_) {},
+          );
+        } else if (isNetworkUrl) {
+          // Use Image.network for other network URLs
           mediaWidget = Image.network(
             mediaPath,
             fit: BoxFit.cover,
             loadingBuilder: (context, child, loadingProgress) {
               if (loadingProgress == null) return child;
-              return const Center(
-                  child: CircularProgressIndicator(strokeWidth: 2.0));
+              // Keep standard indicator for list view
+              return const Center(child: CircularProgressIndicator());
             },
             errorBuilder: (context, error, stackTrace) {
               print("Error loading image $mediaPath: $error");
-              // Fallback icon for images that fail or non-image URLs
               return Container(
                 color: Colors.grey[200],
-                child: Icon(Icons.link, color: Colors.grey[600], size: 30),
+                height: 200, // Give error placeholder some height
+                child: Center(
+                    child: Icon(Icons.broken_image_outlined,
+                        color: Colors.grey[600], size: 40)),
               );
             },
           );
@@ -1172,55 +1214,166 @@ class _CollectionsScreenState extends State<CollectionsScreen>
           // Placeholder for local paths or non-image URLs
           mediaWidget = Container(
             color: Colors.grey[300],
-            child: Icon(Icons.description,
-                color: Colors.grey[700],
-                size: 30), // Icon for general files/paths
+            height: 150, // Give placeholder some height
+            child: Center(
+                child:
+                    Icon(Icons.description, color: Colors.grey[700], size: 40)),
           );
         }
 
-        return GestureDetector(
-          onTap: () async {
-            print('Tapped on media from Experience: ${parentExp.name}');
-
-            // Find the category for navigation (similar to other onTap)
-            final category = _categories.firstWhere(
-                (cat) => cat.name == parentExp.category,
-                orElse: () => UserCategory(
-                    id: '',
-                    name: parentExp.category,
-                    icon: '❓',
-                    ownerUserId: '') // Fallback
-                );
-
-            // Await result and refresh if needed
-            final result = await Navigator.push<bool>(
-              context,
-              MaterialPageRoute(
-                builder: (context) => ExperiencePageScreen(
-                  experience: parentExp,
-                  category: category,
+        // MODIFIED: Return a Column structure suitable for a list item
+        return Padding(
+          key: ValueKey(mediaPath), // Use mediaPath as key
+          padding:
+              const EdgeInsets.only(bottom: 24.0), // Spacing between list items
+          child: Card(
+            elevation: 2.0,
+            clipBehavior: Clip.antiAlias,
+            child: Column(
+              children: [
+                // ADDED: Row for Numbering and Parent Experience Name
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 12.0, vertical: 8.0),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      // Number Bubble
+                      CircleAvatar(
+                        radius: 12,
+                        backgroundColor: Theme.of(context)
+                            .colorScheme
+                            .primary
+                            .withOpacity(0.8),
+                        child: Text(
+                          '${index + 1}', // Display index + 1
+                          style: TextStyle(
+                            fontSize: 12.0,
+                            fontWeight: FontWeight.bold,
+                            color: Theme.of(context).colorScheme.onPrimary,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      // Parent Experience Name (Expanded to fill space)
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Experience Name
+                            Text(
+                              parentExp.name,
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .titleSmall
+                                  ?.copyWith(
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                              overflow: TextOverflow.ellipsis,
+                              maxLines: 1,
+                            ),
+                            // ADDED: Address Subtext (if available)
+                            if (parentExp.location.address != null &&
+                                parentExp.location.address!.isNotEmpty)
+                              Padding(
+                                padding: const EdgeInsets.only(
+                                    top: 2.0), // Add slight spacing
+                                child: Text(
+                                  parentExp.location.address!,
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .bodySmall
+                                      ?.copyWith(
+                                        color: Colors.black54, // Subdued color
+                                      ),
+                                  overflow: TextOverflow.ellipsis,
+                                  maxLines: 1,
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-            );
-            // Refresh data if deletion occurred on the experience page
-            if (result == true && mounted) {
-              _loadData();
-            }
-          },
-          child: GridTile(
-            // Optional: Add a footer with experience name
-            // footer: GridTileBar(
-            //    backgroundColor: Colors.black45,
-            //    title: Text(parentExp.name, style: TextStyle(fontSize: 10), maxLines: 1, overflow: TextOverflow.ellipsis),
-            // ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(8.0),
-              child: mediaWidget,
+                // Divider (optional)
+                // const Divider(height: 1, thickness: 1),
+                // Media Preview Area
+                GestureDetector(
+                  onTap: () async {
+                    print('Tapped on media from Experience: ${parentExp.name}');
+                    final category = _categories.firstWhere(
+                        (cat) => cat.name == parentExp.category,
+                        orElse: () => UserCategory(
+                            id: '',
+                            name: parentExp.category,
+                            icon: '❓',
+                            ownerUserId: '') // Fallback
+                        );
+
+                    final result = await Navigator.push<bool>(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => ExperiencePageScreen(
+                          experience: parentExp,
+                          category: category,
+                        ),
+                      ),
+                    );
+                    if (result == true && mounted) {
+                      _loadData();
+                    }
+                  },
+                  child: mediaWidget,
+                ),
+                // Buttons Row
+                Container(
+                  height: 48, // Standard height for buttons
+                  color: Colors.black.withOpacity(0.03),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceAround,
+                    children: [
+                      // Instagram Button (only if Instagram URL)
+                      if (isInstagramUrl)
+                        IconButton(
+                          icon: const Icon(FontAwesomeIcons.instagram),
+                          iconSize: 28, // Slightly larger icon for list view
+                          color: const Color(0xFFE1306C),
+                          tooltip: 'Open in Instagram',
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                          onPressed: () => _launchUrl(mediaPath),
+                        ),
+                      // Expand/Collapse Button (only if Instagram URL)
+                      if (isInstagramUrl)
+                        IconButton(
+                          icon: Icon(isExpanded
+                              ? Icons.fullscreen_exit
+                              : Icons.fullscreen),
+                          iconSize: 24,
+                          color: Colors.blueGrey,
+                          tooltip: isExpanded ? 'Collapse' : 'Expand',
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                          onPressed: () {
+                            setState(() {
+                              _contentExpansionStates[mediaPath] = !isExpanded;
+                            });
+                          },
+                        ),
+                      // Add other generic buttons here if needed (e.g., Share)
+                      // If not instagram, provide some spacing or alternative actions
+                      if (!isInstagramUrl)
+                        Spacer(), // Use Spacer to push potential future buttons
+                    ],
+                  ),
+                ),
+              ],
             ),
           ),
         );
       },
     );
   }
-  // --- END ADDED ---
+  // --- END MODIFIED ---
 }
