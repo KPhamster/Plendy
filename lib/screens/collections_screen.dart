@@ -7,9 +7,11 @@ import '../services/experience_service.dart';
 import '../widgets/add_category_modal.dart';
 import '../widgets/edit_categories_modal.dart' show CategorySortType;
 import 'experience_page_screen.dart';
+import 'package:geolocator/geolocator.dart';
+import 'dart:async'; // <-- ADDED Import for TimeoutException
 
 // ADDED: Enum for experience sort types
-enum ExperienceSortType { mostRecent, alphabetical }
+enum ExperienceSortType { mostRecent, alphabetical, distanceFromMe }
 
 class CollectionsScreen extends StatefulWidget {
   CollectionsScreen({super.key});
@@ -84,7 +86,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
           _isLoading = false;
           _selectedCategory = null; // Reset selected category on reload
         });
-        _applyExperienceSort(); // Apply initial sort after loading
+        _applyExperienceSort(
+            _experienceSortType); // Apply initial sort after loading
       }
     } catch (e) {
       if (mounted) {
@@ -347,23 +350,161 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     await _saveCategoryOrder();
   }
 
-  // ADDED: Method to apply sorting to the experiences list
-  void _applyExperienceSort() {
-    print("Applying experience sort: $_experienceSortType");
+  // MODIFIED: Method to apply sorting to the experiences list
+  // Takes the desired sort type as an argument
+  Future<void> _applyExperienceSort(ExperienceSortType sortType) async {
+    print("Applying experience sort: $sortType");
+    // Set the internal state first, so UI reflects the choice while processing
     setState(() {
-      if (_experienceSortType == ExperienceSortType.alphabetical) {
+      _experienceSortType = sortType;
+      _isLoading =
+          true; // Show loading indicator for potentially long operations (like distance)
+    });
+
+    try {
+      if (sortType == ExperienceSortType.alphabetical) {
         _experiences.sort(
             (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-      } else if (_experienceSortType == ExperienceSortType.mostRecent) {
+      } else if (sortType == ExperienceSortType.mostRecent) {
         _experiences.sort((a, b) {
           // Sort descending by creation date (most recent first)
           return b.createdAt.compareTo(a.createdAt);
         });
+      } else if (sortType == ExperienceSortType.distanceFromMe) {
+        // --- ADDED: Distance Sorting Logic ---
+        await _sortExperiencesByDistance();
+        // --- END ADDED ---
       }
       // Add other sort types here if needed
-    });
+    } catch (e) {
+      print("Error applying sort: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error sorting experiences: $e')),
+        );
+      }
+    } finally {
+      // Ensure loading indicator is turned off and UI rebuilds
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
     print("Experiences sorted.");
   }
+
+  // --- ADDED: Method to sort experiences by distance ---
+  Future<void> _sortExperiencesByDistance() async {
+    print("Attempting to sort by distance...");
+    Position? currentPosition;
+    bool locationPermissionGranted = false;
+
+    try {
+      // 1. Check Location Services
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content:
+                Text('Location services are disabled. Please enable them.')));
+        return; // Stop if services are disabled
+      }
+
+      // 2. Check and Request Permissions
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+              content: Text(
+                  'Location permission denied. Cannot sort by distance.')));
+        }
+        return; // Stop if permission denied
+      }
+
+      locationPermissionGranted = true;
+
+      // 3. Get Current Location (with timeout)
+      print("Getting current location...");
+      currentPosition = await Geolocator.getCurrentPosition(
+        desiredAccuracy:
+            LocationAccuracy.medium, // Medium accuracy is often faster
+        timeLimit: Duration(seconds: 10), // Add a timeout
+      );
+      print(
+          "Current location obtained: ${currentPosition.latitude}, ${currentPosition.longitude}");
+    } catch (e) {
+      print("Error getting current location: $e");
+      if (mounted) {
+        String message = 'Could not get current location.';
+        if (e is TimeoutException) {
+          message = 'Could not get current location: Request timed out.';
+        } else if (!locationPermissionGranted) {
+          // This case is unlikely if permission check above is robust,
+          // but kept for safety.
+          message = 'Location permission denied. Cannot sort by distance.';
+        } else {
+          message = 'Error getting location: ${e.toString()}';
+        }
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(message)));
+      }
+      return; // Stop if location couldn't be determined
+    }
+
+    // 4. Calculate Distances and Sort
+    if (currentPosition != null) {
+      // Use a temporary list or map to store experiences with distances
+      List<Map<String, dynamic>> experiencesWithDistance = [];
+
+      for (var exp in _experiences) {
+        double? distance;
+        // Check if the experience has valid coordinates
+        if (exp.location.latitude != 0.0 || exp.location.longitude != 0.0) {
+          try {
+            distance = Geolocator.distanceBetween(
+              currentPosition!.latitude,
+              currentPosition!.longitude,
+              exp.location.latitude,
+              exp.location.longitude,
+            );
+          } catch (e) {
+            print("Error calculating distance for ${exp.name}: $e");
+            distance = null; // Treat calculation error as unknown distance
+          }
+        } else {
+          print("Experience ${exp.name} has no valid coordinates.");
+          distance = null; // No coordinates, unknown distance
+        }
+        experiencesWithDistance.add({'experience': exp, 'distance': distance});
+      }
+
+      // Sort the temporary list
+      experiencesWithDistance.sort((a, b) {
+        final distA = a['distance'] as double?;
+        final distB = b['distance'] as double?;
+
+        // Handle null distances (experiences w/o location or errors)
+        if (distA == null && distB == null) return 0; // Keep relative order
+        if (distA == null) return 1; // Nulls go to the end
+        if (distB == null) return -1; // Nulls go to the end
+
+        return distA.compareTo(distB); // Sort by distance ascending
+      });
+
+      // Update the main experiences list with the sorted order
+      _experiences = experiencesWithDistance
+          .map((item) => item['experience'] as Experience)
+          .toList();
+
+      print("Experiences sorted by distance successfully.");
+    }
+  }
+  // --- END ADDED ---
 
   // ADDED: Function to get search suggestions
   Future<List<Experience>> _getExperienceSuggestions(String pattern) async {
@@ -406,10 +547,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
               icon: const Icon(Icons.sort),
               tooltip: 'Sort Experiences',
               onSelected: (ExperienceSortType result) {
-                setState(() {
-                  _experienceSortType = result;
-                });
-                _applyExperienceSort(); // Apply the selected sort
+                _applyExperienceSort(result);
               },
               itemBuilder: (BuildContext context) =>
                   <PopupMenuEntry<ExperienceSortType>>[
@@ -421,7 +559,10 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                   value: ExperienceSortType.alphabetical,
                   child: Text('Sort Alphabetically'),
                 ),
-                // Add other sort options here
+                const PopupMenuItem<ExperienceSortType>(
+                  value: ExperienceSortType.distanceFromMe,
+                  child: Text('Sort by Distance'),
+                ),
               ],
             ),
         ],
@@ -550,8 +691,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     // Find the matching category icon
     final categoryIcon = _categories
         .firstWhere((cat) => cat.name == experience.category,
-            orElse: () =>
-                UserCategory(id: '', name: '', icon: '❓', ownerUserId: '') // Default icon
+            orElse: () => UserCategory(
+                id: '', name: '', icon: '❓', ownerUserId: '') // Default icon
             )
         .icon;
 
@@ -634,7 +775,10 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         final category = _categories.firstWhere(
             (cat) => cat.name == experience.category,
             orElse: () => UserCategory(
-                id: '', name: experience.category, icon: '❓', ownerUserId: '') // Fallback
+                id: '',
+                name: experience.category,
+                icon: '❓',
+                ownerUserId: '') // Fallback
             );
 
         // Await result and refresh if needed
