@@ -637,7 +637,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
 
     // Calculate tab counts (moved from _buildTabbedContentSection)
     final instagramMediaPaths = (_currentExperience.sharedMediaPaths ?? [])
-        .where((path) => path.toLowerCase().contains('instagram.com'))
+        .where((item) => item.path.toLowerCase().contains('instagram.com'))
         .toList();
     final mediaCount = instagramMediaPaths.length;
     final reviewCount = _isLoadingReviews ? '...' : _reviews.length.toString();
@@ -1301,7 +1301,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     // Calculate counts
     // Filter media paths for Instagram URLs to get the count
     final instagramMediaPaths = (_currentExperience.sharedMediaPaths ?? [])
-        .where((path) => path.toLowerCase().contains('instagram.com'))
+        .where((item) => item.path.toLowerCase().contains('instagram.com'))
         .toList();
     final mediaCount = instagramMediaPaths.length; // Count only Instagram posts
     final reviewCount = _isLoadingReviews
@@ -1382,13 +1382,23 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     if (confirm == true) {
       try {
         // Create a mutable copy and remove the URL
-        final List<String> updatedPaths =
-            List<String>.from(_currentExperience.sharedMediaPaths ?? []);
-        bool removed = updatedPaths.remove(urlToDelete);
+        final List<SharedMediaItem> updatedPaths = List<SharedMediaItem>.from(
+            _currentExperience.sharedMediaPaths ?? []);
+
+        // Find the index of the item to remove based on the path
+        final indexToRemove =
+            updatedPaths.indexWhere((item) => item.path == urlToDelete);
+
+        bool removed = false;
+        if (indexToRemove != -1) {
+          updatedPaths.removeAt(indexToRemove);
+          removed = true;
+        }
 
         if (removed) {
           // Create the updated experience object
           Experience updatedExperience = _currentExperience.copyWith(
+            // MODIFIED: Pass the correctly typed list
             sharedMediaPaths: updatedPaths,
             updatedAt: DateTime.now(), // Update timestamp
           );
@@ -1421,13 +1431,17 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   }
 
   // Builds the Media Tab, now including a fullscreen button
-  Widget _buildMediaTab(BuildContext context, List<String>? mediaPaths) {
-    final instagramUrls = (mediaPaths ?? [])
-        .where((path) => path.toLowerCase().contains('instagram.com'))
+  Widget _buildMediaTab(
+      BuildContext context, List<SharedMediaItem>? mediaPaths) {
+    // MODIFIED: Filter based on item.path
+    final instagramItems = (mediaPaths ?? [])
+        .where((item) => item.path.toLowerCase().contains('instagram.com'))
         .toList();
-    final reversedInstagramUrls = instagramUrls.reversed.toList();
+    // MODIFIED: Reverse the list of items
+    final reversedInstagramItems = instagramItems.reversed.toList();
 
-    if (reversedInstagramUrls.isEmpty) {
+    // MODIFIED: Check the item list
+    if (reversedInstagramItems.isEmpty) {
       return const Center(
           child: Text('No Instagram posts shared for this experience.'));
     }
@@ -1453,7 +1467,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                   context,
                   MaterialPageRoute(
                     builder: (context) => MediaFullscreenScreen(
-                      instagramUrls: reversedInstagramUrls,
+                      instagramUrls: reversedInstagramItems,
                       launchUrlCallback: _launchUrl,
                       experience: _currentExperience,
                       experienceService: _experienceService,
@@ -1480,9 +1494,11 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                 right: 16.0,
                 top: 8.0,
                 bottom: 16.0), // Adjust padding
-            itemCount: reversedInstagramUrls.length,
+            itemCount: reversedInstagramItems.length,
             itemBuilder: (context, index) {
-              final url = reversedInstagramUrls[index];
+              // MODIFIED: Get SharedMediaItem and its path
+              final item = reversedInstagramItems[index];
+              final url = item.path;
               // Keep the Column for layout *within* the list item
               return Padding(
                 padding: const EdgeInsets.only(bottom: 24.0),

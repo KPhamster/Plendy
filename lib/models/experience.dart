@@ -146,7 +146,7 @@ class Experience {
   final Map<String, dynamic>? openingHours; // Format depends on implementation
   final List<String>? tags;
   final String? priceRange; // e.g. "$", "$$", "$$$", "$$$$"
-  final List<String>? sharedMediaPaths; // Added for shared content
+  final List<SharedMediaItem>? sharedMediaPaths;
   final String? sharedMediaType; // Added for shared content
   final String? additionalNotes; // Added for user notes
 
@@ -175,8 +175,8 @@ class Experience {
     this.openingHours,
     this.tags,
     this.priceRange,
-    this.sharedMediaPaths, // Added
-    this.sharedMediaType, // Added
+    this.sharedMediaPaths,
+    this.sharedMediaType,
     this.additionalNotes,
     required this.editorUserIds,
   });
@@ -184,6 +184,45 @@ class Experience {
   /// Creates an Experience from a Firestore document
   factory Experience.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
+
+    List<SharedMediaItem>? parsedMediaPaths;
+    final rawMediaPaths = data['sharedMediaPaths'];
+    final experienceCreatedAt = _parseTimestamp(
+        data['createdAt']); // Use experience creation as fallback
+
+    if (rawMediaPaths is List) {
+      if (rawMediaPaths.isNotEmpty) {
+        if (rawMediaPaths.first is String) {
+          // Handle old format: List<String>
+          print(
+              "Parsing old List<String> format for sharedMediaPaths for Experience ID: ${doc.id}");
+          parsedMediaPaths = rawMediaPaths
+              .map((path) => SharedMediaItem(
+                    path: path.toString(),
+                    createdAt: experienceCreatedAt, // Use fallback timestamp
+                  ))
+              .toList();
+        } else if (rawMediaPaths.first is Map) {
+          // Handle new format: List<Map> (or List<SharedMediaItem>)
+          print(
+              "Parsing new List<Map> format for sharedMediaPaths for Experience ID: ${doc.id}");
+          parsedMediaPaths = rawMediaPaths
+              .map((item) =>
+                  SharedMediaItem.fromMap(item as Map<String, dynamic>))
+              .toList();
+        } else {
+          print(
+              "Warning: Unexpected item type in sharedMediaPaths for Experience ID: ${doc.id}. Found type: ${rawMediaPaths.first.runtimeType}");
+          parsedMediaPaths = []; // Or handle as error
+        }
+      } else {
+        parsedMediaPaths = []; // Empty list
+      }
+    } else if (rawMediaPaths != null) {
+      print(
+          "Warning: sharedMediaPaths field is not a List for Experience ID: ${doc.id}. Found type: ${rawMediaPaths.runtimeType}");
+      parsedMediaPaths = []; // Or handle as error
+    }
 
     return Experience(
       id: doc.id,
@@ -210,9 +249,9 @@ class Experience {
       openingHours: data['openingHours'],
       tags: _parseStringList(data['tags']),
       priceRange: data['priceRange'],
-      sharedMediaPaths: _parseStringList(data['sharedMediaPaths']), // Added
-      sharedMediaType: data['sharedMediaType'], // Added
-      additionalNotes: data['additionalNotes'], // Added
+      sharedMediaPaths: parsedMediaPaths,
+      sharedMediaType: data['sharedMediaType'],
+      additionalNotes: data['additionalNotes'],
       editorUserIds: _parseStringList(data['editorUserIds']),
     );
   }
@@ -244,9 +283,10 @@ class Experience {
       'openingHours': openingHours,
       'tags': tags,
       'priceRange': priceRange,
-      'sharedMediaPaths': sharedMediaPaths, // Added
-      'sharedMediaType': sharedMediaType, // Added
-      'additionalNotes': additionalNotes, // Added
+      'sharedMediaPaths':
+          sharedMediaPaths?.map((item) => item.toMap()).toList(),
+      'sharedMediaType': sharedMediaType,
+      'additionalNotes': additionalNotes,
     };
   }
 
@@ -274,9 +314,9 @@ class Experience {
     Map<String, dynamic>? openingHours,
     List<String>? tags,
     String? priceRange,
-    List<String>? sharedMediaPaths, // Added
-    String? sharedMediaType, // Added
-    String? additionalNotes, // Added
+    List<SharedMediaItem>? sharedMediaPaths,
+    String? sharedMediaType,
+    String? additionalNotes,
     List<String>? editorUserIds,
   }) {
     return Experience(
@@ -304,8 +344,8 @@ class Experience {
       openingHours: openingHours ?? this.openingHours,
       tags: tags ?? this.tags,
       priceRange: priceRange ?? this.priceRange,
-      sharedMediaPaths: sharedMediaPaths ?? this.sharedMediaPaths, // Added
-      sharedMediaType: sharedMediaType ?? this.sharedMediaType, // Added
+      sharedMediaPaths: sharedMediaPaths ?? this.sharedMediaPaths,
+      sharedMediaType: sharedMediaType ?? this.sharedMediaType,
       additionalNotes: additionalNotes,
       editorUserIds: editorUserIds ?? this.editorUserIds,
     );
@@ -347,6 +387,44 @@ class Experience {
       return value;
     }
 
+    return DateTime.now();
+  }
+}
+
+// ADDED: Helper class for Shared Media Items
+class SharedMediaItem extends Equatable {
+  final String path;
+  final DateTime createdAt;
+
+  SharedMediaItem({required this.path, required this.createdAt});
+
+  // Factory constructor to create from a Map (e.g., from Firestore)
+  factory SharedMediaItem.fromMap(Map<String, dynamic> map) {
+    return SharedMediaItem(
+      path: map['path'] ?? '',
+      createdAt: _parseTimestamp(map['createdAt']), // Use helper
+    );
+  }
+
+  // Method to convert to a Map (e.g., for Firestore)
+  Map<String, dynamic> toMap() {
+    return {
+      'path': path,
+      'createdAt':
+          Timestamp.fromDate(createdAt), // Convert back to Firestore Timestamp
+    };
+  }
+
+  @override
+  List<Object?> get props => [path, createdAt];
+
+  // Helper method to parse timestamps (copied from Experience for encapsulation)
+  static DateTime _parseTimestamp(dynamic value) {
+    if (value == null) return DateTime.now();
+    if (value is Timestamp) return value.toDate();
+    if (value is DateTime) return value;
+    // Handle potential String representation if needed during migration/parsing
+    // For simplicity now, default to now() if format is unrecognized
     return DateTime.now();
   }
 }

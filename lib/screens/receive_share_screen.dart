@@ -1697,6 +1697,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           if (card.existingExperienceId == null ||
               card.existingExperienceId!.isEmpty) {
             // CREATE NEW EXPERIENCE
+            // Convert List<String> to List<SharedMediaItem>
+            final List<SharedMediaItem> sharedMediaItemsToSave = newMediaPaths
+                .map((path) => SharedMediaItem(path: path, createdAt: now))
+                .toList();
+
             Experience newExperience = Experience(
               id: '',
               name: cardTitle,
@@ -1708,7 +1713,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               website: cardWebsite.isNotEmpty ? cardWebsite : null,
               additionalNotes: notes.isNotEmpty ? notes : null,
               sharedMediaPaths:
-                  newMediaPaths, // These are the *current* shared paths
+                  sharedMediaItemsToSave, // Assign the converted list
               createdAt: now,
               updatedAt: now,
               // Initialize editor list with the current user
@@ -1725,11 +1730,30 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                 .getExperience(card.existingExperienceId!);
 
             if (existingExperience != null) {
-              final Set<String> combinedPathsSet = {
-                ...?existingExperience.sharedMediaPaths,
-                ...newMediaPaths // Combine existing with *current* shared paths
-              };
-              final List<String> updatedMediaPaths = combinedPathsSet.toList();
+              // Combine List<SharedMediaItem> correctly
+              final Map<String, SharedMediaItem> combinedPathsMap =
+                  {}; // Use map to ensure uniqueness by path
+
+              // Add existing items first
+              if (existingExperience.sharedMediaPaths != null) {
+                for (final item in existingExperience.sharedMediaPaths!) {
+                  combinedPathsMap[item.path] = item;
+                }
+              }
+
+              // Add new items, potentially overwriting (or just skipping if keeping old timestamp is desired)
+              for (final path in newMediaPaths) {
+                // If path doesn't exist or you want to update timestamp, add/replace
+                if (!combinedPathsMap.containsKey(path)) {
+                  combinedPathsMap[path] =
+                      SharedMediaItem(path: path, createdAt: now);
+                }
+                // If you always want the newest timestamp for a repeated share:
+                // combinedPathsMap[path] = SharedMediaItem(path: path, createdAt: now);
+              }
+
+              final List<SharedMediaItem> updatedMediaItems =
+                  combinedPathsMap.values.toList();
 
               Experience updatedExperience = existingExperience.copyWith(
                 name: cardTitle,
@@ -1740,7 +1764,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                 description:
                     notes.isNotEmpty ? notes : existingExperience.description,
                 additionalNotes: notes.isNotEmpty ? notes : null,
-                sharedMediaPaths: updatedMediaPaths, // Use combined paths
+                sharedMediaPaths:
+                    updatedMediaItems, // Assign the combined list of items
                 updatedAt: now,
               );
               print(
