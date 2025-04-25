@@ -95,6 +95,9 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   late ScrollController _scrollController;
   bool _isStatusBarLight = true; // Start with light icons
   final double _headerHeight = 320.0; // Match the header height
+
+  // --- ADDED: Expansion state for media tab items ---
+  final Map<String, bool> _mediaTabExpansionStates = {};
   // --- END ADDED ---
 
   // REMOVED: Instagram Credentials
@@ -1074,12 +1077,16 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
             formattedDescription, // Use pre-formatted value
             showLabel: false, // HIDE label
           ),
-          _buildDetailRow(
-            context,
-            Icons.location_on_outlined,
-            'Location',
-            experience.location.address,
-            showLabel: false, // HIDE label
+          // Make the address row tappable
+          GestureDetector(
+            onTap: () => _launchMapLocation(_currentExperience.location),
+            child: _buildDetailRow(
+              context,
+              Icons.location_on_outlined,
+              'Location',
+              _currentExperience.location.address,
+              showLabel: false, // HIDE label
+            ),
           ),
           _buildStatusRow(context, getDetail('businessStatus')),
           _buildExpandableHoursRow(
@@ -1107,7 +1114,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
             context,
             Icons.notes, // CHANGED Icon to match modal
             'Notes',
-            experience.additionalNotes, // Use the field directly
+            _currentExperience.additionalNotes, // Use the field directly
             showLabel: false, // HIDE label
           ),
           // --- END Notes Row ---
@@ -1425,118 +1432,167 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
           child: Text('No Instagram posts shared for this experience.'));
     }
 
-    // IMPORTANT: Use a ListView directly here, not nested in Column/Expanded
-    // NestedScrollView handles the overall scrolling.
-    return ListView.builder(
-      padding: const EdgeInsets.all(16.0), // Add padding here
-      itemCount: reversedInstagramUrls.length,
-      itemBuilder: (context, index) {
-        final url = reversedInstagramUrls[index];
-        // Keep the Column for layout *within* the list item
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 24.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              // Fullscreen Button (Now inside the list item, maybe move outside?)
-              // Or maybe keep it per item if that makes sense?
-              // For now, keep it per item to minimize changes
-              Align(
-                alignment: Alignment.centerRight,
-                child: TextButton.icon(
-                  icon: const Icon(Icons.fullscreen, size: 20.0),
-                  label: const Text('View Fullscreen'),
-                  style: TextButton.styleFrom(
-                    padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    textStyle: TextStyle(fontSize: 13),
+    // Wrap content in a Column
+    return Column(
+      children: [
+        // --- MOVED Fullscreen Button to the top ---
+        Padding(
+          padding: const EdgeInsets.only(top: 8.0, right: 16.0, left: 16.0),
+          child: Align(
+            alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              icon: const Icon(Icons.fullscreen, size: 20.0),
+              label: const Text('View Fullscreen'),
+              style: TextButton.styleFrom(
+                padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                textStyle: TextStyle(fontSize: 13),
+              ),
+              onPressed: () async {
+                // --- Logic remains the same ---
+                final result = await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => MediaFullscreenScreen(
+                      instagramUrls: reversedInstagramUrls,
+                      launchUrlCallback: _launchUrl,
+                      experience: _currentExperience,
+                      experienceService: _experienceService,
+                    ),
                   ),
-                  onPressed: () async {
-                    final result = await Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => MediaFullscreenScreen(
-                          // Pass only the URL for *this* item? Or all?
-                          // Passing all for now, fullscreen can decide which to show first.
-                          instagramUrls: reversedInstagramUrls,
-                          launchUrlCallback: _launchUrl,
-                          experience: _currentExperience,
-                          experienceService: _experienceService,
+                );
+                if (result == true && mounted) {
+                  await _refreshExperienceData();
+                  setState(() {
+                    _didDataChange = true;
+                  });
+                }
+              },
+            ),
+          ),
+        ),
+        // --- END MOVED Button ---
+
+        // IMPORTANT: Use ListView directly here, wrapped in Expanded
+        Expanded(
+          child: ListView.builder(
+            padding: const EdgeInsets.only(
+                left: 16.0,
+                right: 16.0,
+                top: 8.0,
+                bottom: 16.0), // Adjust padding
+            itemCount: reversedInstagramUrls.length,
+            itemBuilder: (context, index) {
+              final url = reversedInstagramUrls[index];
+              // Keep the Column for layout *within* the list item
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 24.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    // REMOVED Fullscreen Button from here
+                    /*
+                     Align(
+                       alignment: Alignment.centerRight,
+                        child: TextButton.icon(...)
+                     ),
+                    */
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8.0, top: 4.0),
+                      child: CircleAvatar(
+                        radius: 14,
+                        backgroundColor:
+                            Theme.of(context).primaryColor.withOpacity(0.8),
+                        child: Text(
+                          '${index + 1}',
+                          style: TextStyle(
+                            fontSize: 14.0,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                          ),
                         ),
                       ),
-                    );
-                    if (result == true && mounted) {
-                      await _refreshExperienceData();
-                      setState(() {
-                        _didDataChange = true;
-                      });
-                    }
-                  },
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.only(bottom: 8.0, top: 4.0),
-                child: CircleAvatar(
-                  radius: 14,
-                  backgroundColor:
-                      Theme.of(context).primaryColor.withOpacity(0.8),
-                  child: Text(
-                    '${index + 1}',
-                    style: TextStyle(
-                      fontSize: 14.0,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
                     ),
-                  ),
-                ),
-              ),
-              Card(
-                margin: EdgeInsets.zero,
-                elevation: 2.0,
-                clipBehavior: Clip.antiAlias,
-                child: instagram_widget.InstagramWebView(
-                  url: url,
-                  height: 840.0,
-                  launchUrlCallback: _launchUrl,
-                  onWebViewCreated: (controller) {},
-                  onPageFinished: (url) {},
-                ),
-              ),
-              const SizedBox(height: 8),
-              SizedBox(
-                height: 48,
-                child: Stack(
-                  children: [
-                    Align(
-                      alignment: Alignment.center,
-                      child: IconButton(
-                        icon: const Icon(FontAwesomeIcons.instagram),
-                        color: const Color(0xFFE1306C),
-                        iconSize: 32,
-                        tooltip: 'Open in Instagram',
-                        constraints: const BoxConstraints(),
-                        padding: EdgeInsets.zero,
-                        onPressed: () => _launchUrl(url),
+                    Card(
+                      margin: EdgeInsets.zero,
+                      elevation: 2.0,
+                      clipBehavior: Clip.antiAlias,
+                      child: instagram_widget.InstagramWebView(
+                        url: url,
+                        // --- UPDATED: Use expansion state for height ---
+                        height: (_mediaTabExpansionStates[url] ?? false)
+                            ? 1200.0 // Expanded height (adjust if needed)
+                            : 840.0, // Collapsed height
+                        // --- END UPDATE ---
+                        launchUrlCallback: _launchUrl,
+                        onWebViewCreated: (controller) {},
+                        onPageFinished: (url) {},
                       ),
                     ),
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: IconButton(
-                        icon: const Icon(Icons.delete_outline),
-                        iconSize: 24,
-                        color: Colors.red[700],
-                        tooltip: 'Delete Media',
-                        constraints: const BoxConstraints(),
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        onPressed: () => _deleteMediaPath(url),
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      height: 48,
+                      child: Stack(
+                        children: [
+                          Align(
+                            alignment: Alignment.center,
+                            child: IconButton(
+                              icon: const Icon(FontAwesomeIcons.instagram),
+                              color: const Color(0xFFE1306C),
+                              iconSize: 32,
+                              tooltip: 'Open in Instagram',
+                              constraints: const BoxConstraints(),
+                              padding: EdgeInsets.zero,
+                              onPressed: () => _launchUrl(url),
+                            ),
+                          ),
+                          // --- ADDED: Expand/Collapse Button ---
+                          Align(
+                            alignment: const Alignment(
+                                0.5, 0.0), // Position like fullscreen
+                            child: IconButton(
+                              icon: Icon(
+                                  (_mediaTabExpansionStates[url] ?? false)
+                                      ? Icons.fullscreen_exit
+                                      : Icons.fullscreen),
+                              iconSize: 24,
+                              color: Colors.blue,
+                              tooltip: (_mediaTabExpansionStates[url] ?? false)
+                                  ? 'Collapse'
+                                  : 'Expand',
+                              constraints: const BoxConstraints(),
+                              padding: EdgeInsets.zero,
+                              onPressed: () {
+                                setState(() {
+                                  _mediaTabExpansionStates[url] =
+                                      !(_mediaTabExpansionStates[url] ?? false);
+                                });
+                              },
+                            ),
+                          ),
+                          // --- END ADDED Button ---
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: IconButton(
+                              icon: const Icon(Icons.delete_outline),
+                              iconSize: 24,
+                              color: Colors.red[700],
+                              tooltip: 'Delete Media',
+                              constraints: const BoxConstraints(),
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 12),
+                              onPressed: () => _deleteMediaPath(url),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
                 ),
-              ),
-            ],
+              );
+            },
           ),
-        );
-      },
+        ),
+      ],
     );
   }
 
@@ -1807,16 +1863,18 @@ class _SliverAppBarDelegate extends SliverPersistentHeaderDelegate {
   double get minExtent =>
       _tabBar.preferredSize.height +
       MediaQueryData.fromView(
-              WidgetsBinding.instance.platformDispatcher.views.first)
-          .padding
-          .top;
+                  WidgetsBinding.instance.platformDispatcher.views.first)
+              .padding
+              .top *
+          0.6;
   @override
   double get maxExtent =>
       _tabBar.preferredSize.height +
       MediaQueryData.fromView(
-              WidgetsBinding.instance.platformDispatcher.views.first)
-          .padding
-          .top;
+                  WidgetsBinding.instance.platformDispatcher.views.first)
+              .padding
+              .top *
+          0.6;
 
   @override
   Widget build(
