@@ -35,6 +35,7 @@ import '../services/auth_service.dart';
 import '../widgets/edit_experience_modal.dart';
 // ADDED: Import for SystemUiOverlayStyle
 import 'package:flutter/services.dart';
+import '../models/shared_media_item.dart'; // ADDED Import
 
 // Convert to StatefulWidget
 class ExperiencePageScreen extends StatefulWidget {
@@ -73,6 +74,9 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   List<Comment> _comments = [];
   // TODO: Add state for comment count if fetching separately
   int _commentCount = 0; // Placeholder
+  // ADDED: State for fetched media items
+  bool _isLoadingMedia = true;
+  List<SharedMediaItem> _mediaItems = [];
 
   // Hours Expansion State
   bool _isHoursExpanded = false;
@@ -128,6 +132,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     _fetchComments(); // Fetch comments on init
     _loadCurrentUserAndCategories(); // Fetch current user and categories
     // TODO: Fetch comment count if needed
+    _fetchMediaItems(); // ADDED: Fetch media items
   }
 
   // --- ADDED: Scroll Listener ---
@@ -635,11 +640,12 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       );
     }
 
-    // Calculate tab counts (moved from _buildTabbedContentSection)
-    final instagramMediaPaths = (_currentExperience.sharedMediaPaths ?? [])
+    // Calculate tab counts using fetched media items
+    final instagramMediaItems = _mediaItems
         .where((item) => item.path.toLowerCase().contains('instagram.com'))
         .toList();
-    final mediaCount = instagramMediaPaths.length;
+    final mediaCount =
+        _isLoadingMedia ? '...' : instagramMediaItems.length.toString();
     final reviewCount = _isLoadingReviews ? '...' : _reviews.length.toString();
     final commentCount = _isLoadingComments ? '...' : _commentCount.toString();
 
@@ -724,8 +730,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
             body: TabBarView(
               controller: _tabController,
               children: [
-                // Pass all paths, filtering happens inside _buildMediaTab
-                _buildMediaTab(context, _currentExperience.sharedMediaPaths),
+                // Pass fetched media items to _buildMediaTab
+                _buildMediaTab(context, _mediaItems),
                 _buildReviewsTab(context),
                 _buildCommentsTab(context),
               ],
@@ -1300,10 +1306,13 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   Widget _buildTabbedContentSection(BuildContext context) {
     // Calculate counts
     // Filter media paths for Instagram URLs to get the count
-    final instagramMediaPaths = (_currentExperience.sharedMediaPaths ?? [])
+    final instagramMediaItems = _mediaItems
         .where((item) => item.path.toLowerCase().contains('instagram.com'))
         .toList();
-    final mediaCount = instagramMediaPaths.length; // Count only Instagram posts
+    final mediaCount = _isLoadingMedia
+        ? '...'
+        : instagramMediaItems.length
+            .toString(); // Count fetched Instagram posts
     final reviewCount = _isLoadingReviews
         ? '...'
         : _reviews.length.toString(); // Show loading indicator or count
@@ -1343,8 +1352,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
           child: TabBarView(
             controller: _tabController,
             children: [
-              // Pass all paths, filtering happens inside _buildMediaTab
-              _buildMediaTab(context, _currentExperience.sharedMediaPaths),
+              // Pass fetched media items
+              _buildMediaTab(context, _mediaItems),
               _buildReviewsTab(context),
               _buildCommentsTab(context),
             ],
@@ -1381,46 +1390,41 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     // Proceed only if confirmed (confirm == true)
     if (confirm == true) {
       try {
-        // Create a mutable copy and remove the URL
-        final List<SharedMediaItem> updatedPaths = List<SharedMediaItem>.from(
-            _currentExperience.sharedMediaPaths ?? []);
-
-        // Find the index of the item to remove based on the path
-        final indexToRemove =
-            updatedPaths.indexWhere((item) => item.path == urlToDelete);
-
-        bool removed = false;
-        if (indexToRemove != -1) {
-          updatedPaths.removeAt(indexToRemove);
-          removed = true;
+        // Find the media item ID corresponding to the URL
+        // MODIFIED: Use try-catch instead of orElse for null safety
+        SharedMediaItem? mediaItemToRemove;
+        try {
+          mediaItemToRemove =
+              _mediaItems.firstWhere((item) => item.path == urlToDelete);
+        } catch (e) {
+          // Handle the case where no element is found (StateError)
+          mediaItemToRemove = null;
         }
 
-        if (removed) {
-          // Create the updated experience object
-          Experience updatedExperience = _currentExperience.copyWith(
-            // MODIFIED: Pass the correctly typed list
-            sharedMediaPaths: updatedPaths,
-            updatedAt: DateTime.now(), // Update timestamp
-          );
-
-          // Update in the backend
-          await _experienceService.updateExperience(updatedExperience);
-
-          // Refresh the local state
-          await _refreshExperienceData();
-          // Set flag to signal change on pop
-          setState(() {
-            _didDataChange = true;
-          });
-
+        if (mediaItemToRemove == null) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Media item removed.')),
+            const SnackBar(
+                content: Text('Error: Media item not found locally.')),
           );
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Error: Media item not found.')),
-          );
+          return; // Exit if not found locally
         }
+
+        // Remove link using the service
+        await _experienceService.removeExperienceLinkFromMediaItem(
+            mediaItemToRemove.id, _currentExperience.id);
+        print(
+            "Removed link between experience ${_currentExperience.id} and media ${mediaItemToRemove.id}");
+
+        // Refresh the local state (refetch experience AND media)
+        await _refreshExperienceData(); // This should implicitly trigger _fetchMediaItems
+        // Set flag to signal change on pop
+        setState(() {
+          _didDataChange = true;
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Media item removed.')),
+        );
       } catch (e) {
         print("Error deleting media path: $e");
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1432,16 +1436,17 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
 
   // Builds the Media Tab, now including a fullscreen button
   Widget _buildMediaTab(
-      BuildContext context, List<SharedMediaItem>? mediaPaths) {
-    // MODIFIED: Filter based on item.path
-    final instagramItems = (mediaPaths ?? [])
+      BuildContext context, List<SharedMediaItem> mediaItems) {
+    // Use the passed mediaItems list directly
+    final instagramItems = mediaItems
         .where((item) => item.path.toLowerCase().contains('instagram.com'))
         .toList();
-    // MODIFIED: Reverse the list of items
     final reversedInstagramItems = instagramItems.reversed.toList();
 
     // MODIFIED: Check the item list
-    if (reversedInstagramItems.isEmpty) {
+    if (_isLoadingMedia) {
+      return const Center(child: CircularProgressIndicator());
+    } else if (reversedInstagramItems.isEmpty) {
       return const Center(
           child: Text('No Instagram posts shared for this experience.'));
     }
@@ -1836,7 +1841,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
 
   // --- End Helper methods ---
 
-  // --- ADDED: Helper method to launch map location --- //
+  // --- ADDED Helper method to launch map location --- //
   Future<void> _launchMapLocation(Location location) async {
     final String mapUrl;
     // Prioritize Place ID if available
@@ -1895,6 +1900,41 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       if (mounted) {
         setState(() {
           _isLoadingExperience = false;
+        });
+      }
+    }
+  }
+
+  // ADDED: Method to fetch media items based on IDs
+  Future<void> _fetchMediaItems() async {
+    setState(() {
+      _isLoadingMedia = true;
+    });
+    try {
+      final mediaIds = _currentExperience.sharedMediaItemIds;
+      if (mediaIds.isNotEmpty) {
+        final items = await _experienceService.getSharedMediaItems(mediaIds);
+        if (mounted) {
+          setState(() {
+            _mediaItems = items;
+            print("Fetched ${_mediaItems.length} media items for experience.");
+          });
+        }
+      } else {
+        print("No media item IDs associated with this experience.");
+        if (mounted) setState(() => _mediaItems = []); // Ensure list is empty
+      }
+    } catch (e) {
+      print("Error fetching media items: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error loading media: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingMedia = false;
         });
       }
     }

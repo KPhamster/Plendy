@@ -6,6 +6,7 @@ import '../models/comment.dart';
 import '../models/reel.dart';
 import '../models/user_category.dart';
 import '../models/public_experience.dart';
+import '../models/shared_media_item.dart';
 
 /// Service for managing Experience-related operations
 class ExperienceService {
@@ -23,6 +24,8 @@ class ExperienceService {
   CollectionReference get _usersCollection => _firestore.collection('users');
   CollectionReference get _publicExperiencesCollection =>
       _firestore.collection('public_experiences');
+  CollectionReference get _sharedMediaItemsCollection =>
+      _firestore.collection('sharedMediaItems');
 
   // User-related operations
   String? get _currentUserId => _auth.currentUser?.uid;
@@ -408,6 +411,252 @@ class ExperienceService {
       print(
           "updatePublicExperienceMediaAndMaybeYelp: No updates to perform for ID: $publicExperienceId");
       return true; // Nothing to do, considered successful
+    }
+  }
+
+  // ======= Shared Media Item Operations =======
+
+  /// Finds a single SharedMediaItem document by its path.
+  /// Returns null if no matching document is found.
+  Future<SharedMediaItem?> findSharedMediaItemByPath(String path) async {
+    if (path.isEmpty) {
+      print("findSharedMediaItemByPath: Provided path is empty.");
+      return null;
+    }
+    try {
+      print("findSharedMediaItemByPath: Searching for path: $path");
+      final snapshot = await _sharedMediaItemsCollection
+          .where('path', isEqualTo: path)
+          .limit(1)
+          .get();
+
+      if (snapshot.docs.isNotEmpty) {
+        final doc = snapshot.docs.first;
+        print(
+            "findSharedMediaItemByPath: Found existing item with ID: ${doc.id}");
+        return SharedMediaItem.fromFirestore(doc);
+      } else {
+        print(
+            "findSharedMediaItemByPath: No existing item found for path: $path");
+        return null;
+      }
+    } catch (e) {
+      print("Error finding shared media item by path '$path': $e");
+      return null;
+    }
+  }
+
+  /// Creates a new SharedMediaItem document in Firestore.
+  /// Returns the ID of the newly created document.
+  Future<String> createSharedMediaItem(SharedMediaItem item) async {
+    try {
+      print(
+          "createSharedMediaItem: Attempting to create item for path: ${item.path}");
+      final data = item.toMap();
+      final docRef = await _sharedMediaItemsCollection.add(data);
+      print(
+          "createSharedMediaItem: Successfully created item with ID: ${docRef.id}");
+      return docRef.id;
+    } catch (e) {
+      print("Error creating shared media item for path '${item.path}': $e");
+      throw Exception("Failed to create shared media item: $e");
+    }
+  }
+
+  /// Adds an experience ID to the experienceIds array of a SharedMediaItem document.
+  Future<void> addExperienceLinkToMediaItem(
+      String mediaItemId, String experienceId) async {
+    if (mediaItemId.isEmpty || experienceId.isEmpty) {
+      print("addExperienceLinkToMediaItem: Invalid arguments.");
+      return;
+    }
+    try {
+      print(
+          "addExperienceLinkToMediaItem: Linking Experience $experienceId to Media $mediaItemId");
+      await _sharedMediaItemsCollection.doc(mediaItemId).update({
+        'experienceIds': FieldValue.arrayUnion([experienceId])
+      });
+    } catch (e) {
+      print("Error linking experience $experienceId to media $mediaItemId: $e");
+      // Consider rethrowing or specific error handling
+    }
+  }
+
+  /// Removes an experience ID from the experienceIds array of a SharedMediaItem document.
+  /// Optionally deletes the media item if it becomes orphaned (no more links).
+  Future<void> removeExperienceLinkFromMediaItem(
+      String mediaItemId, String experienceId,
+      {bool deleteIfOrphaned = true}) async {
+    if (mediaItemId.isEmpty || experienceId.isEmpty) {
+      print("removeExperienceLinkFromMediaItem: Invalid arguments.");
+      return;
+    }
+    try {
+      print(
+          "removeExperienceLinkFromMediaItem: Unlinking Experience $experienceId from Media $mediaItemId");
+      final docRef = _sharedMediaItemsCollection.doc(mediaItemId);
+      await docRef.update({
+        'experienceIds': FieldValue.arrayRemove([experienceId])
+      });
+
+      if (deleteIfOrphaned) {
+        print(
+            "removeExperienceLinkFromMediaItem: Checking if media item $mediaItemId is orphaned.");
+        final updatedDoc = await docRef.get();
+        if (updatedDoc.exists) {
+          final data = updatedDoc.data() as Map<String, dynamic>?;
+          final List<String> remainingLinks =
+              List<String>.from(data?['experienceIds'] ?? []);
+          if (remainingLinks.isEmpty) {
+            print(
+                "removeExperienceLinkFromMediaItem: Media item $mediaItemId is orphaned. Deleting...");
+            await docRef.delete();
+          } else {
+            print(
+                "removeExperienceLinkFromMediaItem: Media item $mediaItemId still has ${remainingLinks.length} links.");
+          }
+        } else {
+          print(
+              "removeExperienceLinkFromMediaItem: Media item $mediaItemId not found after update (possibly already deleted?).");
+        }
+      }
+    } catch (e) {
+      print(
+          "Error unlinking experience $experienceId from media $mediaItemId: $e");
+      // Consider rethrowing or specific error handling
+    }
+  }
+
+  /// Fetches a single SharedMediaItem by its ID.
+  Future<SharedMediaItem?> getSharedMediaItem(String mediaItemId) async {
+    if (mediaItemId.isEmpty) return null;
+    try {
+      final doc = await _sharedMediaItemsCollection.doc(mediaItemId).get();
+      if (!doc.exists) {
+        return null;
+      }
+      return SharedMediaItem.fromFirestore(doc);
+    } catch (e) {
+      print("Error fetching shared media item $mediaItemId: $e");
+      return null;
+    }
+  }
+
+  /// Fetches multiple SharedMediaItem documents by their IDs.
+  /// Handles Firestore 'in' query limits by chunking.
+  Future<List<SharedMediaItem>> getSharedMediaItems(
+      List<String> mediaItemIds) async {
+    if (mediaItemIds.isEmpty) {
+      return [];
+    }
+
+    // Deduplicate IDs just in case
+    final uniqueIds = mediaItemIds.toSet().toList();
+
+    List<SharedMediaItem> results = [];
+    // Firestore 'in' query limit (currently 30, previously 10)
+    const chunkSize = 30;
+
+    for (int i = 0; i < uniqueIds.length; i += chunkSize) {
+      final chunk = uniqueIds.sublist(i,
+          i + chunkSize > uniqueIds.length ? uniqueIds.length : i + chunkSize);
+
+      if (chunk.isEmpty) continue;
+
+      try {
+        print(
+            "getSharedMediaItems: Fetching chunk ${i ~/ chunkSize + 1} with ${chunk.length} IDs.");
+        final snapshot = await _sharedMediaItemsCollection
+            .where(FieldPath.documentId, whereIn: chunk)
+            .get();
+
+        results.addAll(snapshot.docs
+            .map((doc) => SharedMediaItem.fromFirestore(doc))
+            .toList());
+      } catch (e) {
+        print("Error fetching shared media items chunk: $e");
+        // Decide how to handle partial failures - continue or throw?
+        // For now, we continue and return potentially incomplete results.
+      }
+    }
+    print(
+        "getSharedMediaItems: Fetched total of ${results.length} items for ${uniqueIds.length} unique IDs.");
+    return results;
+  }
+
+  /// Updates the media IDs and optionally the Yelp URL for a PublicExperience.
+  /// Merges the new media item IDs with existing ones.
+  Future<bool> updatePublicExperienceMediaIds(
+      String publicExperienceId, List<String> newMediaItemIds,
+      {String? newYelpUrl}) async {
+    if (publicExperienceId.isEmpty) {
+      print("updatePublicExperienceMediaIds: Invalid arguments (ID empty)");
+      return false;
+    }
+
+    Map<String, dynamic> updateData = {};
+
+    // Always add new media item IDs if provided
+    if (newMediaItemIds.isNotEmpty) {
+      print(
+          "updatePublicExperienceMediaIds: Preparing to add ${newMediaItemIds.length} media IDs to public experience ID: $publicExperienceId");
+      // Use arrayUnion to merge IDs
+      updateData['sharedMediaItemIds'] = FieldValue.arrayUnion(newMediaItemIds);
+    } else {
+      print(
+          "updatePublicExperienceMediaIds: No new media item IDs provided for ID: $publicExperienceId");
+    }
+
+    if (updateData.isNotEmpty ||
+        (newYelpUrl != null && newYelpUrl.isNotEmpty)) {
+      try {
+        await _firestore.runTransaction((transaction) async {
+          final docRef = _publicExperiencesCollection.doc(publicExperienceId);
+          final snapshot = await transaction.get(docRef);
+
+          if (!snapshot.exists) {
+            print(
+                "updatePublicExperienceMediaIds: Document $publicExperienceId does not exist.");
+            throw FirebaseException(
+                plugin: 'cloud_firestore', code: 'not-found');
+          }
+
+          final currentData = snapshot.data() as Map<String, dynamic>?;
+          final currentYelpUrl = currentData?['yelpUrl'] as String?;
+
+          // Conditionally add yelpUrl update
+          if (newYelpUrl != null && newYelpUrl.isNotEmpty) {
+            if (currentYelpUrl == null || currentYelpUrl.isEmpty) {
+              print(
+                  "updatePublicExperienceMediaIds: Current Yelp URL is empty, updating with new URL: $newYelpUrl");
+              updateData['yelpUrl'] = newYelpUrl;
+            } else {
+              print(
+                  "updatePublicExperienceMediaIds: Current Yelp URL already exists ('$currentYelpUrl'), not overwriting.");
+            }
+          }
+
+          if (updateData.isNotEmpty) {
+            print(
+                "updatePublicExperienceMediaIds: Applying updates: ${updateData.keys.join(', ')}");
+            transaction.update(docRef, updateData);
+          } else {
+            print(
+                "updatePublicExperienceMediaIds: No fields needed updating after check.");
+          }
+        });
+        print(
+            "updatePublicExperienceMediaIds: Successfully processed updates for ID: $publicExperienceId");
+        return true;
+      } catch (e) {
+        print(
+            "Error updating media/yelp for public experience ID '$publicExperienceId': $e");
+        return false;
+      }
+    } else {
+      print(
+          "updatePublicExperienceMediaIds: No updates to perform for ID: $publicExperienceId");
+      return true;
     }
   }
 

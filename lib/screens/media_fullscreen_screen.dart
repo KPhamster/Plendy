@@ -4,6 +4,7 @@ import 'receive_share/widgets/instagram_preview_widget.dart'
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../models/experience.dart';
 import '../services/experience_service.dart';
+import '../models/shared_media_item.dart';
 
 class MediaFullscreenScreen extends StatefulWidget {
   final List<SharedMediaItem> instagramUrls;
@@ -62,48 +63,66 @@ class _MediaFullscreenScreenState extends State<MediaFullscreenScreen> {
 
     if (confirm == true) {
       try {
+        // --- REFACTORED Deletion Logic --- START ---
+        // Find the matching SharedMediaItem in the local list
+        // MODIFIED: Use try-catch instead of orElse
+        SharedMediaItem? itemToRemove;
+        try {
+          itemToRemove = _localInstagramItems
+              .firstWhere((item) => item.path == urlToDelete);
+        } catch (e) {
+          // Handle StateError if not found
+          itemToRemove = null;
+        }
+
+        if (itemToRemove == null) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                  content: Text('Error: Media item not found locally.')),
+            );
+          }
+          return; // Exit if not found
+        }
+
+        // Call the service to remove the link between the experience and the media item
+        await widget.experienceService.removeExperienceLinkFromMediaItem(
+            itemToRemove.id, widget.experience.id);
+        print(
+            "Removed link between experience ${widget.experience.id} and media ${itemToRemove.id} (from Fullscreen)");
+
+        // --- Old logic removed ---
+        /*
         final List<SharedMediaItem> currentPaths = List<SharedMediaItem>.from(
             widget.experience.sharedMediaPaths ?? []);
-
-        final indexToRemove =
-            currentPaths.indexWhere((item) => item.path == urlToDelete);
-
+        final indexToRemove = currentPaths.indexWhere((item) => item.path == urlToDelete);
         bool removed = false;
         List<SharedMediaItem> updatedPaths = List.from(currentPaths);
         if (indexToRemove != -1) {
           updatedPaths.removeAt(indexToRemove);
           removed = true;
         }
-
         if (removed) {
-          Experience updatedExperience = widget.experience.copyWith(
-            sharedMediaPaths: updatedPaths,
-            updatedAt: DateTime.now(),
+           Experience updatedExperience = widget.experience.copyWith(
+             sharedMediaItemIds: updatedPaths.map((item) => item.id).toList(), // Corrected field
+             updatedAt: DateTime.now(),
+           );
+           await widget.experienceService.updateExperience(updatedExperience);
+        */
+        // --- End Old logic ---
+
+        // Update local state to remove the item visually
+        if (mounted) {
+          setState(() {
+            _localInstagramItems
+                .removeWhere((item) => item.path == urlToDelete);
+            _didDataChange = true; // Mark that a change occurred
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Media item removed.')),
           );
-          await widget.experienceService.updateExperience(updatedExperience);
-
-          // Pop with true to indicate success/change
-          // Navigator.of(context).pop(true); // REMOVED: Don't pop automatically
-
-          // ADDED: Update local state instead of popping
-          if (mounted) {
-            setState(() {
-              _localInstagramItems
-                  .removeWhere((item) => item.path == urlToDelete);
-              _didDataChange = true; // Mark that a change occurred
-            });
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Media item removed.')),
-            );
-          }
-        } else {
-          if (mounted) {
-            // ADDED: Check mounted before showing SnackBar
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Error: Media item not found.')),
-            );
-          }
         }
+        // --- REFACTORED Deletion Logic --- END ---
       } catch (e) {
         print("Error deleting media path from fullscreen: $e");
         if (mounted) {

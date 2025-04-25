@@ -14,6 +14,7 @@ import 'package:provider/provider.dart'; // Import Provider
 import '../providers/receive_share_provider.dart'; // Import the provider
 import '../models/experience.dart';
 import '../models/user_category.dart'; // RENAMED Import
+import '../models/shared_media_item.dart'; // ADDED Import
 import '../services/experience_service.dart';
 import '../services/google_maps_service.dart';
 import '../widgets/google_maps_widget.dart';
@@ -1641,6 +1642,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       _isSaving = true;
     });
 
+    // --- Define the list of paths from the current share ---
+    final List<String> currentSharedPaths =
+        _currentSharedFiles.map((f) => f.path).toList();
+    print(
+        "SAVE_DEBUG: Starting save process with ${currentSharedPaths.length} media paths to process.");
+    // ------
+
     int successCount = 0;
     int updateCount = 0;
     List<String> errors = [];
@@ -1699,8 +1707,22 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             // CREATE NEW EXPERIENCE
             // Convert List<String> to List<SharedMediaItem>
             final List<SharedMediaItem> sharedMediaItemsToSave = newMediaPaths
-                .map((path) => SharedMediaItem(path: path, createdAt: now))
+                .map((path) => SharedMediaItem(
+                      id: '',
+                      path: path,
+                      createdAt: now,
+                      ownerUserId: currentUserId,
+                      experienceIds: [], // Initially empty, linked later
+                    ))
                 .toList();
+
+            // Create SharedMediaItems in Firestore FIRST and get real IDs
+            List<String> savedMediaItemIds = [];
+            for (var mediaItem in sharedMediaItemsToSave) {
+              String mediaItemId =
+                  await _experienceService.createSharedMediaItem(mediaItem);
+              savedMediaItemIds.add(mediaItemId);
+            }
 
             Experience newExperience = Experience(
               id: '',
@@ -1712,15 +1734,23 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               yelpUrl: cardYelpUrl.isNotEmpty ? cardYelpUrl : null,
               website: cardWebsite.isNotEmpty ? cardWebsite : null,
               additionalNotes: notes.isNotEmpty ? notes : null,
-              sharedMediaPaths:
-                  sharedMediaItemsToSave, // Assign the converted list
+              // FIXED: Use the real Firestore IDs instead of empty strings
+              sharedMediaItemIds: savedMediaItemIds,
               createdAt: now,
               updatedAt: now,
               // Initialize editor list with the current user
               editorUserIds: [currentUserId],
             );
             print("SAVE_DEBUG: Creating new Experience: ${newExperience.name}");
-            await _experienceService.createExperience(newExperience);
+            String newExperienceId =
+                await _experienceService.createExperience(newExperience);
+
+            // Now link the experience ID back to each media item
+            for (String mediaItemId in savedMediaItemIds) {
+              await _experienceService.addExperienceLinkToMediaItem(
+                  mediaItemId, newExperienceId);
+            }
+
             successCount++;
           } else {
             // UPDATE EXISTING EXPERIENCE
@@ -1735,8 +1765,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                   {}; // Use map to ensure uniqueness by path
 
               // Add existing items first
-              if (existingExperience.sharedMediaPaths != null) {
-                for (final item in existingExperience.sharedMediaPaths!) {
+              if (existingExperience.sharedMediaItemIds.isNotEmpty) {
+                // Fetch existing SharedMediaItem objects to get their paths
+                // This assumes getSharedMediaItems is implemented in the service
+                // TODO (Service Dependency): Implement getSharedMediaItems
+                List<SharedMediaItem> existingItems = await _experienceService
+                    .getSharedMediaItems(existingExperience.sharedMediaItemIds);
+                for (final item in existingItems) {
                   combinedPathsMap[item.path] = item;
                 }
               }
@@ -1745,15 +1780,36 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               for (final path in newMediaPaths) {
                 // If path doesn't exist or you want to update timestamp, add/replace
                 if (!combinedPathsMap.containsKey(path)) {
-                  combinedPathsMap[path] =
-                      SharedMediaItem(path: path, createdAt: now);
+                  combinedPathsMap[path] = SharedMediaItem(
+                    id: '',
+                    path: path,
+                    createdAt: now,
+                    ownerUserId: currentUserId,
+                    experienceIds: [], // Initially empty
+                  );
                 }
                 // If you always want the newest timestamp for a repeated share:
-                // combinedPathsMap[path] = SharedMediaItem(path: path, createdAt: now);
+                // combinedPathsMap[path] = SharedMediaItem(id: '', path: path, createdAt: now, ownerUserId: currentUserId, experienceIds: []);
               }
 
-              final List<SharedMediaItem> updatedMediaItems =
-                  combinedPathsMap.values.toList();
+              // Process media items - create new ones in Firestore first
+              List<String> finalMediaItemIds = [];
+              List<String> newMediaItemIds =
+                  []; // Track newly created items for linking
+
+              // Process all items - use existing IDs if valid, create new ones if needed
+              for (var item in combinedPathsMap.values) {
+                if (item.id.isNotEmpty) {
+                  // Existing item with valid ID
+                  finalMediaItemIds.add(item.id);
+                } else {
+                  // Create new item in Firestore
+                  String mediaItemId =
+                      await _experienceService.createSharedMediaItem(item);
+                  finalMediaItemIds.add(mediaItemId);
+                  newMediaItemIds.add(mediaItemId); // Track for linking
+                }
+              }
 
               Experience updatedExperience = existingExperience.copyWith(
                 name: cardTitle,
@@ -1764,13 +1820,20 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                 description:
                     notes.isNotEmpty ? notes : existingExperience.description,
                 additionalNotes: notes.isNotEmpty ? notes : null,
-                sharedMediaPaths:
-                    updatedMediaItems, // Assign the combined list of items
+                // FIXED: Use the list with valid Firestore IDs
+                sharedMediaItemIds: finalMediaItemIds,
                 updatedAt: now,
               );
               print(
                   "SAVE_DEBUG: Updating Experience: ${updatedExperience.name}");
               await _experienceService.updateExperience(updatedExperience);
+
+              // Link the experience ID to each new media item
+              for (String mediaItemId in newMediaItemIds) {
+                await _experienceService.addExperienceLinkToMediaItem(
+                    mediaItemId, existingExperience.id);
+              }
+
               updateCount++;
             } else {
               print(
@@ -1831,6 +1894,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             try {
               await _experienceService
                   .updateCategoryLastUsedTimestamp(selectedCategoryObject.id);
+              print(
+                  "SAVE_DEBUG [Card ${card.id}]: Updated timestamp for category: ${selectedCategoryObject.name}");
             } catch (e) {
               // Log error but don't stop the overall process
               print(
