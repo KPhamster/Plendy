@@ -13,6 +13,8 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart'; // Import FontA
 import 'package:plendy/widgets/add_category_modal.dart';
 // ADDED: Import for the Edit modal
 import 'package:plendy/widgets/edit_categories_modal.dart';
+// ADDED: Import for Clipboard
+import 'package:flutter/services.dart';
 
 // Define necessary callbacks
 typedef OnRemoveCallback = void Function(ExperienceCardData card);
@@ -64,6 +66,99 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
 
   // ADDED: Service instance
   final ExperienceService _experienceService = ExperienceService();
+
+  // --- ADDED: Helper to check for Yelp URL ---
+  bool _isYelpUrl(String url) {
+    if (url.isEmpty) return false;
+    String urlLower = url.toLowerCase();
+    // Basic check for yelp.com/biz or yelp.to
+    return urlLower.contains('yelp.com/biz') || urlLower.contains('yelp.to/');
+  }
+  // --- END ADDED ---
+
+  // --- ADDED: Helper to extract the first URL from text ---
+  String? _extractFirstUrl(String text) {
+    if (text.isEmpty) return null;
+    final RegExp urlRegex = RegExp(
+        r"(?:(?:https?|ftp):\/\/|www\.)[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b(?:[-a-zA-Z0-9()@:%_\+.~#?&\/=]*)",
+        caseSensitive: false);
+    final match = urlRegex.firstMatch(text);
+    return match?.group(0);
+  }
+  // --- END ADDED ---
+
+  // --- ADDED: Helper to paste Yelp URL from clipboard ---
+  Future<void> _pasteYelpUrlFromClipboard() async {
+    final clipboardData = await Clipboard.getData(Clipboard.kTextPlain);
+    final clipboardText = clipboardData?.text;
+
+    if (clipboardText != null && clipboardText.isNotEmpty) {
+      // --- MODIFIED: Extract URL first ---
+      final extractedUrl = _extractFirstUrl(clipboardText);
+
+      if (extractedUrl != null) {
+        final isYelp = _isYelpUrl(extractedUrl);
+        if (isYelp) {
+          final isValid = _isValidUrl(extractedUrl);
+          if (isValid) {
+            setState(() {
+              widget.cardData.yelpUrlController.text = extractedUrl;
+            });
+            // Notify parent of update (needed for suffix icon changes)
+            widget.onUpdate(refreshCategories: false);
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                  content: Text('Yelp URL pasted from clipboard.'),
+                  duration: Duration(seconds: 1)),
+            );
+          } else {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Extracted URL is not valid.')),
+            );
+          }
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+                content: Text('Clipboard does not contain a Yelp URL.')),
+          );
+        }
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No URL found in clipboard.')),
+        );
+      }
+      // --- END MODIFICATION ---
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Clipboard is empty.')),
+      );
+    }
+  }
+  // --- END ADDED ---
+
+  // --- ADDED: Helper to paste Website URL from clipboard (direct paste) ---
+  Future<void> _pasteWebsiteUrlFromClipboard() async {
+    final clipboardData = await Clipboard.getData(Clipboard.kTextPlain);
+    final clipboardText = clipboardData?.text;
+
+    if (clipboardText != null && clipboardText.isNotEmpty) {
+      setState(() {
+        widget.cardData.websiteController.text = clipboardText; // Direct paste
+      });
+      // Notify parent of update (needed for suffix icon changes)
+      widget.onUpdate(refreshCategories: false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('Pasted from clipboard.'),
+            duration: Duration(seconds: 1)),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Clipboard is empty.')),
+      );
+    }
+  }
+  // --- END ADDED ---
 
   // --- ADDED: Constants for special dropdown values ---
   static const String _addCategoryValue = '__add_new_category__';
@@ -682,7 +777,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                           prefixIcon:
                               Icon(FontAwesomeIcons.yelp), // Use Yelp icon here
                           suffixIconConstraints: BoxConstraints.tightFor(
-                              width: 60,
+                              width: 90, // Keep width for three icons
                               height: 48), // Increase width for both icons
                           // Use suffix to combine clear and launch buttons
                           suffixIcon: Row(
@@ -690,7 +785,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                 .min, // Prevent row taking full width
                             mainAxisAlignment: MainAxisAlignment.end,
                             children: <Widget>[
-                              // Clear button (only shown if text exists)
+                              // Clear button (now first)
                               if (yelpUrlController.text.isNotEmpty)
                                 InkWell(
                                   onTap: () {
@@ -699,23 +794,47 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                   },
                                   child: Padding(
                                     padding: const EdgeInsets.symmetric(
-                                        horizontal:
-                                            2.0), // Reduce horizontal padding
+                                        horizontal: 0), // No horizontal padding
                                     child: Icon(Icons.clear, size: 18),
                                   ),
-                                  // Consider adding splash/highlight color if desired
+                                  borderRadius: BorderRadius.circular(16),
                                 ),
-                              // Yelp launch button
+                              // Spacer
+                              if (yelpUrlController.text
+                                  .isNotEmpty) // Only show spacer if clear button is shown
+                                const SizedBox(width: 8),
+
+                              // Paste Button (now second)
                               InkWell(
-                                onTap: _launchYelpUrl,
+                                onTap: _pasteYelpUrlFromClipboard,
                                 child: Padding(
                                   padding: const EdgeInsets.symmetric(
-                                      horizontal:
-                                          8.0), // Reduce horizontal padding
-                                  child: Icon(FontAwesomeIcons.yelp,
-                                      size: 18, color: Colors.red[700]),
+                                      horizontal: 0), // No horizontal padding
+                                  child: Icon(Icons.content_paste,
+                                      size: 18, color: Colors.blue[700]),
                                 ),
-                                // Consider adding splash/highlight color if desired
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+
+                              // Spacer
+                              const SizedBox(width: 8),
+
+                              // Yelp launch button (remains last)
+                              InkWell(
+                                onTap: yelpUrlController.text.isNotEmpty
+                                    ? _launchYelpUrl
+                                    : null, // Only enable if field not empty
+                                child: Padding(
+                                  padding: const EdgeInsets.only(
+                                      right:
+                                          8.0), // Add padding only on the right end
+                                  child: Icon(FontAwesomeIcons.yelp,
+                                      size: 18,
+                                      color: yelpUrlController.text.isNotEmpty
+                                          ? Colors.red[700]
+                                          : Colors.grey), // Dim if inactive
+                                ),
+                                borderRadius: BorderRadius.circular(16),
                               ),
                             ],
                           )),
@@ -745,16 +864,15 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                         hintText: 'https://...',
                         border: OutlineInputBorder(),
                         prefixIcon: Icon(Icons.language),
-                        // Combine clear and launch buttons in the suffix
+                        // --- MODIFIED: Add Paste button to suffix ---
                         suffixIconConstraints: BoxConstraints.tightFor(
-                            width: 60,
-                            height: 48), // Adjust constraints for two icons
+                            width: 90, // Keep width for three icons
+                            height: 48),
                         suffixIcon: Row(
-                          mainAxisSize:
-                              MainAxisSize.min, // Prevent row taking full width
+                          mainAxisSize: MainAxisSize.min,
                           mainAxisAlignment: MainAxisAlignment.end,
                           children: <Widget>[
-                            // Clear button (only show if text exists)
+                            // Clear button (first)
                             if (websiteController.text.isNotEmpty)
                               InkWell(
                                 onTap: () {
@@ -762,54 +880,71 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                   widget.onUpdate(refreshCategories: false);
                                 },
                                 child: Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal:
-                                          2.0), // Reduce horizontal padding
+                                  padding:
+                                      const EdgeInsets.symmetric(horizontal: 0),
                                   child: Icon(Icons.clear, size: 18),
                                 ),
+                                borderRadius: BorderRadius.circular(16),
                               ),
-                            // Launch button
+                            // Spacer
+                            if (websiteController.text.isNotEmpty)
+                              const SizedBox(width: 8),
+
+                            // Paste button (second)
                             InkWell(
-                              onTap: () async {
-                                String urlString =
-                                    websiteController.text.trim();
-                                if (_isValidUrl(urlString)) {
-                                  try {
-                                    await launchUrl(
-                                      Uri.parse(urlString),
-                                      mode: LaunchMode.externalApplication,
-                                    );
-                                  } catch (e) {
-                                    // print('Error launching URL: $e');
-                                    if (mounted) {
-                                      ScaffoldMessenger.of(context)
-                                          .showSnackBar(
-                                        SnackBar(
-                                            content:
-                                                Text('Error opening link: $e')),
-                                      );
-                                    }
-                                  }
-                                } else {
-                                  if (mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                          content: Text('Enter a valid URL')),
-                                    );
-                                  }
-                                }
-                              },
+                              onTap: _pasteWebsiteUrlFromClipboard,
                               child: Padding(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal:
-                                        8.0), // Adjust padding as needed
+                                padding:
+                                    const EdgeInsets.symmetric(horizontal: 0),
+                                child: Icon(Icons.content_paste,
+                                    size: 18, color: Colors.blue[700]),
+                              ),
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+
+                            // Spacer
+                            const SizedBox(width: 8),
+
+                            // Launch button (last)
+                            InkWell(
+                              onTap: websiteController.text.isNotEmpty &&
+                                      _isValidUrl(websiteController.text.trim())
+                                  ? () async {
+                                      String urlString =
+                                          websiteController.text.trim();
+                                      // No need to re-validate here, already checked in condition
+                                      try {
+                                        await launchUrl(
+                                          Uri.parse(urlString),
+                                          mode: LaunchMode.externalApplication,
+                                        );
+                                      } catch (e) {
+                                        if (mounted) {
+                                          ScaffoldMessenger.of(context)
+                                              .showSnackBar(
+                                            SnackBar(
+                                                content: Text(
+                                                    'Error opening link: $e')),
+                                          );
+                                        }
+                                      }
+                                    }
+                                  : null,
+                              child: Padding(
+                                padding: const EdgeInsets.only(right: 8.0),
                                 child: Icon(Icons.launch, // Use launch icon
                                     size: 18,
-                                    color: Colors.blue[700]),
+                                    color: websiteController.text.isNotEmpty &&
+                                            _isValidUrl(
+                                                websiteController.text.trim())
+                                        ? Colors.blue[700]
+                                        : Colors.grey),
                               ),
+                              borderRadius: BorderRadius.circular(16),
                             ),
                           ],
                         ),
+                        // --- END MODIFICATION ---
                       ),
                       keyboardType: TextInputType.url,
                       validator: (value) {
