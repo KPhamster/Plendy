@@ -10,6 +10,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../models/share_permission.dart';
 import '../models/enums/share_enums.dart';
+import '../screens/main_screen.dart';
 
 class SharingService {
   static final SharingService _instance = SharingService._internal();
@@ -147,27 +148,41 @@ class SharingService {
     print("SHARE SERVICE: Context updated");
   }
 
-  // Show the receive share screen
-  void showReceiveShareScreen(
-      BuildContext context, List<SharedMediaFile> sharedFiles) {
-    print('SHARING SERVICE: Showing ReceiveShareScreen');
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => ChangeNotifierProvider(
-          create: (_) => ReceiveShareProvider(),
-          child: ReceiveShareScreen(
-            sharedFiles: sharedFiles,
-            onCancel: () {
-              print(
-                  'SHARING SERVICE: ReceiveShareScreen cancelled, resetting intent.');
-              resetSharedItems();
-              Navigator.pop(context);
-            },
+  // Show the receive share screen as a modal bottom sheet or full screen
+  Future<void> showReceiveShareScreen(
+      BuildContext context, List<SharedMediaFile> files) async {
+    print(
+        "SHARE SERVICE: showReceiveShareScreen called with ${files.length} files.");
+    // Dismiss any existing snackbar/dialog before showing new screen
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+
+    if (context.mounted) {
+      // Always push as a full screen route
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => ChangeNotifierProvider(
+            create: (_) => ReceiveShareProvider(), // Create the provider
+            child: ReceiveShareScreen(
+              sharedFiles: files,
+              onCancel: () {
+                print(
+                    "SHARE SERVICE: onCancel called. Navigating to MainScreen.");
+                // Reset shared items when cancelling
+                resetSharedItems();
+                // Navigate to MainScreen and remove all previous routes
+                Navigator.pushAndRemoveUntil(
+                  context,
+                  MaterialPageRoute(builder: (context) => const MainScreen()),
+                  (Route<dynamic> route) => false, // Remove all routes
+                );
+              },
+            ),
           ),
         ),
-      ),
-    );
+      );
+      print("SHARE SERVICE: Navigator.push for ReceiveShareScreen finished.");
+    }
   }
 
   /// Shares an item (Experience or UserCategory) with another user.
