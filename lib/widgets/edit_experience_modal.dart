@@ -6,6 +6,8 @@ import 'package:plendy/screens/receive_share_screen.dart'
 import 'package:plendy/screens/receive_share/widgets/experience_card_form.dart'; // For field structure reference (or reuse fields)
 import 'package:font_awesome_flutter/font_awesome_flutter.dart'; // For icons
 import 'package:plendy/services/google_maps_service.dart'; // For location picker interaction
+import 'package:url_launcher/url_launcher.dart';
+import 'package:flutter/services.dart';
 
 class EditExperienceModal extends StatefulWidget {
   final Experience experience;
@@ -49,14 +51,35 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
     if (_cardData.selectedLocation?.address != null) {
       _cardData.searchController.text = _cardData.selectedLocation!.address!;
     }
+
+    // --- ADDED: Listener to rebuild on Yelp URL text change for suffix icons ---
+    _cardData.yelpUrlController.addListener(_triggerRebuild);
+    // --- END ADDED ---
+    // --- ADDED: Listener for Website URL ---
+    _cardData.websiteController.addListener(_triggerRebuild);
+    // --- END ADDED ---
   }
 
   @override
   void dispose() {
     // Dispose controllers managed by _cardData
     _cardData.dispose();
+    // --- ADDED: Remove listener ---
+    _cardData.yelpUrlController.removeListener(_triggerRebuild);
+    // --- END ADDED ---
+    // --- ADDED: Remove Website listener ---
+    _cardData.websiteController.removeListener(_triggerRebuild);
+    // --- END ADDED ---
     super.dispose();
   }
+
+  // --- ADDED: Helper simply calls setState if mounted ---
+  void _triggerRebuild() {
+    if (mounted) {
+      setState(() {});
+    }
+  }
+  // --- END ADDED ---
 
   // Helper method moved from ReceiveShareScreen's form widget
   bool _isValidUrl(String text) {
@@ -220,6 +243,144 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
     }
   }
   // --- End Category Selection Logic ---
+
+  // --- ADDED: Helper to check for Yelp URL ---
+  bool _isYelpUrl(String url) {
+    if (url.isEmpty) return false;
+    String urlLower = url.toLowerCase();
+    // Basic check for yelp.com/biz or yelp.to
+    return urlLower.contains('yelp.com/biz') || urlLower.contains('yelp.to/');
+  }
+  // --- END ADDED ---
+
+  // --- ADDED: Helper to extract the first URL from text ---
+  String? _extractFirstUrl(String text) {
+    if (text.isEmpty) return null;
+    final RegExp urlRegex = RegExp(
+        r"(?:(?:https?|ftp):\/\/|www\.)[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b(?:[-a-zA-Z0-9()@:%_\+.~#?&\/=]*)",
+        caseSensitive: false);
+    final match = urlRegex.firstMatch(text);
+    return match?.group(0);
+  }
+  // --- END ADDED ---
+
+  // --- ADDED: Helper method to launch Yelp URLs ---
+  Future<void> _launchYelpUrl() async {
+    String urlString = _cardData.yelpUrlController.text.trim();
+    if (!_isValidUrl(urlString)) {
+      // Optionally show a message or try to search if not a valid URL
+      print("Invalid URL, cannot launch: $urlString");
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Invalid Yelp URL entered')),
+      );
+      return;
+    }
+
+    Uri uri = Uri.parse(urlString);
+
+    try {
+      bool launched =
+          await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!launched) {
+        print('Could not launch $uri');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Could not open Yelp link')),
+          );
+        }
+      }
+    } catch (e) {
+      print('Error launching URL: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error opening link: $e')),
+        );
+      }
+    }
+  }
+  // --- END ADDED ---
+
+  // --- ADDED: Helper to paste Yelp URL from clipboard ---
+  Future<void> _pasteYelpUrlFromClipboard() async {
+    // print('MODAL: _pasteYelpUrlFromClipboard called.'); // Log entry
+    final clipboardData = await Clipboard.getData(Clipboard.kTextPlain);
+    final clipboardText = clipboardData?.text;
+    // print('MODAL: Clipboard text retrieved: "$clipboardText"'); // Log clipboard content
+
+    if (clipboardText != null && clipboardText.isNotEmpty) {
+      // --- MODIFIED: Extract URL first ---
+      final extractedUrl = _extractFirstUrl(clipboardText);
+      // print('MODAL: Extracted URL from clipboard: "$extractedUrl"');
+
+      if (extractedUrl != null) {
+        final isYelp = _isYelpUrl(extractedUrl);
+        // print('MODAL: Is Yelp URL check result (extracted): $isYelp'); // Log Yelp check
+        if (isYelp) {
+          // Validate the *extracted* URL
+          final isValid = _isValidUrl(extractedUrl);
+          // print('MODAL: Is valid URL check result (extracted): $isValid'); // Log validity check
+          if (isValid) {
+            // print(
+            //     'MODAL: Conditions met, calling setState to update text field with extracted URL.'); // Log before setState
+            setState(() {
+              _cardData.yelpUrlController.text =
+                  extractedUrl; // Paste extracted URL
+            });
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                  content: Text('Yelp URL pasted from clipboard.'),
+                  duration: Duration(seconds: 1)),
+            );
+          } else {
+            // print('MODAL: Extracted URL is not a valid URL.'); // Log error
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Extracted URL is not valid.')),
+            );
+          }
+        } else {
+          // print('MODAL: Extracted URL is not a Yelp URL.'); // Log error
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+                content: Text('Clipboard does not contain a Yelp URL.')),
+          );
+        }
+      } else {
+        // print('MODAL: No URL found in clipboard text.'); // Log error
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No URL found in clipboard.')),
+        );
+      }
+      // --- END MODIFICATION ---
+    } else {
+      // print('MODAL: Clipboard is empty.'); // Log error
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Clipboard is empty.')),
+      );
+    }
+  }
+  // --- END ADDED ---
+
+  // --- ADDED: Helper to paste Website URL from clipboard (direct paste) ---
+  Future<void> _pasteWebsiteUrlFromClipboard() async {
+    final clipboardData = await Clipboard.getData(Clipboard.kTextPlain);
+    final clipboardText = clipboardData?.text;
+
+    if (clipboardText != null && clipboardText.isNotEmpty) {
+      setState(() {
+        _cardData.websiteController.text = clipboardText; // Direct paste
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('Pasted from clipboard.'),
+            duration: Duration(seconds: 1)),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Clipboard is empty.')),
+      );
+    }
+  }
+  // --- END ADDED ---
 
   void _saveAndClose() {
     if (_formKey.currentState!.validate()) {
@@ -432,10 +593,75 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
               TextFormField(
                 controller: _cardData.yelpUrlController,
                 decoration: InputDecoration(
-                  labelText: 'Yelp URL (optional)',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(FontAwesomeIcons.yelp),
-                ),
+                    labelText: 'Yelp URL (optional)',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(FontAwesomeIcons.yelp),
+                    // --- ADDED: Suffix Icons ---
+                    suffixIconConstraints: BoxConstraints.tightFor(
+                        width: 90, // Keep width for three icons
+                        height: 48),
+                    suffixIcon: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: <Widget>[
+                        // Clear button (now first)
+                        if (_cardData.yelpUrlController.text.isNotEmpty)
+                          InkWell(
+                            onTap: () {
+                              _cardData.yelpUrlController.clear();
+                              // Listener will call _triggerRebuild
+                            },
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal:
+                                      0), // No horizontal padding needed here
+                              child: Icon(Icons.clear, size: 18),
+                            ),
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                        // Spacer
+                        if (_cardData.yelpUrlController.text
+                            .isNotEmpty) // Only show spacer if clear button is shown
+                          const SizedBox(width: 8),
+
+                        // Paste button (now second)
+                        InkWell(
+                          onTap: _pasteYelpUrlFromClipboard,
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal:
+                                    0), // No horizontal padding needed here
+                            child: Icon(Icons.content_paste,
+                                size: 18, color: Colors.blue[700]),
+                          ),
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+
+                        // Spacer
+                        const SizedBox(width: 8),
+
+                        // Yelp launch button (remains last)
+                        InkWell(
+                          onTap: _cardData.yelpUrlController.text.isNotEmpty
+                              ? _launchYelpUrl
+                              : null, // Only enable if field not empty
+                          child: Padding(
+                            padding: const EdgeInsets.only(
+                                right:
+                                    8.0), // Add padding only on the right end
+                            child: Icon(FontAwesomeIcons.yelp,
+                                size: 18,
+                                color:
+                                    _cardData.yelpUrlController.text.isNotEmpty
+                                        ? Colors.red[700]
+                                        : Colors.grey), // Dim if inactive
+                          ),
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                      ],
+                    )
+                    // --- END ADDED ---
+                    ),
                 keyboardType: TextInputType.url,
                 validator: (value) {
                   if (value != null &&
@@ -452,10 +678,74 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
               TextFormField(
                 controller: _cardData.websiteController,
                 decoration: InputDecoration(
-                  labelText: 'Official Website (optional)',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.language),
-                ),
+                    labelText: 'Official Website (optional)',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.language),
+                    // --- MODIFIED: Add Paste button to suffix ---
+                    suffixIconConstraints: BoxConstraints.tightFor(
+                        width: 90, // Keep width for three icons
+                        height: 48),
+                    suffixIcon: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: <Widget>[
+                        // Clear button (first)
+                        if (_cardData.websiteController.text.isNotEmpty)
+                          InkWell(
+                            onTap: () {
+                              _cardData.websiteController.clear();
+                            },
+                            child: Padding(
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 0),
+                              child: Icon(Icons.clear, size: 18),
+                            ),
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                        // Spacer
+                        if (_cardData.websiteController.text.isNotEmpty)
+                          const SizedBox(width: 8),
+
+                        // Paste button (second)
+                        InkWell(
+                          onTap: _pasteWebsiteUrlFromClipboard,
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 0),
+                            child: Icon(Icons.content_paste,
+                                size: 18, color: Colors.blue[700]),
+                          ),
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+
+                        // Spacer
+                        const SizedBox(width: 8),
+
+                        // Launch button (last)
+                        InkWell(
+                          onTap: _cardData.websiteController.text.isNotEmpty &&
+                                  _isValidUrl(
+                                      _cardData.websiteController.text.trim())
+                              ? () => _launchUrl(
+                                  _cardData.websiteController.text.trim())
+                              : null,
+                          child: Padding(
+                            padding: const EdgeInsets.only(right: 8.0),
+                            child: Icon(Icons.launch,
+                                size: 18,
+                                color: _cardData.websiteController.text
+                                            .isNotEmpty &&
+                                        _isValidUrl(_cardData
+                                            .websiteController.text
+                                            .trim())
+                                    ? Colors.blue[700]
+                                    : Colors.grey),
+                          ),
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                      ],
+                    )
+                    // --- END MODIFICATION ---
+                    ),
                 keyboardType: TextInputType.url,
                 validator: (value) {
                   if (value != null &&
@@ -510,6 +800,39 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
       ),
     );
   }
+
+  // --- ADDED: Helper method to launch Generic URLs (if not already present) ---
+  Future<void> _launchUrl(String urlString) async {
+    // Ensure this method exists or add it if missing
+    if (!_isValidUrl(urlString)) {
+      print("Invalid URL, cannot launch: $urlString");
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Invalid URL entered')),
+      );
+      return;
+    }
+    Uri uri = Uri.parse(urlString);
+    try {
+      bool launched =
+          await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!launched) {
+        print('Could not launch $uri');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Could not open link')),
+          );
+        }
+      }
+    } catch (e) {
+      print('Error launching URL: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error opening link: $e')),
+        );
+      }
+    }
+  }
+  // --- END ADDED ---
 }
 
 // Helper extension for Location (if not already defined globally)

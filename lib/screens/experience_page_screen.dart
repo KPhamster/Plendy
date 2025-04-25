@@ -1533,6 +1533,32 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                       height: 48,
                       child: Stack(
                         children: [
+                          // --- ADDED: Share Button ---
+                          Align(
+                            alignment: const Alignment(
+                                -0.5, 0.0), // Position left of center
+                            child: IconButton(
+                              icon: const Icon(Icons.share_outlined),
+                              iconSize: 24,
+                              color:
+                                  Colors.blue, // Use blue like expand/collapse
+                              tooltip:
+                                  'Share Media', // Tooltip for the new button
+                              constraints: const BoxConstraints(),
+                              padding: EdgeInsets.zero,
+                              onPressed: () {
+                                // TODO: Implement share media functionality
+                                print(
+                                    'Share media button tapped for url: $url');
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                      content: Text(
+                                          'Share media not implemented yet.')),
+                                );
+                              },
+                            ),
+                          ),
+                          // --- END ADDED Button ---
                           Align(
                             alignment: Alignment.center,
                             child: IconButton(
@@ -1653,9 +1679,15 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       Map<String, dynamic>? placeDetails, // Use fetched details
       Location location // Use experience location for coordinates
       ) {
-    // Safely get phone number and website from details
+    // Safely get phone number from details
     final String? phoneNumber = placeDetails?['nationalPhoneNumber'];
-    final String? websiteUri = placeDetails?['websiteUri'];
+    // Safely get website URI: Prioritize experience's website, then place details
+    final String? experienceWebsite = _currentExperience.website;
+    final String? placeDetailsWebsite = placeDetails?['websiteUri'];
+    final String? websiteUri =
+        (experienceWebsite != null && experienceWebsite.isNotEmpty)
+            ? experienceWebsite
+            : placeDetailsWebsite;
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 12.0, horizontal: 8.0),
