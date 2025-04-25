@@ -14,6 +14,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart'; // ADDED for ic
 // ADDED: Import Instagram Preview Widget (adjust alias if needed)
 import 'receive_share/widgets/instagram_preview_widget.dart'
     as instagram_widget;
+import '../models/shared_media_item.dart'; // ADDED Import
 
 // ADDED: Enum for experience sort types
 enum ExperienceSortType { mostRecent, alphabetical, distanceFromMe }
@@ -101,17 +102,41 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         experiences = await _experienceService.getExperiencesByUser(userId);
       }
 
-      // --- ADDED: Populate _allContentItems ---
+      // --- REFACTORED: Populate _allContentItems using new data model --- START ---
       List<ContentDisplayItem> allContent = [];
-      for (final exp in experiences) {
-        if (exp.sharedMediaPaths != null) {
-          for (final mediaItem in exp.sharedMediaPaths!) {
-            allContent.add(ContentDisplayItem(
-                mediaItem: mediaItem, parentExperience: exp));
+      if (experiences.isNotEmpty) {
+        // 1. Collect all unique media item IDs from all experiences
+        final Set<String> allMediaItemIds = {};
+        for (final exp in experiences) {
+          allMediaItemIds.addAll(exp.sharedMediaItemIds);
+        }
+
+        if (allMediaItemIds.isNotEmpty) {
+          // 2. Fetch all required SharedMediaItem objects in one go
+          final List<SharedMediaItem> allMediaItems = await _experienceService
+              .getSharedMediaItems(allMediaItemIds.toList());
+
+          // 3. Create a lookup map for efficient access
+          final Map<String, SharedMediaItem> mediaItemMap = {
+            for (var item in allMediaItems) item.id: item
+          };
+
+          // 4. Build the ContentDisplayItem list
+          for (final exp in experiences) {
+            for (final mediaId in exp.sharedMediaItemIds) {
+              final mediaItem = mediaItemMap[mediaId];
+              if (mediaItem != null) {
+                allContent.add(ContentDisplayItem(
+                    mediaItem: mediaItem, parentExperience: exp));
+              } else {
+                print(
+                    "Warning: Could not find SharedMediaItem for ID $mediaId referenced by Experience ${exp.id}");
+              }
+            }
           }
         }
       }
-      // --- END ADDED ---
+      // --- REFACTORED: Populate _allContentItems using new data model --- END ---
 
       if (mounted) {
         setState(() {
@@ -1005,9 +1030,6 @@ class _CollectionsScreenState extends State<CollectionsScreen>
             ),
         ],
       ),
-      // ADDED: Trailing widget for media count
-      trailing: _buildInstagramCountWidget(experience),
-      // TODO: Add onTap to navigate to experience details
       onTap: () async {
         // Make onTap async
         print('Tapped on Experience: ${experience.name}');
@@ -1039,37 +1061,6 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         }
       },
     );
-  }
-
-  // ADDED: Helper widget to build the Instagram link count bubble
-  Widget? _buildInstagramCountWidget(Experience experience) {
-    if (experience.sharedMediaPaths == null ||
-        experience.sharedMediaPaths!.isEmpty) {
-      return null; // No media, show nothing
-    }
-
-    // Filter for Instagram links
-    final instagramLinks = experience.sharedMediaPaths!
-        .where((item) => item.path.toLowerCase().contains('instagram.com'))
-        .toList();
-
-    // Only show the bubble if there are Instagram links
-    if (instagramLinks.isNotEmpty) {
-      return CircleAvatar(
-        radius: 12, // Small radius for the bubble
-        backgroundColor: Theme.of(context).colorScheme.primary,
-        child: Text(
-          instagramLinks.length.toString(),
-          style: TextStyle(
-            color: Theme.of(context).colorScheme.onPrimary,
-            fontSize: 10, // Small font size
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-      );
-    }
-
-    return null; // No Instagram links, show nothing
   }
 
   // MODIFIED: Widget builder for the Experience List View uses the refactored item builder
