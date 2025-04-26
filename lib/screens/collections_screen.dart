@@ -15,6 +15,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart'; // ADDED for ic
 import 'receive_share/widgets/instagram_preview_widget.dart'
     as instagram_widget;
 import '../models/shared_media_item.dart'; // ADDED Import
+import 'package:collection/collection.dart'; // ADDED: Import for groupBy
 
 // ADDED: Enum for experience sort types
 enum ExperienceSortType { mostRecent, alphabetical, distanceFromMe }
@@ -22,12 +23,17 @@ enum ExperienceSortType { mostRecent, alphabetical, distanceFromMe }
 // ADDED: Enum for content sort types
 enum ContentSortType { mostRecent, alphabetical, distanceFromMe }
 
-// ADDED: Helper class to hold media item and parent experience for display/sorting
-class ContentDisplayItem {
+// ADDED: New helper class to hold grouped content
+class GroupedContentItem {
   final SharedMediaItem mediaItem;
-  final Experience parentExperience;
+  final List<Experience> associatedExperiences;
+  double? minDistance; // Used for distance sorting
 
-  ContentDisplayItem({required this.mediaItem, required this.parentExperience});
+  GroupedContentItem({
+    required this.mediaItem,
+    required this.associatedExperiences,
+    this.minDistance,
+  });
 }
 
 class CollectionsScreen extends StatefulWidget {
@@ -56,8 +62,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   String? _userEmail;
   // ADDED: State variable to track the selected category in the first tab
   UserCategory? _selectedCategory;
-  // ADDED: State variable to hold flattened list of all content items
-  List<ContentDisplayItem> _allContentItems = [];
+  // ADDED: State variable to hold grouped list of content items
+  List<GroupedContentItem> _groupedContentItems = [];
   // ADDED: State map for content preview expansion
   final Map<String, bool> _contentExpansionStates = {};
 
@@ -102,8 +108,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         experiences = await _experienceService.getExperiencesByUser(userId);
       }
 
-      // --- REFACTORED: Populate _allContentItems using new data model --- START ---
-      List<ContentDisplayItem> allContent = [];
+      // --- REFACTORED: Populate _groupedContentItems using new data model --- START ---
+      List<GroupedContentItem> groupedContent = [];
       if (experiences.isNotEmpty) {
         // 1. Collect all unique media item IDs from all experiences
         final Set<String> allMediaItemIds = {};
@@ -121,28 +127,56 @@ class _CollectionsScreenState extends State<CollectionsScreen>
             for (var item in allMediaItems) item.id: item
           };
 
-          // 4. Build the ContentDisplayItem list
+          // 4. Create intermediate list mapping media path to experience
+          final List<Map<String, dynamic>> pathExperiencePairs = [];
           for (final exp in experiences) {
             for (final mediaId in exp.sharedMediaItemIds) {
               final mediaItem = mediaItemMap[mediaId];
               if (mediaItem != null) {
-                allContent.add(ContentDisplayItem(
-                    mediaItem: mediaItem, parentExperience: exp));
+                pathExperiencePairs.add({
+                  'path': mediaItem.path,
+                  'mediaItem':
+                      mediaItem, // Keep mediaItem for easy access later
+                  'experience': exp,
+                });
               } else {
                 print(
                     "Warning: Could not find SharedMediaItem for ID $mediaId referenced by Experience ${exp.id}");
               }
             }
           }
+
+          // 5. Group by media path
+          final groupedByPath =
+              groupBy(pathExperiencePairs, (pair) => pair['path'] as String);
+
+          // 6. Build the GroupedContentItem list
+          groupedByPath.forEach((path, pairs) {
+            if (pairs.isNotEmpty) {
+              final firstPair = pairs.first;
+              final mediaItem = firstPair['mediaItem'] as SharedMediaItem;
+              final associatedExperiences = pairs
+                  .map((pair) => pair['experience'] as Experience)
+                  .toList();
+              // Sort associated experiences alphabetically by default? Or by date? Let's do name for now.
+              associatedExperiences.sort((a, b) =>
+                  a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+
+              groupedContent.add(GroupedContentItem(
+                mediaItem: mediaItem,
+                associatedExperiences: associatedExperiences,
+              ));
+            }
+          });
         }
       }
-      // --- REFACTORED: Populate _allContentItems using new data model --- END ---
+      // --- REFACTORED: Populate _groupedContentItems using new data model --- END ---
 
       if (mounted) {
         setState(() {
           _categories = categories;
           _experiences = experiences;
-          _allContentItems = allContent; // Set the state variable
+          _groupedContentItems = groupedContent; // Set the state variable
           _isLoading = false;
           _selectedCategory = null; // Reset selected category on reload
         });
@@ -601,7 +635,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         .toList();
   }
 
-  // --- ADDED: Method to apply sorting to the content items list ---
+  // --- REFACTORED: Method to apply sorting to the grouped content items list ---
   Future<void> _applyContentSort(ContentSortType sortType) async {
     print("Applying content sort: $sortType");
     setState(() {
@@ -614,19 +648,25 @@ class _CollectionsScreenState extends State<CollectionsScreen>
 
     try {
       if (sortType == ContentSortType.mostRecent) {
-        _allContentItems.sort((a, b) {
-          // Sort descending by media item creation date
+        // Sort by media item creation date (descending)
+        _groupedContentItems.sort((a, b) {
           return b.mediaItem.createdAt.compareTo(a.mediaItem.createdAt);
         });
       } else if (sortType == ContentSortType.alphabetical) {
-        _allContentItems.sort((a, b) {
-          // Sort ascending by parent experience name
-          return a.parentExperience.name
+        // Sort by the name of the *first* associated experience (ascending)
+        _groupedContentItems.sort((a, b) {
+          if (a.associatedExperiences.isEmpty &&
+              b.associatedExperiences.isEmpty) return 0;
+          if (a.associatedExperiences.isEmpty)
+            return 1; // Items without experiences go last
+          if (b.associatedExperiences.isEmpty) return -1;
+          return a.associatedExperiences.first.name
               .toLowerCase()
-              .compareTo(b.parentExperience.name.toLowerCase());
+              .compareTo(b.associatedExperiences.first.name.toLowerCase());
         });
       } else if (sortType == ContentSortType.distanceFromMe) {
-        await _sortContentByDistance();
+        // Sort by the minimum distance calculated in _sortContentByDistance
+        await _sortContentByDistance(); // This function now handles the sorting internally
       }
     } catch (e, stackTrace) {
       print("Error applying content sort: $e");
@@ -651,7 +691,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     print("Content items sorted.");
   }
 
-  // --- ADDED: Method to sort content items by distance --- ///
+  // --- REFACTORED: Method to sort grouped content items by distance --- ///
   Future<void> _sortContentByDistance() async {
     print("Attempting to sort content by distance...");
     Position? currentPosition;
@@ -710,54 +750,54 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     }
 
     if (currentPosition != null) {
-      // Create a temporary list with distances
-      List<Map<String, dynamic>> contentWithDistance = [];
-
-      for (var item in _allContentItems) {
-        double? distance;
-        final location = item.parentExperience.location;
-        if (location.latitude != 0.0 || location.longitude != 0.0) {
-          try {
-            distance = Geolocator.distanceBetween(
-              currentPosition.latitude,
-              currentPosition.longitude,
-              location.latitude,
-              location.longitude,
-            );
-          } catch (e) {
+      // Calculate minimum distance for each grouped item
+      for (var group in _groupedContentItems) {
+        double? minGroupDistance;
+        for (var exp in group.associatedExperiences) {
+          double? distance;
+          final location = exp.location;
+          if (location.latitude != 0.0 || location.longitude != 0.0) {
+            try {
+              distance = Geolocator.distanceBetween(
+                currentPosition.latitude,
+                currentPosition.longitude,
+                location.latitude,
+                location.longitude,
+              );
+              // Update minimum distance for the group
+              if (minGroupDistance == null || distance < minGroupDistance) {
+                minGroupDistance = distance;
+              }
+            } catch (e) {
+              print("Error calculating distance for ${exp.name}: $e");
+              // Distance remains null or the previous minGroupDistance
+            }
+          } else {
             print(
-                "Error calculating distance for ${item.parentExperience.name}: $e");
-            distance = null;
+                "Experience ${exp.name} in group ${group.mediaItem.path} has no valid coordinates.");
           }
-        } else {
-          print(
-              "Experience ${item.parentExperience.name} has no valid coordinates.");
-          distance = null;
         }
-        contentWithDistance.add({'item': item, 'distance': distance});
+        // Store the calculated minimum distance in the object
+        group.minDistance = minGroupDistance;
       }
 
-      // Sort the temporary list
-      contentWithDistance.sort((a, b) {
-        final distA = a['distance'] as double?;
-        final distB = b['distance'] as double?;
+      // Sort the main grouped content list based on the calculated minDistance
+      _groupedContentItems.sort((a, b) {
+        final distA = a.minDistance;
+        final distB = b.minDistance;
 
-        if (distA == null && distB == null) return 0;
-        if (distA == null) return 1;
-        if (distB == null) return -1;
+        if (distA == null && distB == null)
+          return 0; // Keep relative order if both unknown
+        if (distA == null) return 1; // Nulls (unknown distances) go to the end
+        if (distB == null) return -1; // Nulls go to the end
 
-        return distA.compareTo(distB);
+        return distA.compareTo(distB); // Sort by distance ascending
       });
 
-      // Update the main content list
-      _allContentItems = contentWithDistance
-          .map((mapItem) => mapItem['item'] as ContentDisplayItem)
-          .toList();
-
-      print("Content items sorted by distance successfully.");
+      print("Grouped content items sorted by distance successfully.");
     }
   }
-  // --- END ADDED ---
+  // --- END REFACTORED ---
 
   @override
   Widget build(BuildContext context) {
@@ -1142,25 +1182,24 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     );
   }
 
-  // --- ADDED: Widget builder for the Content Tab Body --- ///
+  // --- REFACTORED: Widget builder for the Content Tab Body --- ///
   Widget _buildContentTabBody() {
-    // Use instance member _allContentItems
-    if (_allContentItems.isEmpty) {
+    // Use instance member _groupedContentItems
+    if (_groupedContentItems.isEmpty) {
       return const Center(
           child: Text('No shared content found across experiences.'));
     }
 
-    // MODIFIED: Use ListView.builder instead of GridView.builder
+    // Use ListView.builder with grouped items
     return ListView.builder(
-      // padding: const EdgeInsets.all(4.0), // Removed grid padding
-      // Add padding similar to fullscreen list
       padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 16.0),
-      // gridDelegate: ..., // Removed gridDelegate
-      itemCount: _allContentItems.length,
+      itemCount: _groupedContentItems.length,
       itemBuilder: (context, index) {
-        final item = _allContentItems[index];
-        final mediaPath = item.mediaItem.path;
-        final parentExp = item.parentExperience;
+        final group =
+            _groupedContentItems[index]; // Now it's a GroupedContentItem
+        final mediaItem = group.mediaItem;
+        final mediaPath = mediaItem.path;
+        final associatedExperiences = group.associatedExperiences;
 
         final isExpanded = _contentExpansionStates[mediaPath] ?? false;
         final bool isInstagramUrl =
@@ -1174,7 +1213,6 @@ class _CollectionsScreenState extends State<CollectionsScreen>
           // Use InstagramWebView for Instagram URLs
           mediaWidget = instagram_widget.InstagramWebView(
             url: mediaPath,
-            // MODIFIED: Adjust height for list view (similar to fullscreen/exp page)
             height: isExpanded ? 1200 : 840,
             launchUrlCallback: _launchUrl,
             onWebViewCreated: (_) {},
@@ -1187,7 +1225,6 @@ class _CollectionsScreenState extends State<CollectionsScreen>
             fit: BoxFit.cover,
             loadingBuilder: (context, child, loadingProgress) {
               if (loadingProgress == null) return child;
-              // Keep standard indicator for list view
               return const Center(child: CircularProgressIndicator());
             },
             errorBuilder: (context, error, stackTrace) {
@@ -1212,159 +1249,223 @@ class _CollectionsScreenState extends State<CollectionsScreen>
           );
         }
 
-        // MODIFIED: Return a Column structure suitable for a list item
+        // Return a Card containing the media and associated experiences list
         return Padding(
           key: ValueKey(mediaPath), // Use mediaPath as key
           padding:
               const EdgeInsets.only(bottom: 24.0), // Spacing between list items
-          child: Card(
-            elevation: 2.0,
-            clipBehavior: Clip.antiAlias,
-            child: Column(
-              children: [
-                // ADDED: Row for Numbering and Parent Experience Name
-                Padding(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 12.0, vertical: 8.0),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      // Number Bubble
-                      CircleAvatar(
-                        radius: 12,
-                        backgroundColor: Theme.of(context)
-                            .colorScheme
-                            .primary
-                            .withOpacity(0.8),
-                        child: Text(
-                          '${index + 1}', // Display index + 1
-                          style: TextStyle(
-                            fontSize: 12.0,
-                            fontWeight: FontWeight.bold,
-                            color: Theme.of(context).colorScheme.onPrimary,
-                          ),
-                        ),
+          child: Column(
+            children: [
+              // --- ADDED: Centered Numbering (like Fullscreen) --- START ---
+              Padding(
+                padding:
+                    const EdgeInsets.only(bottom: 8.0), // Space below number
+                child: Center(
+                  // Center the bubble horizontally
+                  child: CircleAvatar(
+                    radius: 14, // Match fullscreen size
+                    backgroundColor:
+                        Theme.of(context).primaryColor.withOpacity(0.8),
+                    child: Text(
+                      '${index + 1}', // Number without period
+                      style: TextStyle(
+                        fontSize: 14.0,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white, // Use white like fullscreen
                       ),
-                      const SizedBox(width: 10),
-                      // Parent Experience Name (Expanded to fill space)
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            // Experience Name
-                            Text(
-                              parentExp.name,
+                    ),
+                  ),
+                ),
+              ),
+              // --- ADDED: Centered Numbering (like Fullscreen) --- END ---
+
+              // --- Existing Card ---
+              Card(
+                margin: EdgeInsets.zero, // Card takes full width within padding
+                elevation: 2.0,
+                clipBehavior: Clip.antiAlias,
+                child: Column(
+                  children: [
+                    // --- Section for Associated Experiences --- START ---
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12.0, vertical: 8.0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // Title for the experience list
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 6.0),
+                            child: Text(
+                              associatedExperiences.length == 1
+                                  ? 'Linked Experience:'
+                                  : 'Linked Experiences (${associatedExperiences.length}):',
                               style: Theme.of(context)
                                   .textTheme
-                                  .titleSmall
+                                  .labelLarge
                                   ?.copyWith(
-                                    fontWeight: FontWeight.w500,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.black87,
                                   ),
-                              overflow: TextOverflow.ellipsis,
-                              maxLines: 1,
                             ),
-                            // ADDED: Address Subtext (if available)
-                            if (parentExp.location.address != null &&
-                                parentExp.location.address!.isNotEmpty)
-                              Padding(
-                                padding: const EdgeInsets.only(
-                                    top: 2.0), // Add slight spacing
-                                child: Text(
-                                  parentExp.location.address!,
-                                  style: Theme.of(context)
-                                      .textTheme
-                                      .bodySmall
-                                      ?.copyWith(
-                                        color: Colors.black54, // Subdued color
+                          ),
+                          // Generate a list of Text Widgets for each experience
+                          ...associatedExperiences.map((exp) {
+                            // Find the matching category icon
+                            final categoryIcon = _categories
+                                .firstWhere((cat) => cat.name == exp.category,
+                                    orElse: () => UserCategory(
+                                        id: '',
+                                        name: '',
+                                        icon: '❓',
+                                        ownerUserId: '') // Default icon
+                                    )
+                                .icon;
+                            final address = exp.location.address;
+                            final bool hasAddress =
+                                address != null && address.isNotEmpty;
+
+                            return Padding(
+                              padding: const EdgeInsets.only(
+                                  bottom: 4.0), // Space between experiences
+                              child: InkWell(
+                                // Make each experience row tappable
+                                onTap: () async {
+                                  print(
+                                      'Tapped on experience ${exp.name} within content group');
+                                  // Find the matching category
+                                  final category = _categories.firstWhere(
+                                      (cat) => cat.name == exp.category,
+                                      orElse: () => UserCategory(
+                                          id: '',
+                                          name: exp.category,
+                                          icon: '❓',
+                                          ownerUserId: ''));
+                                  // Navigate to the specific experience page
+                                  final result = await Navigator.push<bool>(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) =>
+                                          ExperiencePageScreen(
+                                        experience: exp,
+                                        category: category,
                                       ),
-                                  overflow: TextOverflow.ellipsis,
-                                  maxLines: 1,
+                                    ),
+                                  );
+                                  // Refresh if deletion occurred
+                                  if (result == true && mounted) {
+                                    _loadData();
+                                  }
+                                },
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    // Icon/Bullet Point
+                                    Padding(
+                                      padding: const EdgeInsets.only(
+                                          right: 8.0, top: 2.0),
+                                      child: Text(categoryIcon,
+                                          style: TextStyle(fontSize: 14)),
+                                      // child: Icon(Icons.place_outlined, size: 16, color: Colors.black54),
+                                    ),
+                                    // Experience Name and Address
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            exp.name,
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .titleSmall
+                                                ?.copyWith(
+                                                    fontWeight:
+                                                        FontWeight.w500),
+                                            overflow: TextOverflow.ellipsis,
+                                            maxLines: 1,
+                                          ),
+                                          if (hasAddress)
+                                            Text(
+                                              address,
+                                              style: Theme.of(context)
+                                                  .textTheme
+                                                  .bodySmall
+                                                  ?.copyWith(
+                                                      color: Colors.black54),
+                                              overflow: TextOverflow.ellipsis,
+                                              maxLines: 1,
+                                            ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
-                          ],
-                        ),
+                            );
+                          }).toList(),
+                        ],
                       ),
-                    ],
-                  ),
-                ),
-                // Divider (optional)
-                // const Divider(height: 1, thickness: 1),
-                // Media Preview Area
-                GestureDetector(
-                  onTap: () async {
-                    print('Tapped on media from Experience: ${parentExp.name}');
-                    final category = _categories.firstWhere(
-                        (cat) => cat.name == parentExp.category,
-                        orElse: () => UserCategory(
-                            id: '',
-                            name: parentExp.category,
-                            icon: '❓',
-                            ownerUserId: '') // Fallback
-                        );
+                    ),
+                    // --- Section for Associated Experiences --- END ---
 
-                    final result = await Navigator.push<bool>(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => ExperiencePageScreen(
-                          experience: parentExp,
-                          category: category,
-                        ),
+                    const Divider(height: 1, thickness: 0.5), // Separator
+
+                    // --- Media Preview Area --- (No changes needed here)
+                    // Keep GestureDetector simple - it doesn't need to navigate anymore as individual experiences are tappable
+                    mediaWidget,
+                    // --- Buttons Row --- (Keep as is)
+                    Container(
+                      height: 48, // Standard height for buttons
+                      color: Colors.black.withOpacity(0.03),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceAround,
+                        children: [
+                          // Instagram Button (only if Instagram URL)
+                          if (isInstagramUrl)
+                            IconButton(
+                              icon: const Icon(FontAwesomeIcons.instagram),
+                              iconSize:
+                                  28, // Slightly larger icon for list view
+                              color: const Color(0xFFE1306C),
+                              tooltip: 'Open in Instagram',
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(),
+                              onPressed: () => _launchUrl(mediaPath),
+                            ),
+                          // Expand/Collapse Button (only if Instagram URL)
+                          if (isInstagramUrl)
+                            IconButton(
+                              icon: Icon(isExpanded
+                                  ? Icons.fullscreen_exit
+                                  : Icons.fullscreen),
+                              iconSize: 24,
+                              color: Colors.blueGrey,
+                              tooltip: isExpanded ? 'Collapse' : 'Expand',
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(),
+                              onPressed: () {
+                                setState(() {
+                                  _contentExpansionStates[mediaPath] =
+                                      !isExpanded;
+                                });
+                              },
+                            ),
+                          // Add other generic buttons here if needed (e.g., Share)
+                          // If not instagram, provide some spacing or alternative actions
+                          if (!isInstagramUrl)
+                            Spacer(), // Use Spacer to push potential future buttons
+                        ],
                       ),
-                    );
-                    if (result == true && mounted) {
-                      _loadData();
-                    }
-                  },
-                  child: mediaWidget,
+                    ),
+                  ],
                 ),
-                // Buttons Row
-                Container(
-                  height: 48, // Standard height for buttons
-                  color: Colors.black.withOpacity(0.03),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceAround,
-                    children: [
-                      // Instagram Button (only if Instagram URL)
-                      if (isInstagramUrl)
-                        IconButton(
-                          icon: const Icon(FontAwesomeIcons.instagram),
-                          iconSize: 28, // Slightly larger icon for list view
-                          color: const Color(0xFFE1306C),
-                          tooltip: 'Open in Instagram',
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(),
-                          onPressed: () => _launchUrl(mediaPath),
-                        ),
-                      // Expand/Collapse Button (only if Instagram URL)
-                      if (isInstagramUrl)
-                        IconButton(
-                          icon: Icon(isExpanded
-                              ? Icons.fullscreen_exit
-                              : Icons.fullscreen),
-                          iconSize: 24,
-                          color: Colors.blueGrey,
-                          tooltip: isExpanded ? 'Collapse' : 'Expand',
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(),
-                          onPressed: () {
-                            setState(() {
-                              _contentExpansionStates[mediaPath] = !isExpanded;
-                            });
-                          },
-                        ),
-                      // Add other generic buttons here if needed (e.g., Share)
-                      // If not instagram, provide some spacing or alternative actions
-                      if (!isInstagramUrl)
-                        Spacer(), // Use Spacer to push potential future buttons
-                    ],
-                  ),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
         );
       },
     );
   }
-  // --- END MODIFIED ---
+  // --- END REFACTORED ---
 }

@@ -146,7 +146,7 @@ class _MediaFullscreenScreenState extends State<MediaFullscreenScreen> {
       },
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('Media'),
+          title: const Text('Content'),
           // Back button is automatically added, WillPopScope handles its pop result
         ),
         body: ListView.builder(
