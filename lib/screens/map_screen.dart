@@ -1,4 +1,6 @@
 import 'dart:async'; // Import async
+import 'dart:typed_data'; // Import for ByteData
+import 'dart:ui' as ui; // Import for ui.Image, ui.Canvas etc.
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart'; // Add Google Maps import
 import '../widgets/google_maps_widget.dart';
@@ -24,6 +26,8 @@ class _MapScreenState extends State<MapScreen> {
   List<UserCategory> _categories = [];
   final Completer<GoogleMapController> _mapControllerCompleter =
       Completer<GoogleMapController>();
+  // ADDED: Cache for generated category icons
+  final Map<String, BitmapDescriptor> _categoryIconCache = {};
 
   @override
   void initState() {
@@ -80,6 +84,29 @@ class _MapScreenState extends State<MapScreen> {
               UserCategory(id: '', name: 'Unknown', icon: '❓', ownerUserId: ''),
         );
 
+        // --- Start Icon Generation ---
+        BitmapDescriptor categoryIconBitmap =
+            BitmapDescriptor.defaultMarker; // Default
+        // Use cache or generate new icon
+        if (_categoryIconCache.containsKey(category.icon)) {
+          categoryIconBitmap = _categoryIconCache[category.icon]!;
+          print(
+              "🗺️ MAP SCREEN: Using cached icon '${category.icon}' for ${category.name}");
+        } else {
+          try {
+            print(
+                "🗺️ MAP SCREEN: Generating icon for '${category.icon}' (${category.name})");
+            categoryIconBitmap = await _bitmapDescriptorFromText(category.icon);
+            _categoryIconCache[category.icon] =
+                categoryIconBitmap; // Cache the result
+          } catch (e) {
+            print(
+                "🗺️ MAP SCREEN: Failed to generate bitmap for icon '${category.icon}': $e");
+            // Keep the default marker if generation fails
+          }
+        }
+        // --- End Icon Generation ---
+
         final position = LatLng(
           experience.location.latitude,
           experience.location.longitude,
@@ -98,7 +125,7 @@ class _MapScreenState extends State<MapScreen> {
             snippet: experience.location.getPlaceName(),
             onTap: () => _navigateToExperience(experience, category),
           ),
-          icon: BitmapDescriptor.defaultMarker, // Keep default for now
+          icon: categoryIconBitmap,
           onTap: () => _navigateToExperience(experience, category),
         );
         _markers[experience.id] = marker;
@@ -148,6 +175,49 @@ class _MapScreenState extends State<MapScreen> {
         });
       }
     }
+  }
+
+  // ADDED: Helper function to create BitmapDescriptor from text/emoji
+  Future<BitmapDescriptor> _bitmapDescriptorFromText(String text,
+      {int size = 100}) async {
+    final ui.PictureRecorder pictureRecorder = ui.PictureRecorder();
+    final Canvas canvas = Canvas(pictureRecorder);
+    final Paint paint = Paint()..color = Colors.transparent; // Background
+    final double radius = size / 2;
+
+    // Optional: Draw a background circle if needed
+    // final Paint circlePaint = Paint()..color = Colors.blue; // Example background
+    // canvas.drawCircle(Offset(radius, radius), radius, circlePaint);
+
+    // Draw text (emoji)
+    final ui.ParagraphBuilder paragraphBuilder = ui.ParagraphBuilder(
+      ui.ParagraphStyle(
+        textAlign: TextAlign.center,
+        fontSize: size * 0.7, // Adjust emoji size relative to marker size
+      ),
+    );
+    paragraphBuilder.addText(text);
+    final ui.Paragraph paragraph = paragraphBuilder.build();
+    paragraph.layout(ui.ParagraphConstraints(width: size.toDouble()));
+
+    // Center the emoji text
+    final double textX = (size - paragraph.width) / 2;
+    final double textY = (size - paragraph.height) / 2;
+    canvas.drawParagraph(paragraph, Offset(textX, textY));
+
+    // Convert canvas to image
+    final ui.Image image = await pictureRecorder
+        .endRecording()
+        .toImage(size, size); // Use size for both width and height
+
+    // Convert image to bytes
+    final ByteData? byteData =
+        await image.toByteData(format: ui.ImageByteFormat.png);
+    if (byteData == null) {
+      throw Exception('Failed to convert image to byte data');
+    }
+
+    return BitmapDescriptor.fromBytes(byteData.buffer.asUint8List());
   }
 
   // Helper function to navigate to the Experience Page
