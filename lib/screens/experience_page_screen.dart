@@ -709,7 +709,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                       tabs: [
                         Tab(
                           icon: Icon(Icons.photo_library_outlined),
-                          text: 'Media ($mediaCount)',
+                          text: 'Content ($mediaCount)',
                         ),
                         Tab(
                           icon: Icon(Icons.star_border_outlined),
