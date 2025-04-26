@@ -27,18 +27,19 @@ class LocationPickerScreen extends StatefulWidget {
 
 class _LocationPickerScreenState extends State<LocationPickerScreen> {
   final GoogleMapsService _mapsService = GoogleMapsService();
-  final GlobalKey<State<GoogleMapsWidget>> _mapKey =
-      GlobalKey<State<GoogleMapsWidget>>();
   Location? _selectedLocation;
   List<Map<String, dynamic>> _searchResults = [];
   bool _showSearchResults = false;
   final TextEditingController _searchController = TextEditingController();
   bool _isSearching = false;
+  GoogleMapController? _mapController;
+  final Map<String, Marker> _mapMarkers = {};
 
   @override
   void initState() {
     super.initState();
     _selectedLocation = widget.initialLocation;
+    _updateSelectedLocationMarker();
   }
 
   @override
@@ -64,15 +65,12 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
       final results = await _mapsService.searchPlaces(query);
 
       // Get current map center for distance calculation
-      final GoogleMapsWidget? mapWidget =
-          _mapKey.currentWidget as GoogleMapsWidget?;
       LatLng? mapCenter;
-      if (mapWidget?.mapController != null) {
+      if (_mapController != null) {
         try {
-          mapCenter = await mapWidget!.mapController!.getLatLng(
-              ScreenCoordinate(
-                  x: MediaQuery.of(context).size.width ~/ 2,
-                  y: MediaQuery.of(context).size.height ~/ 2));
+          mapCenter = await _mapController!.getLatLng(ScreenCoordinate(
+              x: MediaQuery.of(context).size.width ~/ 2,
+              y: MediaQuery.of(context).size.height ~/ 2));
         } catch (e) {
           print('Error getting map center: $e');
         }
@@ -160,16 +158,21 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
       });
 
       // Get reference to the GoogleMapsWidget
-      final mapWidget = _mapKey.currentWidget as GoogleMapsWidget?;
-      if (mapWidget?.mapController != null) {
-        // Animate map to the selected location
-        mapWidget!.animateToLocation(location);
+      if (_mapController != null) {
+        // Animate map to the selected location using the controller
+        _mapController!.animateCamera(CameraUpdate.newLatLngZoom(
+                LatLng(location.latitude, location.longitude),
+                16.0) // Zoom in closer
+            );
       }
 
       // Update parent with selected location
       if (widget.onLocationSelected != null) {
         widget.onLocationSelected!(_selectedLocation!);
       }
+
+      // Update the marker on the map
+      _updateSelectedLocationMarker();
     } catch (e) {
       print('Error getting place details: $e');
       ScaffoldMessenger.of(context).showSnackBar(
@@ -208,8 +211,13 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
     });
 
     // Make sure we have the location centered on the map
-    final mapWidget = _mapKey.currentWidget as GoogleMapsWidget?;
-    mapWidget?.animateToLocation(detailedLocation);
+    if (_mapController != null) {
+      _mapController!.animateCamera(CameraUpdate.newLatLng(
+          LatLng(detailedLocation.latitude, detailedLocation.longitude)));
+    }
+
+    // Update the marker on the map
+    _updateSelectedLocationMarker();
   }
 
   // Open Google Maps with directions to the selected location
@@ -491,11 +499,15 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
               child: Stack(
                 children: [
                   GoogleMapsWidget(
-                    key: _mapKey,
                     initialLocation: widget.initialLocation,
                     showUserLocation: true,
                     allowSelection: true,
                     onLocationSelected: _onLocationSelected,
+                    // Pass a *copy* of the map to ensure change detection
+                    additionalMarkers: Map.of(_mapMarkers),
+                    onMapControllerCreated: (controller) {
+                      _mapController = controller;
+                    },
                   ),
                 ],
               ),
@@ -646,6 +658,36 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
       return Icons.local_pharmacy;
     } else {
       return Icons.place;
+    }
+  }
+
+  // ADDED: Helper function to create/update the selected location marker
+  void _updateSelectedLocationMarker() {
+    // Create a new map instead of mutating the old one
+    final Map<String, Marker> newMarkers = {};
+    if (_selectedLocation != null) {
+      print(
+          "📍 PICKER: Updating marker for: ${_selectedLocation!.getPlaceName()}");
+      final markerId = MarkerId('selected_location');
+      newMarkers[markerId.value] = Marker(
+        markerId: markerId,
+        position:
+            LatLng(_selectedLocation!.latitude, _selectedLocation!.longitude),
+        infoWindow: InfoWindow(
+          title: _selectedLocation!.getPlaceName(),
+          snippet: _selectedLocation!.address,
+        ),
+        // Use a distinct color for the selected location marker
+        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueViolet),
+      );
+    }
+    // Trigger rebuild to show the updated marker
+    if (mounted) {
+      setState(() {
+        // Revert to clearing and adding all
+        _mapMarkers.clear();
+        _mapMarkers.addAll(newMarkers);
+      });
     }
   }
 }
