@@ -49,10 +49,52 @@ class _GoogleMapsWidgetState extends State<GoogleMapsWidget> {
   @override
   void initState() {
     super.initState();
-    // Initialize markers immediately from props
-    _updateInternalMarkers();
-    // Determine initial camera position asynchronously
-    _determineInitialCameraPosition();
+    _updateInternalMarkers(); // Initialize markers from props first
+
+    // Determine initial camera position SYNCHRONOUSLY if possible
+    if (widget.initialLocation != null) {
+      print(
+          "📍 GOOGLE MAPS WIDGET: Using provided initialLocation (sync path).");
+      final target = LatLng(
+          widget.initialLocation!.latitude, widget.initialLocation!.longitude);
+      _initialCameraPosition =
+          CameraPosition(target: target, zoom: widget.initialZoom);
+      _initialPositionDetermined = true; // Set flag immediately
+    } else {
+      // Only fetch user location if initialLocation was null
+      _fetchUserLocationForInitialPosition();
+    }
+  }
+
+  // Renamed the async part for clarity
+  Future<void> _fetchUserLocationForInitialPosition() async {
+    print(
+        "📍 GOOGLE MAPS WIDGET: No initialLocation, attempting user location fetch...");
+    // Set loading state only when actually fetching
+    setState(() {
+      _isLoadingUserLocation = true;
+    });
+    LatLng target;
+    try {
+      _currentUserPosition = await _mapsService.getCurrentLocation();
+      target = LatLng(
+          _currentUserPosition!.latitude, _currentUserPosition!.longitude);
+      print("📍 GOOGLE MAPS WIDGET: Got user location: $target");
+    } catch (e) {
+      print(
+          "📍 GOOGLE MAPS WIDGET: Failed to get user location: $e. Using default.");
+      target = const LatLng(37.42796133580664, -122.085749655962); // Default
+    }
+
+    // Set position and flag only if the widget is still mounted
+    if (mounted) {
+      _initialCameraPosition =
+          CameraPosition(target: target, zoom: widget.initialZoom);
+      setState(() {
+        _isLoadingUserLocation = false;
+        _initialPositionDetermined = true;
+      });
+    }
   }
 
   @override
@@ -138,49 +180,6 @@ class _GoogleMapsWidgetState extends State<GoogleMapsWidget> {
           _isProcessingTap = false;
         });
       }
-    }
-  }
-
-  // ADDED: Method to determine initial camera position
-  Future<void> _determineInitialCameraPosition() async {
-    LatLng target;
-    // Prioritize initialLocation prop
-    if (widget.initialLocation != null) {
-      print("📍 GOOGLE MAPS WIDGET: Using provided initialLocation.");
-      target = LatLng(
-          widget.initialLocation!.latitude, widget.initialLocation!.longitude);
-      _initialCameraPosition =
-          CameraPosition(target: target, zoom: widget.initialZoom);
-      // No need to fetch user location if initial is provided
-      if (mounted) setState(() {}); // Update state to trigger build
-      return;
-    }
-
-    // If no initialLocation, try getting user's current location
-    print(
-        "📍 GOOGLE MAPS WIDGET: No initialLocation provided, attempting to get user location...");
-    setState(() {
-      _isLoadingUserLocation = true;
-    });
-    try {
-      _currentUserPosition = await _mapsService.getCurrentLocation();
-      target = LatLng(
-          _currentUserPosition!.latitude, _currentUserPosition!.longitude);
-      print("📍 GOOGLE MAPS WIDGET: Got user location: $target");
-    } catch (e) {
-      print(
-          "📍 GOOGLE MAPS WIDGET: Failed to get user location: $e. Using default.");
-      // Use default if user location fails
-      target = const LatLng(
-          37.42796133580664, -122.085749655962); // Default to Googleplex
-    }
-    _initialCameraPosition =
-        CameraPosition(target: target, zoom: widget.initialZoom);
-    if (mounted) {
-      setState(() {
-        _isLoadingUserLocation = false;
-        _initialPositionDetermined = true; // Set flag here
-      });
     }
   }
 
