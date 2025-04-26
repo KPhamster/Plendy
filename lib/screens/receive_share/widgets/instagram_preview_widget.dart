@@ -61,20 +61,26 @@ class _InstagramWebViewState extends State<InstagramWebView> {
               return;
             }
 
-            // If no specific element found, click in the center of the embed
+            // If no specific element found, click near the center of the embed
             var rect = embedContainer.getBoundingClientRect();
-            var centerX = rect.left + rect.width / 2;
-            var centerY = rect.top + rect.height / 2;
+            var baseCenterX = rect.left + rect.width / 2;
+            var baseCenterY = rect.top + rect.height / 2;
 
-            console.log('Simulating click at center:', centerX, centerY);
+            // Generate random offset within a small range (e.g., +/- 5 pixels)
+            var offsetX = Math.random() * 10 - 5; // Range -5 to +5
+            var offsetY = Math.random() * 10 - 5; // Range -5 to +5
+            var clickX = baseCenterX + offsetX;
+            var clickY = baseCenterY + offsetY;
 
-            // Create and dispatch click event
+            console.log('Simulating click near center at:', clickX, clickY);
+
+            // Create and dispatch click event using the offset coordinates
             var clickEvent = new MouseEvent('click', {
               view: window,
               bubbles: true,
               cancelable: true,
-              clientX: centerX,
-              clientY: centerY
+              clientX: clickX, // Use coordinate with offset
+              clientY: clickY  // Use coordinate with offset
             });
 
             embedContainer.dispatchEvent(clickEvent);
@@ -85,7 +91,11 @@ class _InstagramWebViewState extends State<InstagramWebView> {
           var player = document.querySelector('iframe[src*="instagram.com"]');
           if (player) {
             console.log('Found Instagram iframe, simulating click');
-            player.click();
+            // Clicking the iframe itself might not work, better to target content within if possible
+            // or stick to the embedContainer click simulation above.
+            // For simplicity, let's keep the embedContainer simulation as the main fallback.
+             console.log('Skipping iframe click, relying on embedContainer fallback.');
+            // player.click(); // This might be less effective
             return;
           }
 
