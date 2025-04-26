@@ -2258,7 +2258,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                 ? _extractFirstUrl(_currentSharedFiles.first.path) ?? ''
                 : '') // Check if first file content contains a special URL
             ? const Text('Save Shared Content')
-            : const Text('Save Shared Media'),
+            : const Text('Save Shared Content'),
         leading: IconButton(
           // Use leading for the cancel/back action
           icon: Icon(Platform.isIOS ? Icons.arrow_back_ios : Icons.arrow_back),
