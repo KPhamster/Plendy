@@ -33,7 +33,7 @@ class _ExperienceMapScreenState extends State<ExperienceMapScreen> {
             initialLocation: widget.experience.location,
             initialZoom: 15.0,
             showUserLocation: true,
-            allowSelection: false, // Read-only map
+            allowSelection: false,
           ),
 
           // Information panel
