@@ -1414,47 +1414,90 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                     // --- Media Preview Area --- (No changes needed here)
                     // Keep GestureDetector simple - it doesn't need to navigate anymore as individual experiences are tappable
                     mediaWidget,
-                    // --- Buttons Row --- (Keep as is)
-                    Container(
-                      height: 48, // Standard height for buttons
-                      color: Colors.black.withOpacity(0.03),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceAround,
+                    // --- Buttons Row --- (Replicated layout from ExperiencePageScreen Media Tab)
+                    SizedBox(
+                      height: 48, // Standard height
+                      child: Stack(
                         children: [
-                          // Instagram Button (only if Instagram URL)
-                          if (isInstagramUrl)
-                            IconButton(
-                              icon: const Icon(FontAwesomeIcons.instagram),
-                              iconSize:
-                                  28, // Slightly larger icon for list view
-                              color: const Color(0xFFE1306C),
-                              tooltip: 'Open in Instagram',
-                              padding: EdgeInsets.zero,
-                              constraints: const BoxConstraints(),
-                              onPressed: () => _launchUrl(mediaPath),
-                            ),
-                          // Expand/Collapse Button (only if Instagram URL)
-                          if (isInstagramUrl)
-                            IconButton(
-                              icon: Icon(isExpanded
-                                  ? Icons.fullscreen_exit
-                                  : Icons.fullscreen),
+                          // Share Button (Left of Center)
+                          Align(
+                            alignment: const Alignment(-0.5, 0.0),
+                            child: IconButton(
+                              icon: const Icon(Icons.share_outlined),
                               iconSize: 24,
-                              color: Colors.blueGrey,
-                              tooltip: isExpanded ? 'Collapse' : 'Expand',
-                              padding: EdgeInsets.zero,
+                              color: Colors.blue, // Match Experience Page
+                              tooltip: 'Share Media',
                               constraints: const BoxConstraints(),
+                              padding: EdgeInsets.zero,
                               onPressed: () {
-                                setState(() {
-                                  _contentExpansionStates[mediaPath] =
-                                      !isExpanded;
-                                });
+                                // TODO: Implement share media functionality
+                                print(
+                                    'Share media button tapped for url: $mediaPath');
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                      content: Text(
+                                          'Share media not implemented yet.')),
+                                );
                               },
                             ),
-                          // Add other generic buttons here if needed (e.g., Share)
-                          // If not instagram, provide some spacing or alternative actions
-                          if (!isInstagramUrl)
-                            Spacer(), // Use Spacer to push potential future buttons
+                          ),
+
+                          // Instagram Button (Centered)
+                          if (isInstagramUrl)
+                            Align(
+                              alignment: Alignment.center,
+                              child: IconButton(
+                                icon: const Icon(FontAwesomeIcons.instagram),
+                                color: const Color(0xFFE1306C),
+                                iconSize: 32, // Match Experience Page size
+                                tooltip: 'Open in Instagram',
+                                constraints: const BoxConstraints(),
+                                padding: EdgeInsets.zero,
+                                onPressed: () => _launchUrl(mediaPath),
+                              ),
+                            ),
+
+                          // Expand/Collapse Button (Right of Center)
+                          if (isInstagramUrl)
+                            Align(
+                              // Position like Experience Page
+                              alignment: const Alignment(0.5, 0.0),
+                              child: IconButton(
+                                icon: Icon(isExpanded
+                                    ? Icons.fullscreen_exit
+                                    : Icons.fullscreen),
+                                iconSize: 24,
+                                // Color to match Experience Page (using blue)
+                                color: Colors.blue,
+                                tooltip: isExpanded ? 'Collapse' : 'Expand',
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(),
+                                onPressed: () {
+                                  setState(() {
+                                    _contentExpansionStates[mediaPath] =
+                                        !isExpanded;
+                                  });
+                                },
+                              ),
+                            ),
+
+                          // Delete Button (Right Aligned)
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: IconButton(
+                              icon: const Icon(Icons.delete_outline),
+                              iconSize: 24,
+                              color: Colors.red[700], // Match Experience Page
+                              tooltip: 'Delete Content',
+                              constraints: const BoxConstraints(),
+                              // Add padding like Experience Page for better tap target
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 12),
+                              onPressed: () {
+                                _showDeleteContentConfirmation(group);
+                              },
+                            ),
+                          ),
                         ],
                       ),
                     ),
@@ -1468,4 +1511,112 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     );
   }
   // --- END REFACTORED ---
+
+  // --- ADDED: Method to show delete confirmation dialog for content ---
+  Future<void> _showDeleteContentConfirmation(GroupedContentItem group) async {
+    final mediaItem = group.mediaItem;
+    final associatedExperiences = group.associatedExperiences;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Content?'),
+        content: Column(
+          // Use Column for better layout
+          mainAxisSize: MainAxisSize.min, // Prevent excessive height
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Are you sure you want to permanently delete this content?',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            // Display the content path or a placeholder
+            Text(
+              mediaItem.path.contains('instagram.com')
+                  ? 'Instagram Post'
+                  : mediaItem.path.split('/').last, // Show filename if possible
+              style: Theme.of(context)
+                  .textTheme
+                  .bodyMedium
+                  ?.copyWith(fontStyle: FontStyle.italic),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 16),
+            Text(
+                'It will also be unlinked from the following ${associatedExperiences.length} experience(s):'),
+            const SizedBox(height: 8),
+            // List associated experiences concisely
+            Container(
+              constraints: BoxConstraints(maxHeight: 100), // Limit height
+              child: SingleChildScrollView(
+                // Make it scrollable if many
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: associatedExperiences
+                      .map((exp) => Padding(
+                            padding: const EdgeInsets.only(bottom: 4.0),
+                            child: Text('• ${exp.name}',
+                                style: Theme.of(context).textTheme.bodySmall),
+                          ))
+                      .toList(),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'This action cannot be undone.',
+              style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Delete', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true && mounted) {
+      // Show loading indicator while deleting
+      setState(() => _isLoading = true);
+      try {
+        // --- Call ExperienceService method ---
+        await _experienceService.deleteSharedMediaItemAndUnlink(
+          mediaItem.id,
+          associatedExperiences.map((e) => e.id).toList(),
+        );
+        print('Deletion confirmed for: ${mediaItem.path}');
+        print(
+            'Associated Experience IDs: ${associatedExperiences.map((e) => e.id).toList()}');
+        // --- END Call ---
+
+        print('Content "${mediaItem.path}" deleted and unlinked successfully.');
+        if (mounted) {
+          // Hide loading indicator
+          setState(() => _isLoading = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Content deleted.')),
+          );
+          _loadData(); // Refresh the screen
+        }
+      } catch (e) {
+        print("Error deleting content: $e");
+        if (mounted) {
+          // Hide loading indicator
+          setState(() => _isLoading = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Error deleting content: $e')),
+          );
+        }
+      }
+    }
+  }
+  // --- END ADDED ---
 }
