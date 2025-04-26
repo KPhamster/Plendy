@@ -584,6 +584,57 @@ class ExperienceService {
     return results;
   }
 
+  /// Deletes a SharedMediaItem and removes its ID from all linked Experiences.
+  /// This operation is performed atomically using a batch write.
+  Future<void> deleteSharedMediaItemAndUnlink(
+      String mediaItemId, List<String> experienceIds) async {
+    if (mediaItemId.isEmpty) {
+      throw ArgumentError("mediaItemId cannot be empty.");
+    }
+
+    print(
+        "Attempting to delete SharedMediaItem $mediaItemId and unlink from ${experienceIds.length} experiences.");
+
+    final batch = _firestore.batch();
+
+    // 1. Add delete operation for the SharedMediaItem
+    final mediaItemRef = _sharedMediaItemsCollection.doc(mediaItemId);
+    batch.delete(mediaItemRef);
+    print("  - Added delete operation for MediaItem $mediaItemId to batch.");
+
+    // 2. Add update operations for each linked Experience
+    if (experienceIds.isNotEmpty) {
+      for (final experienceId in experienceIds) {
+        if (experienceId.isNotEmpty) {
+          final experienceRef = _experiencesCollection.doc(experienceId);
+          batch.update(experienceRef, {
+            'sharedMediaItemIds': FieldValue.arrayRemove([mediaItemId])
+          });
+          print(
+              "  - Added unlink operation from Experience $experienceId for MediaItem $mediaItemId to batch.");
+        } else {
+          print(
+              "Warning: Skipping unlink operation for an empty experienceId linked to MediaItem $mediaItemId.");
+        }
+      }
+    } else {
+      print(
+          "Warning: No experience IDs provided for unlinking MediaItem $mediaItemId. It will still be deleted.");
+    }
+
+    // 3. Commit the batch
+    try {
+      await batch.commit();
+      print(
+          "Successfully deleted MediaItem $mediaItemId and unlinked from experiences.");
+    } catch (e) {
+      print(
+          "Error committing batch delete/unlink for MediaItem $mediaItemId: $e");
+      // Rethrow the exception to allow the caller to handle it (e.g., show error message)
+      rethrow;
+    }
+  }
+
   /// Updates the media IDs and optionally the Yelp URL for a PublicExperience.
   /// Merges the new media item IDs with existing ones.
   Future<bool> updatePublicExperienceMediaIds(
