@@ -113,29 +113,24 @@ class _MapScreenState extends State<MapScreen> {
 
       print("🗺️ MAP SCREEN: Generated ${_markers.length} valid markers.");
 
-      // Animate camera after markers are generated AND map controller is ready
-      if (hasValidMarkers) {
-        print("🗺️ MAP SCREEN: Waiting for map controller to be ready...");
-        // Wait for the controller to be created and retrieve it
-        final GoogleMapController controller =
-            await _mapControllerCompleter.future;
-        print("🗺️ MAP SCREEN: Map controller is ready. Calculating bounds...");
-
-        // Use the helper to calculate bounds
-        final bounds = _calculateBoundsFromMarkers(_markers);
-
-        if (bounds != null) {
-          print(
-              "🗺️ MAP SCREEN: Animating camera to calculated bounds: $bounds");
-          // Use the controller obtained from the Completer
-          controller.animateCamera(CameraUpdate.newLatLngBounds(bounds, 50.0));
-        } else {
-          print(
-              "🗺️ MAP SCREEN: Calculated invalid bounds, not animating camera.");
-        }
-      } else {
-        print("🗺️ MAP SCREEN: No valid markers to calculate bounds for.");
-      }
+      // REMOVED: Automatic camera animation to fit markers.
+      // The map will now initially center based on GoogleMapsWidget's logic (user location if available).
+      // if (hasValidMarkers) {
+      //    print("🗺️ MAP SCREEN: Waiting for map controller to be ready...");
+      //    final GoogleMapController controller = await _mapControllerCompleter.future;
+      //    print("🗺️ MAP SCREEN: Map controller is ready. Calculating bounds...");
+      //
+      //    final bounds = _calculateBoundsFromMarkers(_markers); // Use helper
+      //
+      //    if (bounds != null) {
+      //       print("🗺️ MAP SCREEN: Animating camera to calculated bounds: $bounds");
+      //       controller.animateCamera(CameraUpdate.newLatLngBounds(bounds, 50.0));
+      //    } else {
+      //       print("🗺️ MAP SCREEN: Calculated invalid bounds, not animating camera.");
+      //    }
+      // } else {
+      //      print("🗺️ MAP SCREEN: No valid markers to calculate bounds for.");
+      // }
     } catch (e, stackTrace) {
       print("🗺️ MAP SCREEN: Error loading map data: $e");
       print(stackTrace); // Print stack trace for detailed debugging
