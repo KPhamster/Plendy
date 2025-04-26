@@ -1293,22 +1293,22 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          // Title for the experience list
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 6.0),
-                            child: Text(
-                              associatedExperiences.length == 1
-                                  ? 'Linked Experience:'
-                                  : 'Linked Experiences (${associatedExperiences.length}):',
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .labelLarge
-                                  ?.copyWith(
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.black87,
-                                  ),
+                          // Title for the experience list (only show if > 1)
+                          if (associatedExperiences.length > 1)
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 6.0),
+                              child: Text(
+                                // Text only shown when count > 1, so no need for ternary
+                                'Linked Experiences (${associatedExperiences.length}):',
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .labelLarge
+                                    ?.copyWith(
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.black87,
+                                    ),
+                              ),
                             ),
-                          ),
                           // Generate a list of Text Widgets for each experience
                           ...associatedExperiences.map((exp) {
                             // Find the matching category icon
