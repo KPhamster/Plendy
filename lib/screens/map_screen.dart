@@ -6,6 +6,7 @@ import 'package:google_maps_flutter/google_maps_flutter.dart'; // Add Google Map
 import '../widgets/google_maps_widget.dart';
 import '../services/experience_service.dart'; // Import ExperienceService
 import '../services/auth_service.dart'; // Import AuthService
+import '../services/google_maps_service.dart'; // Import GoogleMapsService
 import '../models/experience.dart'; // Import Experience model
 import '../models/user_category.dart'; // Import UserCategory model
 import 'experience_page_screen.dart'; // Import ExperiencePageScreen for navigation
@@ -20,6 +21,8 @@ class MapScreen extends StatefulWidget {
 class _MapScreenState extends State<MapScreen> {
   final ExperienceService _experienceService = ExperienceService();
   final AuthService _authService = AuthService();
+  final GoogleMapsService _mapsService =
+      GoogleMapsService(); // ADDED: Maps Service
   final Map<String, Marker> _markers = {}; // Use String keys for marker IDs
   bool _isLoading = true;
   List<Experience> _experiences = [];
@@ -33,6 +36,7 @@ class _MapScreenState extends State<MapScreen> {
   void initState() {
     super.initState();
     _loadDataAndGenerateMarkers();
+    _focusOnUserLocation(); // ADDED: Start focusing map on user location
   }
 
   Future<void> _loadDataAndGenerateMarkers() async {
@@ -177,6 +181,39 @@ class _MapScreenState extends State<MapScreen> {
     }
   }
 
+  // ADDED: Function to fetch user location and animate camera
+  Future<void> _focusOnUserLocation() async {
+    print("🗺️ MAP SCREEN: Attempting to focus on user location...");
+    try {
+      // Wait for the map controller to be ready
+      print("🗺️ MAP SCREEN: Waiting for map controller...");
+      final GoogleMapController controller =
+          await _mapControllerCompleter.future;
+      print("🗺️ MAP SCREEN: Map controller ready. Fetching user location...");
+
+      // Get current location
+      final position = await _mapsService.getCurrentLocation();
+      final userLatLng = LatLng(position.latitude, position.longitude);
+      print(
+          "🗺️ MAP SCREEN: User location fetched: $userLatLng. Animating camera...");
+
+      // Animate camera to user location
+      controller.animateCamera(
+        CameraUpdate.newLatLngZoom(userLatLng, 14.0), // Zoom level 14
+      );
+      print("🗺️ MAP SCREEN: Camera animation initiated.");
+    } catch (e) {
+      print(
+          "🗺️ MAP SCREEN: Failed to get user location or animate camera: $e");
+      // Handle error appropriately, maybe show a snackbar
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not center map on your location: $e')),
+        );
+      }
+    }
+  }
+
   // ADDED: Helper function to create BitmapDescriptor from text/emoji
   Future<BitmapDescriptor> _bitmapDescriptorFromText(String text,
       {int size = 100}) async {
@@ -188,6 +225,11 @@ class _MapScreenState extends State<MapScreen> {
     // Optional: Draw a background circle if needed
     // final Paint circlePaint = Paint()..color = Colors.blue; // Example background
     // canvas.drawCircle(Offset(radius, radius), radius, circlePaint);
+
+    // ADDED: Draw semi-transparent background circle
+    final Paint circlePaint = Paint()
+      ..color = Colors.red.withOpacity(0.7); // Black with 80% opacity
+    canvas.drawCircle(Offset(radius, radius), radius, circlePaint);
 
     // Draw text (emoji)
     final ui.ParagraphBuilder paragraphBuilder = ui.ParagraphBuilder(
@@ -296,6 +338,9 @@ class _MapScreenState extends State<MapScreen> {
           GoogleMapsWidget(
             // Pass initial location if needed, or let the widget handle default
             // initialLocation: const Location(latitude: 37.42, longitude: -122.08), // Example default
+            // ADDED: Provide a default initial location to avoid widget loading delay
+            initialLocation: Location(
+                latitude: 37.4219999, longitude: -122.0840575), // Googleplex
             showUserLocation: true,
             allowSelection: false,
             showControls: true,
