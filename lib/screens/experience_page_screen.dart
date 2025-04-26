@@ -104,6 +104,13 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   final Map<String, bool> _mediaTabExpansionStates = {};
   // --- END ADDED ---
 
+  // --- ADDED: State for other experiences linked to media --- START ---
+  bool _isLoadingOtherExperiences = true;
+  Map<String, List<Experience>> _otherAssociatedExperiences = {};
+  Map<String, UserCategory> _fetchedCategoriesForMedia =
+      {}; // Separate cache for media tab categories
+  // --- ADDED: State for other experiences linked to media --- END ---
+
   // REMOVED: Instagram Credentials
   // String? _instagramAppId;
   // String? _instagramClientToken;
@@ -1549,6 +1556,142 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                         onPageFinished: (url) {},
                       ),
                     ),
+                    // --- ADDED: 'Also linked to' section --- START ---
+                    Builder(
+                      builder: (context) {
+                        final otherExperiences =
+                            _otherAssociatedExperiences[url] ?? [];
+                        final bool shouldShowSection =
+                            !_isLoadingOtherExperiences &&
+                                otherExperiences.isNotEmpty;
+
+                        if (!shouldShowSection)
+                          return const SizedBox
+                              .shrink(); // Don't show if not applicable
+
+                        return Padding(
+                          padding:
+                              const EdgeInsets.only(top: 12.0, bottom: 4.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Padding(
+                                padding: const EdgeInsets.only(
+                                    bottom: 6.0, left: 4.0), // Indent slightly
+                                child: Text(
+                                  otherExperiences.length == 1
+                                      ? 'Also linked to:'
+                                      : 'Also linked to (${otherExperiences.length}):',
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .labelLarge
+                                      ?.copyWith(
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.black87,
+                                      ),
+                                ),
+                              ),
+                              // List the other experiences
+                              ...otherExperiences.map((exp) {
+                                final categoryName = exp.category;
+                                // Use the specific category cache for media tab
+                                final categoryIcon =
+                                    _fetchedCategoriesForMedia[categoryName]
+                                            ?.icon ??
+                                        '❓';
+                                final address = exp.location.address;
+                                final bool hasAddress =
+                                    address != null && address.isNotEmpty;
+
+                                return Padding(
+                                  padding: const EdgeInsets.only(
+                                      bottom: 4.0,
+                                      left: 4.0), // Indent slightly
+                                  child: InkWell(
+                                    onTap: () async {
+                                      print(
+                                          'Tapped on other experience ${exp.name} from exp page tab');
+                                      final category =
+                                          _fetchedCategoriesForMedia[
+                                                  categoryName] ??
+                                              UserCategory(
+                                                  id: '',
+                                                  name: categoryName,
+                                                  icon: '❓',
+                                                  ownerUserId: '');
+
+                                      final result = await Navigator.push<bool>(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (context) =>
+                                              ExperiencePageScreen(
+                                            experience: exp,
+                                            category: category,
+                                          ),
+                                        ),
+                                      );
+                                      // If navigation might cause changes relevant here, refresh
+                                      if (result == true && mounted) {
+                                        // Decide what needs refreshing - maybe just the other experience data?
+                                        _loadOtherExperienceData();
+                                        // Or maybe the whole page?
+                                        // _refreshExperienceData();
+                                      }
+                                    },
+                                    child: Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Padding(
+                                          padding: const EdgeInsets.only(
+                                              right: 8.0, top: 2.0),
+                                          child: Text(categoryIcon,
+                                              style: TextStyle(fontSize: 14)),
+                                        ),
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                exp.name,
+                                                style: Theme.of(context)
+                                                    .textTheme
+                                                    .titleSmall
+                                                    ?.copyWith(
+                                                        fontWeight:
+                                                            FontWeight.w500),
+                                                overflow: TextOverflow.ellipsis,
+                                                maxLines: 1,
+                                              ),
+                                              if (hasAddress)
+                                                Text(
+                                                  address,
+                                                  style: Theme.of(context)
+                                                      .textTheme
+                                                      .bodySmall
+                                                      ?.copyWith(
+                                                          color:
+                                                              Colors.black54),
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                  maxLines: 1,
+                                                ),
+                                            ],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                );
+                              }).toList(),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                    // --- ADDED: 'Also linked to' section --- END ---
+
                     const SizedBox(height: 8),
                     SizedBox(
                       height: 48,
@@ -1919,6 +2062,10 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
             _mediaItems = items;
             print("Fetched ${_mediaItems.length} media items for experience.");
           });
+          // --- ADDED: Trigger loading of other experience data --- START ---
+          // Call this AFTER _mediaItems is set
+          _loadOtherExperienceData();
+          // --- ADDED: Trigger loading of other experience data --- END ---
         }
       } else {
         print("No media item IDs associated with this experience.");
@@ -1939,6 +2086,122 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       }
     }
   }
+
+  // --- ADDED: Method to load data about other experiences linked to the media items --- START ---
+  Future<void> _loadOtherExperienceData() async {
+    // Use the same logic as in MediaFullscreenScreen
+    print("[ExpPage - _loadOtherExperienceData] Starting...");
+    if (!mounted || _mediaItems.isEmpty) {
+      print(
+          "[ExpPage - _loadOtherExperienceData] Not mounted or no media items yet. Aborting.");
+      setState(() => _isLoadingOtherExperiences =
+          false); // Ensure loading stops if no items
+      return;
+    }
+
+    setState(() {
+      _isLoadingOtherExperiences = true;
+    });
+
+    final Map<String, List<Experience>> otherExperiencesMap = {};
+    final Set<String> otherExperienceIds = {};
+    final Set<String> requiredCategoryNames = {};
+
+    print(
+        "[ExpPage - _loadOtherExperienceData] Comparing against current Experience ID: ${_currentExperience.id}");
+
+    // 1. Collect all *other* experience IDs from the current media items
+    for (final item in _mediaItems) {
+      print(
+          "[ExpPage - _loadOtherExperienceData] Processing item ${item.id} (Path: ${item.path}) with experienceIds: ${item.experienceIds}");
+      final otherIds = item.experienceIds
+          .where((id) => id != _currentExperience.id)
+          .toList();
+      if (otherIds.isNotEmpty) {
+        otherExperienceIds.addAll(otherIds);
+      }
+    }
+
+    print(
+        "[ExpPage - _loadOtherExperienceData] Found other experience IDs: $otherExperienceIds");
+
+    // 2. Fetch other experiences if any exist
+    Map<String, Experience> fetchedExperiencesById = {};
+    if (otherExperienceIds.isNotEmpty) {
+      try {
+        // Fetch experiences individually using Future.wait
+        final List<Experience?> experienceFutures = await Future.wait(
+            otherExperienceIds
+                .map((id) => _experienceService.getExperience(id))
+                .toList());
+        final List<Experience> experiences =
+            experienceFutures.whereType<Experience>().toList();
+        print(
+            "[ExpPage - _loadOtherExperienceData] Fetched ${experiences.length} other experiences.");
+        fetchedExperiencesById = {for (var exp in experiences) exp.id: exp};
+        for (final exp in experiences) {
+          if (exp.category.isNotEmpty) {
+            requiredCategoryNames.add(exp.category);
+          }
+        }
+      } catch (e) {
+        print("Error fetching other experiences: $e");
+      }
+    }
+
+    // 3. Fetch required categories if any exist (use existing _userCategories or fetch)
+    Map<String, UserCategory> categoryLookupMap = {};
+    // Use already loaded categories if available
+    if (_userCategories.isNotEmpty) {
+      categoryLookupMap = {for (var cat in _userCategories) cat.name: cat};
+      print(
+          "[ExpPage - _loadOtherExperienceData] Using already loaded categories (${_userCategories.length}).");
+    } else if (requiredCategoryNames.isNotEmpty) {
+      // Fallback: Fetch all categories if not loaded (though they should be by now)
+      print(
+          "[ExpPage - _loadOtherExperienceData] Warning: _userCategories empty, fetching all categories again.");
+      try {
+        final allUserCategories = await _experienceService.getUserCategories();
+        categoryLookupMap = {for (var cat in allUserCategories) cat.name: cat};
+        print(
+            "[ExpPage - _loadOtherExperienceData] Fetched ${categoryLookupMap.length} categories.");
+      } catch (e) {
+        print("Error fetching user categories: $e");
+      }
+    }
+
+    // 4. Build the map for the state
+    for (final item in _mediaItems) {
+      final otherIds = item.experienceIds
+          .where((id) => id != _currentExperience.id)
+          .toList();
+      if (otherIds.isNotEmpty) {
+        final associatedExps = otherIds
+            .map((id) => fetchedExperiencesById[id])
+            .where((exp) => exp != null)
+            .cast<Experience>()
+            .toList();
+        associatedExps.sort(
+            (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+        otherExperiencesMap[item.path] = associatedExps;
+      }
+    }
+
+    print(
+        "[ExpPage - _loadOtherExperienceData] Built map for UI: ${otherExperiencesMap.keys.length} items have other experiences.");
+
+    if (mounted) {
+      setState(() {
+        _otherAssociatedExperiences = otherExperiencesMap;
+        _fetchedCategoriesForMedia =
+            categoryLookupMap; // Store the category lookup
+        _isLoadingOtherExperiences = false;
+        print(
+            "[ExpPage - _loadOtherExperienceData] Set state: isLoading=false");
+      });
+    }
+  }
+  // --- ADDED: Method to load data about other experiences linked to the media items --- END ---
 }
 
 // --- ADDED Helper class for SliverPersistentHeader (for TabBar) ---
