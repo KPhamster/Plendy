@@ -16,6 +16,7 @@ import 'receive_share/widgets/instagram_preview_widget.dart'
     as instagram_widget;
 import '../models/shared_media_item.dart'; // ADDED Import
 import 'package:collection/collection.dart'; // ADDED: Import for groupBy
+import 'map_screen.dart'; // ADDED: Import for MapScreen
 
 // ADDED: Enum for experience sort types
 enum ExperienceSortType { mostRecent, alphabetical, distanceFromMe }
@@ -805,6 +806,17 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       appBar: AppBar(
         title: const Text('Collection'),
         actions: [
+          // ADDED: Map Button
+          IconButton(
+            icon: const Icon(Icons.map_outlined),
+            tooltip: 'View Map',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const MapScreen()),
+              );
+            },
+          ),
           if (_currentTabIndex == 0 && _selectedCategory == null)
             PopupMenuButton<CategorySortType>(
               icon: const Icon(Icons.sort),
