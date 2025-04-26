@@ -37,6 +37,7 @@ import 'main_screen.dart'; // Add this import
 import '../models/public_experience.dart'; // ADDED Import
 // ADDED: Import AuthService
 import '../services/auth_service.dart';
+import 'package:collection/collection.dart';
 
 // Enum to track the source of the shared content
 enum ShareType { none, yelp, maps, instagram, genericUrl, image, video, file }
@@ -1599,7 +1600,6 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       _showSnackBar(context, 'Categories not loaded yet. Please wait.');
       return;
     }
-    // --- END ADDED ---
 
     // ADDED: Get current user ID
     final String? currentUserId = _authService.currentUser?.uid;
@@ -1609,45 +1609,35 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       return;
     }
 
+    // --- Form Validation --- START ---
     bool allValid = true;
     for (var card in experienceCards) {
       if (!card.formKey.currentState!.validate()) {
         allValid = false;
         break;
       }
-      // RENAMED: Validate selected category name is set
       if (card.selectedcategory == null || card.selectedcategory!.isEmpty) {
         _showSnackBar(context, 'Please select a category for each card.');
         allValid = false;
         break;
       }
-      // --- END ADDED ---
+      if (card.locationEnabled && card.selectedLocation == null) {
+        _showSnackBar(context,
+            'Please select a location for experience card: "${card.titleController.text}"');
+        allValid = false;
+        break;
+      }
     }
 
     if (!allValid) {
       _showSnackBar(context, 'Please fill in required fields correctly');
       return;
     }
-
-    for (int i = 0; i < experienceCards.length; i++) {
-      final card = experienceCards[i];
-      if (card.locationEnabled && card.selectedLocation == null) {
-        _showSnackBar(
-            context, 'Please select a location for experience ${i + 1}');
-        return;
-      }
-    }
+    // --- Form Validation --- END ---
 
     setState(() {
       _isSaving = true;
     });
-
-    // --- Define the list of paths from the current share ---
-    final List<String> currentSharedPaths =
-        _currentSharedFiles.map((f) => f.path).toList();
-    print(
-        "SAVE_DEBUG: Starting save process with ${currentSharedPaths.length} media paths to process.");
-    // ------
 
     int successCount = 0;
     int updateCount = 0;
@@ -1655,262 +1645,308 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     try {
       final now = DateTime.now();
-      final List<String> newMediaPaths =
-          _currentSharedFiles.map((f) => f.path).toList();
+      final uniqueSharedPaths =
+          _currentSharedFiles.map((f) => f.path).toSet().toList();
+      print(
+          "SAVE_DEBUG: Starting save process for ${experienceCards.length} card(s) with ${uniqueSharedPaths.length} unique media paths.");
 
-      for (final card in experienceCards) {
+      // --- Step 1: Pre-process Media Items (Find or Create for current user) ---
+      final Map<String, String> mediaPathToItemIdMap = {};
+      print("SAVE_DEBUG: Pre-processing media paths...");
+      for (final path in uniqueSharedPaths) {
         try {
-          print(
-              "SAVE_DEBUG: Processing card ${card.id}. ExistingExperienceId: ${card.existingExperienceId}");
-
-          // --- Extract necessary info for both Experience and PublicExperience ---
-          final String placeId = card.selectedLocation?.placeId ?? '';
-          final Location? cardLocation = card.selectedLocation;
-          final String cardTitle = card.titleController.text;
-          final String cardYelpUrl = card.yelpUrlController.text.trim();
-          final String cardWebsite = card.websiteController.text.trim();
-          final String notes = card.notesController.text.trim();
-          final String categoryNameToSave = card.selectedcategory!;
-
-          // Validate Place ID for Public Experience logic
-          bool canProcessPublicExperience =
-              placeId.isNotEmpty && cardLocation != null;
-          print(
-              "SAVE_DEBUG: Can process Public Experience (PlaceID: '$placeId'): $canProcessPublicExperience");
-
-          final Location defaultLocation = Location(
-            latitude: 0.0,
-            longitude: 0.0,
-            address: 'No location specified',
-          );
-
-          final Location locationToSave =
-              (card.locationEnabled && cardLocation != null)
-                  ? cardLocation
-                  : defaultLocation;
-
-          // RENAMED: Use selectedcategory
-          // final String categoryNameToSave = card.selectedcategory!;
-          // UPDATED: Get the full category object using try-catch
-          UserCategory? selectedCategoryObject;
+          // Attempt to find an existing item with this path owned by the current user
+          // NOTE: This assumes ExperienceService has a method like this.
+          // If not, this logic needs adjustment or the service needs updating.
+          SharedMediaItem? existingItem;
           try {
-            selectedCategoryObject = _userCategories
-                .firstWhere((cat) => cat.name == categoryNameToSave);
+            // TODO (Service Dependency): Implement findSharedMediaItemByPathAndOwner in ExperienceService
+            // For now, implementing the logic here:
+            print(
+                "SAVE_DEBUG: Checking for existing SharedMediaItem for path: $path AND owner: $currentUserId");
+            // Use public method and check owner manually
+            SharedMediaItem? foundItem =
+                await _experienceService.findSharedMediaItemByPath(path);
+
+            if (foundItem != null && foundItem.ownerUserId == currentUserId) {
+              existingItem = foundItem;
+              print("SAVE_DEBUG: Found existing item ID: ${existingItem.id}");
+            } else if (foundItem != null) {
+              print(
+                  "SAVE_DEBUG: Found item with same path but DIFFERENT owner (${foundItem.ownerUserId}). Will create new one for $currentUserId.");
+            } else {
+              print(
+                  "SAVE_DEBUG: No existing item found for this path and owner.");
+            }
           } catch (e) {
-            // StateError if not found, assign null
-            selectedCategoryObject = null;
+            print(
+                "SAVE_DEBUG: Error querying for existing shared media item: $e");
+            // Continue, will attempt to create
           }
 
-          // --- Handle User's Private Experience (Create or Update) --- START ---
-          if (card.existingExperienceId == null ||
-              card.existingExperienceId!.isEmpty) {
-            // CREATE NEW EXPERIENCE
-            // Convert List<String> to List<SharedMediaItem>
-            final List<SharedMediaItem> sharedMediaItemsToSave = newMediaPaths
-                .map((path) => SharedMediaItem(
-                      id: '',
-                      path: path,
-                      createdAt: now,
-                      ownerUserId: currentUserId,
-                      experienceIds: [], // Initially empty, linked later
-                    ))
-                .toList();
-
-            // Create SharedMediaItems in Firestore FIRST and get real IDs
-            List<String> savedMediaItemIds = [];
-            for (var mediaItem in sharedMediaItemsToSave) {
-              String mediaItemId =
-                  await _experienceService.createSharedMediaItem(mediaItem);
-              savedMediaItemIds.add(mediaItemId);
-            }
-
-            Experience newExperience = Experience(
-              id: '',
-              name: cardTitle,
-              description:
-                  notes.isNotEmpty ? notes : 'Created from shared content',
-              location: locationToSave,
-              category: categoryNameToSave,
-              yelpUrl: cardYelpUrl.isNotEmpty ? cardYelpUrl : null,
-              website: cardWebsite.isNotEmpty ? cardWebsite : null,
-              additionalNotes: notes.isNotEmpty ? notes : null,
-              // FIXED: Use the real Firestore IDs instead of empty strings
-              sharedMediaItemIds: savedMediaItemIds,
-              createdAt: now,
-              updatedAt: now,
-              // Initialize editor list with the current user
-              editorUserIds: [currentUserId],
-            );
-            print("SAVE_DEBUG: Creating new Experience: ${newExperience.name}");
-            String newExperienceId =
-                await _experienceService.createExperience(newExperience);
-
-            // Now link the experience ID back to each media item
-            for (String mediaItemId in savedMediaItemIds) {
-              await _experienceService.addExperienceLinkToMediaItem(
-                  mediaItemId, newExperienceId);
-            }
-
-            successCount++;
+          if (existingItem != null) {
+            mediaPathToItemIdMap[path] = existingItem.id;
           } else {
-            // UPDATE EXISTING EXPERIENCE
+            // Create a new SharedMediaItem for this user and path
             print(
-                "SAVE_DEBUG: Updating existing Experience ID: ${card.existingExperienceId}");
-            Experience? existingExperience = await _experienceService
-                .getExperience(card.existingExperienceId!);
+                "SAVE_DEBUG: Creating new SharedMediaItem for path: $path, owner: $currentUserId");
+            SharedMediaItem newItem = SharedMediaItem(
+              id: '', // Firestore generates ID
+              path: path,
+              createdAt: now,
+              ownerUserId: currentUserId,
+              experienceIds: [], // Start with empty links
+            );
+            String newItemId =
+                await _experienceService.createSharedMediaItem(newItem);
+            mediaPathToItemIdMap[path] = newItemId;
+            print("SAVE_DEBUG: Created new item ID: $newItemId");
+          }
+        } catch (e) {
+          print(
+              "SAVE_DEBUG: Error finding/creating SharedMediaItem for path '$path': $e");
+          errors.add(
+              "Error processing media: ${path.split('/').last}"); // Add error for this path
+        }
+      }
+      print(
+          "SAVE_DEBUG: Media pre-processing complete. Map: $mediaPathToItemIdMap");
 
-            if (existingExperience != null) {
-              // Combine List<SharedMediaItem> correctly
-              final Map<String, SharedMediaItem> combinedPathsMap =
-                  {}; // Use map to ensure uniqueness by path
+      // Check if any path failed processing before proceeding with cards
+      if (mediaPathToItemIdMap.length != uniqueSharedPaths.length) {
+        print(
+            "SAVE_DEBUG: Errors occurred during media processing. Aborting card processing.");
+        // Error message already added to `errors` list within the loop
+      } else {
+        // --- Step 2: Process Each Experience Card --- START ---
+        for (final card in experienceCards) {
+          String? targetExperienceId;
+          bool isNewExperience = false;
+          Experience? currentExperienceData; // To hold data for updates/linking
 
-              // Add existing items first
-              if (existingExperience.sharedMediaItemIds.isNotEmpty) {
-                // Fetch existing SharedMediaItem objects to get their paths
-                // This assumes getSharedMediaItems is implemented in the service
-                // TODO (Service Dependency): Implement getSharedMediaItems
-                List<SharedMediaItem> existingItems = await _experienceService
-                    .getSharedMediaItems(existingExperience.sharedMediaItemIds);
-                for (final item in existingItems) {
-                  combinedPathsMap[item.path] = item;
-                }
-              }
+          try {
+            print(
+                "SAVE_DEBUG: Processing card ${card.id}. ExistingID: ${card.existingExperienceId}");
 
-              // Add new items, potentially overwriting (or just skipping if keeping old timestamp is desired)
-              for (final path in newMediaPaths) {
-                // If path doesn't exist or you want to update timestamp, add/replace
-                if (!combinedPathsMap.containsKey(path)) {
-                  combinedPathsMap[path] = SharedMediaItem(
-                    id: '',
-                    path: path,
-                    createdAt: now,
-                    ownerUserId: currentUserId,
-                    experienceIds: [], // Initially empty
-                  );
-                }
-                // If you always want the newest timestamp for a repeated share:
-                // combinedPathsMap[path] = SharedMediaItem(id: '', path: path, createdAt: now, ownerUserId: currentUserId, experienceIds: []);
-              }
+            // --- Extract card details ---
+            final String cardTitle = card.titleController.text;
+            final Location? cardLocation = card.selectedLocation;
+            final String placeId = cardLocation?.placeId ?? '';
+            final String cardYelpUrl = card.yelpUrlController.text.trim();
+            final String cardWebsite = card.websiteController.text.trim();
+            final String notes = card.notesController.text.trim();
+            final String categoryNameToSave = card.selectedcategory!;
+            // Moved this definition earlier
+            bool canProcessPublicExperience =
+                placeId.isNotEmpty && cardLocation != null;
 
-              // Process media items - create new ones in Firestore first
-              List<String> finalMediaItemIds = [];
-              List<String> newMediaItemIds =
-                  []; // Track newly created items for linking
+            UserCategory? selectedCategoryObject;
+            try {
+              selectedCategoryObject = _userCategories
+                  .firstWhere((cat) => cat.name == categoryNameToSave);
+            } catch (e) {
+              selectedCategoryObject = null;
+            }
 
-              // Process all items - use existing IDs if valid, create new ones if needed
-              for (var item in combinedPathsMap.values) {
-                if (item.id.isNotEmpty) {
-                  // Existing item with valid ID
-                  finalMediaItemIds.add(item.id);
-                } else {
-                  // Create new item in Firestore
-                  String mediaItemId =
-                      await _experienceService.createSharedMediaItem(item);
-                  finalMediaItemIds.add(mediaItemId);
-                  newMediaItemIds.add(mediaItemId); // Track for linking
-                }
-              }
+            final Location defaultLocation = Location(
+                latitude: 0.0,
+                longitude: 0.0,
+                address: 'No location specified');
+            final Location locationToSave =
+                (card.locationEnabled && cardLocation != null)
+                    ? cardLocation
+                    : defaultLocation;
 
-              Experience updatedExperience = existingExperience.copyWith(
+            // --- Get Target Experience ID (Create or Use Existing) ---
+            if (card.existingExperienceId == null ||
+                card.existingExperienceId!.isEmpty) {
+              // CREATE NEW Experience
+              isNewExperience = true;
+              print("SAVE_DEBUG: Creating NEW experience for card: $cardTitle");
+              // Create experience object (media IDs will be updated later)
+              Experience newExperience = Experience(
+                id: '',
                 name: cardTitle,
+                description:
+                    notes.isNotEmpty ? notes : 'Created from shared content',
                 location: locationToSave,
                 category: categoryNameToSave,
                 yelpUrl: cardYelpUrl.isNotEmpty ? cardYelpUrl : null,
                 website: cardWebsite.isNotEmpty ? cardWebsite : null,
-                description:
-                    notes.isNotEmpty ? notes : existingExperience.description,
                 additionalNotes: notes.isNotEmpty ? notes : null,
-                // FIXED: Use the list with valid Firestore IDs
-                sharedMediaItemIds: finalMediaItemIds,
+                sharedMediaItemIds: [], // Initially empty
+                createdAt: now,
                 updatedAt: now,
+                editorUserIds: [currentUserId],
               );
+              targetExperienceId =
+                  await _experienceService.createExperience(newExperience);
+              currentExperienceData = newExperience
+                  .copyWith(); // ID is part of the object after creation, don't copy ID
+              currentExperienceData = await _experienceService.getExperience(
+                  targetExperienceId); // Re-fetch to ensure all fields (like timestamps) are correct
               print(
-                  "SAVE_DEBUG: Updating Experience: ${updatedExperience.name}");
-              await _experienceService.updateExperience(updatedExperience);
-
-              // Link the experience ID to each new media item
-              for (String mediaItemId in newMediaItemIds) {
-                await _experienceService.addExperienceLinkToMediaItem(
-                    mediaItemId, existingExperience.id);
+                  "SAVE_DEBUG: Created NEW Experience ID: $targetExperienceId");
+              successCount++;
+            } else {
+              // GET EXISTING Experience
+              isNewExperience = false;
+              targetExperienceId = card.existingExperienceId!;
+              print(
+                  "SAVE_DEBUG: Using EXISTING experience ID: $targetExperienceId");
+              currentExperienceData =
+                  await _experienceService.getExperience(targetExperienceId);
+              if (currentExperienceData == null) {
+                print(
+                    "SAVE_DEBUG: ERROR - Could not find existing experience $targetExperienceId");
+                errors.add('Could not update "$cardTitle" (not found).');
+                continue; // Skip processing this card
               }
+              updateCount++; // Assume an update will happen if found
+            }
 
-              updateCount++;
+            // --- Gather Media IDs for this Experience ---
+            final List<String> relevantMediaItemIds = uniqueSharedPaths
+                .map((path) => mediaPathToItemIdMap[path])
+                .where((id) => id != null)
+                .cast<String>()
+                .toList();
+            print(
+                "SAVE_DEBUG: Relevant Media IDs for Experience $targetExperienceId: $relevantMediaItemIds");
+
+            // --- Update Experience with Media Links ---
+            if (currentExperienceData != null) {
+              List<String> existingMediaIds =
+                  currentExperienceData.sharedMediaItemIds;
+              // Combine existing with new, ensuring uniqueness
+              List<String> finalMediaIds =
+                  {...existingMediaIds, ...relevantMediaItemIds}.toList();
+
+              // Only update if the list actually changed or if it's a new experience
+              if (isNewExperience ||
+                  !DeepCollectionEquality()
+                      .equals(existingMediaIds, finalMediaIds)) {
+                print(
+                    "SAVE_DEBUG: Updating Experience $targetExperienceId with final media IDs: $finalMediaIds");
+                Experience experienceToUpdate = currentExperienceData.copyWith(
+                  // Update fields changed by the user in the form (if it was an existing experience)
+                  name:
+                      !isNewExperience ? cardTitle : currentExperienceData.name,
+                  location: !isNewExperience
+                      ? locationToSave
+                      : currentExperienceData.location,
+                  category: !isNewExperience
+                      ? categoryNameToSave
+                      : currentExperienceData.category,
+                  yelpUrl: !isNewExperience && cardYelpUrl.isNotEmpty
+                      ? cardYelpUrl
+                      : currentExperienceData.yelpUrl,
+                  website: !isNewExperience && cardWebsite.isNotEmpty
+                      ? cardWebsite
+                      : currentExperienceData.website,
+                  description: !isNewExperience && notes.isNotEmpty
+                      ? notes
+                      : currentExperienceData.description,
+                  additionalNotes: !isNewExperience && notes.isNotEmpty
+                      ? notes
+                      : currentExperienceData.additionalNotes,
+                  // Update media list
+                  sharedMediaItemIds: finalMediaIds,
+                  updatedAt: now,
+                );
+                await _experienceService.updateExperience(experienceToUpdate);
+              } else {
+                print(
+                    "SAVE_DEBUG: No changes to media links for existing Experience $targetExperienceId. Skipping update.");
+                // Decrement updateCount if no actual update was needed for an existing experience
+                if (!isNewExperience) updateCount--;
+              }
+            } else {
+              // This case should ideally not happen if logic above is correct
+              print(
+                  "SAVE_DEBUG: ERROR - currentExperienceData is null when trying to update media links.");
+              continue;
+            }
+
+            // --- Link Media Items to this Experience ---
+            print(
+                "SAVE_DEBUG: Linking ${relevantMediaItemIds.length} media items to Experience $targetExperienceId...");
+            for (final mediaItemId in relevantMediaItemIds) {
+              try {
+                await _experienceService.addExperienceLinkToMediaItem(
+                    mediaItemId, targetExperienceId);
+              } catch (e) {
+                print(
+                    "SAVE_DEBUG: Error linking media $mediaItemId to experience $targetExperienceId: $e");
+                // Optionally add to errors list
+              }
+            }
+
+            // --- Handle Public Experience (Logic seems mostly okay, uses paths) ---
+            if (canProcessPublicExperience) {
+              print(
+                  "SAVE_DEBUG: Processing Public Experience logic for PlaceID: $placeId");
+              PublicExperience? existingPublicExp = await _experienceService
+                  .findPublicExperienceByPlaceId(placeId);
+              if (existingPublicExp == null) {
+                String publicName = locationToSave.getPlaceName();
+                PublicExperience newPublicExperience = PublicExperience(
+                    id: '',
+                    name: publicName,
+                    location: locationToSave,
+                    placeID: placeId,
+                    yelpUrl: cardYelpUrl.isNotEmpty ? cardYelpUrl : null,
+                    website: cardWebsite.isNotEmpty ? cardWebsite : null,
+                    allMediaPaths:
+                        uniqueSharedPaths // Use the unique paths from this share
+                    );
+                print("SAVE_DEBUG: Creating Public Experience: $publicName");
+                await _experienceService
+                    .createPublicExperience(newPublicExperience);
+              } else {
+                print(
+                    "SAVE_DEBUG: Found existing Public Experience ID: ${existingPublicExp.id}. Adding media paths.");
+                await _experienceService.updatePublicExperienceMediaAndMaybeYelp(
+                    existingPublicExp.id,
+                    uniqueSharedPaths, // Use the unique paths from this share
+                    newYelpUrl: cardYelpUrl.isNotEmpty ? cardYelpUrl : null);
+              }
             } else {
               print(
-                  'Error: Could not find existing experience with ID: ${card.existingExperienceId}');
-              errors.add('Could not update "$cardTitle" (not found).');
+                  "SAVE_DEBUG: Skipping Public Experience logic due to missing PlaceID or Location.");
             }
-          }
-          // --- Handle User's Private Experience (Create or Update) --- END ---
+            // --- Public Experience END ---
 
-          // --- Handle Public Experience (Create or Update Media) --- START ---
-          if (canProcessPublicExperience) {
-            print(
-                "SAVE_DEBUG: Processing Public Experience logic for PlaceID: $placeId");
-            // Find existing public experience by placeId
-            PublicExperience? existingPublicExp =
-                await _experienceService.findPublicExperienceByPlaceId(placeId);
-
-            if (existingPublicExp == null) {
-              // CREATE Public Experience
-              print(
-                  "SAVE_DEBUG: No existing Public Experience found. Creating new one.");
-              // Use location's display name for public experience name
-              String publicName = cardLocation.getPlaceName();
-
-              PublicExperience newPublicExperience = PublicExperience(
-                id: '', // ID will be generated by Firestore
-                name: publicName,
-                location: cardLocation,
-                placeID: placeId,
-                yelpUrl: cardYelpUrl.isNotEmpty ? cardYelpUrl : null,
-                website: cardWebsite.isNotEmpty ? cardWebsite : null,
-                allMediaPaths:
-                    newMediaPaths, // Start with the current shared paths
-              );
-              print("SAVE_DEBUG: Creating Public Experience: $publicName");
-              await _experienceService
-                  .createPublicExperience(newPublicExperience);
+            // --- Update Category Timestamp --- START ---
+            if (selectedCategoryObject != null) {
+              try {
+                await _experienceService
+                    .updateCategoryLastUsedTimestamp(selectedCategoryObject.id);
+                print(
+                    "SAVE_DEBUG [Card ${card.id}]: Updated timestamp for category: ${selectedCategoryObject.name}");
+              } catch (e) {
+                print(
+                    "Error updating timestamp for category ${selectedCategoryObject.id}: $e");
+              }
             } else {
-              // UPDATE Public Experience (add media paths)
               print(
-                  "SAVE_DEBUG: Found existing Public Experience ID: ${existingPublicExp.id}. Adding media paths.");
-              await _experienceService.updatePublicExperienceMediaAndMaybeYelp(
-                existingPublicExp.id,
-                newMediaPaths,
-                newYelpUrl: cardYelpUrl.isNotEmpty
-                    ? cardYelpUrl
-                    : null, // Pass the card's Yelp URL
-              );
+                  "Warning: Could not find category object for '${categoryNameToSave}' to update timestamp.");
             }
-          } else {
+            // --- Update Category Timestamp --- END ---
+          } catch (e) {
             print(
-                "SAVE_DEBUG: Skipping Public Experience logic due to missing PlaceID or Location.");
+                "SAVE_DEBUG: Error processing card '${card.titleController.text}': $e");
+            errors.add('Error saving "${card.titleController.text}".');
+            // Decrement counts if an error occurred after incrementing
+            if (isNewExperience)
+              successCount--;
+            else
+              updateCount--;
           }
-          // --- Handle Public Experience (Create or Update Media) --- END ---
+        } // --- Step 2: Process Each Experience Card --- END ---
+      } // End else block (media processing succeeded)
 
-          // ADDED: Update timestamp for the selected category AFTER successful save/update
-          if (selectedCategoryObject != null) {
-            try {
-              await _experienceService
-                  .updateCategoryLastUsedTimestamp(selectedCategoryObject.id);
-              print(
-                  "SAVE_DEBUG [Card ${card.id}]: Updated timestamp for category: ${selectedCategoryObject.name}");
-            } catch (e) {
-              // Log error but don't stop the overall process
-              print(
-                  "Error updating timestamp for category ${selectedCategoryObject.id}: $e");
-            }
-          } else {
-            print(
-                "Warning: Could not find category object for '${categoryNameToSave}' to update timestamp.");
-          }
-        } catch (e) {
-          print('Error processing card "${card.titleController.text}": $e');
-          errors.add('Error saving "${card.titleController.text}".');
-        }
-      } // End for loop
-
+      // --- Final Message and Navigation --- START ---
       String message;
       if (errors.isEmpty) {
         message = '';
@@ -1928,14 +1964,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
       _showSnackBar(context, message);
 
-      // widget.onCancel(); // OLD: Call the cancel callback
-      // Navigator.pop(context); // OLD: Explicitly pop the current screen
-      // NEW: Navigate to MainScreen and remove all routes until
       Navigator.pushAndRemoveUntil(
         context,
         MaterialPageRoute(builder: (context) => const MainScreen()),
-        (Route<dynamic> route) => false, // Remove all routes
+        (Route<dynamic> route) => false,
       );
+      // --- Final Message and Navigation --- END ---
     } catch (e) {
       print('Error saving experiences: $e');
       _showSnackBar(context, 'Error saving experiences: $e');
