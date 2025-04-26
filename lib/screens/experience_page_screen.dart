@@ -1448,12 +1448,11 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     final instagramItems = mediaItems
         .where((item) => item.path.toLowerCase().contains('instagram.com'))
         .toList();
-    final reversedInstagramItems = instagramItems.reversed.toList();
 
     // MODIFIED: Check the item list
     if (_isLoadingMedia) {
       return const Center(child: CircularProgressIndicator());
-    } else if (reversedInstagramItems.isEmpty) {
+    } else if (instagramItems.isEmpty) {
       return const Center(
           child: Text('No Instagram posts shared for this experience.'));
     }
@@ -1479,7 +1478,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                   context,
                   MaterialPageRoute(
                     builder: (context) => MediaFullscreenScreen(
-                      instagramUrls: reversedInstagramItems,
+                      instagramUrls: instagramItems,
                       launchUrlCallback: _launchUrl,
                       experience: _currentExperience,
                       experienceService: _experienceService,
@@ -1506,10 +1505,10 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                 right: 16.0,
                 top: 8.0,
                 bottom: 16.0), // Adjust padding
-            itemCount: reversedInstagramItems.length,
+            itemCount: instagramItems.length,
             itemBuilder: (context, index) {
               // MODIFIED: Get SharedMediaItem and its path
-              final item = reversedInstagramItems[index];
+              final item = instagramItems[index];
               final url = item.path;
               // Keep the Column for layout *within* the list item
               return Padding(
@@ -2057,6 +2056,9 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       final mediaIds = _currentExperience.sharedMediaItemIds;
       if (mediaIds.isNotEmpty) {
         final items = await _experienceService.getSharedMediaItems(mediaIds);
+        // ADDED: Sort fetched items by createdAt descending
+        items.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
         if (mounted) {
           setState(() {
             _mediaItems = items;
