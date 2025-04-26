@@ -42,6 +42,8 @@ class _MediaFullscreenScreenState extends State<MediaFullscreenScreen> {
     super.initState();
     // Initialize local list from widget property
     _localInstagramItems = List<SharedMediaItem>.from(widget.instagramUrls);
+    // ADDED: Sort the local list by createdAt descending (most recent first)
+    _localInstagramItems.sort((a, b) => b.createdAt.compareTo(a.createdAt));
     // ADDED: Load other experience data after initial build
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadOtherExperienceData();
