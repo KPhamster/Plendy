@@ -34,18 +34,25 @@ class GoogleMapsWidget extends StatefulWidget {
 }
 
 class _GoogleMapsWidgetState extends State<GoogleMapsWidget> {
-  // Re-add MapsService
   final GoogleMapsService _mapsService = GoogleMapsService();
   GoogleMapController? _mapController;
-  // Re-add internal markers map to handle additionalMarkers
   final Map<MarkerId, Marker> _markers = {};
-  bool _isProcessingTap = false; // Simple state for tap feedback
+  bool _isProcessingTap = false;
+  // ADDED: State for user position and loading
+  Position? _currentUserPosition;
+  bool _isLoadingUserLocation = false;
+  // ADDED: Store the calculated initial camera position
+  late CameraPosition _initialCameraPosition;
+  // ADDED: Flag to track if initial position is determined
+  bool _initialPositionDetermined = false;
 
   @override
   void initState() {
     super.initState();
     // Initialize markers immediately from props
     _updateInternalMarkers();
+    // Determine initial camera position asynchronously
+    _determineInitialCameraPosition();
   }
 
   @override
@@ -134,24 +141,77 @@ class _GoogleMapsWidgetState extends State<GoogleMapsWidget> {
     }
   }
 
+  // ADDED: Method to determine initial camera position
+  Future<void> _determineInitialCameraPosition() async {
+    LatLng target;
+    // Prioritize initialLocation prop
+    if (widget.initialLocation != null) {
+      print("📍 GOOGLE MAPS WIDGET: Using provided initialLocation.");
+      target = LatLng(
+          widget.initialLocation!.latitude, widget.initialLocation!.longitude);
+      _initialCameraPosition =
+          CameraPosition(target: target, zoom: widget.initialZoom);
+      // No need to fetch user location if initial is provided
+      if (mounted) setState(() {}); // Update state to trigger build
+      return;
+    }
+
+    // If no initialLocation, try getting user's current location
+    print(
+        "📍 GOOGLE MAPS WIDGET: No initialLocation provided, attempting to get user location...");
+    setState(() {
+      _isLoadingUserLocation = true;
+    });
+    try {
+      _currentUserPosition = await _mapsService.getCurrentLocation();
+      target = LatLng(
+          _currentUserPosition!.latitude, _currentUserPosition!.longitude);
+      print("📍 GOOGLE MAPS WIDGET: Got user location: $target");
+    } catch (e) {
+      print(
+          "📍 GOOGLE MAPS WIDGET: Failed to get user location: $e. Using default.");
+      // Use default if user location fails
+      target = const LatLng(
+          37.42796133580664, -122.085749655962); // Default to Googleplex
+    }
+    _initialCameraPosition =
+        CameraPosition(target: target, zoom: widget.initialZoom);
+    if (mounted) {
+      setState(() {
+        _isLoadingUserLocation = false;
+        _initialPositionDetermined = true; // Set flag here
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final LatLng target = widget.initialLocation != null
-        ? LatLng(
-            widget.initialLocation!.latitude, widget.initialLocation!.longitude)
-        : const LatLng(37.42796133580664, -122.085749655962);
-
-    final initialCameraPosition = CameraPosition(
-      target: target,
-      zoom: widget.initialZoom,
-    );
+    // Use the flag to check if ready
+    if (!_initialPositionDetermined) {
+      // Show loading only if we are actively fetching user location
+      if (_isLoadingUserLocation) {
+        print(
+            "📍 GOOGLE MAPS WIDGET: Waiting for initial position... Showing loading indicator.");
+        return const Center(child: CircularProgressIndicator());
+      } else {
+        // If not loading user location (i.e., initialLocation was provided and processed instantly)
+        // but the flag isn't set yet (build might run before initState setState completes),
+        // show a minimal placeholder or an empty container briefly.
+        print(
+            "📍 GOOGLE MAPS WIDGET: Initial position not ready yet, showing empty container.");
+        return Container(); // Or const SizedBox.shrink();
+      }
+    }
 
     print(
-        "📍 GOOGLE MAPS WIDGET: Building simplified widget structure. allowSelection: ${widget.allowSelection}");
+        "📍 GOOGLE MAPS WIDGET: Building map. allowSelection: ${widget.allowSelection}");
+    print(
+        "📍 GOOGLE MAPS WIDGET: Initial Camera Position: ${_initialCameraPosition.target}");
     return Stack(
       children: [
         GoogleMap(
-          initialCameraPosition: initialCameraPosition,
+          // Use the determined initial position
+          initialCameraPosition: _initialCameraPosition,
           myLocationEnabled: widget.showUserLocation,
           myLocationButtonEnabled:
               widget.showUserLocation && widget.showControls,
@@ -164,7 +224,7 @@ class _GoogleMapsWidgetState extends State<GoogleMapsWidget> {
           // Add onTap back
           onTap: widget.allowSelection ? _onMapTapped : null,
         ),
-        // Show loading indicator only during tap processing
+        // Show loading indicator overlay ONLY during tap processing now
         if (_isProcessingTap)
           Container(
             color: Colors.black.withOpacity(0.1),
