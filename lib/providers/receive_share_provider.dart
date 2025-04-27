@@ -173,6 +173,41 @@ class ReceiveShareProvider extends ChangeNotifier {
     // }
   }
 
+  /// Updates the selected color category for a specific experience card.
+  void updateCardColorCategory(String cardId, String? newColorCategoryId) {
+    // Allow null to clear
+    final index = _experienceCards.indexWhere((card) => card.id == cardId);
+    if (index != -1) {
+      if (_experienceCards[index].selectedColorCategoryId !=
+          newColorCategoryId) {
+        _experienceCards[index].selectedColorCategoryId = newColorCategoryId;
+        print(
+            "Provider: Updated color category for card $cardId to $newColorCategoryId");
+        notifyListeners(); // Notify listeners about the change
+      }
+    } else {
+      print(
+          "Provider ERROR: Card with ID $cardId not found for color category update.");
+    }
+  }
+
+  /// Updates the selected text category for a specific experience card.
+  void updateCardTextCategory(String cardId, String? newTextCategoryName) {
+    // Allow null to clear
+    final index = _experienceCards.indexWhere((card) => card.id == cardId);
+    if (index != -1) {
+      if (_experienceCards[index].selectedcategory != newTextCategoryName) {
+        _experienceCards[index].selectedcategory = newTextCategoryName;
+        print(
+            "Provider: Updated text category for card $cardId to $newTextCategoryName");
+        notifyListeners(); // Notify listeners about the change
+      }
+    } else {
+      print(
+          "Provider ERROR: Card with ID $cardId not found for text category update.");
+    }
+  }
+
   // Notify listeners that a specific card's data might have changed externally
   void notifyCardChanged(ExperienceCardData card) {
     // We don't strictly need the card object here, but it mirrors the pattern

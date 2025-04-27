@@ -2528,13 +2528,32 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                               onSelectSavedExperience:
                                                   _selectSavedExperienceForCard,
                                               // UPDATED onUpdate handling:
-                                              onUpdate: (
-                                                  {bool refreshCategories =
-                                                      false,
-                                                  String? newCategoryName}) {
-                                                print(
-                                                    "onUpdate called: refreshCategories=$refreshCategories, newCategoryName=$newCategoryName"); // Log entry
-                                                if (refreshCategories) {
+                                              onUpdate: ({
+                                                bool refreshCategories = false,
+                                                String? newCategoryName,
+                                                String?
+                                                    selectedColorCategoryId, // ADDED parameter
+                                              }) {
+                                                print(// Log entry
+                                                    "onUpdate called: refreshCategories=$refreshCategories, newCategoryName=$newCategoryName, selectedColorCategoryId=$selectedColorCategoryId"); // ADDED log
+                                                if (selectedColorCategoryId !=
+                                                    null) {
+                                                  // ADDED handling
+                                                  print(// Log provider call
+                                                      "  Updating color category for card ${card.id} to $selectedColorCategoryId via provider.");
+                                                  context
+                                                      .read<
+                                                          ReceiveShareProvider>()
+                                                      .updateCardColorCategory(
+                                                          card.id,
+                                                          selectedColorCategoryId);
+                                                  // ADDED: Trigger rebuild on parent screen to ensure form updates
+                                                  if (mounted) {
+                                                    print(
+                                                        "  Parent setState called after color category provider update.");
+                                                    setState(() {});
+                                                  }
+                                                } else if (refreshCategories) {
                                                   print(
                                                       "  Refreshing Categories...");
                                                   // --- MODIFIED: Refresh both types ---
@@ -2547,42 +2566,42 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                                         "  _loadUserCategories finished.");
                                                     if (mounted) {
                                                       print(
-                                                          "  Component is mounted.");
-                                                      // Log BEFORE potential state update for newCategoryName
+                                                          "  Component is mounted after category refresh.");
+                                                      // If only refresh was requested (e.g., after Edit modal)
+                                                      // We still need setState to trigger rebuild with the new list loaded by _loadUserCategories
                                                       print(
-                                                          "  _userCategories length BEFORE setState: ${_userCategories.length}");
+                                                          "  Refresh requested, calling setState to update list.");
+                                                      setState(
+                                                          () {}); // Keep setState here for list refresh UI update
+                                                      // Handle newCategoryName selection if applicable (this part seems okay)
                                                       if (newCategoryName !=
                                                           null) {
-                                                        // Find the card associated with this specific form instance
-                                                        // Note: This relies on the closure capturing the correct 'card'
                                                         print(
-                                                            "  Attempting to set selected category for card ${card.id} to: $newCategoryName");
-                                                        setState(() {
-                                                          card.selectedcategory =
-                                                              newCategoryName;
-                                                          print(
-                                                              "  setState called for newCategoryName selection.");
-                                                        });
-                                                      } else {
-                                                        // If only refresh was requested (e.g., after Edit modal)
-                                                        // We still need setState to trigger rebuild with the new list loaded by _loadUserCategories
-                                                        print(
-                                                            "  Only refresh requested, calling setState to update list.");
-                                                        setState(() {});
+                                                            "  Attempting to set selected TEXT category for card ${card.id} to: $newCategoryName");
+                                                        // Find the corresponding card in the *provider's* list and update it
+                                                        // Or rely on the _loadUserCategories updating the list and the subsequent
+                                                        // setState triggering a rebuild which might pick up the default?
+                                                        // Let's try setting it directly via provider as well for consistency.
+                                                        context
+                                                            .read<
+                                                                ReceiveShareProvider>()
+                                                            .updateCardTextCategory(
+                                                                card.id,
+                                                                newCategoryName);
                                                       }
-                                                      // Log AFTER state update
-                                                      print(
-                                                          "  _userCategories length AFTER setState: ${_userCategories.length}");
                                                     } else {
                                                       print(
-                                                          "  Component is NOT mounted after _loadUserCategories.");
+                                                          "  Component is NOT mounted after category refresh.");
                                                     }
                                                   });
                                                 } else {
-                                                  // Just trigger rebuild for other updates if needed
+                                                  // Just trigger rebuild for other updates if needed (e.g., clearing fields)
                                                   print(
-                                                      "onUpdate: Non-category update, calling setState.");
+                                                      "onUpdate: Non-category/color update, calling setState.");
                                                   if (mounted) {
+                                                    // This setState might still be needed if form updates (like clearing fields)
+                                                    // require the parent screen to rebuild to reflect changes not managed by provider.
+                                                    // Let's keep it for now. If other updates are also moved to provider, this could be removed.
                                                     setState(() {});
                                                   }
                                                 }
