@@ -39,7 +39,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   @override
   Widget build(BuildContext context) {
     final user = _authService.currentUser;
-    
+
     return Scaffold(
       appBar: AppBar(
         title: Text('Profile'),
@@ -67,12 +67,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   Center(
                     child: CircleAvatar(
                       radius: 50,
-                      backgroundImage: user?.photoURL != null 
-                        ? NetworkImage(user!.photoURL!) 
-                        : null,
-                      child: user?.photoURL == null 
-                        ? Icon(Icons.person, size: 50) 
-                        : null,
+                      backgroundImage: user?.photoURL != null
+                          ? NetworkImage(user!.photoURL!)
+                          : null,
+                      child: user?.photoURL == null
+                          ? Icon(Icons.person, size: 50)
+                          : null,
                     ),
                   ),
                   SizedBox(height: 16),
@@ -120,4 +120,4 @@ class _ProfileScreenState extends State<ProfileScreen> {
       ),
     );
   }
-} 
+}
