@@ -7,6 +7,9 @@ import '../models/reel.dart';
 import '../models/user_category.dart';
 import '../models/public_experience.dart';
 import '../models/shared_media_item.dart';
+// --- ADDED ---
+import '../models/color_category.dart';
+// --- END ADDED ---
 
 /// Service for managing Experience-related operations
 class ExperienceService {
@@ -33,6 +36,12 @@ class ExperienceService {
   // Helper to get the path to a user's custom categories sub-category
   CollectionReference _userCategoriesCollection(String userId) =>
       _usersCollection.doc(userId).collection('categories');
+
+  // --- ADDED ---
+  // Helper to get the path to a user's custom color categories sub-collection
+  CollectionReference _userColorCategoriesCollection(String userId) =>
+      _usersCollection.doc(userId).collection('color_categories');
+  // --- END ADDED ---
 
   // ======= User Category Operations =======
 
@@ -1190,6 +1199,246 @@ class ExperienceService {
         'plendyRating': 0,
         'plendyReviewCount': 0,
       });
+    }
+  }
+
+  // ======= Color Category Operations =======
+
+  /// Fetches the user's custom color categories.
+  /// Categories are sorted by orderIndex, then by name.
+  Future<List<ColorCategory>> getUserColorCategories() async {
+    final userId = _currentUserId;
+    print("getUserColorCategories START - User: $userId");
+    if (userId == null) {
+      print("getUserColorCategories END - No user, returning empty list.");
+      return [];
+    }
+
+    final collectionRef = _userColorCategoriesCollection(userId);
+    final snapshot =
+        await collectionRef.orderBy('orderIndex').orderBy('name').get();
+
+    List<ColorCategory> fetchedCategories =
+        snapshot.docs.map((doc) => ColorCategory.fromFirestore(doc)).toList();
+    print(
+        "getUserColorCategories - Fetched ${fetchedCategories.length} from Firestore:");
+    fetchedCategories.forEach(
+        (c) => print("  - ${c.name} (ID: ${c.id}, Color: ${c.colorHex})"));
+
+    // De-duplicate based on name (case-insensitive)
+    final uniqueCategoriesByName = <String, ColorCategory>{};
+    for (var category in fetchedCategories) {
+      final nameLower = category.name.toLowerCase();
+      uniqueCategoriesByName.putIfAbsent(nameLower, () => category);
+    }
+    final uniqueFetchedCategories = uniqueCategoriesByName.values.toList();
+    print(
+        "getUserColorCategories - De-duplicated list size: ${uniqueFetchedCategories.length}");
+
+    // Sort the unique list based on the original fetched order (which is now sorted by Firestore)
+    final finalCategories = uniqueFetchedCategories.toList();
+    finalCategories.sort((a, b) {
+      final indexA = fetchedCategories.indexWhere((c) => c.id == a.id);
+      final indexB = fetchedCategories.indexWhere((c) => c.id == b.id);
+      if (indexA == -1 || indexB == -1) return a.name.compareTo(b.name);
+      return indexA.compareTo(indexB);
+    });
+
+    print(
+        "getUserColorCategories END - Returning ${finalCategories.length} unique categories (sorted by index/name):");
+    finalCategories.forEach((c) => print(
+        "  - ${c.name} (ID: ${c.id}, Index: ${c.orderIndex}, Color: ${c.colorHex})"));
+    return finalCategories;
+  }
+
+  /// Initializes the default color categories for a user in Firestore.
+  Future<List<ColorCategory>> initializeDefaultUserColorCategories(
+      String userId) async {
+    final defaultCategories = ColorCategory.createInitialCategories(userId);
+    final batch = _firestore.batch();
+    final collectionRef = _userColorCategoriesCollection(userId);
+    List<ColorCategory> createdCategories = [];
+
+    print("INITIALIZING default color categories for user $userId.");
+
+    // Assign sequential orderIndex during initialization
+    for (int i = 0; i < defaultCategories.length; i++) {
+      final category = defaultCategories[i];
+      final docRef = collectionRef.doc();
+      final data = category.toMap();
+      data['orderIndex'] = i; // Assign index
+      batch.set(docRef, data);
+      createdCategories.add(ColorCategory(
+          id: docRef.id,
+          name: category.name,
+          colorHex: category.colorHex,
+          ownerUserId: userId,
+          orderIndex: i));
+    }
+
+    try {
+      await batch.commit();
+      print(
+          "Successfully initialized ${createdCategories.length} default color categories for user $userId.");
+      return createdCategories;
+    } catch (e) {
+      print(
+          "Error during default color category initialization batch commit: $e");
+      throw Exception("Failed to initialize default color categories: $e");
+    }
+  }
+
+  /// Adds a new custom color category for the current user.
+  Future<ColorCategory> addColorCategory(String name, String colorHex) async {
+    final userId = _currentUserId;
+    if (userId == null) {
+      throw Exception('User not authenticated');
+    }
+
+    final categoryRef = _userColorCategoriesCollection(userId);
+
+    // Check if a category with the same name already exists (case-insensitive)
+    final nameLower = name.toLowerCase();
+    final existingSnapshot = await categoryRef.get();
+    final existingDocs = existingSnapshot.docs;
+
+    // Use try-catch for potential state errors during iteration
+    QueryDocumentSnapshot<Object?>? existingDoc;
+    try {
+      existingDoc = existingDocs.firstWhere(
+        (doc) =>
+            (doc.data() as Map<String, dynamic>)['name']?.toLowerCase() ==
+            nameLower,
+      );
+    } on StateError {
+      existingDoc = null; // No matching element found
+    } catch (e) {
+      print("Error checking for existing color category: $e");
+      existingDoc = null; // Treat other errors as not found for safety
+    }
+
+    if (existingDoc != null) {
+      throw Exception('A color category with this name already exists.');
+    }
+
+    // Determine the next order index
+    int nextOrderIndex = 0;
+    try {
+      final querySnapshot = await categoryRef
+          .orderBy('orderIndex', descending: true)
+          .limit(1)
+          .get();
+      if (querySnapshot.docs.isNotEmpty) {
+        final lastCategory =
+            ColorCategory.fromFirestore(querySnapshot.docs.first);
+        if (lastCategory.orderIndex != null) {
+          nextOrderIndex = lastCategory.orderIndex! + 1;
+        }
+      }
+    } catch (e) {
+      print(
+          "Warning: Could not determine next color category orderIndex, defaulting to 0. Error: $e");
+    }
+    print("Assigning next color category orderIndex: $nextOrderIndex");
+
+    final data = {
+      'name': name,
+      'colorHex': colorHex,
+      'ownerUserId': userId, // Ensure owner ID is stored
+      'orderIndex': nextOrderIndex,
+      'lastUsedTimestamp': null
+    };
+    final docRef = await categoryRef.add(data);
+    return ColorCategory(
+        id: docRef.id,
+        name: name,
+        colorHex: colorHex,
+        ownerUserId: userId,
+        orderIndex: nextOrderIndex,
+        lastUsedTimestamp: null);
+  }
+
+  /// Updates an existing custom color category for the current user.
+  Future<void> updateColorCategory(ColorCategory category) async {
+    final userId = _currentUserId;
+    if (userId == null) {
+      throw Exception('User not authenticated');
+    }
+    await _userColorCategoriesCollection(userId)
+        .doc(category.id)
+        .update(category.toMap());
+  }
+
+  /// Deletes a custom color category for the current user.
+  Future<void> deleteColorCategory(String categoryId) async {
+    final userId = _currentUserId;
+    if (userId == null) {
+      throw Exception('User not authenticated');
+    }
+    await _userColorCategoriesCollection(userId).doc(categoryId).delete();
+    // FUTURE: Consider updating Experiences using this colorCategoryId (set to null?)
+  }
+
+  /// Updates only the last used timestamp for a color category.
+  Future<void> updateColorCategoryLastUsedTimestamp(String categoryId) async {
+    final userId = _currentUserId;
+    if (userId == null) {
+      print("Cannot update color category timestamp: User not authenticated");
+      return;
+    }
+    try {
+      await _userColorCategoriesCollection(userId)
+          .doc(categoryId)
+          .update({'lastUsedTimestamp': FieldValue.serverTimestamp()});
+      print("Updated lastUsedTimestamp for color category $categoryId");
+    } catch (e) {
+      print(
+          "Error updating lastUsedTimestamp for color category $categoryId: $e");
+    }
+  }
+
+  /// Updates the orderIndex for multiple color categories.
+  Future<void> updateColorCategoryOrder(
+      List<Map<String, dynamic>> categoryOrderUpdates) async {
+    final userId = _currentUserId;
+    if (userId == null) {
+      throw Exception('User not authenticated');
+    }
+    if (categoryOrderUpdates.isEmpty) {
+      print("No color category order updates to perform.");
+      return;
+    }
+
+    final categoryRef = _userColorCategoriesCollection(userId);
+    final batch = _firestore.batch();
+    int updatedCount = 0;
+
+    for (final updateData in categoryOrderUpdates) {
+      final categoryId = updateData['id'] as String?;
+      final orderIndex = updateData['orderIndex'] as int?;
+
+      if (categoryId != null && orderIndex != null) {
+        final docRef = categoryRef.doc(categoryId);
+        batch.update(docRef, {'orderIndex': orderIndex});
+        updatedCount++;
+      } else {
+        print(
+            "Warning: Skipping invalid color category order update data: $updateData");
+      }
+    }
+
+    if (updatedCount > 0) {
+      try {
+        await batch.commit();
+        print(
+            "Successfully updated orderIndex for $updatedCount color categories.");
+      } catch (e) {
+        print("Error committing color category order update batch: $e");
+        throw Exception("Failed to save color category order: $e");
+      }
+    } else {
+      print(
+          "No valid color category order updates found in the provided list.");
     }
   }
 

@@ -14,6 +14,7 @@ import 'package:provider/provider.dart'; // Import Provider
 import '../providers/receive_share_provider.dart'; // Import the provider
 import '../models/experience.dart';
 import '../models/user_category.dart'; // RENAMED Import
+import '../models/color_category.dart'; // ADDED Import
 import '../models/shared_media_item.dart'; // ADDED Import
 import '../services/experience_service.dart';
 import '../services/google_maps_service.dart';
@@ -89,6 +90,11 @@ class ExperienceCardData {
   // --- ADDED ---
   // ID of the existing experience if this card represents one
   String? existingExperienceId;
+  // --- END ADDED ---
+
+  // --- ADDED ---
+  // Selected Color Category ID
+  String? selectedColorCategoryId;
   // --- END ADDED ---
 
   // Constructor can set initial values if needed
@@ -185,6 +191,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   Future<List<UserCategory>>? _userCategoriesFuture;
   List<UserCategory> _userCategories =
       []; // RENAMED Cache the loaded Categories
+
+  // --- ADDED: State for user Color Categories ---
+  Future<List<ColorCategory>>? _userColorCategoriesFuture;
+  List<ColorCategory> _userColorCategories =
+      []; // Cache the loaded ColorCategories
+  // --- END ADDED ---
 
   @override
   void initState() {
@@ -1740,6 +1752,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             bool canProcessPublicExperience =
                 placeId.isNotEmpty && cardLocation != null;
 
+            // --- ADDED ---
+            final String? colorCategoryIdToSave = card.selectedColorCategoryId;
+            // --- END ADDED ---
+
             UserCategory? selectedCategoryObject;
             try {
               selectedCategoryObject = _userCategories
@@ -1778,6 +1794,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                 createdAt: now,
                 updatedAt: now,
                 editorUserIds: [currentUserId],
+                // --- ADDED ---
+                colorCategoryId: colorCategoryIdToSave,
+                // --- END ADDED ---
               );
               targetExperienceId =
                   await _experienceService.createExperience(newExperience);
@@ -1850,6 +1869,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                   additionalNotes: !isNewExperience && notes.isNotEmpty
                       ? notes
                       : currentExperienceData.additionalNotes,
+                  // --- ADDED ---
+                  colorCategoryId: !isNewExperience
+                      ? colorCategoryIdToSave // Update if existing experience
+                      : currentExperienceData
+                          .colorCategoryId, // Keep original if new
+                  // --- END ADDED ---
                   // Update media list
                   sharedMediaItemIds: finalMediaIds,
                   updatedAt: now,
@@ -1933,6 +1958,20 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                   "Warning: Could not find category object for '${categoryNameToSave}' to update timestamp.");
             }
             // --- Update Category Timestamp --- END ---
+
+            // --- ADDED: Update Color Category Timestamp --- START ---
+            if (colorCategoryIdToSave != null) {
+              try {
+                await _experienceService.updateColorCategoryLastUsedTimestamp(
+                    colorCategoryIdToSave);
+                print(
+                    "SAVE_DEBUG [Card ${card.id}]: Updated timestamp for color category ID: $colorCategoryIdToSave");
+              } catch (e) {
+                print(
+                    "Error updating timestamp for color category $colorCategoryIdToSave: $e");
+              }
+            }
+            // --- END ADDED: Update Color Category Timestamp --- END ---
           } catch (e) {
             print(
                 "SAVE_DEBUG: Error processing card '${card.titleController.text}': $e");
@@ -2294,20 +2333,37 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                 ),
               )
             // RENAMED: FutureBuilder for User Categories
-            : FutureBuilder<List<UserCategory>>(
-                future: _userCategoriesFuture, // RENAMED future
+            // --- MODIFIED: Use Future.wait to load both category types ---
+            : FutureBuilder<List<dynamic>>(
+                future: Future.wait([
+                  // Use Future.wait
+                  _userCategoriesFuture ??
+                      Future.value([]), // Handle null future
+                  _userColorCategoriesFuture ??
+                      Future.value([]) // Handle null future
+                ]),
                 builder: (context, snapshot) {
                   if (snapshot.connectionState == ConnectionState.waiting) {
                     return const Center(child: CircularProgressIndicator());
                   }
                   if (snapshot.hasError) {
-                    // Already handled error in _loadUserCategories, show the UI with defaults
-                    print(
-                        "FutureBuilder Error (already handled): ${snapshot.error}");
-                    // Proceed to build UI with potentially default Categories loaded in _userCategories
+                    // Handle error for combined future
+                    print("FutureBuilder Error (Combined): ${snapshot.error}");
+                    // Show an error message or fallback UI
+                    return Center(
+                        child: Text(
+                            "Error loading categories: ${snapshot.error}"));
                   }
-                  // snapshot.hasData or error handled (defaults loaded)
-                  // Now _userCategories should be populated
+                  // We expect snapshot.data to be a List<List<dynamic>> if successful
+                  if (!snapshot.hasData || snapshot.data!.length < 2) {
+                    // Handle unexpected data format
+                    return const Center(
+                        child: Text("Error: Could not load category data."));
+                  }
+
+                  // Data is loaded, _userCategories and _userColorCategories should be populated by the loaders
+                  print(
+                      "Categories loaded: Text=${_userCategories.length}, Color=${_userColorCategories.length}");
 
                   return Column(
                     children: [
@@ -2456,6 +2512,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                               canRemove:
                                                   experienceCards.length > 1,
                                               userCategories: _userCategories,
+                                              // --- ADDED ---
+                                              userColorCategories:
+                                                  _userColorCategories,
+                                              // --- END ADDED ---
                                               onRemove: _removeExperienceCard,
                                               onLocationSelect:
                                                   _showLocationPicker,
@@ -2471,8 +2531,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                                 if (refreshCategories) {
                                                   print(
                                                       "  Refreshing Categories...");
-                                                  _loadUserCategories()
-                                                      .then((_) {
+                                                  // --- MODIFIED: Refresh both types ---
+                                                  Future.wait([
+                                                    _loadUserCategories(),
+                                                    _loadUserColorCategories()
+                                                  ]).then((_) {
+                                                    // --- END MODIFIED ---
                                                     print(
                                                         "  _loadUserCategories finished.");
                                                     if (mounted) {
@@ -3057,6 +3121,29 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   }
 
   // --- End Google Maps Specific Logic ---
+
+  // --- ADDED: Method to load user Color Categories ---
+  Future<void> _loadUserColorCategories() {
+    _userColorCategoriesFuture = _experienceService.getUserColorCategories();
+    // Return the future that completes after setting state or handling error
+    return _userColorCategoriesFuture!.then((colorCategories) {
+      if (mounted) {
+        setState(() {
+          _userColorCategories = colorCategories;
+        });
+      }
+    }).catchError((error) {
+      print("Error loading user Color Categories: $error");
+      if (mounted) {
+        setState(() {
+          _userColorCategories = []; // Use empty list on error
+        });
+        // Optionally show snackbar
+        // _showSnackBar(context, "Error loading color categories.");
+      }
+    });
+  }
+  // --- END ADDED ---
 } // End _ReceiveShareScreenState
 
 // Helper extension for Place Name (consider moving to Location model)

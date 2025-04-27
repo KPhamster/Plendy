@@ -1,0 +1,130 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:equatable/equatable.dart';
+import 'package:flutter/material.dart'; // Import Material for Color
+
+/// Represents a user-defined color category with a name and color.
+class ColorCategory extends Equatable {
+  final String id; // Document ID from Firestore
+  final String name;
+  final String colorHex; // Hex string for the color (e.g., "FF00FF00")
+  final String ownerUserId; // ID of the user who owns this category
+  final Timestamp? lastUsedTimestamp;
+  final int? orderIndex;
+
+  const ColorCategory({
+    required this.id,
+    required this.name,
+    required this.colorHex,
+    required this.ownerUserId,
+    this.lastUsedTimestamp,
+    this.orderIndex,
+  });
+
+  @override
+  List<Object?> get props => [
+        id,
+        name,
+        colorHex,
+        ownerUserId,
+        lastUsedTimestamp,
+        orderIndex,
+      ];
+
+  /// Creates a ColorCategory from a Firestore document.
+  factory ColorCategory.fromFirestore(DocumentSnapshot doc) {
+    final data = doc.data() as Map<String, dynamic>;
+    final ownerId = data['ownerUserId'] as String?;
+    if (ownerId == null) {
+      throw FormatException(
+          'ColorCategory document ${doc.id} is missing the required ownerUserId field.');
+    }
+    final colorHex = data['colorHex'] as String?;
+    if (colorHex == null) {
+      throw FormatException(
+          'ColorCategory document ${doc.id} is missing the required colorHex field.');
+    }
+
+    return ColorCategory(
+      id: doc.id,
+      name: data['name'] ?? 'Unnamed Color',
+      colorHex:
+          colorHex, // Default color if missing? Or throw error? Let's throw for now.
+      ownerUserId: ownerId,
+      lastUsedTimestamp: data['lastUsedTimestamp'] as Timestamp?,
+      orderIndex: data['orderIndex'] as int?,
+    );
+  }
+
+  /// Converts ColorCategory to a map for Firestore.
+  Map<String, dynamic> toMap() {
+    return {
+      'name': name,
+      'colorHex': colorHex,
+      'ownerUserId': ownerUserId,
+      'lastUsedTimestamp': lastUsedTimestamp,
+      'orderIndex': orderIndex,
+    };
+  }
+
+  /// Creates a copy with updated fields.
+  ColorCategory copyWith({
+    String? id,
+    String? name,
+    String? colorHex,
+    String? ownerUserId,
+    Timestamp? lastUsedTimestamp,
+    bool setLastUsedTimestampNull = false,
+    int? orderIndex,
+    bool setOrderIndexNull = false,
+  }) {
+    return ColorCategory(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      colorHex: colorHex ?? this.colorHex,
+      ownerUserId: ownerUserId ?? this.ownerUserId,
+      lastUsedTimestamp: setLastUsedTimestampNull
+          ? null
+          : lastUsedTimestamp ?? this.lastUsedTimestamp,
+      orderIndex: setOrderIndexNull ? null : orderIndex ?? this.orderIndex,
+    );
+  }
+
+  // Helper to get the Color object from the hex string
+  Color get color {
+    final buffer = StringBuffer();
+    if (colorHex.length == 6 || colorHex.length == 7)
+      buffer.write('ff'); // Add alpha if missing
+    buffer.write(colorHex.replaceFirst('#', ''));
+    try {
+      return Color(int.parse(buffer.toString(), radix: 16));
+    } catch (e) {
+      print("Error parsing color hex '$colorHex': $e");
+      return Colors.grey; // Default fallback color
+    }
+  }
+
+  /// Default Color Categories.
+  /// The key is the category name, the value is the suggested colorHex.
+  static const Map<String, String> defaultCategories = {
+    'Done': 'FF4CAF50', // Green
+    'To Try': 'FFFFEB3B', // Yellow
+    'Urgent': 'FFF44336', // Red
+    'Research': 'FF2196F3', // Blue
+    'Maybe': 'FF9E9E9E', // Grey
+  };
+
+  /// Creates the initial list of ColorCategory objects for a new user.
+  static List<ColorCategory> createInitialCategories(String ownerId) {
+    int index = 0;
+    return defaultCategories.entries.map((entry) {
+      return ColorCategory(
+        id: '', // No ID yet
+        name: entry.key,
+        colorHex: entry.value,
+        ownerUserId: ownerId,
+        lastUsedTimestamp: null,
+        orderIndex: index++, // Assign initial order
+      );
+    }).toList();
+  }
+}

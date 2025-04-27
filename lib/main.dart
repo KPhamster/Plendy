@@ -11,6 +11,7 @@ import 'services/sharing_service.dart';
 import 'package:provider/provider.dart';
 import 'providers/receive_share_provider.dart';
 import 'dart:async'; // Import dart:async for StreamSubscription
+import 'services/google_maps_service.dart'; // ADDED: Import GoogleMapsService
 
 // Define a GlobalKey for the Navigator
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
@@ -22,6 +23,20 @@ void main() async {
   await dotenv.load(fileName: ".env");
 
   await Firebase.initializeApp();
+
+  // --- ADDED: Preload user location silently --- START ---
+  try {
+    print("📍 MAIN: Starting background location preload...");
+    final mapsService = GoogleMapsService();
+    await mapsService.getCurrentLocation(); // Attempt to get location
+    print("📍 MAIN: Background location preload attempt finished.");
+  } catch (e) {
+    // Catch errors silently - we don't want to crash the app or bother the user here.
+    print(
+        "📍 MAIN: Error during background location preload (expected if permissions not granted yet): $e");
+  }
+  // --- ADDED: Preload user location silently --- END ---
+
   // Initialize sharing service
   SharingService().init();
   runApp(MyApp());
