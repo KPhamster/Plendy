@@ -997,19 +997,29 @@ class GoogleMapsService {
     return 'Selected Place';
   }
 
-  /// Get place details from geocoding service
+  /// Get place details from geocoding service, ensuring Place ID is included.
   Future<Location> getAddressFromLatLng(LatLng position) async {
+    print(
+        "🗺️ GEOCODING: Getting address details for LatLng: ${position.latitude}, ${position.longitude}");
     try {
       final placeDetails =
           await findPlaceDetails(position.latitude, position.longitude);
 
       if (placeDetails != null) {
+        print(
+            "🗺️ GEOCODING: Found details: Name='${placeDetails['name']}', Address='${placeDetails['address']}', PlaceID='${placeDetails['placeId']}'");
         return Location(
-          latitude: placeDetails['latitude'] as double, // Use POI coordinates
-          longitude: placeDetails['longitude'] as double, // Use POI coordinates
+          // Use the coordinates from the result, which might be snapped to a POI
+          latitude: placeDetails['latitude'] as double? ?? position.latitude,
+          longitude: placeDetails['longitude'] as double? ?? position.longitude,
           address: placeDetails['address'] as String?,
           displayName: placeDetails['name'] as String?,
+          // Ensure placeId is passed through
+          placeId: placeDetails['placeId'] as String?,
         );
+      } else {
+        print(
+            "🗺️ GEOCODING: findPlaceDetails returned null. Creating basic location.");
       }
 
       // If we couldn't get details, return a basic location
@@ -1018,18 +1028,19 @@ class GoogleMapsService {
         longitude: position.longitude,
         address:
             'Location at ${position.latitude.toStringAsFixed(6)}, ${position.longitude.toStringAsFixed(6)}',
-        displayName: 'Selected Location',
+        displayName: 'Tapped Location', // More specific default name
+        placeId: null, // Explicitly null if no details found
       );
     } catch (e) {
-      print('Error getting address: $e');
+      print('🗺️ GEOCODING ERROR: Error getting address: $e');
 
       // Even in case of error, return a basic location to avoid null issues
       return Location(
         latitude: position.latitude,
         longitude: position.longitude,
-        address:
-            'Location at ${position.latitude.toStringAsFixed(6)}, ${position.longitude.toStringAsFixed(6)}',
-        displayName: 'Selected Location',
+        address: 'Error finding location details', // Indicate error in address
+        displayName: 'Tapped Location',
+        placeId: null,
       );
     }
   }

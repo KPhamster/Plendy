@@ -3,11 +3,12 @@ import 'dart:typed_data'; // Import for ByteData
 import 'dart:ui' as ui; // Import for ui.Image, ui.Canvas etc.
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart'; // Add Google Maps import
+import 'package:url_launcher/url_launcher.dart'; // ADDED: Import url_launcher
 import '../widgets/google_maps_widget.dart';
 import '../services/experience_service.dart'; // Import ExperienceService
 import '../services/auth_service.dart'; // Import AuthService
 import '../services/google_maps_service.dart'; // Import GoogleMapsService
-import '../models/experience.dart'; // Import Experience model
+import '../models/experience.dart'; // Import Experience model (includes Location)
 import '../models/user_category.dart'; // Import UserCategory model
 import '../models/color_category.dart'; // Import ColorCategory model
 import 'experience_page_screen.dart'; // Import ExperiencePageScreen for navigation
@@ -55,6 +56,10 @@ class _MapScreenState extends State<MapScreen> {
   // ADDED: State for selected filters
   Set<String> _selectedCategoryIds = {}; // Empty set means no filter
   Set<String> _selectedColorCategoryIds = {}; // Empty set means no filter
+
+  // ADDED: State for tapped location
+  Marker? _tappedLocationMarker;
+  Location? _tappedLocationDetails;
 
   @override
   void initState() {
@@ -215,6 +220,11 @@ class _MapScreenState extends State<MapScreen> {
   // Helper function to navigate to the Experience Page
   void _navigateToExperience(Experience experience, UserCategory category) {
     print("🗺️ MAP SCREEN: Navigating to experience: ${experience.name}");
+    // Clear the temporary tapped marker when navigating away
+    setState(() {
+      _tappedLocationMarker = null;
+      _tappedLocationDetails = null;
+    });
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -472,17 +482,7 @@ class _MapScreenState extends State<MapScreen> {
   // --- REFACTORED: Marker generation logic ---
   Future<void> _generateMarkersFromExperiences(
       List<Experience> experiencesToMark) async {
-    // Use a temporary map to build markers to avoid modifying state directly in loop
     Map<String, Marker> tempMarkers = {};
-    // Clear existing markers before generating new ones
-    // _markers.clear(); // Clear happens when we assign tempMarkers later
-
-    // We will calculate bounds manually now
-    double minLat = double.infinity;
-    double maxLat = double.negativeInfinity;
-    double minLng = double.infinity;
-    double maxLng = double.negativeInfinity;
-    bool hasValidMarkers = false;
 
     for (final experience in experiencesToMark) {
       // Basic validation for location data
@@ -579,38 +579,209 @@ class _MapScreenState extends State<MapScreen> {
           onTap: () => _navigateToExperience(experience, category),
         ),
         icon: categoryIconBitmap,
-        onTap: () => _navigateToExperience(experience, category),
+        // IMPORTANT: Experience marker onTap clears the temporary tapped marker
+        onTap: () {
+          // When an experience marker is tapped, clear the temporary one
+          setState(() {
+            _tappedLocationMarker = null;
+            _tappedLocationDetails = null;
+          });
+          _navigateToExperience(experience, category);
+        },
       );
-      // FIX: Add to temporary map
       tempMarkers[experience.id] = marker;
-
-      // Update bounds manually
-      if (position.latitude < minLat) minLat = position.latitude;
-      if (position.latitude > maxLat) maxLat = position.latitude;
-      if (position.longitude < minLng) minLng = position.longitude;
-      if (position.longitude > maxLng) maxLng = position.longitude;
-      hasValidMarkers = true;
     }
 
     print(
-        "🗺️ MAP SCREEN: Generated ${_markers.length} markers from ${experiencesToMark.length} experiences.");
+        "🗺️ MAP SCREEN: Generated ${tempMarkers.length} experience markers from ${experiencesToMark.length} experiences.");
 
-    // Important: We need to call setState here AFTER markers are generated
-    // to update the map widget in the build method.
-    // The _isLoading state is handled by the calling function (_applyFiltersAndUpdateMarkers or _loadData...)
     if (mounted) {
       setState(() {
-        // FIX: Clear the existing map and add all from the temp map
         _markers.clear();
         _markers.addAll(tempMarkers);
-      }); // Trigger rebuild to show updated markers
+      });
     }
   }
   // --- END REFACTORED Marker generation ---
 
+  // --- ADDED: Handle location selection from GoogleMapsWidget ---
+  Future<void> _handleLocationSelected(Location locationDetails) async {
+    print(
+        "🗺️ MAP SCREEN: Location selected via widget callback: ${locationDetails.displayName}");
+    setState(() {
+      _isLoading = true; // Show loading while creating marker
+    });
+
+    try {
+      _tappedLocationDetails =
+          locationDetails; // Store details received from widget
+
+      print(
+          "🗺️ MAP SCREEN: Selected location details: Name='${locationDetails.displayName}', Address='${locationDetails.address}', PlaceID='${locationDetails.placeId}'");
+
+      // Create a new marker for the selected location
+      final tappedMarkerId = MarkerId('selected_location'); // Use specific ID
+      final tappedMarker = Marker(
+        markerId: tappedMarkerId,
+        position: LatLng(locationDetails.latitude,
+            locationDetails.longitude), // Use coords from result
+        infoWindow: InfoWindow(
+          title:
+              locationDetails.getPlaceName(), // Use helper from Location model
+          // FIXED: Correct multi-line string formatting and content
+          snippet:
+              '${locationDetails.address ?? 'Unknown Address'}\nTap for Directions',
+          onTap: () {
+            print(
+                "🗺️ MAP SCREEN: InfoWindow tapped for ${_tappedLocationDetails?.displayName}");
+            if (_tappedLocationDetails != null) {
+              _openDirectionsForLocation(_tappedLocationDetails!);
+            } else {
+              print(
+                  "🗺️ MAP SCREEN: Error - Tapped location details are null, cannot open directions.");
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                    content:
+                        Text('Could not get location details for directions.')),
+              );
+            }
+          },
+        ),
+        // Use a distinct marker color
+        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueViolet),
+        zIndex:
+            1.0, // Ensure it appears above experience markers if overlapping
+      );
+
+      // Update state to show the new marker (replace any existing tapped marker)
+      setState(() {
+        _tappedLocationMarker = tappedMarker;
+      });
+
+      // Animate camera to the tapped location (optional, widget might do this)
+      try {
+        final GoogleMapController controller =
+            await _mapControllerCompleter.future;
+        controller.animateCamera(
+          CameraUpdate.newLatLng(
+              LatLng(locationDetails.latitude, locationDetails.longitude)),
+        );
+      } catch (e) {
+        print(
+            "🗺️ MAP SCREEN: Could not animate camera to selected location: $e");
+      }
+    } catch (e) {
+      print("🗺️ MAP SCREEN: Error handling location selection: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error processing selected location: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false; // Hide loading indicator
+        });
+      }
+    }
+  }
+  // --- END Handle location selection ---
+
+  // --- ADDED: Open Directions ---
+  Future<void> _openDirectionsForLocation(Location location) async {
+    print(
+        "🗺️ MAP SCREEN: Opening directions for ${location.displayName ?? location.address}");
+
+    // Use the Place ID if available for a more specific destination
+    final url = _mapsService.getDirectionsUrl(location);
+    final uri = Uri.parse(url);
+
+    if (await canLaunchUrl(uri)) {
+      try {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+        // Clear the temporary marker after successfully launching maps
+        if (mounted) {
+          setState(() {
+            _tappedLocationMarker = null;
+            _tappedLocationDetails = null;
+          });
+        }
+      } catch (e) {
+        print("🗺️ MAP SCREEN: Could not launch $uri: $e");
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Could not open Google Maps')),
+          );
+        }
+      }
+    } else {
+      print("🗺️ MAP SCREEN: Cannot launch URL: $uri");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('Could not open Google Maps application')),
+        );
+      }
+    }
+  }
+  // --- END Open Directions ---
+
+  // --- ADDED: Helper method to launch map location directly --- //
+  Future<void> _launchMapLocation(Location location) async {
+    final String mapUrl;
+    // Prioritize Place ID if available for a more specific search
+    if (location.placeId != null && location.placeId!.isNotEmpty) {
+      // Use the Google Maps search API with place_id format
+      final placeName =
+          location.displayName ?? location.address ?? 'Selected Location';
+      mapUrl =
+          'https://www.google.com/maps/search/?api=1&query=${Uri.encodeComponent(placeName)}&query_place_id=${location.placeId}';
+      print('🗺️ MAP SCREEN: Launching Map with Place ID: $mapUrl');
+    } else {
+      // Fallback to coordinate-based URL if no place ID
+      final lat = location.latitude;
+      final lng = location.longitude;
+      mapUrl = 'https://www.google.com/maps/search/?api=1&query=$lat,$lng';
+      print('🗺️ MAP SCREEN: Launching Map with Coordinates: $mapUrl');
+    }
+
+    final Uri mapUri = Uri.parse(mapUrl);
+
+    if (!await launchUrl(mapUri, mode: LaunchMode.externalApplication)) {
+      print('🗺️ MAP SCREEN: Could not launch $mapUri');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open map location.')),
+        );
+      }
+    }
+    // Clear the temporary marker after successfully launching maps
+    if (mounted) {
+      setState(() {
+        _tappedLocationMarker = null;
+        _tappedLocationDetails = null;
+      });
+    }
+  }
+  // --- END: Helper method to launch map location --- //
+
   @override
   Widget build(BuildContext context) {
     print("🗺️ MAP SCREEN: Building widget. isLoading: $_isLoading");
+
+    // Combine experience markers and the tapped marker (if it exists)
+    final Map<String, Marker> allMarkers = Map.from(_markers);
+    if (_tappedLocationMarker != null) {
+      allMarkers[_tappedLocationMarker!.markerId.value] =
+          _tappedLocationMarker!;
+      print(
+          "🗺️ MAP SCREEN: Adding selected location marker '${_tappedLocationMarker!.markerId.value}' to map.");
+    } else {
+      print("🗺️ MAP SCREEN: No selected location marker to add to map.");
+    }
+    print(
+        "🗺️ MAP SCREEN: Total markers being sent to widget: ${allMarkers.length}");
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Experiences Map'),
@@ -620,32 +791,92 @@ class _MapScreenState extends State<MapScreen> {
             tooltip: 'Filter Experiences',
             onPressed: () {
               print("🗺️ MAP SCREEN: Filter button pressed!");
+              // Clear the temporary tapped marker when opening filters
+              setState(() {
+                _tappedLocationMarker = null;
+                _tappedLocationDetails = null;
+              });
               _showFilterDialog();
             },
           ),
         ],
       ),
-      // Use a Stack to overlay the loading indicator
+      // ADDED: Bottom Navigation Bar when a location is tapped
+      bottomNavigationBar: _tappedLocationDetails != null
+          ? Container(
+              padding: EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.1),
+                    blurRadius: 8,
+                    offset: Offset(0, -3),
+                  ),
+                ],
+                // Optional: Add rounded corners if desired
+                // borderRadius: BorderRadius.only(
+                //   topLeft: Radius.circular(16),
+                //   topRight: Radius.circular(16),
+                // ),
+              ),
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.map_outlined), // Added icon
+                label: const Text(
+                  'Open in map app', // Updated button text
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                style: ElevatedButton.styleFrom(
+                  padding: EdgeInsets.symmetric(vertical: 16),
+                  backgroundColor:
+                      Theme.of(context).primaryColor, // Use theme color
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+                onPressed: () {
+                  // FIXED: Call the new _launchMapLocation function
+                  if (_tappedLocationDetails != null) {
+                    _launchMapLocation(_tappedLocationDetails!);
+                  } else {
+                    print(
+                        "🗺️ MAP SCREEN: Error - Bottom bar button pressed but tapped details are null.");
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                          content: Text(
+                              'Could not get location details to open map.')),
+                    );
+                  }
+                },
+              ),
+            )
+          : null, // Show nothing if no location is tapped
       body: Stack(
         children: [
-          // Always build the map widget
           GoogleMapsWidget(
-            // Pass initial location if needed, or let the widget handle default
-            // initialLocation: const Location(latitude: 37.42, longitude: -122.08), // Example default
-            // ADDED: Provide a default initial location to avoid widget loading delay
             initialLocation: Location(
                 latitude: 37.4219999, longitude: -122.0840575), // Googleplex
             showUserLocation: true,
-            allowSelection: false,
+            // FIXED: Set allowSelection to true and use onLocationSelected
+            allowSelection: true,
+            onLocationSelected: _handleLocationSelected,
             showControls: true,
-            additionalMarkers:
-                _markers.map((key, marker) => MapEntry(key, marker)),
+            additionalMarkers: allMarkers,
             onMapControllerCreated: _onMapWidgetCreated,
+            // REMOVED: onTap parameter which is not supported by the widget
+            // onTap: _handleMapTap,
           ),
           // Show loading indicator on top if loading
           if (_isLoading)
-            const Center(
-              child: CircularProgressIndicator(),
+            Container(
+              color: Colors.black.withOpacity(0.1),
+              child: const Center(
+                child: CircularProgressIndicator(),
+              ),
             ),
         ],
       ),
