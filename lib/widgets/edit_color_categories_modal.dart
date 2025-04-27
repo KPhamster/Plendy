@@ -104,9 +104,9 @@ class _EditColorCategoriesModalState extends State<EditColorCategoriesModal> {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Delete Color Tag?'),
+        title: const Text('Delete Color Category?'),
         content: Text(
-            'Are you sure you want to delete the "${category.name}" tag? This cannot be undone.'),
+            'Are you sure you want to delete the "${category.name}" category? This cannot be undone.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
@@ -131,7 +131,7 @@ class _EditColorCategoriesModalState extends State<EditColorCategoriesModal> {
         _loadColorCategories(); // Refresh list
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('"${category.name}" tag deleted.')),
+            SnackBar(content: Text('"${category.name}" category deleted.')),
           );
         }
       } catch (e) {
@@ -163,7 +163,7 @@ class _EditColorCategoriesModalState extends State<EditColorCategoriesModal> {
       print("Color category edited, _categoriesChanged set to true.");
       _loadColorCategories(); // Refresh list
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('"${updatedCategory.name}" tag updated.')),
+        SnackBar(content: Text('"${updatedCategory.name}" category updated.')),
       );
     }
   }
@@ -214,12 +214,12 @@ class _EditColorCategoriesModalState extends State<EditColorCategoriesModal> {
                 Padding(
                   padding:
                       const EdgeInsets.only(left: 8.0, top: 8.0, bottom: 8.0),
-                  child: Text('Edit Color Tags',
+                  child: Text('Edit Color Categories',
                       style: Theme.of(context).textTheme.titleLarge),
                 ),
                 PopupMenuButton<ColorCategorySortType>(
                   icon: const Icon(Icons.sort),
-                  tooltip: "Sort Color Tags",
+                  tooltip: "Sort Color Categories",
                   onSelected: (ColorCategorySortType result) {
                     _applySort(result);
                   },
@@ -248,7 +248,7 @@ class _EditColorCategoriesModalState extends State<EditColorCategoriesModal> {
               child: _isLoading
                   ? const Center(child: CircularProgressIndicator())
                   : _categories.isEmpty
-                      ? const Center(child: Text('No color tags found.'))
+                      ? const Center(child: Text('No color categories found.'))
                       : ReorderableListView.builder(
                           itemCount: _categories.length,
                           itemBuilder: (context, index) {
@@ -315,7 +315,7 @@ class _EditColorCategoriesModalState extends State<EditColorCategoriesModal> {
               width: double.infinity,
               child: ElevatedButton.icon(
                 icon: const Icon(Icons.add),
-                label: const Text('Add New Color Tag'),
+                label: const Text('Add New Color Category'),
                 onPressed: _isLoading ? null : _addNewCategory,
                 style: ElevatedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 12),
@@ -364,7 +364,7 @@ class _EditColorCategoriesModalState extends State<EditColorCategoriesModal> {
         print("Error saving color category order: $e");
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text("Error saving color tag order: $e")),
+            SnackBar(content: Text("Error saving color category order: $e")),
           );
           Navigator.of(context).pop(false); // Indicate save failed
         }

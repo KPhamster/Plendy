@@ -591,7 +591,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                 Padding(
                   padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
                   child: Text(
-                    'Select Color Tag', // Changed Title
+                    'Select Color Category', // Changed Title
                     style: Theme.of(context).textTheme.titleLarge,
                   ),
                 ),
@@ -636,7 +636,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                       TextButton.icon(
                         icon: Icon(Icons.add_circle_outline,
                             size: 20, color: Colors.blue[700]),
-                        label: Text('Add New Color Tag',
+                        label: Text('Add New Color Category',
                             style: TextStyle(color: Colors.blue[700])),
                         onPressed: () {
                           Navigator.pop(
@@ -650,7 +650,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                       TextButton.icon(
                         icon: Icon(Icons.edit_outlined,
                             size: 20, color: Colors.orange[700]),
-                        label: Text('Edit Color Tags',
+                        label: Text('Edit Color Categories',
                             style: TextStyle(color: Colors.orange[700])),
                         onPressed: () {
                           Navigator.pop(context,
@@ -992,7 +992,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                     SizedBox(height: 16),
 
                     // --- ADDED: Color Category Selection Button ---
-                    Text('Color Tag',
+                    Text('Color Category',
                         style: Theme.of(context)
                             .textTheme
                             .bodyMedium
@@ -1028,7 +1028,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                               const SizedBox(width: 8),
                               Text(
                                 _getSelectedColorCategoryObject()?.name ??
-                                    'Select Color Tag',
+                                    'Select Color Category',
                                 style: TextStyle(
                                   color:
                                       widget.cardData.selectedColorCategoryId !=

@@ -146,7 +146,10 @@ class _AddColorCategoryModalState extends State<AddColorCategoryModal> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(_isEditing ? 'Edit Color Tag' : 'Create a New Color Tag',
+                Text(
+                    _isEditing
+                        ? 'Edit Color Category'
+                        : 'Create a New Color Category',
                     style: Theme.of(context).textTheme.titleLarge),
                 IconButton(
                   icon: const Icon(Icons.close),
@@ -159,13 +162,15 @@ class _AddColorCategoryModalState extends State<AddColorCategoryModal> {
             TextFormField(
               controller: _nameController,
               decoration: InputDecoration(
-                labelText:
-                    _isEditing ? 'Edit tag name' : 'Name your new color tag',
+                labelText: _isEditing
+                    ? 'Edit category name'
+                    : 'Name your new color category',
                 border: OutlineInputBorder(),
               ),
+              textCapitalization: TextCapitalization.sentences,
               validator: (value) {
                 if (value == null || value.trim().isEmpty) {
-                  return 'Please enter a tag name';
+                  return 'Please enter a category name';
                 }
                 // Optional: Add validation to check if name already exists (might need service call)
                 return null;
@@ -215,8 +220,8 @@ class _AddColorCategoryModalState extends State<AddColorCategoryModal> {
                 label: Text(_isLoading
                     ? 'Saving...'
                     : _isEditing
-                        ? 'Update Tag'
-                        : 'Save Tag'),
+                        ? 'Update Category'
+                        : 'Save Category'),
                 onPressed: _isLoading ? null : _saveCategory,
                 style: ElevatedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 12),
