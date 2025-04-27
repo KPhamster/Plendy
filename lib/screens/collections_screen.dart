@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_typeahead/flutter_typeahead.dart';
 import '../models/experience.dart';
 import '../models/user_category.dart';
+import '../models/color_category.dart';
+import '../widgets/add_color_category_modal.dart';
+import '../widgets/edit_color_categories_modal.dart' show ColorCategorySortType;
 import '../services/auth_service.dart';
 import '../services/experience_service.dart';
 import '../widgets/add_category_modal.dart';
@@ -56,6 +59,9 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   bool _isLoading = true;
   List<UserCategory> _categories = [];
   List<Experience> _experiences = [];
+  // ADDED: State for color categories
+  List<ColorCategory> _colorCategories = [];
+  bool _showingColorCategories = false; // Flag to toggle view in first tab
   // ADDED: State variable for experience sort type
   ExperienceSortType _experienceSortType = ExperienceSortType.mostRecent;
   // ADDED: State variable for content sort type
@@ -103,11 +109,20 @@ class _CollectionsScreenState extends State<CollectionsScreen>
 
     final userId = _authService.currentUser?.uid;
     try {
-      final categories = await _experienceService.getUserCategories();
-      List<Experience> experiences = [];
-      if (userId != null) {
-        experiences = await _experienceService.getExperiencesByUser(userId);
-      }
+      // Fetch both types of categories concurrently
+      final results = await Future.wait([
+        _experienceService.getUserCategories(),
+        _experienceService.getUserColorCategories(), // Fetch color categories
+        if (userId != null)
+          _experienceService.getExperiencesByUser(userId)
+        else
+          Future.value(<Experience>[]), // Return empty list if no user
+      ]);
+
+      final categories = results[0] as List<UserCategory>;
+      final colorCategories =
+          results[1] as List<ColorCategory>; // Get color categories
+      final experiences = results[2] as List<Experience>;
 
       // --- REFACTORED: Populate _groupedContentItems using new data model --- START ---
       List<GroupedContentItem> groupedContent = [];
@@ -176,10 +191,12 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       if (mounted) {
         setState(() {
           _categories = categories;
+          _colorCategories = colorCategories; // Store color categories
           _experiences = experiences;
           _groupedContentItems = groupedContent; // Set the state variable
           _isLoading = false;
           _selectedCategory = null; // Reset selected category on reload
+          // _showingColorCategories = false; // Ensure default view on reload
         });
         // Apply initial sorts after loading
         _applyExperienceSort(_experienceSortType);
@@ -817,12 +834,15 @@ class _CollectionsScreenState extends State<CollectionsScreen>
               );
             },
           ),
-          if (_currentTabIndex == 0 && _selectedCategory == null)
+          // --- MODIFIED: Conditionally show sort button for first tab ---
+          if (_currentTabIndex == 0 &&
+              _selectedCategory == null &&
+              !_showingColorCategories)
             PopupMenuButton<CategorySortType>(
               icon: const Icon(Icons.sort),
               tooltip: 'Sort Categories',
               onSelected: (CategorySortType result) {
-                _applySortAndSave(result);
+                _applySortAndSave(result); // Saves text category order
               },
               itemBuilder: (BuildContext context) =>
                   <PopupMenuEntry<CategorySortType>>[
@@ -836,6 +856,29 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                 ),
               ],
             ),
+          // --- ADDED: Sort button for Color Categories --- START ---
+          if (_currentTabIndex == 0 &&
+              _selectedCategory == null &&
+              _showingColorCategories)
+            PopupMenuButton<ColorCategorySortType>(
+              icon: const Icon(Icons.sort),
+              tooltip: 'Sort Color Categories',
+              onSelected: (ColorCategorySortType result) {
+                _applyColorSortAndSave(result); // Saves color category order
+              },
+              itemBuilder: (BuildContext context) =>
+                  <PopupMenuEntry<ColorCategorySortType>>[
+                const PopupMenuItem<ColorCategorySortType>(
+                  value: ColorCategorySortType.mostRecent,
+                  child: Text('Sort by Most Recent'),
+                ),
+                const PopupMenuItem<ColorCategorySortType>(
+                  value: ColorCategorySortType.alphabetical,
+                  child: Text('Sort Alphabetically'),
+                ),
+              ],
+            ),
+          // --- ADDED: Sort button for Color Categories --- END ---
           if (_currentTabIndex == 1)
             PopupMenuButton<ExperienceSortType>(
               icon: const Icon(Icons.sort),
@@ -984,9 +1027,46 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                     controller: _tabController,
                     children: [
                       // MODIFIED: Conditionally show category list or category experiences
-                      _selectedCategory == null
-                          ? _buildCategoriesList()
-                          : _buildCategoryExperiencesList(_selectedCategory!),
+                      // _selectedCategory == null
+                      //     ? _buildCategoriesList()
+                      //     : _buildCategoryExperiencesList(_selectedCategory!),
+                      // --- MODIFIED: First tab now uses Column and toggle ---
+                      Column(
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 16.0, vertical: 8.0),
+                            child: Align(
+                              alignment: Alignment.centerRight,
+                              child: TextButton.icon(
+                                icon: Icon(_showingColorCategories
+                                    ? Icons.category_outlined
+                                    : Icons.color_lens_outlined),
+                                label: Text(_showingColorCategories
+                                    ? 'Categories'
+                                    : 'Color Categories'),
+                                onPressed: () {
+                                  setState(() {
+                                    _showingColorCategories =
+                                        !_showingColorCategories;
+                                    _selectedCategory =
+                                        null; // Clear selected text category when switching views
+                                  });
+                                },
+                              ),
+                            ),
+                          ),
+                          Expanded(
+                            child: _selectedCategory != null
+                                ? _buildCategoryExperiencesList(
+                                    _selectedCategory!) // Still show experiences if a text category was selected
+                                : _showingColorCategories
+                                    ? _buildColorCategoriesList() // Show color list
+                                    : _buildCategoriesList(), // Show text list
+                          ),
+                        ],
+                      ),
+                      // --- END MODIFIED ---
                       _buildExperiencesListView(),
                       // MODIFIED: Call builder for Content tab
                       _buildContentTabBody(),
@@ -995,13 +1075,19 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                 ),
               ],
             ),
-      floatingActionButton: _currentTabIndex == 0 && _selectedCategory == null
+      floatingActionButton: _showingColorCategories
           ? FloatingActionButton(
-              onPressed: _showAddCategoryModal,
-              tooltip: 'Add Category',
+              onPressed: _showAddColorCategoryModal, // Call new modal func
+              tooltip: 'Add Color Category',
               child: const Icon(Icons.add),
             )
-          : null,
+          : _currentTabIndex == 0 && _selectedCategory == null
+              ? FloatingActionButton(
+                  onPressed: _showAddCategoryModal, // Original action
+                  tooltip: 'Add Category',
+                  child: const Icon(Icons.add),
+                )
+              : null, // No FAB for other tabs
     );
   }
 
@@ -1631,4 +1717,228 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     }
   }
   // --- END ADDED ---
+
+  // --- ADDED: Methods for Color Category Editing --- START ---
+
+  Future<void> _showAddColorCategoryModal() async {
+    final result = await showModalBottomSheet<ColorCategory>(
+      context: context,
+      builder: (_) => const AddColorCategoryModal(),
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+    );
+
+    if (result != null) {
+      print("AddColorCategoryModal returned, refreshing data...");
+      _loadData(); // Refresh both lists
+    }
+  }
+
+  Future<void> _showEditSingleColorCategoryModal(ColorCategory category) async {
+    final result = await showModalBottomSheet<ColorCategory>(
+      context: context,
+      builder: (_) => AddColorCategoryModal(categoryToEdit: category),
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+    );
+
+    if (result != null) {
+      print("AddColorCategoryModal (for edit) returned, refreshing data...");
+      _loadData();
+    }
+  }
+
+  Future<void> _showDeleteColorCategoryConfirmation(
+      ColorCategory category) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Color Category?'),
+        content: Text(
+            'Are you sure you want to delete the "${category.name}" category? Experiences using this color will lose it. This cannot be undone.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Delete', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true && mounted) {
+      try {
+        await _experienceService.deleteColorCategory(category.id);
+        print('Color Category "${category.name}" deleted successfully.');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('"${category.name}" category deleted.')),
+          );
+          _loadData(); // Refresh data
+        }
+      } catch (e) {
+        print("Error deleting color category: $e");
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Error deleting color category: $e')),
+          );
+        }
+      }
+    }
+  }
+
+  void _updateLocalColorOrderIndices() {
+    for (int i = 0; i < _colorCategories.length; i++) {
+      _colorCategories[i] = _colorCategories[i].copyWith(orderIndex: i);
+    }
+    print("Updated local color category order indices.");
+  }
+
+  Future<void> _saveColorCategoryOrder() async {
+    setState(() => _isLoading = true);
+    final List<Map<String, dynamic>> updates = [];
+    for (final category in _colorCategories) {
+      if (category.id.isNotEmpty && category.orderIndex != null) {
+        updates.add({
+          'id': category.id,
+          'orderIndex': category.orderIndex!,
+        });
+      } else {
+        print(
+            "Warning: Skipping color category in save order with missing id or index: ${category.name}");
+      }
+    }
+
+    if (updates.isEmpty) {
+      print("No valid color category updates to save.");
+      setState(() => _isLoading = false);
+      return;
+    }
+
+    try {
+      print("Attempting to save order for ${updates.length} color categories.");
+      await _experienceService.updateColorCategoryOrder(updates);
+      print("Color category order saved successfully.");
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    } catch (e) {
+      print("Error saving color category order: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Error saving color category order: $e")),
+        );
+        setState(() => _isLoading = false);
+        _loadData(); // Revert on error
+      }
+    }
+  }
+
+  Future<void> _applyColorSortAndSave(ColorCategorySortType sortType) async {
+    print("Applying color category sort: $sortType");
+    setState(() {
+      if (sortType == ColorCategorySortType.alphabetical) {
+        _colorCategories.sort(
+            (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+      } else if (sortType == ColorCategorySortType.mostRecent) {
+        _colorCategories.sort((a, b) {
+          final tsA = a.lastUsedTimestamp;
+          final tsB = b.lastUsedTimestamp;
+          if (tsA == null && tsB == null) {
+            return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+          }
+          if (tsA == null) return 1;
+          if (tsB == null) return -1;
+          return tsB.compareTo(tsA);
+        });
+      }
+      _updateLocalColorOrderIndices();
+    });
+    await _saveColorCategoryOrder();
+  }
+
+  // --- ADDED: Methods for Color Category Editing --- END ---
+
+  // --- ADDED: Builder for Color Category List --- START ---
+  Widget _buildColorCategoriesList() {
+    if (_colorCategories.isEmpty) {
+      return const Center(child: Text('No color categories found.'));
+    }
+
+    return ReorderableListView.builder(
+      itemCount: _colorCategories.length,
+      itemBuilder: (context, index) {
+        final category = _colorCategories[index];
+        // TODO: Calculate count for color categories if needed
+        // final count = _getExperienceCountForColorCategory(category);
+        return ListTile(
+          key: ValueKey(category.id),
+          leading: Container(
+            width: 24,
+            height: 24,
+            decoration: BoxDecoration(
+                color: category.color,
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.grey.shade400, width: 1)),
+          ),
+          title: Text(category.name),
+          // subtitle: Text('$count ${count == 1 ? "experience" : "experiences"}'), // Placeholder
+          trailing: PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert),
+            tooltip: 'Color Category Options',
+            onSelected: (String result) {
+              switch (result) {
+                case 'edit':
+                  _showEditSingleColorCategoryModal(category);
+                  break;
+                case 'delete':
+                  _showDeleteColorCategoryConfirmation(category);
+                  break;
+              }
+            },
+            itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
+              const PopupMenuItem<String>(
+                value: 'edit',
+                child: ListTile(
+                  leading: Icon(Icons.edit_outlined),
+                  title: Text('Edit'),
+                ),
+              ),
+              const PopupMenuItem<String>(
+                value: 'delete',
+                child: ListTile(
+                  leading: Icon(Icons.delete_outline, color: Colors.red),
+                  title: Text('Delete', style: TextStyle(color: Colors.red)),
+                ),
+              ),
+            ],
+          ),
+          onTap: () {
+            // Currently no action on tap for color categories
+            print('Tapped on color category: ${category.name}');
+          },
+        );
+      },
+      onReorder: (int oldIndex, int newIndex) {
+        setState(() {
+          if (newIndex > oldIndex) {
+            newIndex -= 1;
+          }
+          final ColorCategory item = _colorCategories.removeAt(oldIndex);
+          _colorCategories.insert(newIndex, item);
+          _updateLocalColorOrderIndices();
+          print("Color categories reordered locally. Triggering save.");
+          _saveColorCategoryOrder();
+        });
+      },
+    );
+  }
+  // --- ADDED: Builder for Color Category List --- END ---
 }
