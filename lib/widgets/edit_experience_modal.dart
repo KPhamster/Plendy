@@ -8,15 +8,22 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart'; // For icons
 import 'package:plendy/services/google_maps_service.dart'; // For location picker interaction
 import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter/services.dart';
+import 'package:plendy/models/color_category.dart';
+import 'package:plendy/widgets/add_color_category_modal.dart'; // Placeholder/Actual
+import 'package:plendy/widgets/edit_color_categories_modal.dart'; // Placeholder/Actual
+import 'package:plendy/widgets/add_category_modal.dart';
+import 'package:plendy/widgets/edit_categories_modal.dart';
 
 class EditExperienceModal extends StatefulWidget {
   final Experience experience;
   final List<UserCategory> userCategories;
+  final List<ColorCategory> userColorCategories;
 
   const EditExperienceModal({
     super.key,
     required this.experience,
     required this.userCategories,
+    required this.userColorCategories,
   });
 
   @override
@@ -30,6 +37,19 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
   final GoogleMapsService _mapsService =
       GoogleMapsService(); // If needed for picker
 
+  // --- ADDED: Constants for dialog actions (copied from ExperienceCardForm) ---
+  static const String _addCategoryValue =
+      '__add_new_category__'; // For regular categories
+  static const String _editCategoriesValue =
+      '__edit_categories__'; // For regular categories
+  static const String _dialogActionAdd =
+      '__add__'; // Generic add action from dialog
+  static const String _dialogActionEdit =
+      '__edit__'; // Generic edit action from dialog
+  static const String _addColorCategoryValue = '__add_new_color_category__';
+  static const String _editColorCategoriesValue = '__edit_color_categories__';
+  // --- END ADDED ---
+
   @override
   void initState() {
     super.initState();
@@ -42,6 +62,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
     _cardData.websiteController.text = widget.experience.website ?? '';
     _cardData.notesController.text = widget.experience.additionalNotes ?? '';
     _cardData.selectedcategory = widget.experience.category;
+    _cardData.selectedColorCategoryId = widget.experience.colorCategoryId;
     _cardData.selectedLocation = widget.experience.location;
     _cardData.locationEnabled = widget.experience.location.latitude != 0.0 ||
         widget.experience.location.longitude !=
@@ -211,7 +232,44 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                     },
                   ),
                 ),
-                // Don't include Add/Edit buttons within the edit modal's category selector
+                // --- ADDED: Add/Edit Buttons (similar to ExperienceCardForm dialog) ---
+                const Divider(height: 1),
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 8.0, vertical: 8.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      TextButton.icon(
+                        icon:
+                            Icon(Icons.add, size: 20, color: Colors.blue[700]),
+                        label: Text('Add New Category',
+                            style: TextStyle(color: Colors.blue[700])),
+                        onPressed: () {
+                          Navigator.pop(context, _dialogActionAdd);
+                        },
+                        style: TextButton.styleFrom(
+                            alignment: Alignment.centerLeft,
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 12)),
+                      ),
+                      TextButton.icon(
+                        icon: Icon(Icons.edit,
+                            size: 20, color: Colors.orange[700]),
+                        label: Text('Edit Categories',
+                            style: TextStyle(color: Colors.orange[700])),
+                        onPressed: () {
+                          Navigator.pop(context, _dialogActionEdit);
+                        },
+                        style: TextButton.styleFrom(
+                            alignment: Alignment.centerLeft,
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 12)),
+                      ),
+                    ],
+                  ),
+                ),
+                // --- END ADDED ---
               ],
             ),
           ),
@@ -219,14 +277,22 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
       },
     );
 
-    // Handle the dialog result
+    // --- MODIFIED: Handle Add/Edit Actions from Dialog ---
     if (selectedValue != null) {
-      if (_cardData.selectedcategory != selectedValue) {
-        setState(() {
-          _cardData.selectedcategory = selectedValue;
-        });
+      if (selectedValue == _dialogActionAdd) {
+        _handleAddCategory(); // Call the handler
+      } else if (selectedValue == _dialogActionEdit) {
+        _handleEditCategories(); // Call the handler
+      } else {
+        // User selected an actual category name
+        if (_cardData.selectedcategory != selectedValue) {
+          setState(() {
+            _cardData.selectedcategory = selectedValue;
+          });
+        }
       }
     }
+    // --- END MODIFICATION ---
   }
 
   // Helper to get category icon
@@ -243,6 +309,75 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
     }
   }
   // --- End Category Selection Logic ---
+
+  // --- ADDED: Method to handle adding a new user category (copied from ExperienceCardForm state) ---
+  Future<void> _handleAddCategory() async {
+    FocusScope.of(context).unfocus();
+    final newCategory = await showModalBottomSheet<UserCategory>(
+      context: context,
+      builder: (context) => const AddCategoryModal(),
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+    );
+    if (newCategory != null && mounted) {
+      print(
+          "Edit Modal: New user category added: ${newCategory.name} (${newCategory.icon})");
+      // In the modal, we can't easily refresh the parent's list and pass it back down.
+      // Simplest approach: Show a message, user needs to close/reopen modal
+      // or select the category if it magically appears (state mgmt dependent).
+      // Or, ideally, the AddCategoryModal updates a global state provider.
+      // For now, just select it if the name matches.
+      setState(() {
+        _cardData.selectedcategory = newCategory.name;
+        // We assume widget.userCategories might be updated by a provider later
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+            content: Text(
+                'Category "${newCategory.name}" added. Select it from the list.')),
+      );
+    }
+  }
+  // --- END ADDED ---
+
+  // --- ADDED: Method to handle editing user categories (copied from ExperienceCardForm state) ---
+  Future<void> _handleEditCategories() async {
+    FocusScope.of(context).unfocus();
+    final bool? categoriesChanged = await showModalBottomSheet<bool>(
+      context: context,
+      builder: (context) => const EditCategoriesModal(),
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+    );
+
+    if (categoriesChanged == true && mounted) {
+      print("Edit Modal: User Categories potentially changed.");
+      // Similar to adding, we can't easily refresh the list here.
+      // If the currently selected category was deleted/renamed, we might need to clear selection.
+      // Check if the current selection still exists in the (potentially updated) list
+      final currentSelectionExists = widget.userCategories
+          .any((cat) => cat.name == _cardData.selectedcategory);
+      if (!currentSelectionExists && _cardData.selectedcategory != null) {
+        setState(() {
+          _cardData.selectedcategory =
+              null; // Clear selection if it was removed/renamed
+        });
+      } else {
+        // Force a rebuild in case category icons changed etc.
+        setState(() {});
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content:
+                Text('Category list updated. Please review your selection.')),
+      );
+    }
+  }
+  // --- END ADDED ---
 
   // --- ADDED: Helper to check for Yelp URL ---
   bool _isYelpUrl(String url) {
@@ -382,6 +517,226 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
   }
   // --- END ADDED ---
 
+  // --- ADDED: Color Category Selection Logic (Copied & Adapted from ExperienceCardForm state) ---
+
+  // Helper to find Color for selected ColorCategory
+  Color _getColorForSelectedCategory() {
+    final selectedId = _cardData.selectedColorCategoryId;
+    if (selectedId == null) {
+      return Colors.grey.shade400; // Default indicator color
+    }
+    // Use the list passed to the modal
+    final matchingCategory = widget.userColorCategories.firstWhere(
+      (category) => category.id == selectedId,
+      orElse: () => const ColorCategory(
+          id: '',
+          name: '',
+          colorHex: 'FF9E9E9E', // Grey fallback
+          ownerUserId: ''),
+    );
+    return matchingCategory.color;
+  }
+
+  // Helper to get the full ColorCategory object
+  ColorCategory? _getSelectedColorCategoryObject() {
+    final selectedId = _cardData.selectedColorCategoryId;
+    if (selectedId == null) {
+      return null;
+    }
+    try {
+      // Use the list passed to the modal
+      return widget.userColorCategories
+          .firstWhere((cat) => cat.id == selectedId);
+    } catch (e) {
+      return null; // Not found
+    }
+  }
+
+  // Method to handle adding a new color category
+  Future<void> _handleAddColorCategory() async {
+    FocusScope.of(context).unfocus();
+    final newCategory = await showModalBottomSheet<ColorCategory>(
+      context: context,
+      builder: (context) => const AddColorCategoryModal(), // Use the modal
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+    );
+    if (newCategory != null && mounted) {
+      print(
+          "Edit Modal: New color category added: ${newCategory.name} (${newCategory.colorHex})");
+      // Similar to user categories, select the new one
+      setState(() {
+        _cardData.selectedColorCategoryId = newCategory.id;
+        // Assume widget.userColorCategories might update via provider
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+            content: Text(
+                'Color Category "${newCategory.name}" added. It has been selected.')),
+      );
+    }
+  }
+
+  // Method to handle editing color categories
+  Future<void> _handleEditColorCategories() async {
+    FocusScope.of(context).unfocus();
+    final bool? categoriesChanged = await showModalBottomSheet<bool>(
+      context: context,
+      builder: (context) => const EditColorCategoriesModal(), // Use the modal
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+    );
+
+    if (categoriesChanged == true && mounted) {
+      print("Edit Modal: Color Categories potentially changed.");
+      // Check if the current selection still exists
+      final currentSelectionExists = widget.userColorCategories
+          .any((cat) => cat.id == _cardData.selectedColorCategoryId);
+      if (!currentSelectionExists &&
+          _cardData.selectedColorCategoryId != null) {
+        setState(() {
+          _cardData.selectedColorCategoryId =
+              null; // Clear selection if removed/renamed
+        });
+      } else {
+        // Force rebuild in case color/name changed
+        setState(() {});
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text(
+                'Color Category list updated. Please review your selection.')),
+      );
+    }
+  }
+
+  // Function to show the color category selection dialog
+  Future<void> _showColorCategorySelectionDialog() async {
+    FocusScope.of(context).unfocus(); // Dismiss keyboard
+
+    // Use the list passed to the modal
+    final List<ColorCategory> categoriesToShow =
+        List.from(widget.userColorCategories);
+
+    final String? selectedValue = await showDialog<String>(
+      context: context,
+      builder: (BuildContext context) {
+        return Dialog(
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16.0)),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(context).size.height * 0.8),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+                  child: Text(
+                    'Select Color Category',
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                ),
+                Expanded(
+                  child: ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: categoriesToShow.length,
+                    itemBuilder: (context, index) {
+                      final category = categoriesToShow[index];
+                      final bool isSelected = category.id ==
+                          _cardData.selectedColorCategoryId; // Use _cardData
+                      return ListTile(
+                        leading: Container(
+                          width: 24,
+                          height: 24,
+                          decoration: BoxDecoration(
+                              color: category.color,
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                  color: Colors.grey.shade400, width: 1)),
+                        ),
+                        title: Text(category.name),
+                        trailing: isSelected
+                            ? const Icon(Icons.check, color: Colors.blue)
+                            : null,
+                        onTap: () {
+                          Navigator.pop(
+                              context, category.id); // Return category ID
+                        },
+                        visualDensity: VisualDensity.compact,
+                      );
+                    },
+                  ),
+                ),
+                const Divider(height: 1),
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 8.0, vertical: 8.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      TextButton.icon(
+                        icon: Icon(Icons.add_circle_outline,
+                            size: 20, color: Colors.blue[700]),
+                        label: Text('Add New Color Category',
+                            style: TextStyle(color: Colors.blue[700])),
+                        onPressed: () {
+                          Navigator.pop(
+                              context, _addColorCategoryValue); // Use constant
+                        },
+                        style: TextButton.styleFrom(
+                            alignment: Alignment.centerLeft,
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 12)),
+                      ),
+                      TextButton.icon(
+                        icon: Icon(Icons.edit_outlined,
+                            size: 20, color: Colors.orange[700]),
+                        label: Text('Edit Color Categories',
+                            style: TextStyle(color: Colors.orange[700])),
+                        onPressed: () {
+                          Navigator.pop(context,
+                              _editColorCategoriesValue); // Use constant
+                        },
+                        style: TextButton.styleFrom(
+                            alignment: Alignment.centerLeft,
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 12)),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    // Handle the dialog result
+    if (selectedValue != null) {
+      if (selectedValue == _addColorCategoryValue) {
+        _handleAddColorCategory(); // Call handler
+      } else if (selectedValue == _editColorCategoriesValue) {
+        _handleEditColorCategories(); // Call handler
+      } else {
+        // User selected an actual category ID
+        if (_cardData.selectedColorCategoryId != selectedValue) {
+          setState(() {
+            _cardData.selectedColorCategoryId =
+                selectedValue; // Update _cardData
+          });
+        }
+      }
+    }
+  }
+  // --- END ADDED Color Category Logic ---
+
   void _saveAndClose() {
     if (_formKey.currentState!.validate()) {
       // Construct the updated Experience object
@@ -403,14 +758,11 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
         website: _cardData.websiteController.text.trim().isNotEmpty
             ? _cardData.websiteController.text.trim()
             : null,
-        // Keep original description (don't overwrite with notes)
-        // description: _cardData.notesController.text.trim(),
-        // Explicitly set additionalNotes based on whether the text is empty
+        colorCategoryId: _cardData.selectedColorCategoryId,
         additionalNotes: _cardData.notesController.text.trim().isEmpty
             ? null
             : _cardData.notesController.text.trim(),
         updatedAt: DateTime.now(), // Update timestamp
-        // Keep other fields like sharedMediaPaths, ownerUserId, createdAt etc. from original
       );
 
       // --- DEBUG PRINTS ---
@@ -587,6 +939,58 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                 ),
               ),
               // TODO: Add validation message display if needed
+              SizedBox(height: 16),
+
+              // Color Category Selection Button
+              Text('Color Category',
+                  style: Theme.of(context)
+                      .textTheme
+                      .bodyMedium
+                      ?.copyWith(color: Colors.grey[600])),
+              const SizedBox(height: 4),
+              OutlinedButton(
+                onPressed:
+                    _showColorCategorySelectionDialog, // Call the dialog function
+                style: OutlinedButton.styleFrom(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 15),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8.0)),
+                  side: BorderSide(color: Colors.grey),
+                  alignment: Alignment.centerLeft,
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Row(
+                      children: [
+                        // Display selected category color circle
+                        Container(
+                          width: 18,
+                          height: 18,
+                          decoration: BoxDecoration(
+                              color:
+                                  _getColorForSelectedCategory(), // Use helper
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                  color: Colors.grey.shade400, width: 1)),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          _getSelectedColorCategoryObject()?.name ??
+                              'Select Color Category',
+                          style: TextStyle(
+                            color: _cardData.selectedColorCategoryId != null
+                                ? Theme.of(context).textTheme.bodyLarge?.color
+                                : Colors.grey[600],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const Icon(Icons.arrow_drop_down, color: Colors.grey),
+                  ],
+                ),
+              ),
               SizedBox(height: 16),
 
               // Yelp URL

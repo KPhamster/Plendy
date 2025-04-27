@@ -996,6 +996,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                           builder: (context) => ExperiencePageScreen(
                             experience: suggestion,
                             category: category, // Pass the found category
+                            userColorCategories: _colorCategories,
                           ),
                         ),
                       );
@@ -1247,6 +1248,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
             builder: (context) => ExperiencePageScreen(
               experience: experience,
               category: category, // Pass the found category
+              userColorCategories: _colorCategories,
             ),
           ),
         );
@@ -1504,6 +1506,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                                           ExperiencePageScreen(
                                         experience: exp,
                                         category: category,
+                                        userColorCategories: _colorCategories,
                                       ),
                                     ),
                                   );

@@ -6,6 +6,7 @@ import '../models/experience.dart';
 import '../services/experience_service.dart';
 import '../models/shared_media_item.dart';
 import '../models/user_category.dart';
+import '../models/color_category.dart';
 import 'experience_page_screen.dart';
 
 class MediaFullscreenScreen extends StatefulWidget {
@@ -36,6 +37,10 @@ class _MediaFullscreenScreenState extends State<MediaFullscreenScreen> {
   bool _isLoadingOtherExperiences = true;
   Map<String, List<Experience>> _otherAssociatedExperiences = {};
   Map<String, UserCategory> _fetchedCategories = {}; // Cache for category icons
+  // --- ADDED: State for Color Categories --- START ---
+  List<ColorCategory> _userColorCategories = [];
+  bool _isLoadingColorCategories = true;
+  // --- ADDED: State for Color Categories --- END ---
 
   @override
   void initState() {
@@ -47,6 +52,9 @@ class _MediaFullscreenScreenState extends State<MediaFullscreenScreen> {
     // ADDED: Load other experience data after initial build
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadOtherExperienceData();
+      // --- ADDED: Load Color Categories --- START ---
+      _loadColorCategories();
+      // --- ADDED: Load Color Categories --- END ---
     });
   }
 
@@ -156,6 +164,36 @@ class _MediaFullscreenScreenState extends State<MediaFullscreenScreen> {
       });
     }
   }
+
+  // --- ADDED: Method to load color categories --- START ---
+  Future<void> _loadColorCategories() async {
+    print("[_loadColorCategories] Starting...");
+    if (!mounted) return;
+    setState(() {
+      _isLoadingColorCategories = true;
+    });
+    try {
+      final categories =
+          await widget.experienceService.getUserColorCategories();
+      print(
+          "[_loadColorCategories] Fetched ${categories.length} color categories.");
+      if (mounted) {
+        setState(() {
+          _userColorCategories = categories;
+          _isLoadingColorCategories = false;
+        });
+      }
+    } catch (e) {
+      print("[_loadColorCategories] Error fetching color categories: $e");
+      if (mounted) {
+        setState(() {
+          _isLoadingColorCategories = false; // Stop loading on error
+        });
+        // Optionally show error message
+      }
+    }
+  }
+  // --- ADDED: Method to load color categories --- END ---
 
   Future<void> _confirmAndDelete(String urlToDelete) async {
     final bool? confirm = await showDialog<bool>(
@@ -392,6 +430,10 @@ class _MediaFullscreenScreenState extends State<MediaFullscreenScreen> {
                                         experience: exp,
                                         category:
                                             category, // Pass the found/fallback category
+                                        // --- ADDED: Pass color categories --- START ---
+                                        userColorCategories:
+                                            _userColorCategories,
+                                        // --- ADDED: Pass color categories --- END ---
                                       ),
                                     ),
                                   );

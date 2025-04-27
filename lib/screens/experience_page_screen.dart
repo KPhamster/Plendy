@@ -4,7 +4,6 @@ import '../models/experience.dart';
 import '../models/user_category.dart'; // Import UserCategory
 // TODO: Import your PlaceDetails model and PlacesService
 // import '../models/place_details.dart';
-// import '../services/places_service.dart';
 // ADDED: Import GoogleMapsService
 import '../services/google_maps_service.dart';
 import 'dart:convert';
@@ -36,16 +35,24 @@ import '../widgets/edit_experience_modal.dart';
 // ADDED: Import for SystemUiOverlayStyle
 import 'package:flutter/services.dart';
 import '../models/shared_media_item.dart'; // ADDED Import
+// --- ADDED: Import ColorCategory ---
+import '../models/color_category.dart';
+// --- END ADDED ---
+// --- ADDED --- Import collection package
+import 'package:collection/collection.dart';
+// --- END ADDED ---
 
 // Convert to StatefulWidget
 class ExperiencePageScreen extends StatefulWidget {
   final Experience experience;
   final UserCategory category;
+  final List<ColorCategory> userColorCategories;
 
   const ExperiencePageScreen({
     super.key,
     required this.experience,
     required this.category,
+    required this.userColorCategories,
   });
 
   @override
@@ -385,6 +392,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
         return EditExperienceModal(
           experience: _currentExperience,
           userCategories: _userCategories,
+          userColorCategories: widget.userColorCategories, // ADD THIS LINE
         );
       },
     );
@@ -775,7 +783,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     return _buildDetailsSection(context, _currentExperience, _placeDetailsData);
   }
 
-  // Helper method to build a single row in the details section
+  // --- ADDED: Restore original _buildDetailRow --- START ---
   Widget _buildDetailRow(
       BuildContext context, IconData icon, String label, String? value,
       {bool showLabel = true}) {
@@ -783,7 +791,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     if (value == null || value.isEmpty) return const SizedBox.shrink();
 
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6.0),
+      padding: const EdgeInsets.symmetric(vertical: 6.0), // Original padding
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -807,6 +815,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       ),
     );
   }
+  // --- ADDED: Helper to build detail row with a leading WIDGET --- END ---
 
   // Helper method to build the details section (now accepts place details)
   Widget _buildDetailsSection(
@@ -1083,6 +1092,64 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
               ],
             ),
           ),
+          // --- ADDED: Color Category Row (Directly) --- START ---
+          Builder(
+            builder: (context) {
+              if (_currentExperience.colorCategoryId == null) {
+                return const SizedBox.shrink(); // No color category ID
+              }
+              final colorCategory = widget.userColorCategories.firstWhereOrNull(
+                (cat) => cat.id == _currentExperience.colorCategoryId,
+              );
+              if (colorCategory == null) {
+                print(
+                    "Warning: ColorCategory object not found for ID: ${_currentExperience.colorCategoryId}");
+                return const SizedBox.shrink(); // Category object not found
+              }
+              // Build the row directly here
+              return Padding(
+                padding: const EdgeInsets.symmetric(
+                    vertical: 6.0), // Reduced vertical padding further
+                child: Row(
+                  crossAxisAlignment:
+                      CrossAxisAlignment.start, // Match _buildDetailRow
+                  children: [
+                    // --- MODIFIED: Use SizedBox + Center to mimic Icon space --- START ---
+                    SizedBox(
+                      width: 20.0, // Match Icon size used in _buildDetailRow
+                      height: 20.0,
+                      child: Center(
+                        child: Container(
+                          width: 14, // Smaller circle size
+                          height: 14,
+                          decoration: BoxDecoration(
+                            color: colorCategory.color,
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: Theme.of(context).dividerColor,
+                              width: 1,
+                            ),
+                          ),
+                          child: Tooltip(
+                              message:
+                                  colorCategory.name), // Tooltip on the circle
+                        ),
+                      ),
+                    ),
+                    // --- MODIFIED: Use SizedBox + Center to mimic Icon space --- END ---
+                    const SizedBox(width: 12), // Standard spacing
+                    Expanded(
+                      child: Text(
+                        colorCategory.name,
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+          // --- ADDED: Color Category Row (Directly) --- END ---
           _buildDetailRow(
             context,
             Icons.description_outlined,
@@ -1090,6 +1157,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
             formattedDescription, // Use pre-formatted value
             showLabel: false, // HIDE label
           ),
+          // --- END Notes Row ---
           // Make the address row tappable
           GestureDetector(
             onTap: () => _launchMapLocation(_currentExperience.location),
@@ -1130,11 +1198,61 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
             _currentExperience.additionalNotes, // Use the field directly
             showLabel: false, // HIDE label
           ),
-          // --- END Notes Row ---
         ],
       ),
     );
   }
+
+  // --- ADDED: Helper Widget for Color Category Row --- START ---
+  Widget _buildColorCategoryRow(BuildContext context, Experience experience) {
+    if (experience.colorCategoryId == null) {
+      return const SizedBox.shrink(); // Don't show row if no color category
+    }
+
+    // Find the color category object from the passed list
+    final colorCategory = widget.userColorCategories.firstWhereOrNull(
+      (cat) => cat.id == experience.colorCategoryId,
+    );
+
+    // Don't show if the category object wasn't found in the list
+    if (colorCategory == null) {
+      print(
+          "Warning: ColorCategory object not found for ID: ${experience.colorCategoryId}");
+      return const SizedBox.shrink();
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6.0),
+      child: Row(
+        crossAxisAlignment:
+            CrossAxisAlignment.center, // Center items vertically
+        children: [
+          // Color Circle
+          Container(
+            width: 14, // Smaller size
+            height: 14,
+            decoration: BoxDecoration(
+              color: colorCategory.color,
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: Theme.of(context).dividerColor,
+                width: 1,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          // Category Name
+          Expanded(
+            child: Text(
+              colorCategory.name,
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+  // --- ADDED: Helper Widget for Color Category Row --- END ---
 
   // --- ADDED: New Widget/Helper for Status Row ---
   Widget _buildStatusRow(BuildContext context, dynamic statusValue) {
@@ -1626,6 +1744,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                                               ExperiencePageScreen(
                                             experience: exp,
                                             category: category,
+                                            userColorCategories:
+                                                widget.userColorCategories,
                                           ),
                                         ),
                                       );

@@ -9,7 +9,26 @@ import '../services/auth_service.dart'; // Import AuthService
 import '../services/google_maps_service.dart'; // Import GoogleMapsService
 import '../models/experience.dart'; // Import Experience model
 import '../models/user_category.dart'; // Import UserCategory model
+import '../models/color_category.dart'; // Import ColorCategory model
 import 'experience_page_screen.dart'; // Import ExperiencePageScreen for navigation
+
+// Helper function to parse hex color string
+Color _parseColor(String hexColor) {
+  hexColor = hexColor.toUpperCase().replaceAll("#", "");
+  if (hexColor.length == 6) {
+    hexColor = "FF$hexColor"; // Add alpha if missing
+  }
+  if (hexColor.length == 8) {
+    try {
+      return Color(int.parse("0x$hexColor"));
+    } catch (e) {
+      print("🗺️ MAP SCREEN: Error parsing color '$hexColor': $e");
+      return Colors.grey; // Default color on parsing error
+    }
+  }
+  print("🗺️ MAP SCREEN: Invalid hex color format: '$hexColor'");
+  return Colors.grey; // Default color on invalid format
+}
 
 class MapScreen extends StatefulWidget {
   const MapScreen({super.key});
@@ -27,6 +46,7 @@ class _MapScreenState extends State<MapScreen> {
   bool _isLoading = true;
   List<Experience> _experiences = [];
   List<UserCategory> _categories = [];
+  List<ColorCategory> _colorCategories = [];
   final Completer<GoogleMapController> _mapControllerCompleter =
       Completer<GoogleMapController>();
   // ADDED: Cache for generated category icons
@@ -62,6 +82,7 @@ class _MapScreenState extends State<MapScreen> {
 
       _categories = await _experienceService.getUserCategories();
       _experiences = await _experienceService.getExperiencesByUser(userId);
+      _colorCategories = await _experienceService.getUserColorCategories();
       print(
           "🗺️ MAP SCREEN: Loaded ${_experiences.length} experiences and ${_categories.length} categories.");
 
@@ -89,23 +110,70 @@ class _MapScreenState extends State<MapScreen> {
         );
 
         // --- Start Icon Generation ---
+        // REMOVED: Print the category name being searched for
+        // print("🗺️ MAP SCREEN: Searching for color for category: '${category.name}'");
+
+        // Find the corresponding color category *based on the experience's property*
+        ColorCategory? colorCategory;
+        String? experienceColorCategoryId =
+            experience.colorCategoryId; // Get the ID (nullable)
+        // String experienceColorCategoryName = experience.colorCategoryName; // Assuming this field exists
+        // print(
+        //     "🗺️ MAP SCREEN: Searching for ColorCategory named: '${experienceColorCategoryName}' for experience '${experience.name}'");
+
+        if (experienceColorCategoryId != null) {
+          print(
+              "🗺️ MAP SCREEN: Searching for ColorCategory with ID: '${experienceColorCategoryId}' for experience '${experience.name}'");
+          try {
+            colorCategory = _colorCategories.firstWhere(
+              (cc) => cc.id == experienceColorCategoryId, // Match by ID now
+            );
+            print(
+                "🗺️ MAP SCREEN: Found ColorCategory '${colorCategory.name}' with color ${colorCategory.colorHex}");
+          } catch (e) {
+            colorCategory = null; // Not found
+            print(
+                "🗺️ MAP SCREEN: No ColorCategory found matching ID '${experienceColorCategoryId}'. Using default color.");
+          }
+        } else {
+          print(
+              "🗺️ MAP SCREEN: Experience '${experience.name}' has no colorCategoryId. Using default color.");
+        }
+
+        // Determine marker background color
+        Color markerBackgroundColor = Colors.grey; // Default
+        if (colorCategory != null && colorCategory.colorHex.isNotEmpty) {
+          markerBackgroundColor = _parseColor(colorCategory.colorHex);
+          print(
+              "🗺️ MAP SCREEN: Using color ${markerBackgroundColor} for category '${category.name}'.");
+        }
+
+        // Generate a unique cache key including the color and the *icon* (not the category name)
+        final String cacheKey =
+            '${category.icon}_${markerBackgroundColor.value}';
+
         BitmapDescriptor categoryIconBitmap =
             BitmapDescriptor.defaultMarker; // Default
+
         // Use cache or generate new icon
-        if (_categoryIconCache.containsKey(category.icon)) {
-          categoryIconBitmap = _categoryIconCache[category.icon]!;
+        if (_categoryIconCache.containsKey(cacheKey)) {
+          categoryIconBitmap = _categoryIconCache[cacheKey]!;
           print(
-              "🗺️ MAP SCREEN: Using cached icon '${category.icon}' for ${category.name}");
+              "🗺️ MAP SCREEN: Using cached icon '$cacheKey' for ${category.name}");
         } else {
           try {
             print(
-                "🗺️ MAP SCREEN: Generating icon for '${category.icon}' (${category.name})");
-            categoryIconBitmap = await _bitmapDescriptorFromText(category.icon);
-            _categoryIconCache[category.icon] =
+                "🗺️ MAP SCREEN: Generating icon for '$cacheKey' (${category.name})");
+            // Pass the background color to the generator
+            categoryIconBitmap = await _bitmapDescriptorFromText(
+              category.icon,
+              backgroundColor: markerBackgroundColor,
+            );
+            _categoryIconCache[cacheKey] =
                 categoryIconBitmap; // Cache the result
           } catch (e) {
             print(
-                "🗺️ MAP SCREEN: Failed to generate bitmap for icon '${category.icon}': $e");
+                "🗺️ MAP SCREEN: Failed to generate bitmap for icon '$cacheKey': $e");
             // Keep the default marker if generation fails
           }
         }
@@ -215,8 +283,11 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   // ADDED: Helper function to create BitmapDescriptor from text/emoji
-  Future<BitmapDescriptor> _bitmapDescriptorFromText(String text,
-      {int size = 60}) async {
+  Future<BitmapDescriptor> _bitmapDescriptorFromText(
+    String text, {
+    int size = 60,
+    required Color backgroundColor, // Added required background color parameter
+  }) async {
     final ui.PictureRecorder pictureRecorder = ui.PictureRecorder();
     final Canvas canvas = Canvas(pictureRecorder);
     final double radius = size / 2;
@@ -225,9 +296,10 @@ class _MapScreenState extends State<MapScreen> {
     // final Paint circlePaint = Paint()..color = Colors.blue; // Example background
     // canvas.drawCircle(Offset(radius, radius), radius, circlePaint);
 
-    // ADDED: Draw semi-transparent background circle
+    // ADDED: Draw semi-transparent background circle using the provided color
     final Paint circlePaint = Paint()
-      ..color = Colors.red.withOpacity(0.7); // Black with 80% opacity
+      ..color =
+          backgroundColor.withOpacity(0.7); // Use passed color with 70% opacity
     canvas.drawCircle(Offset(radius, radius), radius, circlePaint);
 
     // Draw text (emoji)
@@ -270,6 +342,7 @@ class _MapScreenState extends State<MapScreen> {
         builder: (context) => ExperiencePageScreen(
           experience: experience,
           category: category,
+          userColorCategories: _colorCategories,
         ),
       ),
     );
