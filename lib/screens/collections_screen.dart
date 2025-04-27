@@ -21,6 +21,24 @@ import '../models/shared_media_item.dart'; // ADDED Import
 import 'package:collection/collection.dart'; // ADDED: Import for groupBy
 import 'map_screen.dart'; // ADDED: Import for MapScreen
 
+// Helper function to parse hex color string (copied from map_screen)
+Color _parseColor(String hexColor) {
+  hexColor = hexColor.toUpperCase().replaceAll("#", "");
+  if (hexColor.length == 6) {
+    hexColor = "FF$hexColor"; // Add alpha if missing
+  }
+  if (hexColor.length == 8) {
+    try {
+      return Color(int.parse("0x$hexColor"));
+    } catch (e) {
+      print("🎨 COLLECTIONS SCREEN: Error parsing color '$hexColor': $e");
+      return Colors.grey; // Default color on parsing error
+    }
+  }
+  print("🎨 COLLECTIONS SCREEN: Invalid hex color format: '$hexColor'");
+  return Colors.grey; // Default color on invalid format
+}
+
 // ADDED: Enum for experience sort types
 enum ExperienceSortType { mostRecent, alphabetical, distanceFromMe }
 
@@ -76,6 +94,17 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   List<GroupedContentItem> _groupedContentItems = [];
   // ADDED: State map for content preview expansion
   final Map<String, bool> _contentExpansionStates = {};
+
+  // --- ADDED: Filter State ---
+  Set<String> _selectedCategoryIds =
+      {}; // Empty set means no filter (copied from map_screen)
+  Set<String> _selectedColorCategoryIds =
+      {}; // Empty set means no filter (copied from map_screen)
+  List<Experience> _filteredExperiences =
+      []; // To hold filtered experiences for tab 1
+  List<GroupedContentItem> _filteredGroupedContentItems =
+      []; // To hold filtered content for tab 2
+  // --- END Filter State ---
 
   @override
   void initState() {
@@ -202,6 +231,10 @@ class _CollectionsScreenState extends State<CollectionsScreen>
           _selectedColorCategory =
               null; // Reset selected color category on reload
           // _showingColorCategories = false; // Ensure default view on reload
+
+          // Initialize filtered lists with all items initially
+          _filteredExperiences = List.from(_experiences);
+          _filteredGroupedContentItems = List.from(_groupedContentItems);
         });
         // Apply initial sorts after loading
         _applyExperienceSort(_experienceSortType);
@@ -471,28 +504,36 @@ class _CollectionsScreenState extends State<CollectionsScreen>
 
   // MODIFIED: Method to apply sorting to the experiences list
   // Takes the desired sort type as an argument
-  Future<void> _applyExperienceSort(ExperienceSortType sortType) async {
-    print("Applying experience sort: $sortType");
+  // ADDED: Optional parameter to apply sort to the filtered list
+  Future<void> _applyExperienceSort(ExperienceSortType sortType,
+      {bool applyToFiltered = false}) async {
+    print(
+        "Applying experience sort: $sortType (applyToFiltered: $applyToFiltered)");
     // Set the internal state first, so UI reflects the choice while processing
     setState(() {
       _experienceSortType = sortType;
+      // Only show loading indicator if sorting the main list by distance
       _isLoading =
-          true; // Show loading indicator for potentially long operations (like distance)
+          (sortType == ExperienceSortType.distanceFromMe && !applyToFiltered);
     });
+
+    // Determine which list to sort
+    List<Experience> listToSort =
+        applyToFiltered ? _filteredExperiences : _experiences;
 
     try {
       if (sortType == ExperienceSortType.alphabetical) {
-        _experiences.sort(
+        listToSort.sort(
             (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
       } else if (sortType == ExperienceSortType.mostRecent) {
-        _experiences.sort((a, b) {
+        listToSort.sort((a, b) {
           // Sort descending by creation date (most recent first)
           return b.createdAt.compareTo(a.createdAt);
         });
       } else if (sortType == ExperienceSortType.distanceFromMe) {
-        // --- ADDED: Distance Sorting Logic ---
-        await _sortExperiencesByDistance();
-        // --- END ADDED ---
+        // --- MODIFIED: Distance Sorting Logic now operates on listToSort ---
+        await _sortExperiencesByDistance(listToSort);
+        // --- END MODIFIED ---
       }
       // Add other sort types here if needed
     } catch (e) {
@@ -514,7 +555,9 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   }
 
   // --- ADDED: Method to sort experiences by distance ---
-  Future<void> _sortExperiencesByDistance() async {
+  // MODIFIED: Takes the list to sort as a parameter
+  Future<void> _sortExperiencesByDistance(
+      List<Experience> experiencesToSort) async {
     print("Attempting to sort by distance...");
     Position? currentPosition;
     bool locationPermissionGranted = false;
@@ -580,7 +623,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       // Use a temporary list or map to store experiences with distances
       List<Map<String, dynamic>> experiencesWithDistance = [];
 
-      for (var exp in _experiences) {
+      // Use the passed-in list
+      for (var exp in experiencesToSort) {
         double? distance;
         // Check if the experience has valid coordinates
         if (exp.location.latitude != 0.0 || exp.location.longitude != 0.0) {
@@ -615,69 +659,45 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         return distA.compareTo(distB); // Sort by distance ascending
       });
 
-      // Update the main experiences list with the sorted order
-      _experiences = experiencesWithDistance
+      // Update the *original* list passed in (experiencesToSort) with the sorted order
+      // This modifies the list in place (either _experiences or _filteredExperiences)
+      experiencesToSort.clear();
+      experiencesToSort.addAll(experiencesWithDistance
           .map((item) => item['experience'] as Experience)
-          .toList();
+          .toList());
 
       print("Experiences sorted by distance successfully.");
     }
   }
   // --- END ADDED ---
 
-  // ADDED: Helper method for launching URLs (copied from ExperiencePageScreen)
-  Future<void> _launchUrl(String urlString) async {
-    // Ensure URL starts with http/https for launchUrl
-    String launchableUrl = urlString;
-    if (!launchableUrl.startsWith('http://') &&
-        !launchableUrl.startsWith('https://')) {
-      // Assume https if no scheme provided
-      launchableUrl = 'https://' + launchableUrl;
-      print("Prepended 'https://' to URL: $launchableUrl");
-    }
-
-    final Uri uri = Uri.parse(launchableUrl);
-    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
-      print('Could not launch $uri');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not open link: $urlString')),
-        );
-      }
-    }
-  }
-
-  // ADDED: Function to get search suggestions
-  Future<List<Experience>> _getExperienceSuggestions(String pattern) async {
-    if (pattern.isEmpty) {
-      return [];
-    }
-    // Simple case-insensitive search on the name
-    return _experiences
-        .where((exp) => exp.name.toLowerCase().contains(pattern.toLowerCase()))
-        .toList();
-  }
-
   // --- REFACTORED: Method to apply sorting to the grouped content items list ---
-  Future<void> _applyContentSort(ContentSortType sortType) async {
-    print("Applying content sort: $sortType");
+  // ADDED: Optional parameter to apply sort to the filtered list
+  Future<void> _applyContentSort(ContentSortType sortType,
+      {bool applyToFiltered = false}) async {
+    print(
+        "Applying content sort: $sortType (applyToFiltered: $applyToFiltered)");
     setState(() {
       _contentSortType = sortType;
-      // Show loading only for distance sort as it's potentially slow
-      if (sortType == ContentSortType.distanceFromMe) {
+      // Show loading only for distance sort on the main list
+      if (sortType == ContentSortType.distanceFromMe && !applyToFiltered) {
         _isLoading = true;
       }
     });
 
+    // Determine which list to sort
+    List<GroupedContentItem> listToSort =
+        applyToFiltered ? _filteredGroupedContentItems : _groupedContentItems;
+
     try {
       if (sortType == ContentSortType.mostRecent) {
         // Sort by media item creation date (descending)
-        _groupedContentItems.sort((a, b) {
+        listToSort.sort((a, b) {
           return b.mediaItem.createdAt.compareTo(a.mediaItem.createdAt);
         });
       } else if (sortType == ContentSortType.alphabetical) {
         // Sort by the name of the *first* associated experience (ascending)
-        _groupedContentItems.sort((a, b) {
+        listToSort.sort((a, b) {
           if (a.associatedExperiences.isEmpty &&
               b.associatedExperiences.isEmpty) return 0;
           if (a.associatedExperiences.isEmpty)
@@ -689,7 +709,9 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         });
       } else if (sortType == ContentSortType.distanceFromMe) {
         // Sort by the minimum distance calculated in _sortContentByDistance
-        await _sortContentByDistance(); // This function now handles the sorting internally
+        // --- MODIFIED: Pass the list to sort ---
+        await _sortContentByDistance(listToSort);
+        // --- END MODIFIED ---
       }
     } catch (e, stackTrace) {
       print("Error applying content sort: $e");
@@ -715,7 +737,9 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   }
 
   // --- REFACTORED: Method to sort grouped content items by distance --- ///
-  Future<void> _sortContentByDistance() async {
+  // MODIFIED: Takes the list to sort as a parameter
+  Future<void> _sortContentByDistance(
+      List<GroupedContentItem> contentToSort) async {
     print("Attempting to sort content by distance...");
     Position? currentPosition;
     bool locationPermissionGranted = false;
@@ -773,8 +797,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     }
 
     if (currentPosition != null) {
-      // Calculate minimum distance for each grouped item
-      for (var group in _groupedContentItems) {
+      // Calculate minimum distance for each grouped item in the list to sort
+      for (var group in contentToSort) {
         double? minGroupDistance;
         for (var exp in group.associatedExperiences) {
           double? distance;
@@ -804,8 +828,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         group.minDistance = minGroupDistance;
       }
 
-      // Sort the main grouped content list based on the calculated minDistance
-      _groupedContentItems.sort((a, b) {
+      // Sort the list passed in (contentToSort) based on the calculated minDistance
+      contentToSort.sort((a, b) {
         final distA = a.minDistance;
         final distB = b.minDistance;
 
@@ -931,6 +955,15 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                       'Sort by Distance (from Experience)'), // Clarified label
                 ),
               ],
+            ),
+          // --- ADDED: Filter Button for Experiences and Content tabs ---
+          if (_currentTabIndex == 1 || _currentTabIndex == 2)
+            IconButton(
+              icon: const Icon(Icons.filter_list),
+              tooltip: 'Filter Items',
+              onPressed: () {
+                _showFilterDialog();
+              },
             ),
         ],
       ),
@@ -1262,15 +1295,22 @@ class _CollectionsScreenState extends State<CollectionsScreen>
 
   // MODIFIED: Widget builder for the Experience List View uses the refactored item builder
   Widget _buildExperiencesListView() {
-    if (_experiences.isEmpty) {
-      return const Center(child: Text('No experiences found. Add some!'));
+    // MODIFIED: Use the filtered list
+    if (_filteredExperiences.isEmpty) {
+      // Show different message depending on whether filters are active
+      bool filtersActive = _selectedCategoryIds.isNotEmpty ||
+          _selectedColorCategoryIds.isNotEmpty;
+      return Center(
+          child: Text(filtersActive
+              ? 'No experiences match the current filters.'
+              : 'No experiences found. Add some!'));
     }
 
-    // Use the refactored item builder
+    // Use the refactored item builder with the filtered list
     return ListView.builder(
-      itemCount: _experiences.length,
+      itemCount: _filteredExperiences.length,
       itemBuilder: (context, index) {
-        return _buildExperienceListItem(_experiences[index]);
+        return _buildExperienceListItem(_filteredExperiences[index]);
       },
     );
   }
@@ -1341,19 +1381,23 @@ class _CollectionsScreenState extends State<CollectionsScreen>
 
   // --- REFACTORED: Widget builder for the Content Tab Body --- ///
   Widget _buildContentTabBody() {
-    // Use instance member _groupedContentItems
-    if (_groupedContentItems.isEmpty) {
-      return const Center(
-          child: Text('No shared content found across experiences.'));
+    // MODIFIED: Use the filtered grouped list
+    if (_filteredGroupedContentItems.isEmpty) {
+      // Show different message depending on whether filters are active
+      bool filtersActive = _selectedCategoryIds.isNotEmpty ||
+          _selectedColorCategoryIds.isNotEmpty;
+      return Center(
+          child: Text(filtersActive
+              ? 'No content matches the current filters.'
+              : 'No shared content found across experiences.'));
     }
 
-    // Use ListView.builder with grouped items
+    // Use ListView.builder with filtered grouped items
     return ListView.builder(
       padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 16.0),
-      itemCount: _groupedContentItems.length,
+      itemCount: _filteredGroupedContentItems.length,
       itemBuilder: (context, index) {
-        final group =
-            _groupedContentItems[index]; // Now it's a GroupedContentItem
+        final group = _filteredGroupedContentItems[index]; // Use filtered list
         final mediaItem = group.mediaItem;
         final mediaPath = mediaItem.path;
         final associatedExperiences = group.associatedExperiences;
@@ -2091,4 +2135,244 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     );
   }
   // --- ADDED: Widget to display experiences for a specific color category --- END ---
+
+  // --- ADDED: Filter Dialog & Logic (Adapted from map_screen) --- START ---
+  Future<void> _showFilterDialog() async {
+    // Temporary sets for dialog state
+    Set<String> tempSelectedCategoryIds = Set.from(_selectedCategoryIds);
+    Set<String> tempSelectedColorCategoryIds =
+        Set.from(_selectedColorCategoryIds);
+
+    await showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Filter Items'),
+          content: StatefulBuilder(
+            builder: (BuildContext context, StateSetter setStateDialog) {
+              return SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    const Text('By Category:',
+                        style: TextStyle(fontWeight: FontWeight.bold)),
+                    if (_categories.isEmpty)
+                      const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 8.0),
+                          child: Text('No categories available.')),
+                    ...(_categories.toList()
+                          ..sort((a, b) => a.name.compareTo(b.name)))
+                        .map((category) {
+                      return CheckboxListTile(
+                        title: Text('${category.icon} ${category.name}'),
+                        value: tempSelectedCategoryIds.contains(category.id),
+                        controlAffinity:
+                            ListTileControlAffinity.leading, // Checkbox on left
+                        contentPadding:
+                            EdgeInsets.zero, // Remove default padding
+                        onChanged: (bool? selected) {
+                          setStateDialog(() {
+                            if (selected == true) {
+                              tempSelectedCategoryIds.add(category.id);
+                            } else {
+                              tempSelectedCategoryIds.remove(category.id);
+                            }
+                          });
+                        },
+                      );
+                    }).toList(),
+                    const SizedBox(height: 16),
+                    const Text('By Color:',
+                        style: TextStyle(fontWeight: FontWeight.bold)),
+                    if (_colorCategories.isEmpty)
+                      const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 8.0),
+                          child: Text('No color categories available.')),
+                    ...(_colorCategories.toList()
+                          ..sort((a, b) => a.name.compareTo(b.name)))
+                        .map((colorCategory) {
+                      return CheckboxListTile(
+                        controlAffinity:
+                            ListTileControlAffinity.leading, // Checkbox on left
+                        contentPadding:
+                            EdgeInsets.zero, // Remove default padding
+                        title: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              width: 16,
+                              height: 16,
+                              decoration: BoxDecoration(
+                                  color: _parseColor(
+                                      colorCategory.colorHex), // Use helper
+                                  shape: BoxShape.circle,
+                                  border: Border.all(color: Colors.grey)),
+                            ),
+                            const SizedBox(width: 8),
+                            Flexible(
+                                child: Text(colorCategory.name,
+                                    overflow: TextOverflow.ellipsis)),
+                          ],
+                        ),
+                        value: tempSelectedColorCategoryIds
+                            .contains(colorCategory.id),
+                        onChanged: (bool? selected) {
+                          setStateDialog(() {
+                            if (selected == true) {
+                              tempSelectedColorCategoryIds
+                                  .add(colorCategory.id);
+                            } else {
+                              tempSelectedColorCategoryIds
+                                  .remove(colorCategory.id);
+                            }
+                          });
+                        },
+                      );
+                    }).toList(),
+                  ],
+                ),
+              );
+            },
+          ),
+          actions: <Widget>[
+            TextButton(
+              child: const Text('Show All'),
+              onPressed: () {
+                // Clear temporary selections
+                tempSelectedCategoryIds.clear();
+                tempSelectedColorCategoryIds.clear();
+                // Apply cleared filters directly
+                setState(() {
+                  _selectedCategoryIds = tempSelectedCategoryIds;
+                  _selectedColorCategoryIds = tempSelectedColorCategoryIds;
+                });
+                Navigator.of(context).pop(); // Close dialog
+                _applyFiltersAndUpdateLists(); // Update lists
+              },
+            ),
+            TextButton(
+              child: const Text('Cancel'),
+              onPressed: () {
+                Navigator.of(context).pop();
+              },
+            ),
+            TextButton(
+              child: const Text('Apply'),
+              onPressed: () {
+                // Apply filters from dialog state
+                setState(() {
+                  _selectedCategoryIds = tempSelectedCategoryIds;
+                  _selectedColorCategoryIds = tempSelectedColorCategoryIds;
+                });
+                Navigator.of(context).pop(); // Close dialog
+                _applyFiltersAndUpdateLists(); // Update lists
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _applyFiltersAndUpdateLists() {
+    print("🎨 COLLECTIONS SCREEN: Applying filters...");
+    // Filter experiences
+    final filteredExperiences = _experiences.where((exp) {
+      // Find the category ID for the experience (same logic as map_screen filter)
+      String? expCategoryId;
+      try {
+        expCategoryId =
+            _categories.firstWhere((cat) => cat.name == exp.category).id;
+      } catch (e) {
+        expCategoryId = null;
+      }
+
+      final bool categoryMatch = _selectedCategoryIds.isEmpty ||
+          (expCategoryId != null &&
+              _selectedCategoryIds.contains(expCategoryId));
+
+      final bool colorMatch = _selectedColorCategoryIds.isEmpty ||
+          (exp.colorCategoryId != null &&
+              _selectedColorCategoryIds.contains(exp.colorCategoryId));
+
+      return categoryMatch && colorMatch;
+    }).toList();
+
+    // Filter grouped content items
+    final filteredGroupedContent = _groupedContentItems.where((group) {
+      // Include the group if ANY of its associated experiences match the filters
+      return group.associatedExperiences.any((exp) {
+        String? expCategoryId;
+        try {
+          expCategoryId =
+              _categories.firstWhere((cat) => cat.name == exp.category).id;
+        } catch (e) {
+          expCategoryId = null;
+        }
+
+        final bool categoryMatch = _selectedCategoryIds.isEmpty ||
+            (expCategoryId != null &&
+                _selectedCategoryIds.contains(expCategoryId));
+
+        final bool colorMatch = _selectedColorCategoryIds.isEmpty ||
+            (exp.colorCategoryId != null &&
+                _selectedColorCategoryIds.contains(exp.colorCategoryId));
+
+        return categoryMatch && colorMatch;
+      });
+    }).toList();
+
+    print(
+        "🎨 COLLECTIONS SCREEN: Experiences filtered to ${filteredExperiences.length}");
+    print(
+        "🎨 COLLECTIONS SCREEN: Content groups filtered to ${filteredGroupedContent.length}");
+
+    // Update the state with the filtered lists
+    setState(() {
+      _filteredExperiences = filteredExperiences;
+      _filteredGroupedContentItems = filteredGroupedContent;
+    });
+
+    // Re-apply sorting to the newly filtered lists
+    // This ensures the sort order is maintained after filtering
+    _applyExperienceSort(_experienceSortType, applyToFiltered: true);
+    _applyContentSort(_contentSortType, applyToFiltered: true);
+  }
+  // --- ADDED: Filter Dialog & Logic (Adapted from map_screen) --- END ---
+
+  // --- ADDED: Helper method for launching URLs (restored) ---
+  Future<void> _launchUrl(String urlString) async {
+    // Ensure URL starts with http/https for launchUrl
+    String launchableUrl = urlString;
+    if (!launchableUrl.startsWith('http://') &&
+        !launchableUrl.startsWith('https://')) {
+      // Assume https if no scheme provided
+      launchableUrl = 'https://' + launchableUrl;
+      print("Prepended 'https://' to URL: $launchableUrl");
+    }
+
+    final Uri uri = Uri.parse(launchableUrl);
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+      print('Could not launch $uri');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open link: $urlString')),
+        );
+      }
+    }
+  }
+  // --- END ADDED ---
+
+  // --- ADDED: Function to get search suggestions (restored) ---
+  Future<List<Experience>> _getExperienceSuggestions(String pattern) async {
+    if (pattern.isEmpty) {
+      return [];
+    }
+    // Simple case-insensitive search on the name (using the full list)
+    return _experiences
+        .where((exp) => exp.name.toLowerCase().contains(pattern.toLowerCase()))
+        .toList();
+  }
+  // --- END ADDED ---
 }
