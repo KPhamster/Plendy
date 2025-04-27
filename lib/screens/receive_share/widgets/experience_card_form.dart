@@ -693,6 +693,11 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
   // Build method - Logic from _buildExperienceCard goes here
   @override
   Widget build(BuildContext context) {
+    // --- ADDED LOG ---
+    print(
+        "ExperienceCardForm BUILD: Received ${widget.userColorCategories.length} color categories.");
+    // --- END ADDED LOG ---
+
     // Access controllers directly from widget.cardData
     final titleController = widget.cardData.titleController;
     final yelpUrlController = widget.cardData.yelpUrlController;
