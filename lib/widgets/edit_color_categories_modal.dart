@@ -245,7 +245,7 @@ class _EditColorCategoriesModalState extends State<EditColorCategoriesModal> {
             const Divider(),
             const SizedBox(height: 8),
             Expanded(
-              child: _isLoading && _categories.isEmpty
+              child: _isLoading
                   ? const Center(child: CircularProgressIndicator())
                   : _categories.isEmpty
                       ? const Center(child: Text('No color tags found.'))

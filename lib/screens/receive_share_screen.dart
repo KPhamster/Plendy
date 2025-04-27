@@ -209,6 +209,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     // RENAMED: Fetch user Categories
     _loadUserCategories();
+    // --- ADDED --- Call to load color categories ---
+    _loadUserColorCategories();
+    // --- END ADDED ---
 
     // Access provider - DO NOT listen here, just need read access
     // final provider = context.read<ReceiveShareProvider>();
@@ -412,6 +415,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       _setupIntentListener();
       // RENAMED: Reload user Categories
       _loadUserCategories();
+      // --- ADDED --- Reload color categories ---
+      _loadUserColorCategories();
+      // --- END ADDED ---
     }
   }
 
@@ -3124,16 +3130,26 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
   // --- ADDED: Method to load user Color Categories ---
   Future<void> _loadUserColorCategories() {
+    print("_loadUserColorCategories START"); // Log start
     _userColorCategoriesFuture = _experienceService.getUserColorCategories();
+    print(
+        "  _loadUserColorCategories: Called service method."); // Log service call
+
     // Return the future that completes after setting state or handling error
     return _userColorCategoriesFuture!.then((colorCategories) {
+      print(
+          "  _loadUserColorCategories: Service call successful, received ${colorCategories.length} items.");
       if (mounted) {
         setState(() {
           _userColorCategories = colorCategories;
+          print("  _loadUserColorCategories: setState called."); // Log setState
         });
+      } else {
+        print(
+            "  _loadUserColorCategories: Component not mounted after service call.");
       }
     }).catchError((error) {
-      print("Error loading user Color Categories: $error");
+      print("Error loading user Color Categories: $error"); // Log error
       if (mounted) {
         setState(() {
           _userColorCategories = []; // Use empty list on error
