@@ -216,10 +216,9 @@ class _MapScreenState extends State<MapScreen> {
 
   // ADDED: Helper function to create BitmapDescriptor from text/emoji
   Future<BitmapDescriptor> _bitmapDescriptorFromText(String text,
-      {int size = 100}) async {
+      {int size = 60}) async {
     final ui.PictureRecorder pictureRecorder = ui.PictureRecorder();
     final Canvas canvas = Canvas(pictureRecorder);
-    final Paint paint = Paint()..color = Colors.transparent; // Background
     final double radius = size / 2;
 
     // Optional: Draw a background circle if needed

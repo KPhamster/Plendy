@@ -150,6 +150,10 @@ class Experience {
   final String? sharedMediaType; // Added for shared content
   final String? additionalNotes; // Added for user notes
 
+  // --- ADDED ---
+  final String? colorCategoryId; // ID linking to the selected ColorCategory
+  // --- END ADDED ---
+
   Experience({
     required this.id,
     required this.name,
@@ -179,6 +183,7 @@ class Experience {
     this.sharedMediaType,
     this.additionalNotes,
     required this.editorUserIds,
+    this.colorCategoryId,
   });
 
   /// Creates an Experience from a Firestore document
@@ -214,6 +219,7 @@ class Experience {
       sharedMediaType: data['sharedMediaType'],
       additionalNotes: data['additionalNotes'],
       editorUserIds: _parseStringList(data['editorUserIds']),
+      colorCategoryId: data['colorCategoryId'] as String?,
     );
   }
 
@@ -247,6 +253,7 @@ class Experience {
       'sharedMediaItemIds': sharedMediaItemIds,
       'sharedMediaType': sharedMediaType,
       'additionalNotes': additionalNotes,
+      'colorCategoryId': colorCategoryId,
     };
   }
 
@@ -278,6 +285,7 @@ class Experience {
     String? sharedMediaType,
     String? additionalNotes,
     List<String>? editorUserIds,
+    String? colorCategoryId,
   }) {
     return Experience(
       id: id,
@@ -308,6 +316,7 @@ class Experience {
       sharedMediaType: sharedMediaType ?? this.sharedMediaType,
       additionalNotes: additionalNotes,
       editorUserIds: editorUserIds ?? this.editorUserIds,
+      colorCategoryId: colorCategoryId ?? this.colorCategoryId,
     );
   }
 

@@ -15,6 +15,12 @@ import 'package:plendy/widgets/add_category_modal.dart';
 import 'package:plendy/widgets/edit_categories_modal.dart';
 // ADDED: Import for Clipboard
 import 'package:flutter/services.dart';
+// ADDED: Import for ColorCategory
+import 'package:plendy/models/color_category.dart';
+// --- ADDED: Placeholders for Color Category Modals ---
+import 'package:plendy/widgets/add_color_category_modal.dart'; // Placeholder
+import 'package:plendy/widgets/edit_color_categories_modal.dart'; // Placeholder
+// --- END ADDED ---
 
 // Define necessary callbacks
 typedef OnRemoveCallback = void Function(ExperienceCardData card);
@@ -33,6 +39,7 @@ class ExperienceCardForm extends StatefulWidget {
   final bool isFirstCard; // To potentially hide remove button
   final bool canRemove; // Explicit flag to control remove button visibility
   final List<UserCategory> userCategories; // RENAMED
+  final List<ColorCategory> userColorCategories;
   final OnRemoveCallback onRemove;
   final OnLocationSelectCallback onLocationSelect;
   final OnSelectSavedExperienceCallback onSelectSavedExperience;
@@ -45,6 +52,7 @@ class ExperienceCardForm extends StatefulWidget {
     required this.isFirstCard,
     required this.canRemove,
     required this.userCategories, // RENAMED
+    required this.userColorCategories,
     required this.onRemove,
     required this.onLocationSelect,
     required this.onSelectSavedExperience,
@@ -163,6 +171,9 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
   // --- ADDED: Constants for special dropdown values ---
   static const String _addCategoryValue = '__add_new_category__';
   static const String _editCategoriesValue = '__edit_categories__';
+  // --- ADDED Color Category constants ---
+  static const String _addColorCategoryValue = '__add_new_color_category__';
+  static const String _editColorCategoriesValue = '__edit_color_categories__';
   // --- END ADDED ---
 
   // --- ADDED: Constants for special dialog actions ---
@@ -470,6 +481,215 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
   }
   // --- END UPDATED FUNCTION ---
 
+  // --- ADDED: Helper to find Color for selected ColorCategory ---
+  Color _getColorForSelectedCategory() {
+    final selectedId = widget.cardData.selectedColorCategoryId;
+    if (selectedId == null) {
+      return Colors.grey.shade400; // Default indicator color
+    }
+    final matchingCategory = widget.userColorCategories.firstWhere(
+      (category) => category.id == selectedId,
+      orElse: () => const ColorCategory(
+          id: '',
+          name: '',
+          colorHex: 'FF9E9E9E', // Grey fallback
+          ownerUserId: ''),
+    );
+    return matchingCategory.color;
+  }
+
+  ColorCategory? _getSelectedColorCategoryObject() {
+    final selectedId = widget.cardData.selectedColorCategoryId;
+    if (selectedId == null) {
+      return null;
+    }
+    try {
+      return widget.userColorCategories
+          .firstWhere((cat) => cat.id == selectedId);
+    } catch (e) {
+      return null; // Not found
+    }
+  }
+
+  // --- ADDED: Method to handle adding a new color category ---
+  Future<void> _handleAddColorCategory() async {
+    FocusScope.of(context).unfocus();
+    // TODO: Implement AddColorCategoryModal
+    final newCategory = await showModalBottomSheet<ColorCategory>(
+      context: context,
+      builder: (context) => const AddColorCategoryModal(), // Use placeholder
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+    );
+    if (newCategory != null && mounted) {
+      print(
+          "New color category added: ${newCategory.name} (${newCategory.colorHex})");
+      // Notify parent to refresh list and potentially select it
+      // Note: We refresh BOTH lists as the modal interaction might affect order/usage indirectly
+      widget.onUpdate(
+          refreshCategories: true,
+          newCategoryName:
+              null); // Pass null for new name, selection happens based on ID
+      // Explicitly set the new category ID
+      setState(() {
+        widget.cardData.selectedColorCategoryId = newCategory.id;
+      });
+    }
+  }
+
+  // --- ADDED: Method to handle editing color categories ---
+  Future<void> _handleEditColorCategories() async {
+    FocusScope.of(context).unfocus();
+    // TODO: Implement EditColorCategoriesModal
+    final bool? categoriesChanged = await showModalBottomSheet<bool>(
+      context: context,
+      builder: (context) => const EditColorCategoriesModal(), // Use placeholder
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+    );
+
+    if (categoriesChanged == true && mounted) {
+      print(
+          "Color Categories potentially changed in Edit modal, refreshing list.");
+      widget.onUpdate(refreshCategories: true);
+    }
+  }
+
+  // --- ADDED: Function to show the color category selection dialog ---
+  Future<void> _showColorCategorySelectionDialog() async {
+    FocusScope.of(context).unfocus(); // Dismiss keyboard
+
+    // Sort categories for display (e.g., by orderIndex or name)
+    // We assume userColorCategories is already sorted by the parent
+    final List<ColorCategory> categoriesToShow =
+        List.from(widget.userColorCategories);
+    // Example sort: by name if orderIndex is null or same
+    // categoriesToShow.sort((a, b) {
+    //   if (a.orderIndex != null && b.orderIndex != null) {
+    //      return a.orderIndex!.compareTo(b.orderIndex!);
+    //   }
+    //   return a.name.compareTo(b.name);
+    // });
+
+    final String? selectedValue = await showDialog<String>(
+      context: context,
+      builder: (BuildContext context) {
+        return Dialog(
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16.0)),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(context).size.height * 0.8),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+                  child: Text(
+                    'Select Color Tag', // Changed Title
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                ),
+                Expanded(
+                  child: ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: categoriesToShow.length,
+                    itemBuilder: (context, index) {
+                      final category = categoriesToShow[index];
+                      final bool isSelected = category.id ==
+                          widget.cardData.selectedColorCategoryId;
+                      return ListTile(
+                        leading: Container(
+                          width: 24,
+                          height: 24,
+                          decoration: BoxDecoration(
+                              color: category.color,
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                  color: Colors.grey.shade400, width: 1)),
+                        ),
+                        title: Text(category.name),
+                        trailing: isSelected
+                            ? const Icon(Icons.check, color: Colors.blue)
+                            : null,
+                        onTap: () {
+                          Navigator.pop(
+                              context, category.id); // Return category ID
+                        },
+                        visualDensity: VisualDensity.compact,
+                      );
+                    },
+                  ),
+                ),
+                const Divider(height: 1),
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 8.0, vertical: 8.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      TextButton.icon(
+                        icon: Icon(Icons.add_circle_outline,
+                            size: 20, color: Colors.blue[700]),
+                        label: Text('Add New Color Tag',
+                            style: TextStyle(color: Colors.blue[700])),
+                        onPressed: () {
+                          Navigator.pop(
+                              context, _addColorCategoryValue); // Use constant
+                        },
+                        style: TextButton.styleFrom(
+                            alignment: Alignment.centerLeft,
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 12)),
+                      ),
+                      TextButton.icon(
+                        icon: Icon(Icons.edit_outlined,
+                            size: 20, color: Colors.orange[700]),
+                        label: Text('Edit Color Tags',
+                            style: TextStyle(color: Colors.orange[700])),
+                        onPressed: () {
+                          Navigator.pop(context,
+                              _editColorCategoriesValue); // Use constant
+                        },
+                        style: TextButton.styleFrom(
+                            alignment: Alignment.centerLeft,
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 12)),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    // Handle the dialog result
+    if (selectedValue != null) {
+      if (selectedValue == _addColorCategoryValue) {
+        _handleAddColorCategory();
+      } else if (selectedValue == _editColorCategoriesValue) {
+        _handleEditColorCategories();
+      } else {
+        // User selected an actual category ID
+        if (widget.cardData.selectedColorCategoryId != selectedValue) {
+          setState(() {
+            widget.cardData.selectedColorCategoryId = selectedValue;
+          });
+          widget.onUpdate(refreshCategories: false);
+        }
+      }
+    }
+  }
+  // --- END ADDED ---
+
   // Build method - Logic from _buildExperienceCard goes here
   @override
   Widget build(BuildContext context) {
@@ -763,6 +983,65 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                       ), 
                     */
                     // --- END REPLACEMENT ---
+
+                    SizedBox(height: 16),
+
+                    // --- ADDED: Color Category Selection Button ---
+                    Text('Color Tag',
+                        style: Theme.of(context)
+                            .textTheme
+                            .bodyMedium
+                            ?.copyWith(color: Colors.grey[600])),
+                    const SizedBox(height: 4),
+                    OutlinedButton(
+                      onPressed:
+                          _showColorCategorySelectionDialog, // Call the new dialog function
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 15),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8.0)),
+                        side: BorderSide(color: Colors.grey),
+                        alignment: Alignment.centerLeft,
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Row(
+                            children: [
+                              // Display selected category color circle
+                              Container(
+                                width: 18,
+                                height: 18,
+                                decoration: BoxDecoration(
+                                    color:
+                                        _getColorForSelectedCategory(), // Use helper
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                        color: Colors.grey.shade400, width: 1)),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                _getSelectedColorCategoryObject()?.name ??
+                                    'Select Color Tag',
+                                style: TextStyle(
+                                  color:
+                                      widget.cardData.selectedColorCategoryId !=
+                                              null
+                                          ? Theme.of(context)
+                                              .textTheme
+                                              .bodyLarge
+                                              ?.color
+                                          : Colors.grey[600],
+                                ),
+                              ),
+                            ],
+                          ),
+                          const Icon(Icons.arrow_drop_down, color: Colors.grey),
+                        ],
+                      ),
+                    ),
+                    // --- END ADDED ---
 
                     SizedBox(height: 16),
 
