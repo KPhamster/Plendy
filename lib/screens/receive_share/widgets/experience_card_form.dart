@@ -32,6 +32,7 @@ typedef OnUpdateCallback = void Function({
   // Modified to accept optional flag
   bool refreshCategories, // Flag to indicate category list needs refresh
   String? newCategoryName, // Optional new category name
+  String? selectedColorCategoryId, // ADDED
 });
 
 class ExperienceCardForm extends StatefulWidget {
@@ -680,10 +681,15 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
       } else {
         // User selected an actual category ID
         if (widget.cardData.selectedColorCategoryId != selectedValue) {
-          setState(() {
-            widget.cardData.selectedColorCategoryId = selectedValue;
-          });
-          widget.onUpdate(refreshCategories: false);
+          // REMOVE local setState
+          // setState(() {
+          //   widget.cardData.selectedColorCategoryId = selectedValue;
+          // });
+          // Call onUpdate with the new ID
+          widget.onUpdate(
+            refreshCategories: false,
+            selectedColorCategoryId: selectedValue, // Pass the ID
+          );
         }
       }
     }

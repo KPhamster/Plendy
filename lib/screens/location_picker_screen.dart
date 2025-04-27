@@ -606,10 +606,31 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
                     Positioned(
                       top: -8,
                       right: -8,
-                      child: IconButton(
-                        onPressed: _openDirectionsInGoogleMaps,
-                        icon: Icon(Icons.directions, color: Colors.blue),
-                        tooltip: 'Get Directions',
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            onPressed: () {
+                              if (_selectedLocation != null) {
+                                _launchMapLocation(_selectedLocation!);
+                              }
+                            },
+                            icon: Icon(Icons.map_outlined,
+                                color: Colors.green[700], size: 28),
+                            tooltip: 'Open in map app',
+                            padding: const EdgeInsets.all(8),
+                            constraints: const BoxConstraints(),
+                          ),
+                          const SizedBox(width: 4),
+                          IconButton(
+                            onPressed: _openDirectionsInGoogleMaps,
+                            icon: Icon(Icons.directions,
+                                color: Colors.blue, size: 28),
+                            tooltip: 'Get Directions',
+                            padding: const EdgeInsets.all(8),
+                            constraints: const BoxConstraints(),
+                          ),
+                        ],
                       ),
                     ),
                   ],
@@ -659,6 +680,38 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
     } else {
       return Icons.place;
     }
+  }
+
+  // ADDED: Helper method to launch map location directly
+  Future<void> _launchMapLocation(Location location) async {
+    final String mapUrl;
+    // Prioritize Place ID if available for a more specific search
+    if (location.placeId != null && location.placeId!.isNotEmpty) {
+      // Use the Google Maps search API with place_id format
+      final placeName =
+          location.displayName ?? location.address ?? 'Selected Location';
+      mapUrl =
+          'https://www.google.com/maps/search/?api=1&query=${Uri.encodeComponent(placeName)}&query_place_id=${location.placeId}';
+      print('📍 PICKER: Launching Map with Place ID: $mapUrl');
+    } else {
+      // Fallback to coordinate-based URL if no place ID
+      final lat = location.latitude;
+      final lng = location.longitude;
+      mapUrl = 'https://www.google.com/maps/search/?api=1&query=$lat,$lng';
+      print('📍 PICKER: Launching Map with Coordinates: $mapUrl');
+    }
+
+    final Uri mapUri = Uri.parse(mapUrl);
+
+    if (!await launchUrl(mapUri, mode: LaunchMode.externalApplication)) {
+      print('📍 PICKER: Could not launch $mapUri');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open map location.')),
+        );
+      }
+    }
+    // Note: No need to clear marker here as it's managed differently
   }
 
   // ADDED: Helper function to create/update the selected location marker

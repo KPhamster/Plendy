@@ -551,6 +551,7 @@ class _MapScreenState extends State<MapScreen> {
           categoryIconBitmap = await _bitmapDescriptorFromText(
             category.icon,
             backgroundColor: markerBackgroundColor,
+            size: 70,
           );
           _categoryIconCache[cacheKey] = categoryIconBitmap; // Cache the result
         } catch (e) {
@@ -801,10 +802,16 @@ class _MapScreenState extends State<MapScreen> {
           ),
         ],
       ),
-      // ADDED: Bottom Navigation Bar when a location is tapped
+      // UPDATED: Bottom Navigation Bar now shows location details panel
       bottomNavigationBar: _tappedLocationDetails != null
           ? Container(
-              padding: EdgeInsets.all(16),
+              padding: EdgeInsets.fromLTRB(
+                  16,
+                  16,
+                  16,
+                  16 +
+                      MediaQuery.of(context).padding.bottom /
+                          2), // Adjust padding for safe area
               decoration: BoxDecoration(
                 color: Colors.white,
                 boxShadow: [
@@ -814,44 +821,139 @@ class _MapScreenState extends State<MapScreen> {
                     offset: Offset(0, -3),
                   ),
                 ],
-                // Optional: Add rounded corners if desired
-                // borderRadius: BorderRadius.only(
-                //   topLeft: Radius.circular(16),
-                //   topRight: Radius.circular(16),
-                // ),
               ),
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.map_outlined), // Added icon
-                label: const Text(
-                  'Open in map app', // Updated button text
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
+              child: Stack(
+                clipBehavior: Clip.none, // Allow button to overflow slightly
+                children: [
+                  // Column with location details
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize:
+                        MainAxisSize.min, // Important for bottom bar height
+                    children: [
+                      // Title
+                      Text(
+                        'Tapped Location',
+                        style: TextStyle(
+                          fontWeight: FontWeight.normal,
+                          fontSize: 14,
+                          color: Colors.grey[800],
+                        ),
+                      ),
+                      SizedBox(height: 12),
+
+                      // Place name
+                      Text(
+                        _tappedLocationDetails!.getPlaceName(),
+                        style: TextStyle(
+                          fontWeight: FontWeight.w500,
+                          fontSize: 16,
+                        ),
+                      ),
+                      SizedBox(height: 8),
+
+                      // Full address
+                      if (_tappedLocationDetails!.address != null &&
+                          _tappedLocationDetails!.address!.isNotEmpty) ...[
+                        Text(
+                          _tappedLocationDetails!.address!,
+                          style: TextStyle(color: Colors.grey[700]),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        SizedBox(height: 8),
+                      ],
+
+                      // Area details if available (similar to picker)
+                      Row(children: [
+                        if (_tappedLocationDetails!.city != null) ...[
+                          Icon(Icons.location_city,
+                              size: 16, color: Colors.grey[600]),
+                          SizedBox(width: 4),
+                          Text(
+                            _tappedLocationDetails!.city!,
+                            style: TextStyle(color: Colors.grey[700]),
+                          ),
+                          SizedBox(width: 16),
+                        ],
+                        if (_tappedLocationDetails!.state != null) ...[
+                          Text(
+                            _tappedLocationDetails!.state!,
+                            style: TextStyle(color: Colors.grey[700]),
+                          ),
+                          SizedBox(width: 8),
+                        ],
+                        if (_tappedLocationDetails!.country != null) ...[
+                          Text(
+                            _tappedLocationDetails!.country!,
+                            style: TextStyle(color: Colors.grey[700]),
+                          ),
+                        ],
+                      ]),
+                      SizedBox(height: 12),
+
+                      // Coordinates
+                      Row(
+                        children: [
+                          Icon(Icons.gps_fixed,
+                              size: 16, color: Colors.grey[600]),
+                          SizedBox(width: 4),
+                          Expanded(
+                            child: Text(
+                              '${_tappedLocationDetails!.latitude.toStringAsFixed(6)}, ${_tappedLocationDetails!.longitude.toStringAsFixed(6)}',
+                              style: TextStyle(
+                                color: Colors.grey[600],
+                                fontFamily: 'monospace',
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
-                ),
-                style: ElevatedButton.styleFrom(
-                  padding: EdgeInsets.symmetric(vertical: 16),
-                  backgroundColor:
-                      Theme.of(context).primaryColor, // Use theme color
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8),
+
+                  // Get Directions button positioned at top-right (like picker)
+                  Positioned(
+                    top: -8,
+                    right: -8,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min, // Keep Row compact
+                      children: [
+                        // ADDED: Open in Map App button
+                        IconButton(
+                          onPressed: () {
+                            if (_tappedLocationDetails != null) {
+                              _launchMapLocation(_tappedLocationDetails!);
+                            }
+                          },
+                          icon: Icon(Icons.map_outlined,
+                              color: Colors.green[700], size: 28),
+                          tooltip: 'Open in map app',
+                          padding: const EdgeInsets.all(8), // Add padding
+                          constraints:
+                              const BoxConstraints(), // Remove default constraints
+                        ),
+                        const SizedBox(width: 4), // Spacing between icons
+                        // Existing Directions button
+                        IconButton(
+                          onPressed: () {
+                            if (_tappedLocationDetails != null) {
+                              _openDirectionsForLocation(
+                                  _tappedLocationDetails!);
+                            }
+                          },
+                          icon: Icon(Icons.directions,
+                              color: Colors.blue, size: 28),
+                          tooltip: 'Get Directions',
+                          padding: const EdgeInsets.all(8), // Add padding
+                          constraints:
+                              const BoxConstraints(), // Remove default constraints
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                onPressed: () {
-                  // FIXED: Call the new _launchMapLocation function
-                  if (_tappedLocationDetails != null) {
-                    _launchMapLocation(_tappedLocationDetails!);
-                  } else {
-                    print(
-                        "🗺️ MAP SCREEN: Error - Bottom bar button pressed but tapped details are null.");
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                          content: Text(
-                              'Could not get location details to open map.')),
-                    );
-                  }
-                },
+                ],
               ),
             )
           : null, // Show nothing if no location is tapped
