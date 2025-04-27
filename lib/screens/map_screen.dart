@@ -42,7 +42,7 @@ class _MapScreenState extends State<MapScreen> {
   final AuthService _authService = AuthService();
   final GoogleMapsService _mapsService =
       GoogleMapsService(); // ADDED: Maps Service
-  final Map<String, Marker> _markers = {}; // Use String keys for marker IDs
+  Map<String, Marker> _markers = {}; // Use String keys for marker IDs
   bool _isLoading = true;
   List<Experience> _experiences = [];
   List<UserCategory> _categories = [];
@@ -51,6 +51,10 @@ class _MapScreenState extends State<MapScreen> {
       Completer<GoogleMapController>();
   // ADDED: Cache for generated category icons
   final Map<String, BitmapDescriptor> _categoryIconCache = {};
+
+  // ADDED: State for selected filters
+  Set<String> _selectedCategoryIds = {}; // Empty set means no filter
+  Set<String> _selectedColorCategoryIds = {}; // Empty set means no filter
 
   @override
   void initState() {
@@ -86,6 +90,11 @@ class _MapScreenState extends State<MapScreen> {
       print(
           "🗺️ MAP SCREEN: Loaded ${_experiences.length} experiences and ${_categories.length} categories.");
 
+      // Initial marker generation using the refactored function
+      // This will display all markers initially, respecting no filters
+      await _generateMarkersFromExperiences(_experiences);
+
+      /* --- REMOVED Marker generation loop (moved to _generateMarkersFromExperiences) ---
       _markers.clear();
       // We will calculate bounds manually now
       double minLat = double.infinity;
@@ -95,141 +104,11 @@ class _MapScreenState extends State<MapScreen> {
       bool hasValidMarkers = false;
 
       for (final experience in _experiences) {
-        // Basic validation for location data
-        if (experience.location.latitude == 0.0 &&
-            experience.location.longitude == 0.0) {
-          print(
-              "🗺️ MAP SCREEN: Skipping experience '${experience.name}' due to invalid coordinates (0,0).");
-          continue; // Skip markers with default/invalid coordinates
-        }
-
-        final category = _categories.firstWhere(
-          (cat) => cat.name == experience.category,
-          orElse: () =>
-              UserCategory(id: '', name: 'Unknown', icon: '❓', ownerUserId: ''),
-        );
-
-        // --- Start Icon Generation ---
-        // REMOVED: Print the category name being searched for
-        // print("🗺️ MAP SCREEN: Searching for color for category: '${category.name}'");
-
-        // Find the corresponding color category *based on the experience's property*
-        ColorCategory? colorCategory;
-        String? experienceColorCategoryId =
-            experience.colorCategoryId; // Get the ID (nullable)
-        // String experienceColorCategoryName = experience.colorCategoryName; // Assuming this field exists
-        // print(
-        //     "🗺️ MAP SCREEN: Searching for ColorCategory named: '${experienceColorCategoryName}' for experience '${experience.name}'");
-
-        if (experienceColorCategoryId != null) {
-          print(
-              "🗺️ MAP SCREEN: Searching for ColorCategory with ID: '${experienceColorCategoryId}' for experience '${experience.name}'");
-          try {
-            colorCategory = _colorCategories.firstWhere(
-              (cc) => cc.id == experienceColorCategoryId, // Match by ID now
-            );
-            print(
-                "🗺️ MAP SCREEN: Found ColorCategory '${colorCategory.name}' with color ${colorCategory.colorHex}");
-          } catch (e) {
-            colorCategory = null; // Not found
-            print(
-                "🗺️ MAP SCREEN: No ColorCategory found matching ID '${experienceColorCategoryId}'. Using default color.");
-          }
-        } else {
-          print(
-              "🗺️ MAP SCREEN: Experience '${experience.name}' has no colorCategoryId. Using default color.");
-        }
-
-        // Determine marker background color
-        Color markerBackgroundColor = Colors.grey; // Default
-        if (colorCategory != null && colorCategory.colorHex.isNotEmpty) {
-          markerBackgroundColor = _parseColor(colorCategory.colorHex);
-          print(
-              "🗺️ MAP SCREEN: Using color ${markerBackgroundColor} for category '${category.name}'.");
-        }
-
-        // Generate a unique cache key including the color and the *icon* (not the category name)
-        final String cacheKey =
-            '${category.icon}_${markerBackgroundColor.value}';
-
-        BitmapDescriptor categoryIconBitmap =
-            BitmapDescriptor.defaultMarker; // Default
-
-        // Use cache or generate new icon
-        if (_categoryIconCache.containsKey(cacheKey)) {
-          categoryIconBitmap = _categoryIconCache[cacheKey]!;
-          print(
-              "🗺️ MAP SCREEN: Using cached icon '$cacheKey' for ${category.name}");
-        } else {
-          try {
-            print(
-                "🗺️ MAP SCREEN: Generating icon for '$cacheKey' (${category.name})");
-            // Pass the background color to the generator
-            categoryIconBitmap = await _bitmapDescriptorFromText(
-              category.icon,
-              backgroundColor: markerBackgroundColor,
-            );
-            _categoryIconCache[cacheKey] =
-                categoryIconBitmap; // Cache the result
-          } catch (e) {
-            print(
-                "🗺️ MAP SCREEN: Failed to generate bitmap for icon '$cacheKey': $e");
-            // Keep the default marker if generation fails
-          }
-        }
-        // --- End Icon Generation ---
-
-        final position = LatLng(
-          experience.location.latitude,
-          experience.location.longitude,
-        );
-
-        // Logging marker details
-        print(
-            "🗺️ MAP SCREEN: Creating marker for '${experience.name}' at ${position.latitude}, ${position.longitude}");
-
-        final markerId = MarkerId(experience.id);
-        final marker = Marker(
-          markerId: markerId,
-          position: position,
-          infoWindow: InfoWindow(
-            title: '${category.icon} ${experience.name}',
-            snippet: experience.location.getPlaceName(),
-            onTap: () => _navigateToExperience(experience, category),
-          ),
-          icon: categoryIconBitmap,
-          onTap: () => _navigateToExperience(experience, category),
-        );
-        _markers[experience.id] = marker;
-
-        // Update bounds manually
-        if (position.latitude < minLat) minLat = position.latitude;
-        if (position.latitude > maxLat) maxLat = position.latitude;
-        if (position.longitude < minLng) minLng = position.longitude;
-        if (position.longitude > maxLng) maxLng = position.longitude;
-        hasValidMarkers = true;
+          // ... (loop content removed) ...
       }
 
       print("🗺️ MAP SCREEN: Generated ${_markers.length} valid markers.");
-
-      // REMOVED: Automatic camera animation to fit markers.
-      // The map will now initially center based on GoogleMapsWidget's logic (user location if available).
-      // if (hasValidMarkers) {
-      //    print("🗺️ MAP SCREEN: Waiting for map controller to be ready...");
-      //    final GoogleMapController controller = await _mapControllerCompleter.future;
-      //    print("🗺️ MAP SCREEN: Map controller is ready. Calculating bounds...");
-      //
-      //    final bounds = _calculateBoundsFromMarkers(_markers); // Use helper
-      //
-      //    if (bounds != null) {
-      //       print("🗺️ MAP SCREEN: Animating camera to calculated bounds: $bounds");
-      //       controller.animateCamera(CameraUpdate.newLatLngBounds(bounds, 50.0));
-      //    } else {
-      //       print("🗺️ MAP SCREEN: Calculated invalid bounds, not animating camera.");
-      //    }
-      // } else {
-      //      print("🗺️ MAP SCREEN: No valid markers to calculate bounds for.");
-      // }
+      */
     } catch (e, stackTrace) {
       print("🗺️ MAP SCREEN: Error loading map data: $e");
       print(stackTrace); // Print stack trace for detailed debugging
@@ -396,12 +275,355 @@ class _MapScreenState extends State<MapScreen> {
     return null; // Indicate invalid bounds
   }
 
+  // --- ADDED: Filter Dialog ---
+  Future<void> _showFilterDialog() async {
+    // Create temporary sets to hold selections within the dialog
+    Set<String> tempSelectedCategoryIds = Set.from(_selectedCategoryIds);
+    Set<String> tempSelectedColorCategoryIds =
+        Set.from(_selectedColorCategoryIds);
+
+    await showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Filter Experiences'),
+          content: StatefulBuilder(
+            // Use StatefulBuilder to manage state within the dialog
+            builder: (BuildContext context, StateSetter setStateDialog) {
+              return SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    const Text('By Category:',
+                        style: TextStyle(fontWeight: FontWeight.bold)),
+                    // FIX: Correctly use map().toList() to generate CheckboxListTiles
+                    ...(_categories.toList()
+                          ..sort((a, b) => a.name.compareTo(b.name)))
+                        .map((category) {
+                      // This map returns a Widget (CheckboxListTile)
+                      return CheckboxListTile(
+                        title: Text('${category.icon} ${category.name}'),
+                        value: tempSelectedCategoryIds.contains(category.id),
+                        onChanged: (bool? selected) {
+                          setStateDialog(() {
+                            if (selected == true) {
+                              tempSelectedCategoryIds.add(category.id);
+                            } else {
+                              tempSelectedCategoryIds.remove(category.id);
+                            }
+                          });
+                        },
+                      );
+                    }).toList(), // This creates List<CheckboxListTile>
+                    const SizedBox(height: 16),
+                    const Text('By Color:',
+                        style: TextStyle(fontWeight: FontWeight.bold)),
+                    // FIX: Correctly use map().toList() to generate CheckboxListTiles
+                    ...(_colorCategories.toList()
+                          ..sort((a, b) => a.name.compareTo(b.name)))
+                        .map((colorCategory) {
+                      // This map returns a Widget (CheckboxListTile)
+                      return CheckboxListTile(
+                        title: Row(
+                          children: [
+                            Container(
+                              width: 16,
+                              height: 16,
+                              decoration: BoxDecoration(
+                                  color: _parseColor(colorCategory.colorHex),
+                                  shape: BoxShape.circle,
+                                  border: Border.all(color: Colors.grey)),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(colorCategory.name),
+                          ],
+                        ),
+                        value: tempSelectedColorCategoryIds
+                            .contains(colorCategory.id),
+                        onChanged: (bool? selected) {
+                          setStateDialog(() {
+                            if (selected == true) {
+                              tempSelectedColorCategoryIds
+                                  .add(colorCategory.id);
+                            } else {
+                              tempSelectedColorCategoryIds
+                                  .remove(colorCategory.id);
+                            }
+                          });
+                        },
+                      );
+                    }).toList(),
+                  ],
+                ),
+              );
+            },
+          ),
+          actions: <Widget>[
+            // ADDED: Show All Button
+            TextButton(
+              child: const Text('Show All'),
+              onPressed: () {
+                // Clear temporary selections
+                tempSelectedCategoryIds.clear();
+                tempSelectedColorCategoryIds.clear();
+
+                // Apply the cleared filters directly to the main state
+                setState(() {
+                  _selectedCategoryIds = tempSelectedCategoryIds; // Now empty
+                  _selectedColorCategoryIds =
+                      tempSelectedColorCategoryIds; // Now empty
+                });
+
+                Navigator.of(context).pop(); // Close the dialog
+                _applyFiltersAndUpdateMarkers(); // Apply filters (which are now empty) and update map
+              },
+            ),
+            TextButton(
+              child: const Text('Cancel'),
+              onPressed: () {
+                Navigator.of(context).pop(); // Close dialog without applying
+              },
+            ),
+            TextButton(
+              child: const Text('Apply'),
+              onPressed: () {
+                // Apply the selected filters from the temporary sets
+                setState(() {
+                  _selectedCategoryIds = tempSelectedCategoryIds;
+                  _selectedColorCategoryIds = tempSelectedColorCategoryIds;
+                });
+                Navigator.of(context).pop(); // Close the dialog
+                _applyFiltersAndUpdateMarkers(); // Apply filters and update map
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+  // --- END Filter Dialog ---
+
+  // --- ADDED: Function to apply filters and regenerate markers ---
+  Future<void> _applyFiltersAndUpdateMarkers() async {
+    print("🗺️ MAP SCREEN: Applying filters and updating markers...");
+    setState(() {
+      _isLoading = true; // Show loading indicator while filtering
+    });
+
+    try {
+      // Filter experiences based on selected IDs
+      final filteredExperiences = _experiences.where((exp) {
+        // Find the category ID based on the experience's category name
+        String? expCategoryId;
+        try {
+          expCategoryId =
+              _categories.firstWhere((cat) => cat.name == exp.category).id;
+        } catch (e) {
+          // Handle case where category name doesn't match any known category
+          expCategoryId = null;
+          print(
+              "🗺️ MAP SCREEN: Warning - Could not find category ID for category name: ${exp.category}");
+        }
+
+        final bool categoryMatch = _selectedCategoryIds.isEmpty ||
+            (expCategoryId != null &&
+                _selectedCategoryIds.contains(expCategoryId));
+
+        final bool colorMatch = _selectedColorCategoryIds.isEmpty ||
+            (exp.colorCategoryId != null &&
+                _selectedColorCategoryIds.contains(exp.colorCategoryId));
+
+        return categoryMatch && colorMatch;
+      }).toList();
+
+      print(
+          "🗺️ MAP SCREEN: Filtered ${_experiences.length} experiences down to ${filteredExperiences.length}");
+
+      // Regenerate markers from the filtered list
+      _generateMarkersFromExperiences(filteredExperiences);
+
+      // Optionally: Animate camera to fit the filtered markers if needed
+      // This might be desired behavior after filtering
+      // final GoogleMapController controller = await _mapControllerCompleter.future;
+      // final bounds = _calculateBoundsFromMarkers(_markers); // Use the updated _markers
+      // if (bounds != null) {
+      //   controller.animateCamera(CameraUpdate.newLatLngBounds(bounds, 50.0));
+      // }
+    } catch (e, stackTrace) {
+      print("🗺️ MAP SCREEN: Error applying filters: $e");
+      print(stackTrace);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error applying filters: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        print("🗺️ MAP SCREEN: Filter application finished.");
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
+  // --- END Apply Filters ---
+
+  // --- REFACTORED: Marker generation logic ---
+  Future<void> _generateMarkersFromExperiences(
+      List<Experience> experiencesToMark) async {
+    // Use a temporary map to build markers to avoid modifying state directly in loop
+    Map<String, Marker> tempMarkers = {};
+    // Clear existing markers before generating new ones
+    // _markers.clear(); // Clear happens when we assign tempMarkers later
+
+    // We will calculate bounds manually now
+    double minLat = double.infinity;
+    double maxLat = double.negativeInfinity;
+    double minLng = double.infinity;
+    double maxLng = double.negativeInfinity;
+    bool hasValidMarkers = false;
+
+    for (final experience in experiencesToMark) {
+      // Basic validation for location data
+      if (experience.location.latitude == 0.0 &&
+          experience.location.longitude == 0.0) {
+        print(
+            "🗺️ MAP SCREEN: Skipping experience '${experience.name}' due to invalid coordinates (0,0).");
+        continue; // Skip markers with default/invalid coordinates
+      }
+
+      final category = _categories.firstWhere(
+        (cat) =>
+            cat.name == experience.category, // Use category name for matching
+        orElse: () =>
+            UserCategory(id: '', name: 'Unknown', icon: '❓', ownerUserId: ''),
+      );
+
+      // Find the corresponding color category *based on the experience's property*
+      ColorCategory? colorCategory;
+      String? experienceColorCategoryId =
+          experience.colorCategoryId; // Get the ID (nullable)
+
+      if (experienceColorCategoryId != null) {
+        // print(
+        //     "🗺️ MAP SCREEN: Searching for ColorCategory with ID: '${experienceColorCategoryId}' for experience '${experience.name}'");
+        try {
+          colorCategory = _colorCategories.firstWhere(
+            (cc) => cc.id == experienceColorCategoryId, // Match by ID now
+          );
+          // print(
+          //     "🗺️ MAP SCREEN: Found ColorCategory '${colorCategory.name}' with color ${colorCategory.colorHex}");
+        } catch (e) {
+          colorCategory = null; // Not found
+          // print(
+          //     "🗺️ MAP SCREEN: No ColorCategory found matching ID '${experienceColorCategoryId}'. Using default color.");
+        }
+      } else {
+        // print(
+        //     "🗺️ MAP SCREEN: Experience '${experience.name}' has no colorCategoryId. Using default color.");
+      }
+
+      // Determine marker background color
+      Color markerBackgroundColor = Colors.grey; // Default
+      if (colorCategory != null && colorCategory.colorHex.isNotEmpty) {
+        markerBackgroundColor = _parseColor(colorCategory.colorHex);
+        // print(
+        //     "🗺️ MAP SCREEN: Using color ${markerBackgroundColor} for category '${category.name}'.");
+      }
+
+      // Generate a unique cache key including the color and the *icon*
+      final String cacheKey = '${category.icon}_${markerBackgroundColor.value}';
+
+      BitmapDescriptor categoryIconBitmap =
+          BitmapDescriptor.defaultMarker; // Default
+
+      // Use cache or generate new icon
+      if (_categoryIconCache.containsKey(cacheKey)) {
+        categoryIconBitmap = _categoryIconCache[cacheKey]!;
+        // print(
+        //     "🗺️ MAP SCREEN: Using cached icon '$cacheKey' for ${category.name}");
+      } else {
+        try {
+          // print(
+          //     "🗺️ MAP SCREEN: Generating icon for '$cacheKey' (${category.name})");
+          // Pass the background color to the generator
+          categoryIconBitmap = await _bitmapDescriptorFromText(
+            category.icon,
+            backgroundColor: markerBackgroundColor,
+          );
+          _categoryIconCache[cacheKey] = categoryIconBitmap; // Cache the result
+        } catch (e) {
+          print(
+              "🗺️ MAP SCREEN: Failed to generate bitmap for icon '$cacheKey': $e");
+          // Keep the default marker if generation fails
+        }
+      }
+
+      final position = LatLng(
+        experience.location.latitude,
+        experience.location.longitude,
+      );
+
+      // Logging marker details
+      // print(
+      //     "🗺️ MAP SCREEN: Creating marker for '${experience.name}' at ${position.latitude}, ${position.longitude}");
+
+      final markerId = MarkerId(experience.id);
+      final marker = Marker(
+        markerId: markerId,
+        position: position,
+        infoWindow: InfoWindow(
+          title: '${category.icon} ${experience.name}',
+          snippet: experience.location.getPlaceName(),
+          onTap: () => _navigateToExperience(experience, category),
+        ),
+        icon: categoryIconBitmap,
+        onTap: () => _navigateToExperience(experience, category),
+      );
+      // FIX: Add to temporary map
+      tempMarkers[experience.id] = marker;
+
+      // Update bounds manually
+      if (position.latitude < minLat) minLat = position.latitude;
+      if (position.latitude > maxLat) maxLat = position.latitude;
+      if (position.longitude < minLng) minLng = position.longitude;
+      if (position.longitude > maxLng) maxLng = position.longitude;
+      hasValidMarkers = true;
+    }
+
+    print(
+        "🗺️ MAP SCREEN: Generated ${_markers.length} markers from ${experiencesToMark.length} experiences.");
+
+    // Important: We need to call setState here AFTER markers are generated
+    // to update the map widget in the build method.
+    // The _isLoading state is handled by the calling function (_applyFiltersAndUpdateMarkers or _loadData...)
+    if (mounted) {
+      setState(() {
+        // FIX: Clear the existing map and add all from the temp map
+        _markers.clear();
+        _markers.addAll(tempMarkers);
+      }); // Trigger rebuild to show updated markers
+    }
+  }
+  // --- END REFACTORED Marker generation ---
+
   @override
   Widget build(BuildContext context) {
     print("🗺️ MAP SCREEN: Building widget. isLoading: $_isLoading");
     return Scaffold(
       appBar: AppBar(
         title: const Text('Experiences Map'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.filter_list),
+            tooltip: 'Filter Experiences',
+            onPressed: () {
+              print("🗺️ MAP SCREEN: Filter button pressed!");
+              _showFilterDialog();
+            },
+          ),
+        ],
       ),
       // Use a Stack to overlay the loading indicator
       body: Stack(
