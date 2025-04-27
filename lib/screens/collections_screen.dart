@@ -69,6 +69,9 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   String? _userEmail;
   // ADDED: State variable to track the selected category in the first tab
   UserCategory? _selectedCategory;
+  // --- ADDED: State variable for selected color category ---
+  ColorCategory? _selectedColorCategory;
+  // --- END ADDED ---
   // ADDED: State variable to hold grouped list of content items
   List<GroupedContentItem> _groupedContentItems = [];
   // ADDED: State map for content preview expansion
@@ -196,6 +199,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
           _groupedContentItems = groupedContent; // Set the state variable
           _isLoading = false;
           _selectedCategory = null; // Reset selected category on reload
+          _selectedColorCategory =
+              null; // Reset selected color category on reload
           // _showingColorCategories = false; // Ensure default view on reload
         });
         // Apply initial sorts after loading
@@ -1051,6 +1056,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                                         !_showingColorCategories;
                                     _selectedCategory =
                                         null; // Clear selected text category when switching views
+                                    _selectedColorCategory =
+                                        null; // Clear selected color category when switching views
                                   });
                                 },
                               ),
@@ -1060,9 +1067,14 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                             child: _selectedCategory != null
                                 ? _buildCategoryExperiencesList(
                                     _selectedCategory!) // Still show experiences if a text category was selected
-                                : _showingColorCategories
-                                    ? _buildColorCategoriesList() // Show color list
-                                    : _buildCategoriesList(), // Show text list
+                                // --- MODIFIED: Check for selected color category first --- START ---
+                                : _selectedColorCategory != null
+                                    ? _buildColorCategoryExperiencesList(
+                                        _selectedColorCategory!) // Show color experiences
+                                    : _showingColorCategories
+                                        ? _buildColorCategoriesList() // Show color list
+                                        : _buildCategoriesList(), // Show text list
+                            // --- MODIFIED: Check for selected color category first --- END ---
                           ),
                         ],
                       ),
@@ -1139,7 +1151,52 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                 ),
         ),
       ),
-      title: Text(experience.name),
+      // --- MODIFIED: Integrate indicator into title --- START ---
+      title: Row(
+        mainAxisSize:
+            MainAxisSize.min, // Prevent Row from taking excessive space
+        children: [
+          Expanded(
+            child: Text(
+              experience.name,
+              overflow:
+                  TextOverflow.ellipsis, // Prevent overflow if name is long
+              maxLines: 1,
+            ),
+          ),
+          // Add spacing
+          const SizedBox(width: 8),
+          // Color Indicator Circle
+          if (experience.colorCategoryId != null)
+            Builder(
+              builder: (context) {
+                final colorCategory = _colorCategories.firstWhereOrNull(
+                  (cat) => cat.id == experience.colorCategoryId,
+                );
+                if (colorCategory != null) {
+                  return Container(
+                    width: 10, // User adjusted size
+                    height: 10,
+                    decoration: BoxDecoration(
+                      color: colorCategory.color,
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: Theme.of(context).dividerColor,
+                        width: 1,
+                      ),
+                    ),
+                    child: Tooltip(message: colorCategory.name),
+                  );
+                } else {
+                  return const SizedBox(
+                      width: 10,
+                      height: 10); // Maintain space even if category not found
+                }
+              },
+            ),
+        ],
+      ),
+      // --- MODIFIED: Integrate indicator into title --- END ---
       subtitle: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1864,7 +1921,14 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     await _saveColorCategoryOrder();
   }
 
-  // --- ADDED: Methods for Color Category Editing --- END ---
+  // --- ADDED: Helper to count experiences for a specific color category --- START ---
+  int _getExperienceCountForColorCategory(ColorCategory category) {
+    // Filter experiences where colorCategoryId matches the category's ID
+    return _experiences
+        .where((exp) => exp.colorCategoryId == category.id)
+        .length;
+  }
+  // --- ADDED: Helper to count experiences for a specific color category --- END ---
 
   // --- ADDED: Builder for Color Category List --- START ---
   Widget _buildColorCategoriesList() {
@@ -1876,8 +1940,9 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       itemCount: _colorCategories.length,
       itemBuilder: (context, index) {
         final category = _colorCategories[index];
-        // TODO: Calculate count for color categories if needed
-        // final count = _getExperienceCountForColorCategory(category);
+        // --- ADDED: Calculate count --- START ---
+        final count = _getExperienceCountForColorCategory(category);
+        // --- ADDED: Calculate count --- END ---
         return ListTile(
           key: ValueKey(category.id),
           leading: Container(
@@ -1889,7 +1954,9 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                 border: Border.all(color: Colors.grey.shade400, width: 1)),
           ),
           title: Text(category.name),
-          // subtitle: Text('$count ${count == 1 ? "experience" : "experiences"}'), // Placeholder
+          // --- MODIFIED: Add subtitle --- START ---
+          subtitle: Text('$count ${count == 1 ? "experience" : "experiences"}'),
+          // --- MODIFIED: Add subtitle --- END ---
           trailing: PopupMenuButton<String>(
             icon: const Icon(Icons.more_vert),
             tooltip: 'Color Category Options',
@@ -1921,8 +1988,13 @@ class _CollectionsScreenState extends State<CollectionsScreen>
             ],
           ),
           onTap: () {
-            // Currently no action on tap for color categories
-            print('Tapped on color category: ${category.name}');
+            // --- MODIFIED: Set selected color category --- START ---
+            setState(() {
+              _selectedColorCategory = category;
+            });
+            print(
+                'Tapped on color category: ${category.name}, showing experiences.');
+            // --- MODIFIED: Set selected color category --- END ---
           },
         );
       },
@@ -1941,4 +2013,79 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     );
   }
   // --- ADDED: Builder for Color Category List --- END ---
+
+  // --- ADDED: Widget to display experiences for a specific color category --- START ---
+  Widget _buildColorCategoryExperiencesList(ColorCategory category) {
+    final categoryExperiences = _experiences
+        .where((exp) => exp.colorCategoryId == category.id)
+        .toList(); // Filter experiences by colorCategoryId
+
+    // Apply the current experience sort order (reuse existing logic if applicable)
+    // Note: This creates a sorted copy
+    if (_experienceSortType == ExperienceSortType.alphabetical) {
+      categoryExperiences
+          .sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    } else if (_experienceSortType == ExperienceSortType.mostRecent) {
+      categoryExperiences.sort((a, b) {
+        return b.createdAt.compareTo(a.createdAt);
+      });
+    } // TODO: Implement distance sort for this view if needed
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Header row with back button and color category name
+        Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: Row(
+            children: [
+              IconButton(
+                icon: const Icon(Icons.arrow_back),
+                tooltip: 'Back to Color Categories',
+                onPressed: () {
+                  setState(() {
+                    _selectedColorCategory =
+                        null; // Go back to color category list
+                  });
+                },
+              ),
+              const SizedBox(width: 8),
+              // Show color circle and name
+              Container(
+                width: 20,
+                height: 20,
+                decoration: BoxDecoration(
+                    color: category.color,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.grey.shade400, width: 1)),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                category.name,
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+              const Spacer(),
+              // Optional: Add sort button specific to this filtered view
+            ],
+          ),
+        ),
+        const Divider(height: 1),
+        // List of experiences for this color category
+        Expanded(
+          child: categoryExperiences.isEmpty
+              ? Center(
+                  child: Text(
+                      'No experiences found with the "${category.name}" color category.'))
+              : ListView.builder(
+                  itemCount: categoryExperiences.length,
+                  itemBuilder: (context, index) {
+                    // Reuse the existing list item builder
+                    return _buildExperienceListItem(categoryExperiences[index]);
+                  },
+                ),
+        ),
+      ],
+    );
+  }
+  // --- ADDED: Widget to display experiences for a specific color category --- END ---
 }
