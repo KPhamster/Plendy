@@ -33,6 +33,10 @@ class AuthService {
               .initializeDefaultUserCategories(credential.user!.uid);
           print(
               "Default categories initialized for new user: ${credential.user!.uid}");
+          await _experienceService
+              .initializeDefaultUserColorCategories(credential.user!.uid);
+          print(
+              "Default COLOR categories initialized for new user: ${credential.user!.uid}");
         } catch (e) {
           print("Error initializing default categories: $e");
           // Don't rethrow - allow registration to succeed even if category init fails
@@ -85,6 +89,10 @@ class AuthService {
                 .initializeDefaultUserCategories(userCredential.user!.uid);
             print(
                 "Default categories initialized for new Google user: ${userCredential.user!.uid}");
+            await _experienceService
+                .initializeDefaultUserColorCategories(userCredential.user!.uid);
+            print(
+                "Default COLOR categories initialized for new Google user: ${userCredential.user!.uid}");
           } catch (e) {
             print("Error initializing default categories: $e");
             // Don't rethrow - allow sign-in to succeed even if category init fails

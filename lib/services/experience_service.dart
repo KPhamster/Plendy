@@ -37,8 +37,7 @@ class ExperienceService {
   CollectionReference _userCategoriesCollection(String userId) =>
       _usersCollection.doc(userId).collection('categories');
 
-  // --- ADDED ---
-  // Helper to get the path to a user's custom color categories sub-collection
+  // --- ADDED: Helper to get the path to a user's custom color categories sub-collection ---
   CollectionReference _userColorCategoriesCollection(String userId) =>
       _usersCollection.doc(userId).collection('color_categories');
   // --- END ADDED ---
@@ -1254,8 +1253,11 @@ class ExperienceService {
   /// Initializes the default color categories for a user in Firestore.
   Future<List<ColorCategory>> initializeDefaultUserColorCategories(
       String userId) async {
-    final defaultCategories = ColorCategory.createInitialCategories(userId);
+    // Use the ColorCategory initializer
+    final defaultCategories =
+        ColorCategory.createInitialColorCategories(userId);
     final batch = _firestore.batch();
+    // Use the color categories collection helper
     final collectionRef = _userColorCategoriesCollection(userId);
     List<ColorCategory> createdCategories = [];
 
@@ -1268,12 +1270,15 @@ class ExperienceService {
       final data = category.toMap();
       data['orderIndex'] = i; // Assign index
       batch.set(docRef, data);
+      // Create the ColorCategory object with the generated ID and index
       createdCategories.add(ColorCategory(
-          id: docRef.id,
-          name: category.name,
-          colorHex: category.colorHex,
-          ownerUserId: userId,
-          orderIndex: i));
+        id: docRef.id,
+        name: category.name,
+        colorHex: category.colorHex,
+        ownerUserId: userId,
+        orderIndex: i, // Include index
+        lastUsedTimestamp: null, // Ensure this is explicitly null
+      ));
     }
 
     try {
