@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:plendy/screens/register_screen.dart';
+import 'package:provider/provider.dart';
 
 class AuthScreen extends StatefulWidget {
   const AuthScreen({super.key});
@@ -14,25 +15,11 @@ class _AuthScreenState extends State<AuthScreen> {
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
-  final _authService = AuthService();
-
-  Future<void> _signInWithEmail() async {
-    if (_formKey.currentState!.validate()) {
-      try {
-        await _authService.signInWithEmail(
-          _emailController.text,
-          _passwordController.text,
-        );
-      } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(e.toString())),
-        );
-      }
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
+    final authService = Provider.of<AuthService>(context, listen: false);
+
     return Scaffold(
       body: SafeArea(
         child: Padding(
@@ -44,18 +31,21 @@ class _AuthScreenState extends State<AuthScreen> {
               children: [
                 TextFormField(
                   controller: _emailController,
-                  decoration: InputDecoration(labelText: 'Email'),
+                  decoration: const InputDecoration(labelText: 'Email'),
                   validator: (value) {
                     if (value == null || value.isEmpty) {
                       return 'Please enter your email';
                     }
+                    if (!RegExp(r"^\S+@\S+\.\S+$").hasMatch(value)) {
+                      return 'Please enter a valid email address';
+                    }
                     return null;
                   },
                 ),
-                SizedBox(height: 16),
+                const SizedBox(height: 16),
                 TextFormField(
                   controller: _passwordController,
-                  decoration: InputDecoration(labelText: 'Password'),
+                  decoration: const InputDecoration(labelText: 'Password'),
                   obscureText: true,
                   validator: (value) {
                     if (value == null || value.isEmpty) {
@@ -64,32 +54,50 @@ class _AuthScreenState extends State<AuthScreen> {
                     return null;
                   },
                 ),
-                SizedBox(height: 24),
+                const SizedBox(height: 24),
                 ElevatedButton(
-                  onPressed: _signInWithEmail,
-                  child: Text('Sign In'),
+                  onPressed: () async {
+                    if (_formKey.currentState!.validate()) {
+                      try {
+                        await authService.signInWithEmail(
+                          _emailController.text,
+                          _passwordController.text,
+                        );
+                      } catch (e) {
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text(e.toString())),
+                          );
+                        }
+                      }
+                    }
+                  },
+                  child: const Text('Sign In'),
                 ),
                 TextButton(
                   onPressed: () {
                     Navigator.push(
                       context,
-                      MaterialPageRoute(builder: (context) => RegisterScreen()),
+                      MaterialPageRoute(
+                          builder: (context) => const RegisterScreen()),
                     );
                   },
-                  child: Text('Create Account'),
+                  child: const Text('Create Account'),
                 ),
                 ElevatedButton.icon(
                   onPressed: () async {
                     try {
-                      await _authService.signInWithGoogle();
+                      await authService.signInWithGoogle();
                     } catch (e) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text(e.toString())),
-                      );
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text(e.toString())),
+                        );
+                      }
                     }
                   },
-                  icon: FaIcon(FontAwesomeIcons.google),
-                  label: Text('Sign in with Google'),
+                  icon: const FaIcon(FontAwesomeIcons.google),
+                  label: const Text('Sign in with Google'),
                 ),
               ],
             ),
@@ -98,4 +106,4 @@ class _AuthScreenState extends State<AuthScreen> {
       ),
     );
   }
-} 
+}

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
 import '../services/user_service.dart';
 import 'edit_profile_screen.dart';
+import 'package:provider/provider.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -11,47 +12,60 @@ class ProfileScreen extends StatefulWidget {
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
-  final _authService = AuthService();
   final _userService = UserService();
   String? _username;
 
+  AuthService? _authService;
+
   @override
-  void initState() {
-    super.initState();
-    _loadUsername();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final authService = Provider.of<AuthService>(context);
+    if (_authService != authService) {
+      _authService = authService;
+      _loadUsername();
+    }
   }
 
   Future<void> _loadUsername() async {
-    final user = _authService.currentUser;
+    final user = _authService?.currentUser;
     if (user != null) {
       final username = await _userService.getUserUsername(user.uid);
-      setState(() {
-        _username = username;
-      });
+      if (mounted) {
+        setState(() {
+          _username = username;
+        });
+      }
     }
   }
 
   void _refreshProfile() {
-    setState(() {});
+    if (mounted) {
+      setState(() {});
+    }
     _loadUsername();
   }
 
   @override
   Widget build(BuildContext context) {
-    final user = _authService.currentUser;
+    final authService = _authService!;
+    final user = authService.currentUser;
 
     return Scaffold(
       appBar: AppBar(
-        title: Text('Profile'),
+        title: const Text('Profile'),
         actions: [
           IconButton(
-            icon: Icon(Icons.edit),
+            icon: const Icon(Icons.edit),
             onPressed: () async {
-              await Navigator.push(
+              final result = await Navigator.push<bool>(
                 context,
-                MaterialPageRoute(builder: (context) => EditProfileScreen()),
+                MaterialPageRoute(
+                    builder: (context) => const EditProfileScreen()),
               );
-              _refreshProfile();
+              if (result == true) {
+                _refreshProfile();
+              }
             },
           ),
         ],
@@ -71,27 +85,29 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           ? NetworkImage(user!.photoURL!)
                           : null,
                       child: user?.photoURL == null
-                          ? Icon(Icons.person, size: 50)
+                          ? const Icon(Icons.person, size: 50)
                           : null,
                     ),
                   ),
-                  SizedBox(height: 16),
-                  Text(
-                    '@${_username ?? 'username_not_set'}',
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
+                  const SizedBox(height: 16),
+                  Center(
+                    child: Text(
+                      '@${_username ?? '...'}',
+                      style: const TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
-                  SizedBox(height: 8),
+                  const SizedBox(height: 8),
                   Text(
                     'Email: ${user?.email ?? 'No email'}',
-                    style: TextStyle(fontSize: 18),
+                    style: const TextStyle(fontSize: 18),
                   ),
-                  SizedBox(height: 8),
+                  const SizedBox(height: 8),
                   Text(
                     'Name: ${user?.displayName ?? 'No name set'}',
-                    style: TextStyle(fontSize: 18),
+                    style: const TextStyle(fontSize: 18),
                   ),
                 ],
               ),
@@ -103,13 +119,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
               width: double.infinity,
               child: ElevatedButton(
                 onPressed: () async {
-                  await _authService.signOut();
+                  await authService.signOut();
                 },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.red,
-                  padding: EdgeInsets.symmetric(vertical: 16),
+                  padding: const EdgeInsets.symmetric(vertical: 16),
                 ),
-                child: Text(
+                child: const Text(
                   'Log Out',
                   style: TextStyle(fontSize: 16),
                 ),

@@ -39,7 +39,12 @@ void main() async {
 
   // Initialize sharing service
   SharingService().init();
-  runApp(MyApp());
+  runApp(
+    Provider<AuthService>(
+      create: (_) => AuthService(),
+      child: const MyApp(),
+    ),
+  );
 }
 
 class MyApp extends StatefulWidget {
@@ -50,7 +55,6 @@ class MyApp extends StatefulWidget {
 }
 
 class _MyAppState extends State<MyApp> {
-  final AuthService _authService = AuthService();
   final SharingService _sharingService = SharingService();
   StreamSubscription? _intentSub;
   List<SharedMediaFile>? _sharedFiles;
@@ -114,6 +118,7 @@ class _MyAppState extends State<MyApp> {
   void dispose() {
     // Clean up observers
     WidgetsBinding.instance.removeObserver(AppLifecycleObserver());
+    _intentSub?.cancel(); // Cancel the stream subscription
     super.dispose();
   }
 
@@ -121,6 +126,9 @@ class _MyAppState extends State<MyApp> {
   Widget build(BuildContext context) {
     // Check if launched from share AND there are files
     bool launchedFromShare = _sharedFiles != null && _sharedFiles!.isNotEmpty;
+
+    // --- ADDED: Get AuthService from Provider ---
+    final authService = Provider.of<AuthService>(context, listen: false);
 
     return MaterialApp(
       navigatorKey: navigatorKey, // Assign the key to MaterialApp
@@ -138,27 +146,46 @@ class _MyAppState extends State<MyApp> {
                     // Logic to navigate back or close app
                     // Maybe SystemNavigator.pop() or navigate to MainScreen
                     print("MyApp: Closing share screen launched initially");
-                    _sharedFiles = null; // Clear shared files
+                    setState(() {
+                      // Use setState to trigger rebuild
+                      _sharedFiles = null; // Clear shared files
+                    });
                     ReceiveSharingIntent.instance.reset(); // Reset intent
-                    // Trigger rebuild to show AuthWrapper/MainScreen
-                    setState(() {});
-                    // Potentially navigate to a default screen if needed
-                    // navigatorKey.currentState?.pushReplacementNamed('/');
+                    // No explicit navigation needed here, the StreamBuilder below will handle it
                   }),
             )
           // Otherwise, proceed with normal auth flow
           : StreamBuilder<User?>(
-              stream: AuthService().authStateChanges,
+              // --- MODIFIED: Use provided AuthService instance ---
+              stream: authService.authStateChanges,
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
-                  return Center(child: CircularProgressIndicator());
+                  return const Center(child: CircularProgressIndicator());
                 }
 
                 // Print debug info
                 print(
                     'Auth state changed: ${snapshot.hasData ? 'Logged in' : 'Logged out'}');
 
-                return snapshot.hasData ? MainScreen() : AuthScreen();
+                // --- ADDED: Reset share data on logout ---
+                if (!snapshot.hasData && _sharedFiles != null) {
+                  // If user logs out while share data is present, clear it
+                  // Use a post-frame callback to avoid calling setState during build
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (mounted) {
+                      // Check if still mounted
+                      setState(() {
+                        _sharedFiles = null;
+                      });
+                      ReceiveSharingIntent.instance.reset();
+                      print("MyApp: Cleared share data due to logout.");
+                    }
+                  });
+                }
+
+                return snapshot.hasData
+                    ? const MainScreen()
+                    : const AuthScreen();
               },
             ),
     );

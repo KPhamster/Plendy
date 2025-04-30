@@ -22,10 +22,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
           _emailController.text,
           _passwordController.text,
         );
+        if (mounted) {
+          Navigator.of(context).pop();
+        }
       } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(e.toString())),
-        );
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(e.toString())),
+          );
+        }
       }
     }
   }
@@ -33,7 +38,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text('Create Account')),
+      appBar: AppBar(title: const Text('Create Account')),
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(16.0),
@@ -43,25 +48,31 @@ class _RegisterScreenState extends State<RegisterScreen> {
               children: [
                 TextFormField(
                   controller: _emailController,
-                  decoration: InputDecoration(labelText: 'Email'),
-                  validator: (value) => value?.isEmpty ?? true ? 'Enter an email' : null,
+                  decoration: const InputDecoration(labelText: 'Email'),
+                  validator: (value) =>
+                      value?.isEmpty ?? true ? 'Enter an email' : null,
                 ),
                 TextFormField(
                   controller: _passwordController,
-                  decoration: InputDecoration(labelText: 'Password'),
+                  decoration: const InputDecoration(labelText: 'Password'),
                   obscureText: true,
-                  validator: (value) => (value?.length ?? 0) < 6 ? 'Password must be at least 6 characters' : null,
+                  validator: (value) => (value?.length ?? 0) < 6
+                      ? 'Password must be at least 6 characters'
+                      : null,
                 ),
                 TextFormField(
                   controller: _confirmPasswordController,
-                  decoration: InputDecoration(labelText: 'Confirm Password'),
+                  decoration:
+                      const InputDecoration(labelText: 'Confirm Password'),
                   obscureText: true,
-                  validator: (value) => value != _passwordController.text ? 'Passwords do not match' : null,
+                  validator: (value) => value != _passwordController.text
+                      ? 'Passwords do not match'
+                      : null,
                 ),
-                SizedBox(height: 24),
+                const SizedBox(height: 24),
                 ElevatedButton(
                   onPressed: _register,
-                  child: Text('Create Account'),
+                  child: const Text('Create Account'),
                 ),
               ],
             ),
@@ -70,4 +81,4 @@ class _RegisterScreenState extends State<RegisterScreen> {
       ),
     );
   }
-} 
+}
