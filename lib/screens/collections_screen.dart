@@ -1851,8 +1851,12 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     );
 
     if (result != null) {
-      print("AddColorCategoryModal (for edit) returned, refreshing data...");
+      print(
+          "🎨 COLLECTIONS_SCREEN: EditColorCategoryModal returned result: ${result.id} - ${result.name}, refreshing data...");
       _loadData();
+    } else {
+      print(
+          "🎨 COLLECTIONS_SCREEN: EditColorCategoryModal closed without saving.");
     }
   }
 

@@ -13,6 +13,7 @@ import 'package:plendy/widgets/add_color_category_modal.dart'; // Placeholder/Ac
 import 'package:plendy/widgets/edit_color_categories_modal.dart'; // Placeholder/Actual
 import 'package:plendy/widgets/add_category_modal.dart';
 import 'package:plendy/widgets/edit_categories_modal.dart';
+import 'package:plendy/services/experience_service.dart';
 
 class EditExperienceModal extends StatefulWidget {
   final Experience experience;
@@ -36,6 +37,13 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
   final _formKey = GlobalKey<FormState>();
   final GoogleMapsService _mapsService =
       GoogleMapsService(); // If needed for picker
+
+  // --- ADDED: Service instance and local state for categories ---
+  final ExperienceService _experienceService = ExperienceService();
+  List<UserCategory> _currentUserCategories = [];
+  List<ColorCategory> _currentColorCategories = [];
+  bool _isLoadingCategories = true; // Loading indicator for categories
+  // --- END ADDED ---
 
   // --- ADDED: Constants for dialog actions (copied from ExperienceCardForm) ---
   static const String _addCategoryValue =
@@ -79,6 +87,10 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
     // --- ADDED: Listener for Website URL ---
     _cardData.websiteController.addListener(_triggerRebuild);
     // --- END ADDED ---
+
+    // --- ADDED: Load categories on init ---
+    _loadAllCategories();
+    // --- END ADDED ---
   }
 
   @override
@@ -98,6 +110,77 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
   void _triggerRebuild() {
     if (mounted) {
       setState(() {});
+    }
+  }
+  // --- END ADDED ---
+
+  // --- ADDED: Methods to load categories locally ---
+  Future<void> _loadAllCategories() async {
+    setState(() => _isLoadingCategories = true);
+    try {
+      final results = await Future.wait([
+        _experienceService.getUserCategories(),
+        _experienceService.getUserColorCategories(),
+      ]);
+      if (mounted) {
+        setState(() {
+          _currentUserCategories = results[0] as List<UserCategory>;
+          _currentColorCategories = results[1] as List<ColorCategory>;
+          _isLoadingCategories = false;
+        });
+      }
+    } catch (e) {
+      print("EditExperienceModal: Error loading categories: $e");
+      if (mounted) {
+        setState(() => _isLoadingCategories = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Error loading categories: $e")),
+        );
+      }
+    }
+  }
+
+  Future<void> _loadUserCategories() async {
+    // Simplified version for targeted refresh
+    setState(() => _isLoadingCategories = true);
+    try {
+      final categories = await _experienceService.getUserCategories();
+      if (mounted) {
+        setState(() {
+          _currentUserCategories = categories;
+          _isLoadingCategories = false;
+        });
+      }
+    } catch (e) {
+      print("EditExperienceModal: Error loading user categories: $e");
+      if (mounted) {
+        setState(() => _isLoadingCategories = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Error loading user categories: $e")),
+        );
+      }
+    }
+  }
+
+  Future<void> _loadColorCategories() async {
+    // Simplified version for targeted refresh
+    setState(() => _isLoadingCategories = true);
+    try {
+      final categories = await _experienceService.getUserColorCategories();
+      if (mounted) {
+        setState(() {
+          _currentColorCategories = categories;
+          _isLoadingCategories = false;
+        });
+      }
+    } catch (e) {
+      print("EditExperienceModal: Error loading color categories: $e");
+      if (mounted) {
+        setState(() => _isLoadingCategories = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Error loading color categories: $e")),
+        );
+      }
     }
   }
   // --- END ADDED ---
@@ -186,8 +269,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
     FocusScope.of(context).unfocus(); // Dismiss keyboard
 
     // Filter out Add/Edit options if they exist in the list passed from parent
-    final displayCategories =
-        widget.userCategories; // Assume parent passes clean list
+    final displayCategories = _currentUserCategories; // Use local state list
 
     final String? selectedValue = await showDialog<String>(
       context: context,
@@ -300,7 +382,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
     final selectedName = _cardData.selectedcategory;
     if (selectedName == null) return '❓';
     try {
-      final matchingCategory = widget.userCategories.firstWhere(
+      final matchingCategory = _currentUserCategories.firstWhere(
         (category) => category.name == selectedName,
       );
       return matchingCategory.icon;
@@ -333,6 +415,9 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
         _cardData.selectedcategory = newCategory.name;
         // We assume widget.userCategories might be updated by a provider later
       });
+      // --- MODIFIED: Refresh local list ---
+      _loadUserCategories(); // Refresh the list within this modal
+      // --- END MODIFICATION ---
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
             content: Text(
@@ -359,7 +444,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
       // Similar to adding, we can't easily refresh the list here.
       // If the currently selected category was deleted/renamed, we might need to clear selection.
       // Check if the current selection still exists in the (potentially updated) list
-      final currentSelectionExists = widget.userCategories
+      final currentSelectionExists = _currentUserCategories
           .any((cat) => cat.name == _cardData.selectedcategory);
       if (!currentSelectionExists && _cardData.selectedcategory != null) {
         setState(() {
@@ -370,6 +455,8 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
         // Force a rebuild in case category icons changed etc.
         setState(() {});
       }
+      // Simplest fix: Reload categories
+      _loadUserCategories(); // Refresh the list within this modal
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
             content:
@@ -526,7 +613,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
       return Colors.grey.shade400; // Default indicator color
     }
     // Use the list passed to the modal
-    final matchingCategory = widget.userColorCategories.firstWhere(
+    final matchingCategory = _currentColorCategories.firstWhere(
       (category) => category.id == selectedId,
       orElse: () => const ColorCategory(
           id: '',
@@ -545,8 +632,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
     }
     try {
       // Use the list passed to the modal
-      return widget.userColorCategories
-          .firstWhere((cat) => cat.id == selectedId);
+      return _currentColorCategories.firstWhere((cat) => cat.id == selectedId);
     } catch (e) {
       return null; // Not found
     }
@@ -571,6 +657,9 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
         _cardData.selectedColorCategoryId = newCategory.id;
         // Assume widget.userColorCategories might update via provider
       });
+      // --- MODIFIED: Refresh local list ---
+      _loadColorCategories(); // Refresh the list within this modal
+      // --- END MODIFICATION ---
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
             content: Text(
@@ -594,7 +683,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
     if (categoriesChanged == true && mounted) {
       print("Edit Modal: Color Categories potentially changed.");
       // Check if the current selection still exists
-      final currentSelectionExists = widget.userColorCategories
+      final currentSelectionExists = _currentColorCategories
           .any((cat) => cat.id == _cardData.selectedColorCategoryId);
       if (!currentSelectionExists &&
           _cardData.selectedColorCategoryId != null) {
@@ -606,6 +695,9 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
         // Force rebuild in case color/name changed
         setState(() {});
       }
+      // --- MODIFIED: Refresh local list ---
+      _loadColorCategories(); // Refresh the list within this modal
+      // --- END MODIFICATION ---
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
             content: Text(
@@ -620,7 +712,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
 
     // Use the list passed to the modal
     final List<ColorCategory> categoriesToShow =
-        List.from(widget.userColorCategories);
+        List.from(_currentColorCategories);
 
     final String? selectedValue = await showDialog<String>(
       context: context,
@@ -908,7 +1000,8 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                       ?.copyWith(color: Colors.grey[600])),
               const SizedBox(height: 4),
               OutlinedButton(
-                onPressed: _showCategorieselectionDialog,
+                onPressed:
+                    _isLoadingCategories ? null : _showCategorieselectionDialog,
                 style: OutlinedButton.styleFrom(
                   padding:
                       const EdgeInsets.symmetric(horizontal: 12, vertical: 15),
@@ -949,8 +1042,9 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                       ?.copyWith(color: Colors.grey[600])),
               const SizedBox(height: 4),
               OutlinedButton(
-                onPressed:
-                    _showColorCategorySelectionDialog, // Call the dialog function
+                onPressed: _isLoadingCategories
+                    ? null
+                    : _showColorCategorySelectionDialog,
                 style: OutlinedButton.styleFrom(
                   padding:
                       const EdgeInsets.symmetric(horizontal: 12, vertical: 15),
