@@ -97,14 +97,23 @@ class _AddColorCategoryModalState extends State<AddColorCategoryModal> {
             name: name,
             colorHex: colorHex,
           );
+          print(
+              "🎨 ADD_COLOR_MODAL: Attempting to update category ID: ${updatedCategory.id}");
+          print(
+              "🎨 ADD_COLOR_MODAL: Updating with Name: ${updatedCategory.name}, ColorHex: ${updatedCategory.colorHex}");
           await _experienceService.updateColorCategory(updatedCategory);
           resultCategory = updatedCategory;
           print("Color category updated: ${resultCategory.name}");
         } else {
+          print(
+              "🎨 ADD_COLOR_MODAL: Attempting to add new category with Name: $name, ColorHex: $colorHex");
           resultCategory =
               await _experienceService.addColorCategory(name, colorHex);
           print("Color category added: ${resultCategory.name}");
         }
+
+        print(
+            "🎨 ADD_COLOR_MODAL: Popping with resultCategory: ${resultCategory.id} - ${resultCategory.name}");
 
         if (mounted) {
           Navigator.of(context)
