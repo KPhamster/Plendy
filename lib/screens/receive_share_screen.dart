@@ -185,7 +185,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   bool _chainDetectedFromUrl = false;
 
   // ADDED: State map for preview expansion
-  final Map<int, bool> _previewExpansionStates = {};
+  // final Map<int, bool> _previewExpansionStates = {}; // REMOVED
 
   // RENAMED: State for user Categories
   Future<List<UserCategory>>? _userCategoriesFuture;
@@ -2419,6 +2419,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
                                     // Apply padding conditionally around the Card
                                     return Padding(
+                                      // ADDED: Use ValueKey based on the file path
+                                      key: ValueKey(file.path),
                                       padding: EdgeInsets.symmetric(
                                         horizontal: horizontalPadding,
                                         vertical: verticalPadding,
@@ -2833,67 +2835,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     // Special handling for Instagram URLs
     if (url.contains('instagram.com')) {
-      // Determine expansion state for this specific preview
-      final bool isExpanded = _previewExpansionStates[index] ?? false;
-      // Determine height based on expansion
-      final double height = isExpanded
-          ? 1200.0
-          : 400.0; // Default collapsed height for receive screen
-
-      // Build Column with WebView and Buttons
-      return Column(
-        mainAxisSize:
-            MainAxisSize.min, // Prevent column from taking excessive space
-        children: [
-          // The WebView
-          instagram_widget.InstagramWebView(
-            url: url,
-            height: height, // Pass calculated height
-            launchUrlCallback: _launchUrl,
-            onWebViewCreated: (controller) {},
-            onPageFinished: (url) {},
-          ),
-          // Spacing
-          const SizedBox(height: 8),
-          // Buttons specific to ReceiveShareScreen
-          Row(
-            // Space buttons out, pushing Expand to the right
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              // Spacer to help center the Instagram button
-              const SizedBox(width: 48), // Approx width of an IconButton
-              // Instagram Button (Centered)
-              IconButton(
-                icon: const Icon(FontAwesomeIcons.instagram),
-                color: const Color(0xFFE1306C),
-                iconSize: 32, // Increased size
-                tooltip: 'Open in Instagram',
-                constraints: const BoxConstraints(),
-                padding:
-                    EdgeInsets.zero, // Remove padding if centering with Spacer
-                onPressed: () => _launchUrl(url),
-              ),
-              // Expand/Collapse Button (Right side)
-              IconButton(
-                icon:
-                    Icon(isExpanded ? Icons.fullscreen_exit : Icons.fullscreen),
-                iconSize: 24,
-                color: Colors.blue,
-                tooltip: isExpanded ? 'Collapse' : 'Expand',
-                constraints: const BoxConstraints(),
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                onPressed: () {
-                  setState(() {
-                    _previewExpansionStates[index] = !isExpanded;
-                  });
-                },
-              ),
-            ],
-          ),
-          // Optional extra spacing below buttons if needed
-          const SizedBox(height: 8),
-        ],
+      // --- MODIFIED: Return the new wrapper widget ---
+      return InstagramPreviewWrapper(
+        url: url,
+        launchUrlCallback: _launchUrl,
       );
+      // --- END MODIFICATION ---
     }
 
     // Generic URL
@@ -3180,6 +3127,91 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   }
   // --- END ADDED ---
 } // End _ReceiveShareScreenState
+
+// --- ADDED: StatefulWidget to manage Instagram preview expansion state ---
+class InstagramPreviewWrapper extends StatefulWidget {
+  final String url;
+  final Future<void> Function(String) launchUrlCallback;
+
+  const InstagramPreviewWrapper({
+    Key? key,
+    required this.url,
+    required this.launchUrlCallback,
+  }) : super(key: key);
+
+  @override
+  _InstagramPreviewWrapperState createState() =>
+      _InstagramPreviewWrapperState();
+}
+
+class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
+  bool _isExpanded = false; // Default to collapsed
+
+  @override
+  Widget build(BuildContext context) {
+    // Determine height based on expansion state
+    final double height = _isExpanded
+        ? 1200.0
+        : 400.0; // Default collapsed height for receive screen
+
+    // Build Column with WebView and Buttons
+    return Column(
+      mainAxisSize:
+          MainAxisSize.min, // Prevent column from taking excessive space
+      children: [
+        // The WebView
+        instagram_widget.InstagramWebView(
+          url: widget.url,
+          height: height, // Pass calculated height
+          launchUrlCallback: widget.launchUrlCallback,
+          onWebViewCreated: (controller) {},
+          onPageFinished: (url) {},
+        ),
+        // Spacing
+        const SizedBox(height: 8),
+        // Buttons specific to ReceiveShareScreen
+        Row(
+          // Space buttons out, pushing Expand to the right
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            // Spacer to help center the Instagram button
+            const SizedBox(width: 48), // Approx width of an IconButton
+            // Instagram Button (Centered)
+            IconButton(
+              icon: const Icon(FontAwesomeIcons.instagram),
+              color: const Color(0xFFE1306C),
+              iconSize: 32, // Increased size
+              tooltip: 'Open in Instagram',
+              constraints: const BoxConstraints(),
+              padding:
+                  EdgeInsets.zero, // Remove padding if centering with Spacer
+              onPressed: () => widget.launchUrlCallback(widget.url),
+            ),
+            // Expand/Collapse Button (Right side)
+            IconButton(
+              icon:
+                  Icon(_isExpanded ? Icons.fullscreen_exit : Icons.fullscreen),
+              iconSize: 24,
+              color: Colors.blue,
+              tooltip: _isExpanded ? 'Collapse' : 'Expand',
+              constraints: const BoxConstraints(),
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              onPressed: () {
+                // Use local setState to only rebuild this wrapper
+                setState(() {
+                  _isExpanded = !_isExpanded;
+                });
+              },
+            ),
+          ],
+        ),
+        // Optional extra spacing below buttons if needed
+        const SizedBox(height: 8),
+      ],
+    );
+  }
+}
+// --- END ADDED StatefulWidget ---
 
 // Helper extension for Place Name (consider moving to Location model)
 extension LocationNameHelper on Location {
