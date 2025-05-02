@@ -2173,7 +2173,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           _yelpPreviewFutures[futureKey] = Future.value(newFutureData);
 
           // Trigger rebuild for the preview widget if it depends on the future map
-          setState(() {});
+          // setState(() {});
         } catch (e) {
           print("Error getting place details or updating card: $e");
           _showSnackBar(
@@ -2245,7 +2245,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           }
 
           // Trigger rebuild for the preview widget if it depends on the future map
-          setState(() {});
+          // setState(() {});
           print("LocationPicker update successful for non-Yelp context.");
         } catch (e) {
           print(
@@ -2549,12 +2549,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                                       .updateCardColorCategory(
                                                           card.id,
                                                           selectedColorCategoryId);
-                                                  // ADDED: Trigger rebuild on parent screen to ensure form updates
-                                                  if (mounted) {
-                                                    print(
-                                                        "  Parent setState called after color category provider update.");
-                                                    setState(() {});
-                                                  }
+                                                  // REMOVED: Trigger rebuild on parent screen
+                                                  // if (mounted) {
+                                                  //   print(
+                                                  //       "  Parent setState called after color category provider update.");
+                                                  //   setState(() {});
+                                                  // }
                                                 } else if (refreshCategories) {
                                                   print(
                                                       "  Refreshing Categories...");
@@ -2599,13 +2599,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                                 } else {
                                                   // Just trigger rebuild for other updates if needed (e.g., clearing fields)
                                                   print(
-                                                      "onUpdate: Non-category/color update, calling setState.");
-                                                  if (mounted) {
-                                                    // This setState might still be needed if form updates (like clearing fields)
-                                                    // require the parent screen to rebuild to reflect changes not managed by provider.
-                                                    // Let's keep it for now. If other updates are also moved to provider, this could be removed.
-                                                    setState(() {});
-                                                  }
+                                                      "onUpdate: Non-category/color update. No setState needed here."); // Updated log
+                                                  // REMOVE setState - Provider notification handles rebuilds for data changes
+                                                  // if (mounted) {
+                                                  //   setState(() {});
+                                                  // }
                                                 }
                                               },
                                               formKey: card.formKey,

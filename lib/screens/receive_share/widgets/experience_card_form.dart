@@ -67,8 +67,9 @@ class ExperienceCardForm extends StatefulWidget {
 
 class _ExperienceCardFormState extends State<ExperienceCardForm> {
   // Local state for UI elements directly managed here
-  bool _isExpanded = true;
-  bool _locationEnabled = true;
+  // REMOVED: _isExpanded and _locationEnabled are driven by cardData now
+  // bool _isExpanded = true;
+  // bool _locationEnabled = true;
 
   // Service needed for location updates if interaction happens within the form
   final GoogleMapsService _mapsService = GoogleMapsService();
@@ -110,9 +111,10 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
         if (isYelp) {
           final isValid = _isValidUrl(extractedUrl);
           if (isValid) {
-            setState(() {
-              widget.cardData.yelpUrlController.text = extractedUrl;
-            });
+            // REMOVED setState
+            // setState(() {
+            widget.cardData.yelpUrlController.text = extractedUrl;
+            // });
             // Notify parent of update (needed for suffix icon changes)
             widget.onUpdate(refreshCategories: false);
             ScaffoldMessenger.of(context).showSnackBar(
@@ -151,9 +153,10 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
     final clipboardText = clipboardData?.text;
 
     if (clipboardText != null && clipboardText.isNotEmpty) {
-      setState(() {
-        widget.cardData.websiteController.text = clipboardText; // Direct paste
-      });
+      // REMOVED setState
+      // setState(() {
+      widget.cardData.websiteController.text = clipboardText; // Direct paste
+      // });
       // Notify parent of update (needed for suffix icon changes)
       widget.onUpdate(refreshCategories: false);
       ScaffoldMessenger.of(context).showSnackBar(
@@ -185,72 +188,67 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
   @override
   void initState() {
     super.initState();
-    // Initialize local state from widget.cardData
-    _isExpanded = widget.cardData.isExpanded;
-    _locationEnabled = widget.cardData.locationEnabled;
+    // REMOVED: Initialize local state from widget.cardData
+    // _isExpanded = widget.cardData.isExpanded;
+    // _locationEnabled = widget.cardData.locationEnabled;
 
-    // Add listeners to controllers from widget.cardData
-    // to trigger rebuilds for suffix icons, collapsed header title etc.
-    widget.cardData.titleController.addListener(_triggerRebuild);
-    widget.cardData.yelpUrlController.addListener(_triggerRebuild);
-    widget.cardData.websiteController.addListener(_triggerRebuild);
+    // REMOVED: Add listeners to controllers
+    // widget.cardData.titleController.addListener(_triggerRebuild);
+    // widget.cardData.yelpUrlController.addListener(_triggerRebuild);
+    // widget.cardData.websiteController.addListener(_triggerRebuild);
   }
 
-  // Helper simply calls setState if mounted
-  void _triggerRebuild() {
-    if (mounted) {
-      setState(() {});
-    }
-  }
+  // REMOVED: _triggerRebuild method
+  // void _triggerRebuild() {
+  //   if (mounted) {
+  //     setState(() {});
+  //   }
+  // }
 
   @override
   void didUpdateWidget(covariant ExperienceCardForm oldWidget) {
     super.didUpdateWidget(oldWidget);
 
-    // Update local state based on incoming widget data if it changed
-    if (widget.cardData.locationEnabled != oldWidget.cardData.locationEnabled) {
-      setState(() {
-        _locationEnabled = widget.cardData.locationEnabled;
-      });
-    }
-    if (widget.cardData.isExpanded != oldWidget.cardData.isExpanded) {
-      setState(() {
-        _isExpanded = widget.cardData.isExpanded;
-      });
-    }
-    if (widget.cardData.selectedcategory !=
-        oldWidget.cardData.selectedcategory) {
-      _triggerRebuild();
-    }
+    // REMOVED: Update local state based on incoming widget data
+    // if (widget.cardData.locationEnabled != oldWidget.cardData.locationEnabled) {
+    //   setState(() {
+    //     _locationEnabled = widget.cardData.locationEnabled;
+    //   });
+    // }
+    // if (widget.cardData.isExpanded != oldWidget.cardData.isExpanded) {
+    //   setState(() {
+    //     _isExpanded = widget.cardData.isExpanded;
+    //   });
+    // }
+    // if (widget.cardData.selectedcategory !=
+    //     oldWidget.cardData.selectedcategory) {
+    //   _triggerRebuild(); // Keep this if the category button relies on it? No, parent rebuilds.
+    // }
 
-    // If the controller instances themselves have changed (e.g., after resetExperienceCards)
-    // update listeners.
-    if (!identical(
-        widget.cardData.titleController, oldWidget.cardData.titleController)) {
-      oldWidget.cardData.titleController.removeListener(_triggerRebuild);
-      widget.cardData.titleController.addListener(_triggerRebuild);
-    }
-    if (!identical(widget.cardData.yelpUrlController,
-        oldWidget.cardData.yelpUrlController)) {
-      oldWidget.cardData.yelpUrlController.removeListener(_triggerRebuild);
-      widget.cardData.yelpUrlController.addListener(_triggerRebuild);
-    }
-    if (!identical(widget.cardData.websiteController,
-        oldWidget.cardData.websiteController)) {
-      oldWidget.cardData.websiteController.removeListener(_triggerRebuild);
-      widget.cardData.websiteController.addListener(_triggerRebuild);
-    }
+    // REMOVED: Update listeners if controller instances change
+    // if (!identical(
+    //     widget.cardData.titleController, oldWidget.cardData.titleController)) {
+    //   oldWidget.cardData.titleController.removeListener(_triggerRebuild);
+    //   widget.cardData.titleController.addListener(_triggerRebuild);
+    // }
+    // if (!identical(widget.cardData.yelpUrlController,
+    //     oldWidget.cardData.yelpUrlController)) {
+    //   oldWidget.cardData.yelpUrlController.removeListener(_triggerRebuild);
+    //   widget.cardData.yelpUrlController.addListener(_triggerRebuild);
+    // }
+    // if (!identical(widget.cardData.websiteController,
+    //     oldWidget.cardData.websiteController)) {
+    //   oldWidget.cardData.websiteController.removeListener(_triggerRebuild);
+    //   widget.cardData.websiteController.addListener(_triggerRebuild);
+    // }
   }
 
   @override
   void dispose() {
-    // Remove listeners added in initState (from the potentially old widget.cardData instance)
-    // It's safer to check if the controller still exists or handle potential errors,
-    // but typically dispose is called when the state object is permanently removed.
-    // We access the current widget's cardData controllers here.
-    widget.cardData.titleController.removeListener(_triggerRebuild);
-    widget.cardData.yelpUrlController.removeListener(_triggerRebuild);
-    widget.cardData.websiteController.removeListener(_triggerRebuild);
+    // REMOVED: Remove listeners
+    // widget.cardData.titleController.removeListener(_triggerRebuild);
+    // widget.cardData.yelpUrlController.removeListener(_triggerRebuild);
+    // widget.cardData.websiteController.removeListener(_triggerRebuild);
     super.dispose();
   }
 
@@ -474,9 +472,10 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
       } else {
         // User selected an actual category
         if (widget.cardData.selectedcategory != selectedValue) {
-          setState(() {
-            widget.cardData.selectedcategory = selectedValue;
-          });
+          // REMOVED setState
+          // setState(() {
+          widget.cardData.selectedcategory = selectedValue;
+          // });
           widget.onUpdate(refreshCategories: false);
         }
       }
@@ -536,9 +535,10 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
           newCategoryName:
               null); // Pass null for new name, selection happens based on ID
       // Explicitly set the new category ID
-      setState(() {
-        widget.cardData.selectedColorCategoryId = newCategory.id;
-      });
+      // REMOVED setState
+      // setState(() {
+      widget.cardData.selectedColorCategoryId = newCategory.id;
+      // });
     }
   }
 
@@ -683,14 +683,12 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
       } else {
         // User selected an actual category ID
         if (widget.cardData.selectedColorCategoryId != selectedValue) {
-          // REMOVE local setState
-          // setState(() {
-          //   widget.cardData.selectedColorCategoryId = selectedValue;
-          // });
-          // Call onUpdate with the new ID
+          // Directly update the card data
+          widget.cardData.selectedColorCategoryId = selectedValue;
+          // Call onUpdate without the category ID to prevent explicit provider call
           widget.onUpdate(
             refreshCategories: false,
-            selectedColorCategoryId: selectedValue, // Pass the ID
+            // selectedColorCategoryId: selectedValue, // REMOVED
           );
         }
       }
@@ -728,12 +726,14 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
             // Header row with expand/collapse and delete functionality
             InkWell(
               onTap: () {
-                setState(() {
-                  _isExpanded = !_isExpanded;
-                });
-                widget.cardData.isExpanded = _isExpanded; // Update data model
+                // REMOVED setState
+                // setState(() {
+                // _isExpanded = !_isExpanded; // This variable is removed
+                // });
+                // Directly update the cardData which should trigger parent rebuild
+                widget.cardData.isExpanded = !widget.cardData.isExpanded;
                 // Unfocus any active fields when collapsing
-                if (!_isExpanded) {
+                if (!widget.cardData.isExpanded) {
                   FocusScope.of(context).unfocus();
                 }
                 widget.onUpdate(
@@ -746,7 +746,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                 child: Row(
                   children: [
                     Icon(
-                      _isExpanded
+                      widget.cardData.isExpanded // Read directly from cardData
                           ? Icons.keyboard_arrow_up
                           : Icons.keyboard_arrow_down,
                       color: Colors.blue,
@@ -779,7 +779,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
             ),
 
             // Expandable content
-            if (_isExpanded)
+            if (widget.cardData.isExpanded) // Read directly from cardData
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                 child: Column(
@@ -806,13 +806,15 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                     // Location selection with preview
                     GestureDetector(
                       // Call the parent's location selection logic
-                      onTap: (_locationEnabled)
+                      onTap: (widget.cardData
+                              .locationEnabled) // Read directly from cardData
                           ? () => widget.onLocationSelect(widget.cardData)
                           : null,
                       child: Container(
                         decoration: BoxDecoration(
                           border: Border.all(
-                              color: _locationEnabled
+                              color: widget.cardData
+                                      .locationEnabled // Read directly from cardData
                                   ? Colors.grey
                                   : Colors.grey.shade300),
                           borderRadius: BorderRadius.circular(4),
@@ -823,7 +825,8 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                         child: Row(
                           children: [
                             Icon(Icons.location_on,
-                                color: _locationEnabled
+                                color: widget.cardData
+                                        .locationEnabled // Read directly from cardData
                                     ? Colors.grey[600]
                                     : Colors.grey[400]),
                             SizedBox(width: 12),
@@ -839,7 +842,8 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                           currentLocation.getPlaceName(),
                                           style: TextStyle(
                                             fontWeight: FontWeight.bold,
-                                            color: _locationEnabled
+                                            color: widget.cardData
+                                                    .locationEnabled // Read directly from cardData
                                                 ? Colors.black
                                                 : Colors.grey[500],
                                           ),
@@ -850,7 +854,8 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                             currentLocation.address!,
                                             style: TextStyle(
                                               fontSize: 12,
-                                              color: _locationEnabled
+                                              color: widget.cardData
+                                                      .locationEnabled // Read directly from cardData
                                                   ? Colors.black87
                                                   : Colors.grey[500],
                                             ),
@@ -862,7 +867,8 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                   : Text(
                                       'Select location',
                                       style: TextStyle(
-                                          color: _locationEnabled
+                                          color: widget.cardData
+                                                  .locationEnabled // Read directly from cardData
                                               ? Colors.grey[600]
                                               : Colors.grey[400]),
                                     ),
@@ -871,11 +877,13 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                             Transform.scale(
                               scale: 0.8,
                               child: Switch(
-                                value: _locationEnabled,
+                                value: widget.cardData
+                                    .locationEnabled, // Read directly from cardData
                                 onChanged: (value) {
-                                  setState(() {
-                                    _locationEnabled = value;
-                                  });
+                                  // REMOVED setState
+                                  // setState(() {
+                                  //   _locationEnabled = value; // Variable removed
+                                  // });
                                   widget.cardData.locationEnabled =
                                       value; // Update model
                                   widget.onUpdate(
@@ -923,7 +931,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                         return null;
                       },
                       onChanged: (value) {
-                        // Listener calls _triggerRebuild for UI updates (suffix icon, header)
+                        // REMOVED Listener calls _triggerRebuild for UI updates (suffix icon, header)
                         // Notify parent only if parent needs immediate reaction to text changes
                         // widget.onUpdate();
                       },
@@ -1141,7 +1149,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                         return null;
                       },
                       onChanged: (value) {
-                        // Listener calls _triggerRebuild if needed
+                        // REMOVED Listener calls _triggerRebuild if needed
                         // widget.onUpdate();
                       },
                     ),
@@ -1248,7 +1256,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                         return null;
                       },
                       onChanged: (value) {
-                        // Listener calls _triggerRebuild if needed
+                        // REMOVED Listener calls _triggerRebuild if needed
                         // widget.onUpdate();
                       },
                     ),
