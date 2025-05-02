@@ -178,6 +178,7 @@ class ExperienceService {
     final data = {
       'name': name,
       'icon': icon,
+      'ownerUserId': userId, // Ensure owner ID is stored
       'orderIndex': nextOrderIndex, // Set the order index
       'lastUsedTimestamp': null // Explicitly null initially
     };

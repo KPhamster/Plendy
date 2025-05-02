@@ -319,6 +319,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
   // UPDATED: Method to handle adding a new category
   Future<void> _handleAddCategory() async {
     FocusScope.of(context).unfocus();
+    print("DEBUG: Attempting to show AddCategoryModal...");
     final newCategory = await showModalBottomSheet<UserCategory>(
       context: context,
       builder: (context) => const AddCategoryModal(),
@@ -338,6 +339,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
   // UPDATED: Method to handle editing categories
   Future<void> _handleEditCategories() async {
     FocusScope.of(context).unfocus();
+    print("DEBUG: Attempting to show EditCategoriesModal...");
     // Show the EditCategoriesModal
     final bool? categoriesChanged = await showModalBottomSheet<bool>(
       context: context,
