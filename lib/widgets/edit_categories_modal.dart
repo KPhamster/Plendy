@@ -56,6 +56,10 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
       }
     } catch (error) {
       print("_loadCategories ERROR: $error"); // Log Error
+      print("ERROR TYPE: ${error.runtimeType}");
+      if (error is Error) {
+        print("ERROR StackTrace: ${error.stackTrace}");
+      }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error loading Categories: $error')),
