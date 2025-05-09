@@ -198,6 +198,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       []; // Cache the loaded ColorCategories
   // --- END ADDED ---
 
+  // --- ADDED: ValueNotifiers ---
+  late ValueNotifier<List<UserCategory>> _userCategoriesNotifier;
+  late ValueNotifier<List<ColorCategory>> _userColorCategoriesNotifier;
+  // --- END ADDED ---
+
   @override
   void initState() {
     super.initState();
@@ -206,6 +211,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     // Register observer for app lifecycle events
     WidgetsBinding.instance.addObserver(this);
+
+    // --- ADDED: Initialize ValueNotifiers ---
+    _userCategoriesNotifier = ValueNotifier<List<UserCategory>>(_userCategories);
+    _userColorCategoriesNotifier =
+        ValueNotifier<List<ColorCategory>>(_userColorCategories);
+    // --- END ADDED ---
 
     // RENAMED: Fetch user Categories
     _loadUserCategories();
@@ -280,17 +291,19 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     // Return the future that completes after setting state or handling error
     return _userCategoriesFuture!.then((Categories) {
       if (mounted) {
-        setState(() {
+        setState(() { // This setState is for the FutureBuilder that depends on _userCategoriesFuture
           _userCategories = Categories; // RENAMED state variable
+          _userCategoriesNotifier.value = Categories; // ADDED: Update notifier
           _updateCardDefaultCategoriesIfNeeded(Categories);
         });
       }
     }).catchError((error) {
       print("Error loading user Categories: $error");
       if (mounted) {
-        setState(() {
+        setState(() { // This setState is for the FutureBuilder
           // Use empty list instead of defaults on error
           _userCategories = [];
+          _userCategoriesNotifier.value = []; // ADDED: Update notifier
           // _userCategories = UserCategory.createInitialCategories(); // Needs ownerId
         });
         // REMOVED: Calling ScaffoldMessenger inside initState catchError is problematic
@@ -404,6 +417,47 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     });
   }
 
+  // --- ADDED: Methods to refresh categories from dialogs without full screen setState ---
+  Future<void> _refreshUserCategoriesFromDialog() {
+    print("_refreshUserCategoriesFromDialog START");
+    // No need to assign to _userCategoriesFuture here as the main FutureBuilder isn't being re-triggered
+    return _experienceService.getUserCategories().then((categories) {
+      if (mounted) {
+        _userCategories = categories; // Keep local list in sync if used elsewhere directly
+        _userCategoriesNotifier.value = categories; // This notifies ValueListenableBuilders
+        _updateCardDefaultCategoriesIfNeeded(categories); // Ensure defaults are handled
+        print(
+            "  _refreshUserCategoriesFromDialog: Notifier updated with ${categories.length} categories.");
+      }
+    }).catchError((error) {
+      print("Error refreshing user Categories from dialog: $error");
+      if (mounted) {
+        _userCategories = [];
+        _userCategoriesNotifier.value = [];
+      }
+    });
+  }
+
+  Future<void> _refreshUserColorCategoriesFromDialog() {
+    print("_refreshUserColorCategoriesFromDialog START");
+    return _experienceService.getUserColorCategories().then((colorCategories) {
+      if (mounted) {
+        _userColorCategories = colorCategories; // Keep local list in sync
+        _userColorCategoriesNotifier.value =
+            colorCategories; // This notifies ValueListenableBuilders
+        print(
+            "  _refreshUserColorCategoriesFromDialog: Notifier updated with ${colorCategories.length} color categories.");
+      }
+    }).catchError((error) {
+      print("Error refreshing user Color Categories from dialog: $error");
+      if (mounted) {
+        _userColorCategories = [];
+        _userColorCategoriesNotifier.value = [];
+      }
+    });
+  }
+  // --- END ADDED ---
+  
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
@@ -447,6 +501,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       ReceiveSharingIntent.instance.reset();
       print("SHARE DEBUG: Intent reset in dispose");
     }
+
+    // --- ADDED: Dispose ValueNotifiers ---
+    _userCategoriesNotifier.dispose();
+    _userColorCategoriesNotifier.dispose();
+    // --- END ADDED ---
 
     // No need to dispose cards here, Provider handles it
     // Dispose all controllers for all experience cards
@@ -1456,9 +1515,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     }
 
     // If no specific card found, use the first one
-    targetCard ??= provider.experienceCards.isNotEmpty
-        ? provider.experienceCards.first
-        : null;
+    targetCard ??=
+        provider.experienceCards.isNotEmpty ? provider.experienceCards.first : null;
 
     if (targetCard == null) return;
 
@@ -1668,7 +1726,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       print(
           "SAVE_DEBUG: Starting save process for ${experienceCards.length} card(s) with ${uniqueSharedPaths.length} unique media paths.");
 
-      // --- Step 1: Pre-process Media Items (Find or Create for current user) ---
+      // --- Step 1: Pre-process Media Items (Find or Create for current user) ---\
       final Map<String, String> mediaPathToItemIdMap = {};
       print("SAVE_DEBUG: Pre-processing media paths...");
       for (final path in uniqueSharedPaths) {
@@ -1830,7 +1888,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               updateCount++; // Assume an update will happen if found
             }
 
-            // --- Gather Media IDs for this Experience ---
+            // --- Gather Media IDs for this Experience ---\
             final List<String> relevantMediaItemIds = uniqueSharedPaths
                 .map((path) => mediaPathToItemIdMap[path])
                 .where((id) => id != null)
@@ -1839,7 +1897,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             print(
                 "SAVE_DEBUG: Relevant Media IDs for Experience $targetExperienceId: $relevantMediaItemIds");
 
-            // --- Update Experience with Media Links ---
+            // --- Update Experience with Media Links ---\
             if (currentExperienceData != null) {
               List<String> existingMediaIds =
                   currentExperienceData.sharedMediaItemIds;
@@ -1899,7 +1957,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               continue;
             }
 
-            // --- Link Media Items to this Experience ---
+            // --- Link Media Items to this Experience ---\
             print(
                 "SAVE_DEBUG: Linking ${relevantMediaItemIds.length} media items to Experience $targetExperienceId...");
             for (final mediaItemId in relevantMediaItemIds) {
@@ -1913,7 +1971,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               }
             }
 
-            // --- Handle Public Experience (Logic seems mostly okay, uses paths) ---
+            // --- Handle Public Experience (Logic seems mostly okay, uses paths) ---\
             if (canProcessPublicExperience) {
               print(
                   "SAVE_DEBUG: Processing Public Experience logic for PlaceID: $placeId");
@@ -1946,9 +2004,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               print(
                   "SAVE_DEBUG: Skipping Public Experience logic due to missing PlaceID or Location.");
             }
-            // --- Public Experience END ---
+            // --- Public Experience END ---\
 
-            // --- Update Category Timestamp --- START ---
+            // --- Update Category Timestamp --- START ---\
             if (selectedCategoryObject != null) {
               try {
                 await _experienceService
@@ -1963,9 +2021,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               print(
                   "Warning: Could not find category object for '${categoryNameToSave}' to update timestamp.");
             }
-            // --- Update Category Timestamp --- END ---
+            // --- Update Category Timestamp --- END ---\
 
-            // --- ADDED: Update Color Category Timestamp --- START ---
+            // --- ADDED: Update Color Category Timestamp --- START ---\
             if (colorCategoryIdToSave != null) {
               try {
                 await _experienceService.updateColorCategoryLastUsedTimestamp(
@@ -1977,7 +2035,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                     "Error updating timestamp for color category $colorCategoryIdToSave: $e");
               }
             }
-            // --- END ADDED: Update Color Category Timestamp --- END ---
+            // --- END ADDED: Update Color Category Timestamp --- END ---\
           } catch (e) {
             print(
                 "SAVE_DEBUG: Error processing card '${card.titleController.text}': $e");
@@ -1991,7 +2049,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         } // --- Step 2: Process Each Experience Card --- END ---
       } // End else block (media processing succeeded)
 
-      // --- Final Message and Navigation --- START ---
+      // --- Final Message and Navigation --- START ---\
       String message;
       if (errors.isEmpty) {
         message = '';
@@ -2014,7 +2072,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         MaterialPageRoute(builder: (context) => const MainScreen()),
         (Route<dynamic> route) => false,
       );
-      // --- Final Message and Navigation --- END ---
+      // --- Final Message and Navigation --- END ---\
     } catch (e) {
       print('Error saving experiences: $e');
       _showSnackBar(context, 'Error saving experiences: $e');
@@ -2341,12 +2399,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             // RENAMED: FutureBuilder for User Categories
             // --- MODIFIED: Use Future.wait to load both category types ---
             : FutureBuilder<List<dynamic>>(
-                future: Future.wait([
-                  // Use Future.wait
-                  _userCategoriesFuture ??
-                      Future.value([]), // Handle null future
-                  _userColorCategoriesFuture ??
-                      Future.value([]) // Handle null future
+                future: Future.wait([ // Use Future.wait
+                  _userCategoriesFuture ?? Future.value([]), // Handle null future
+                  _userColorCategoriesFuture ?? Future.value([]) // Handle null future
                 ]),
                 builder: (context, snapshot) {
                   if (snapshot.connectionState == ConnectionState.waiting) {
@@ -2390,8 +2445,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                               else
                                 // REMOVED Outer Padding around ListView
                                 ListView.builder(
-                                  padding: EdgeInsets
-                                      .zero, // Ensure ListView itself has no padding
+                                  padding: EdgeInsets.zero, // Ensure ListView itself has no padding
                                   shrinkWrap: true,
                                   physics: const NeverScrollableScrollPhysics(),
                                   itemCount: _currentSharedFiles.length,
@@ -2480,7 +2534,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                       )
                                     // --- End Title Placeholder ---
                                     else
-                                      // --- Restored No Cards Title ---
+                                      // --- Restored No Cards Title ---\
                                       const Padding(
                                           padding: EdgeInsets.only(
                                               top: 16.0, bottom: 8.0),
@@ -2513,17 +2567,17 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                             final card = experienceCards[i];
                                             // ADDED Key based on the category list to force rebuild
                                             return ExperienceCardForm(
-                                              key: ObjectKey(
-                                                  _userCategories), // Key changes when list instance changes
+                                              key: ObjectKey(card.id), // Use a stable key per card
                                               cardData: card,
                                               isFirstCard: i == 0,
                                               canRemove:
                                                   experienceCards.length > 1,
-                                              userCategories: _userCategories,
-                                              // --- ADDED ---
-                                              userColorCategories:
-                                                  _userColorCategories,
-                                              // --- END ADDED ---
+                                              // --- MODIFIED: Pass Notifiers ---
+                                              userCategoriesNotifier:
+                                                  _userCategoriesNotifier, 
+                                              userColorCategoriesNotifier:
+                                                  _userColorCategoriesNotifier, 
+                                              // --- END MODIFIED ---
                                               onRemove: _removeExperienceCard,
                                               onLocationSelect:
                                                   _showLocationPicker,
@@ -2549,41 +2603,27 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                                       .updateCardColorCategory(
                                                           card.id,
                                                           selectedColorCategoryId);
-                                                  // REMOVED: Trigger rebuild on parent screen
-                                                  // if (mounted) {
-                                                  //   print(
-                                                  //       "  Parent setState called after color category provider update.");
-                                                  //   setState(() {});
-                                                  // }
                                                 } else if (refreshCategories) {
                                                   print(
-                                                      "  Refreshing Categories...");
-                                                  // --- MODIFIED: Refresh both types ---
+                                                      "  Refreshing Categories via Notifiers...");
+                                                  // --- MODIFIED: Call methods that update Notifiers ---
                                                   Future.wait([
-                                                    _loadUserCategories(),
-                                                    _loadUserColorCategories()
+                                                    _refreshUserCategoriesFromDialog(), 
+                                                    _refreshUserColorCategoriesFromDialog() 
                                                   ]).then((_) {
                                                     // --- END MODIFIED ---
                                                     print(
-                                                        "  _loadUserCategories finished.");
+                                                        "  Category Notifiers updated.");
                                                     if (mounted) {
                                                       print(
-                                                          "  Component is mounted after category refresh.");
-                                                      // If only refresh was requested (e.g., after Edit modal)
-                                                      // We still need setState to trigger rebuild with the new list loaded by _loadUserCategories
+                                                          "  Component is mounted after category refresh via notifiers.");
+                                                      // NO setState() for ReceiveShareScreen
                                                       print(
-                                                          "  Refresh requested, calling setState to update list.");
-                                                      setState(
-                                                          () {}); // Keep setState here for list refresh UI update
-                                                      // Handle newCategoryName selection if applicable (this part seems okay)
+                                                          "  Categories refreshed from dialog. Notifiers updated. No screen setState needed.");
                                                       if (newCategoryName !=
                                                           null) {
                                                         print(
                                                             "  Attempting to set selected TEXT category for card ${card.id} to: $newCategoryName");
-                                                        // Find the corresponding card in the *provider's* list and update it
-                                                        // Or rely on the _loadUserCategories updating the list and the subsequent
-                                                        // setState triggering a rebuild which might pick up the default?
-                                                        // Let's try setting it directly via provider as well for consistency.
                                                         context
                                                             .read<
                                                                 ReceiveShareProvider>()
@@ -2593,17 +2633,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                                       }
                                                     } else {
                                                       print(
-                                                          "  Component is NOT mounted after category refresh.");
+                                                          "  Component is NOT mounted after category refresh via notifiers.");
                                                     }
                                                   });
                                                 } else {
-                                                  // Just trigger rebuild for other updates if needed (e.g., clearing fields)
                                                   print(
-                                                      "onUpdate: Non-category/color update. No setState needed here."); // Updated log
-                                                  // REMOVE setState - Provider notification handles rebuilds for data changes
-                                                  // if (mounted) {
-                                                  //   setState(() {});
-                                                  // }
+                                                      "onUpdate: Non-category/color update. No setState needed here."); 
                                                 }
                                               },
                                               formKey: card.formKey,
@@ -2611,15 +2646,15 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                           }),
 
                                     // Add another experience button
-                                    // --- Restored _isSpecialUrl check ---
+                                    // --- Restored _isSpecialUrl check ---\
                                     if (!_isSpecialUrl(_currentSharedFiles
                                             .isNotEmpty
                                         ? _extractFirstUrl(_currentSharedFiles
                                                 .first.path) ??
                                             ''
                                         : ''))
-                                      // --- End Restored Check ---
-                                      // --- Restored Button Placeholder ---
+                                      // --- End Restored Check ---\
+                                      // --- Restored Button Placeholder ---\
                                       Padding(
                                         padding: const EdgeInsets.only(
                                             top: 12.0, bottom: 16.0),
@@ -2642,7 +2677,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                           ),
                                         ),
                                       )
-                                    // --- End Button Placeholder ---
+                                    // --- End Button Placeholder ---\
                                     ,
                                   ],
                                 ),
@@ -2652,7 +2687,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                         ),
                       ),
                       // Action buttons (Save/Cancel) - Fixed at the bottom
-                      // --- Restored Buttons Container ---
+                      // --- Restored Buttons Container ---\
                       Container(
                         padding: const EdgeInsets.symmetric(
                             horizontal: 16.0, vertical: 12.0),
@@ -2699,12 +2734,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                           ],
                         ),
                       )
-                      // --- End Buttons Container ---
+                      // --- End Buttons Container ---\
                     ],
                   );
                 },
               ),
-        // --- END FutureBuilder ---
+        // --- END FutureBuilder ---\
       ),
     ));
   }
@@ -2924,7 +2959,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     String? placeIdToLookup;
 
     try {
-      // --- 2. Search with Extracted Path Info (Primary Strategy) ---
+      // --- 2. Search with Extracted Path Info (Primary Strategy) ---\
       String searchQuery =
           resolvedUrl; // Default to full URL in case path extraction fails
       try {
@@ -2933,7 +2968,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         final placeSegmentIndex = uri.pathSegments.indexOf('place');
         if (placeSegmentIndex != -1 &&
             placeSegmentIndex < uri.pathSegments.length - 1) {
-          // Extract text after /place/
+          // Extract text after /place/\
           String placePathInfo = uri.pathSegments[placeSegmentIndex + 1];
           // Decode and clean up
           placePathInfo =
@@ -2987,7 +3022,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             "🗺️ MAPS PARSE ERROR: Error during fallback search with query \"$searchQuery\": $e");
       }
 
-      // --- 3. Extract Place ID from Query (Fallback Strategy) ---
+      // --- 3. Extract Place ID from Query (Fallback Strategy) ---\
       // Only try this if the path search failed
       if (foundLocation == null) {
         print(
@@ -3012,7 +3047,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         }
       }
 
-      // --- 4. Final Check and Return ---
+      // --- 4. Final Check and Return ---\
       if (foundLocation != null) {
         final String finalName = foundLocation.getPlaceName(); // Use helper
         final String? finalWebsite = foundLocation.website;
@@ -3104,8 +3139,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       print(
           "  _loadUserColorCategories: Service call successful, received ${colorCategories.length} items.");
       if (mounted) {
-        setState(() {
+        setState(() { // This setState is for the FutureBuilder that depends on _userColorCategoriesFuture
           _userColorCategories = colorCategories;
+          _userColorCategoriesNotifier.value = colorCategories; // ADDED: Update notifier
           print("  _loadUserColorCategories: setState called."); // Log setState
         });
       } else {
@@ -3115,8 +3151,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     }).catchError((error) {
       print("Error loading user Color Categories: $error"); // Log error
       if (mounted) {
-        setState(() {
+        setState(() { // This setState is for the FutureBuilder
           _userColorCategories = []; // Use empty list on error
+          _userColorCategoriesNotifier.value = []; // ADDED: Update notifier
         });
         // Optionally show snackbar
         // _showSnackBar(context, "Error loading color categories.");

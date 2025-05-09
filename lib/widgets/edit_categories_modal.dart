@@ -219,184 +219,216 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
     final screenHeight = MediaQuery.of(context).size.height;
     final maxHeight = screenHeight * 0.9;
 
-    // Wrap Padding in a Container with constraints
-    return Container(
-      constraints: BoxConstraints(
-        maxHeight: maxHeight,
-      ),
-      child: Padding(
-        padding: EdgeInsets.only(
-          left: 16.0,
-          right: 16.0,
-          top: 8.0,
-          bottom: bottomPadding + 16.0, // Padding for keyboard is still needed
+    return PopScope(
+      canPop: false, 
+      onPopInvoked: (bool didPop) async {
+        if (didPop) {
+          return; 
+        }
+        // If not popped (e.g., swipe gesture), call _handleCloseLogic
+        bool result = await _handleCloseLogic();
+        if (mounted) {
+          Navigator.of(context).pop(result); 
+        }
+      },
+      child: Container(
+        constraints: BoxConstraints(
+          maxHeight: maxHeight,
         ),
-        child: Column(
-          // Re-add mainAxisSize: MainAxisSize.min so the column doesn't force max height if content is short
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Header Row (Fixed Top)
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Padding(
-                  padding:
-                      const EdgeInsets.only(left: 8.0, top: 8.0, bottom: 8.0),
-                  child: Text('Edit Categories',
-                      style: Theme.of(context).textTheme.titleLarge),
-                ),
-                // UPDATED: Sorting Menu Button
-                PopupMenuButton<CategorySortType>(
-                  // Use standard sort icon
-                  icon: const Icon(Icons.sort),
-                  tooltip: "Sort Categories",
-                  onSelected: (CategorySortType result) {
-                    // Directly apply the selected sort permanently
-                    _applySort(result);
-                  },
-                  itemBuilder: (BuildContext context) =>
-                      <PopupMenuEntry<CategorySortType>>[
-                    // UPDATED: Menu items (Removed Manual)
-                    const PopupMenuItem<CategorySortType>(
-                      value: CategorySortType.mostRecent,
-                      child: Text('Sort by Most Recent'),
-                    ),
-                    const PopupMenuItem<CategorySortType>(
-                      value: CategorySortType.alphabetical,
-                      child: Text('Sort Alphabetically'),
-                    ),
-                  ],
-                ),
-                IconButton(
-                  icon: const Icon(Icons.close),
-                  onPressed: () =>
-                      _handleClose(), // UPDATED: Use helper to handle close
-                  tooltip: 'Close',
-                ),
-              ],
-            ),
-            const Divider(),
-            const SizedBox(height: 8),
-            // Scrollable List Area (Uses Expanded)
-            Expanded(
-              child: _isLoading && _Categories.isEmpty
-                  ? const Center(child: CircularProgressIndicator())
-                  : _Categories.isEmpty
-                      ? const Center(child: Text('No Categories found.'))
-                      // UPDATED: Use ReorderableListView.builder
-                      : ReorderableListView.builder(
-                          // buildDefaultDragHandles: false, // We use a custom handle
-                          itemCount: _Categories.length,
-                          itemBuilder: (context, index) {
-                            final category = _Categories[index];
-                            // IMPORTANT: Each item MUST have a unique Key
-                            return ListTile(
-                              key: ValueKey(category.id),
-                              leading: Text(category.icon,
-                                  style: const TextStyle(fontSize: 24)),
-                              title: Text(category.name),
-                              trailing: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  IconButton(
-                                    icon: Icon(Icons.edit_outlined,
-                                        color: Colors.blue[700], size: 20),
-                                    tooltip: 'Edit ${category.name}',
-                                    onPressed: _isLoading
-                                        ? null
-                                        : () => _editCategory(category),
-                                  ),
-                                  IconButton(
-                                    icon: Icon(Icons.delete_outline,
-                                        color: Colors.red[700], size: 20),
-                                    tooltip: 'Delete ${category.name}',
-                                    onPressed: _isLoading
-                                        ? null
-                                        : () => _deleteCategory(category),
-                                  ),
-                                  // Add some spacing before the drag handle
-                                  const SizedBox(width: 20),
-                                  // Moved Drag Handle to the end of the Row
-                                  ReorderableDragStartListener(
-                                    index: index,
-                                    child: const Icon(Icons.drag_handle,
-                                        color: Colors.grey, size: 24),
-                                  ),
-                                ],
-                              ),
-                            );
-                          },
-                          onReorder: (int oldIndex, int newIndex) {
-                            setState(() {
-                              // Adjust index if item is moved down in the list
-                              if (newIndex > oldIndex) {
-                                newIndex -= 1;
-                              }
-                              // Remove item from old position and insert into new position
-                              final UserCategory item =
-                                  _Categories.removeAt(oldIndex);
-                              _Categories.insert(newIndex, item);
+        child: Padding(
+          padding: EdgeInsets.only(
+            left: 16.0,
+            right: 16.0,
+            top: 8.0,
+            bottom: bottomPadding + 16.0, // Padding for keyboard is still needed
+          ),
+          child: Column(
+            // Re-add mainAxisSize: MainAxisSize.min so the column doesn't force max height if content is short
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Header Row (Fixed Top)
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Padding(
+                    padding:
+                        const EdgeInsets.only(left: 8.0, top: 8.0, bottom: 8.0),
+                    child: Text('Edit Categories',
+                        style: Theme.of(context).textTheme.titleLarge),
+                  ),
+                  // UPDATED: Sorting Menu Button
+                  PopupMenuButton<CategorySortType>(
+                    // Use standard sort icon
+                    icon: const Icon(Icons.sort),
+                    tooltip: "Sort Categories",
+                    onSelected: (CategorySortType result) {
+                      // Directly apply the selected sort permanently
+                      _applySort(result);
+                    },
+                    itemBuilder: (BuildContext context) =>
+                        <PopupMenuEntry<CategorySortType>>[
+                      // UPDATED: Menu items (Removed Manual)
+                      const PopupMenuItem<CategorySortType>(
+                        value: CategorySortType.mostRecent,
+                        child: Text('Sort by Most Recent'),
+                      ),
+                      const PopupMenuItem<CategorySortType>(
+                        value: CategorySortType.alphabetical,
+                        child: Text('Sort Alphabetically'),
+                      ),
+                    ],
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () async {
+                      bool result = await _handleCloseLogic();
+                      if (mounted) {
+                        Navigator.of(context).pop(result);
+                      }
+                    },
+                    tooltip: 'Close',
+                  ),
+                ],
+              ),
+              const Divider(),
+              const SizedBox(height: 8),
+              // Scrollable List Area (Uses Expanded)
+              Expanded(
+                child: _isLoading && _Categories.isEmpty
+                    ? const Center(child: CircularProgressIndicator())
+                    : _Categories.isEmpty
+                        ? const Center(child: Text('No Categories found.'))
+                        // UPDATED: Use ReorderableListView.builder
+                        : ReorderableListView.builder(
+                            // buildDefaultDragHandles: false, // We use a custom handle
+                            itemCount: _Categories.length,
+                            itemBuilder: (context, index) {
+                              final category = _Categories[index];
+                              // IMPORTANT: Each item MUST have a unique Key
+                              return ListTile(
+                                key: ValueKey(category.id),
+                                leading: Text(category.icon,
+                                    style: const TextStyle(fontSize: 24)),
+                                title: Text(category.name),
+                                trailing: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    IconButton(
+                                      icon: Icon(Icons.edit_outlined,
+                                          color: Colors.blue[700], size: 20),
+                                      tooltip: 'Edit ${category.name}',
+                                      onPressed: _isLoading
+                                          ? null
+                                          : () => _editCategory(category),
+                                    ),
+                                    IconButton(
+                                      icon: Icon(Icons.delete_outline,
+                                          color: Colors.red[700], size: 20),
+                                      tooltip: 'Delete ${category.name}',
+                                      onPressed: _isLoading
+                                          ? null
+                                          : () => _deleteCategory(category),
+                                    ),
+                                    // Add some spacing before the drag handle
+                                    const SizedBox(width: 20),
+                                    // Moved Drag Handle to the end of the Row
+                                    ReorderableDragStartListener(
+                                      index: index,
+                                      child: const Icon(Icons.drag_handle,
+                                          color: Colors.grey, size: 24),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            },
+                            onReorder: (int oldIndex, int newIndex) {
+                              setState(() {
+                                // Adjust index if item is moved down in the list
+                                if (newIndex > oldIndex) {
+                                  newIndex -= 1;
+                                }
+                                // Remove item from old position and insert into new position
+                                final UserCategory item =
+                                    _Categories.removeAt(oldIndex);
+                                _Categories.insert(newIndex, item);
 
-                              // Update orderIndex property in the local list
-                              _updateLocalOrderIndices(); // Use helper
+                                // Update orderIndex property in the local list
+                                _updateLocalOrderIndices(); // Use helper
 
-                              _CategoriesChanged =
-                                  true; // Mark that changes were made
-                              print(
-                                  "Category reordered, _CategoriesChanged set to true."); // Log flag set
+                                _CategoriesChanged =
+                                    true; // Mark that changes were made
+                                print(
+                                    "Category reordered, _CategoriesChanged set to true."); // Log flag set
 
-                              // Update orderIndex property in the local list
-                              _updateLocalOrderIndices(); // Use helper
+                                // Update orderIndex property in the local list
+                                _updateLocalOrderIndices(); // Use helper
 
-                              print("Categories reordered.");
-                            });
-                          },
-                        ),
-            ),
-            const SizedBox(height: 16),
-            // Add New Category Button (Fixed Bottom)
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.add),
-                label: const Text('Add New Category'),
-                onPressed: _isLoading ? null : _addNewCategory,
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 12),
+                                print("Categories reordered.");
+                              });
+                            },
+                          ),
+              ),
+              const SizedBox(height: 16),
+              // Add New Category Button (Fixed Bottom)
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  icon: const Icon(Icons.add),
+                  label: const Text('Add New Category'),
+                  onPressed: _isLoading ? null : _addNewCategory,
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
                 ),
               ),
-            ),
-            // ADDED Padding below button
-            const SizedBox(height: 16),
-          ],
+              // ADDED Padding below button
+              const SizedBox(height: 8), // Reduced space a bit
+              // ADDED: Additional Close Button
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton(
+                  child: const Text('Close'),
+                  onPressed: () async {
+                    bool result = await _handleCloseLogic();
+                    if (mounted) {
+                      Navigator.of(context).pop(result);
+                    }
+                  },
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    side: BorderSide(color: Colors.grey), // Match theme or provide subtle border
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  // ADDED: Helper function to handle closing and potentially saving order
-  Future<void> _handleClose() async {
-    // UPDATED: Save if any changes were flagged
-    bool shouldSaveChanges = _CategoriesChanged;
-    print(
-        "Closing EditCategoriesModal. Should save changes: $shouldSaveChanges");
+  // MODIFIED: To only perform logic and return Future<bool>, does NOT pop.
+  Future<bool> _handleCloseLogic() async {
+    bool changesSuccessfullySaved = false;
+    bool hadChanges = _CategoriesChanged; // Store initial state
 
-    if (shouldSaveChanges) {
+    print(
+        "Executing _handleCloseLogic. Had changes: $hadChanges");
+
+    if (hadChanges) {
       setState(() {
         _isLoading = true;
-      }); // Show loading indicator
+      });
       try {
-        // Prepare data for batch update
         final List<Map<String, dynamic>> updates = [];
         for (int i = 0; i < _Categories.length; i++) {
-          // Ensure category has an ID and index before adding to update
           if (_Categories[i].id.isNotEmpty &&
               _Categories[i].orderIndex != null) {
             updates.add({
               'id': _Categories[i].id,
-              'orderIndex':
-                  _Categories[i].orderIndex!, // Use ! as we updated it
+              'orderIndex': _Categories[i].orderIndex!,
             });
           } else {
             print(
@@ -404,35 +436,32 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
           }
         }
 
-        print("Attempting to save order for ${updates.length} Categories.");
-        await _experienceService.updateCategoryOrder(updates);
-        print("Category order saved successfully.");
-        if (mounted) {
-          Navigator.of(context)
-              .pop(true); // Indicate changes were made and saved
+        if (updates.isNotEmpty) {
+          print("Attempting to save order for ${updates.length} Categories.");
+          await _experienceService.updateCategoryOrder(updates);
+          print("Category order saved successfully.");
+          changesSuccessfullySaved = true;
+        } else if (updates.isEmpty && _CategoriesChanged) {
+          changesSuccessfullySaved = true; 
         }
+
       } catch (e) {
         print("Error saving category order: $e");
         if (mounted) {
-          // Show error message
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text("Error saving category order: $e")),
           );
-          // Optionally, don't pop or pop indicating failure?
-          // For now, we still pop but indicate no changes were successfully saved (original _CategoriesChanged state)
-          Navigator.of(context)
-              .pop(_CategoriesChanged && false); // Force false if save failed
         }
+        changesSuccessfullySaved = false; 
       } finally {
         if (mounted) {
           setState(() {
             _isLoading = false;
-          }); // Hide loading indicator
+          });
         }
       }
-    } else {
-      // No changes to save, just pop
-      Navigator.of(context).pop(_CategoriesChanged);
     }
+    return changesSuccessfullySaved && hadChanges;
   }
 }
+

@@ -193,148 +193,185 @@ class _EditColorCategoriesModalState extends State<EditColorCategoriesModal> {
     final screenHeight = MediaQuery.of(context).size.height;
     final maxHeight = screenHeight * 0.9;
 
-    return Container(
-      constraints: BoxConstraints(
-        maxHeight: maxHeight,
-      ),
-      child: Padding(
-        padding: EdgeInsets.only(
-          left: 16.0,
-          right: 16.0,
-          top: 8.0,
-          bottom: bottomPadding + 16.0,
+    return PopScope(
+      canPop: false,
+      onPopInvoked: (bool didPop) async {
+        if (didPop) {
+          return;
+        }
+        bool result = await _handleCloseLogic();
+        if (mounted) {
+          Navigator.of(context).pop(result);
+        }
+      },
+      child: Container(
+        constraints: BoxConstraints(
+          maxHeight: maxHeight,
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Padding(
-                  padding:
-                      const EdgeInsets.only(left: 8.0, top: 8.0, bottom: 8.0),
-                  child: Text('Edit Color Categories',
-                      style: Theme.of(context).textTheme.titleLarge),
-                ),
-                PopupMenuButton<ColorCategorySortType>(
-                  icon: const Icon(Icons.sort),
-                  tooltip: "Sort Color Categories",
-                  onSelected: (ColorCategorySortType result) {
-                    _applySort(result);
-                  },
-                  itemBuilder: (BuildContext context) =>
-                      <PopupMenuEntry<ColorCategorySortType>>[
-                    const PopupMenuItem<ColorCategorySortType>(
-                      value: ColorCategorySortType.mostRecent,
-                      child: Text('Sort by Most Recent'),
-                    ),
-                    const PopupMenuItem<ColorCategorySortType>(
-                      value: ColorCategorySortType.alphabetical,
-                      child: Text('Sort Alphabetically'),
-                    ),
-                  ],
-                ),
-                IconButton(
-                  icon: const Icon(Icons.close),
-                  onPressed: () => _handleClose(),
-                  tooltip: 'Close',
-                ),
-              ],
-            ),
-            const Divider(),
-            const SizedBox(height: 8),
-            Expanded(
-              child: _isLoading
-                  ? const Center(child: CircularProgressIndicator())
-                  : _categories.isEmpty
-                      ? const Center(child: Text('No color categories found.'))
-                      : ReorderableListView.builder(
-                          itemCount: _categories.length,
-                          itemBuilder: (context, index) {
-                            final category = _categories[index];
-                            return ListTile(
-                              key: ValueKey(category.id),
-                              leading: Container(
-                                width: 24,
-                                height: 24,
-                                decoration: BoxDecoration(
-                                    color: category.color,
-                                    shape: BoxShape.circle,
-                                    border: Border.all(
-                                        color: Colors.grey.shade400, width: 1)),
-                              ),
-                              title: Text(category.name),
-                              trailing: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  IconButton(
-                                    icon: Icon(Icons.edit_outlined,
-                                        color: Colors.blue[700], size: 20),
-                                    tooltip: 'Edit ${category.name}',
-                                    onPressed: _isLoading
-                                        ? null
-                                        : () => _editCategory(category),
-                                  ),
-                                  IconButton(
-                                    icon: Icon(Icons.delete_outline,
-                                        color: Colors.red[700], size: 20),
-                                    tooltip: 'Delete ${category.name}',
-                                    onPressed: _isLoading
-                                        ? null
-                                        : () => _deleteCategory(category),
-                                  ),
-                                  const SizedBox(width: 20),
-                                  ReorderableDragStartListener(
-                                    index: index,
-                                    child: const Icon(Icons.drag_handle,
-                                        color: Colors.grey, size: 24),
-                                  ),
-                                ],
-                              ),
-                            );
-                          },
-                          onReorder: (int oldIndex, int newIndex) {
-                            setState(() {
-                              if (newIndex > oldIndex) {
-                                newIndex -= 1;
-                              }
-                              final ColorCategory item =
-                                  _categories.removeAt(oldIndex);
-                              _categories.insert(newIndex, item);
-                              _updateLocalOrderIndices();
-                              _categoriesChanged = true;
-                              print(
-                                  "Color category reordered, _categoriesChanged set to true.");
-                            });
-                          },
-                        ),
-            ),
-            const SizedBox(height: 16),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.add),
-                label: const Text('Add New Color Category'),
-                onPressed: _isLoading ? null : _addNewCategory,
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 12),
+        child: Padding(
+          padding: EdgeInsets.only(
+            left: 16.0,
+            right: 16.0,
+            top: 8.0,
+            bottom: bottomPadding + 16.0,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Padding(
+                    padding:
+                        const EdgeInsets.only(left: 8.0, top: 8.0, bottom: 8.0),
+                    child: Text('Edit Color Categories',
+                        style: Theme.of(context).textTheme.titleLarge),
+                  ),
+                  PopupMenuButton<ColorCategorySortType>(
+                    icon: const Icon(Icons.sort),
+                    tooltip: "Sort Color Categories",
+                    onSelected: (ColorCategorySortType result) {
+                      _applySort(result);
+                    },
+                    itemBuilder: (BuildContext context) =>
+                        <PopupMenuEntry<ColorCategorySortType>>[
+                      const PopupMenuItem<ColorCategorySortType>(
+                        value: ColorCategorySortType.mostRecent,
+                        child: Text('Sort by Most Recent'),
+                      ),
+                      const PopupMenuItem<ColorCategorySortType>(
+                        value: ColorCategorySortType.alphabetical,
+                        child: Text('Sort Alphabetically'),
+                      ),
+                    ],
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () async {
+                        bool result = await _handleCloseLogic();
+                        if (mounted) {
+                          Navigator.of(context).pop(result);
+                        }
+                    },
+                    tooltip: 'Close',
+                  ),
+                ],
+              ),
+              const Divider(),
+              const SizedBox(height: 8),
+              Expanded(
+                child: _isLoading
+                    ? const Center(child: CircularProgressIndicator())
+                    : _categories.isEmpty
+                        ? const Center(child: Text('No color categories found.'))
+                        : ReorderableListView.builder(
+                            itemCount: _categories.length,
+                            itemBuilder: (context, index) {
+                              final category = _categories[index];
+                              return ListTile(
+                                key: ValueKey(category.id),
+                                leading: Container(
+                                  width: 24,
+                                  height: 24,
+                                  decoration: BoxDecoration(
+                                      color: category.color,
+                                      shape: BoxShape.circle,
+                                      border: Border.all(
+                                          color: Colors.grey.shade400, width: 1)),
+                                ),
+                                title: Text(category.name),
+                                trailing: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    IconButton(
+                                      icon: Icon(Icons.edit_outlined,
+                                          color: Colors.blue[700], size: 20),
+                                      tooltip: 'Edit ${category.name}',
+                                      onPressed: _isLoading
+                                          ? null
+                                          : () => _editCategory(category),
+                                    ),
+                                    IconButton(
+                                      icon: Icon(Icons.delete_outline,
+                                          color: Colors.red[700], size: 20),
+                                      tooltip: 'Delete ${category.name}',
+                                      onPressed: _isLoading
+                                          ? null
+                                          : () => _deleteCategory(category),
+                                    ),
+                                    const SizedBox(width: 20),
+                                    ReorderableDragStartListener(
+                                      index: index,
+                                      child: const Icon(Icons.drag_handle,
+                                          color: Colors.grey, size: 24),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            },
+                            onReorder: (int oldIndex, int newIndex) {
+                              setState(() {
+                                if (newIndex > oldIndex) {
+                                  newIndex -= 1;
+                                }
+                                final ColorCategory item =
+                                    _categories.removeAt(oldIndex);
+                                _categories.insert(newIndex, item);
+                                _updateLocalOrderIndices();
+                                _categoriesChanged = true;
+                                print(
+                                    "Color category reordered, _categoriesChanged set to true.");
+                              });
+                            },
+                          ),
+              ),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  icon: const Icon(Icons.add),
+                  label: const Text('Add New Color Category'),
+                  onPressed: _isLoading ? null : _addNewCategory,
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(height: 16),
-          ],
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton(
+                  child: const Text('Close'),
+                  onPressed: () async {
+                    bool result = await _handleCloseLogic();
+                    if (mounted) {
+                      Navigator.of(context).pop(result);
+                    }
+                  },
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    side: BorderSide(color: Colors.grey),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  Future<void> _handleClose() async {
-    bool shouldSaveChanges = _categoriesChanged;
-    print(
-        "Closing EditColorCategoriesModal. Should save changes: $shouldSaveChanges");
+  // MODIFIED: To only perform logic and return Future<bool>, does NOT pop.
+  Future<bool> _handleCloseLogic() async {
+    bool changesSuccessfullySaved = false;
+    bool hadChanges = _categoriesChanged; // Store initial state
 
-    if (shouldSaveChanges) {
+    print(
+        "Executing _handleCloseLogic (Color Categories). Had changes: $hadChanges");
+
+    if (hadChanges) {
       setState(() {
         _isLoading = true;
       });
@@ -353,21 +390,24 @@ class _EditColorCategoriesModalState extends State<EditColorCategoriesModal> {
           }
         }
 
-        print(
-            "Attempting to save order for ${updates.length} color categories.");
-        await _experienceService.updateColorCategoryOrder(updates);
-        print("Color category order saved successfully.");
-        if (mounted) {
-          Navigator.of(context).pop(true); // Indicate changes saved
+        if (updates.isNotEmpty) { 
+          print(
+              "Attempting to save order for ${updates.length} color categories.");
+          await _experienceService.updateColorCategoryOrder(updates);
+          print("Color category order saved successfully.");
+          changesSuccessfullySaved = true;
+        } else if (updates.isEmpty && _categoriesChanged) {
+          changesSuccessfullySaved = true; 
         }
+
       } catch (e) {
         print("Error saving color category order: $e");
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text("Error saving color category order: $e")),
           );
-          Navigator.of(context).pop(false); // Indicate save failed
         }
+        changesSuccessfullySaved = false; 
       } finally {
         if (mounted) {
           setState(() {
@@ -375,9 +415,7 @@ class _EditColorCategoriesModalState extends State<EditColorCategoriesModal> {
           });
         }
       }
-    } else {
-      Navigator.of(context)
-          .pop(_categoriesChanged); // Pop with false (no changes)
     }
+    return changesSuccessfullySaved && hadChanges;
   }
 }
