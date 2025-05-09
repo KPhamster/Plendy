@@ -39,8 +39,8 @@ class ExperienceCardForm extends StatefulWidget {
   final ExperienceCardData cardData;
   final bool isFirstCard; // To potentially hide remove button
   final bool canRemove; // Explicit flag to control remove button visibility
-  final List<UserCategory> userCategories; // RENAMED
-  final List<ColorCategory> userColorCategories;
+  final ValueNotifier<List<UserCategory>> userCategoriesNotifier; // ADDED
+  final ValueNotifier<List<ColorCategory>> userColorCategoriesNotifier; // ADDED
   final OnRemoveCallback onRemove;
   final OnLocationSelectCallback onLocationSelect;
   final OnSelectSavedExperienceCallback onSelectSavedExperience;
@@ -52,8 +52,8 @@ class ExperienceCardForm extends StatefulWidget {
     required this.cardData,
     required this.isFirstCard,
     required this.canRemove,
-    required this.userCategories, // RENAMED
-    required this.userColorCategories,
+    required this.userCategoriesNotifier, // ADDED
+    required this.userColorCategoriesNotifier, // ADDED
     required this.onRemove,
     required this.onLocationSelect,
     required this.onSelectSavedExperience,
@@ -303,7 +303,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
       return '❓'; // Default icon
     }
     // Use renamed parameter and class
-    final matchingCategory = widget.userCategories.firstWhere(
+    final matchingCategory = widget.userCategoriesNotifier.value.firstWhere(
       (category) => category.name == selectedName,
       orElse: () => UserCategory(
           id: '',
@@ -343,11 +343,14 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
       context: context,
       builder: (context) => const EditCategoriesModal(), // Show the new modal
       isScrollControlled: true,
+      enableDrag: false, // PREVENT DRAG TO DISMISS
       // Add shape etc. if desired, similar to Add modal
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
     );
+    // ADDED LOGGING
+    print("EditCategoriesModal closed, categoriesChanged: $categoriesChanged (Text Categories)");
 
     if (categoriesChanged == true && mounted) {
       print("Categories potentially changed in Edit modal, refreshing list.");
@@ -361,8 +364,10 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
   Future<void> _showCategorieselectionDialog() async {
     FocusScope.of(context).unfocus(); // Dismiss keyboard
 
+    // MODIFIED: Read list from notifier
+    final currentCategories = widget.userCategoriesNotifier.value;
     final uniqueCategoriesByName = <String, UserCategory>{};
-    for (var category in widget.userCategories) {
+    for (var category in currentCategories) {
       uniqueCategoriesByName[category.name] = category;
     }
     final uniqueCategoryList = uniqueCategoriesByName.values.toList();
@@ -489,7 +494,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
     if (selectedId == null) {
       return Colors.grey.shade400; // Default indicator color
     }
-    final matchingCategory = widget.userColorCategories.firstWhere(
+    final matchingCategory = widget.userColorCategoriesNotifier.value.firstWhere(
       (category) => category.id == selectedId,
       orElse: () => const ColorCategory(
           id: '',
@@ -506,7 +511,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
       return null;
     }
     try {
-      return widget.userColorCategories
+      return widget.userColorCategoriesNotifier.value
           .firstWhere((cat) => cat.id == selectedId);
     } catch (e) {
       return null; // Not found
@@ -550,10 +555,13 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
       context: context,
       builder: (context) => const EditColorCategoriesModal(), // Use placeholder
       isScrollControlled: true,
+      enableDrag: false, // PREVENT DRAG TO DISMISS
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
     );
+    // ADDED LOGGING
+    print("EditColorCategoriesModal closed, categoriesChanged: $categoriesChanged (Color Categories)");
 
     if (categoriesChanged == true && mounted) {
       print(
@@ -568,8 +576,9 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
 
     // Sort categories for display (e.g., by orderIndex or name)
     // We assume userColorCategories is already sorted by the parent
+    // MODIFIED: Read list from notifier
     final List<ColorCategory> categoriesToShow =
-        List.from(widget.userColorCategories);
+        List.from(widget.userColorCategoriesNotifier.value);
     // Example sort: by name if orderIndex is null or same
     // categoriesToShow.sort((a, b) {
     //   if (a.orderIndex != null && b.orderIndex != null) {
@@ -701,7 +710,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
   Widget build(BuildContext context) {
     // --- ADDED LOG ---
     print(
-        "ExperienceCardForm BUILD: Received ${widget.userColorCategories.length} color categories.");
+        "ExperienceCardForm BUILD: Received ${widget.userColorCategoriesNotifier.value.length} color categories.");
     // --- END ADDED LOG ---
 
     // Access controllers directly from widget.cardData
@@ -938,131 +947,136 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                     ),
                     SizedBox(height: 16),
 
-                    // --- REPLACED Dropdown with a Button ---
+                    // --- REPLACED Dropdown with a Button wrapped in ValueListenableBuilder ---
                     Text('Category',
                         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                             color: Colors.grey[600])), // Label like text field
                     const SizedBox(height: 4),
-                    OutlinedButton(
-                      onPressed: _showCategorieselectionDialog,
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 15), // Adjust padding for height
-                        shape: RoundedRectangleBorder(
-                          borderRadius:
-                              BorderRadius.circular(8.0), // Match field style
-                        ),
-                        side: BorderSide(
-                            color: Colors.grey), // Match field border
-                        alignment: Alignment.centerLeft, // Align content left
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment
-                            .spaceBetween, // Space between content and arrow
-                        children: [
-                          // Display selected category icon and name
-                          Row(
+                    ValueListenableBuilder<List<UserCategory>>(
+                      valueListenable: widget.userCategoriesNotifier,
+                      builder: (context, currentCategoryList, child) {
+                        // Note: currentCategoryList is available if needed, but button display
+                        // mainly depends on widget.cardData.selectedcategory
+                        return OutlinedButton(
+                          onPressed: _showCategorieselectionDialog,
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 15), // Adjust padding for height
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(
+                                  8.0), // Match field style
+                            ),
+                            side: BorderSide(
+                                color: Colors.grey), // Match field border
+                            alignment:
+                                Alignment.centerLeft, // Align content left
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment
+                                .spaceBetween, // Space between content and arrow
                             children: [
-                              Text(_getIconForSelectedCategory(),
-                                  style: const TextStyle(fontSize: 18)),
-                              const SizedBox(width: 8),
-                              Text(
-                                widget.cardData.selectedcategory ??
-                                    'Select Category',
-                                style: TextStyle(
-                                  // Ensure text color matches default button text color or form field color
-                                  color: widget.cardData.selectedcategory !=
-                                          null
-                                      ? Theme.of(context)
-                                          .textTheme
-                                          .bodyLarge
-                                          ?.color
-                                      : Colors.grey[
-                                          600], // Hint color if nothing selected
-                                ),
+                              // Display selected category icon and name
+                              Row(
+                                children: [
+                                  Text(_getIconForSelectedCategory(),
+                                      style: const TextStyle(fontSize: 18)),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    widget.cardData.selectedcategory ??
+                                        'Select Category',
+                                    style: TextStyle(
+                                      // Ensure text color matches default button text color or form field color
+                                      color:
+                                          widget.cardData.selectedcategory !=
+                                                  null
+                                              ? Theme.of(context)
+                                                  .textTheme
+                                                  .bodyLarge
+                                                  ?.color
+                                              : Colors.grey[
+                                                  600], // Hint color if nothing selected
+                                    ),
+                                  ),
+                                ],
                               ),
+                              // Dropdown arrow indicator
+                              const Icon(Icons.arrow_drop_down,
+                                  color: Colors.grey),
                             ],
                           ),
-                          // Dropdown arrow indicator
-                          const Icon(Icons.arrow_drop_down, color: Colors.grey),
-                        ],
-                      ),
+                        );
+                      },
                     ),
-                    // You might need a way to show validation errors if category is required
-                    // This could involve a separate Text widget below the button
-                    // that appears if widget.cardData.selectedcategory is null during form validation.
-                    // For now, relying on parent form validation.
-                    /* Example Validation Message Display:
-                    if (widget.formKey.currentState?.validate() == false && widget.cardData.selectedcategory == null) 
-                      Padding(
-                        padding: const EdgeInsets.only(top: 8.0, left: 12.0),
-                        child: Text(
-                          'Please select a category',
-                          style: TextStyle(color: Theme.of(context).colorScheme.error, fontSize: 12),
-                        ),
-                      ), 
-                    */
-                    // --- END REPLACEMENT ---
+                    // --- END REPLACEMENT (with wrapper) ---
 
                     SizedBox(height: 16),
 
-                    // --- ADDED: Color Category Selection Button ---
+                    // --- ADDED: Color Category Selection Button wrapped in ValueListenableBuilder ---
                     Text('Color Category',
                         style: Theme.of(context)
                             .textTheme
                             .bodyMedium
                             ?.copyWith(color: Colors.grey[600])),
                     const SizedBox(height: 4),
-                    OutlinedButton(
-                      onPressed:
-                          _showColorCategorySelectionDialog, // Call the new dialog function
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 15),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8.0)),
-                        side: BorderSide(color: Colors.grey),
-                        alignment: Alignment.centerLeft,
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Row(
+                    ValueListenableBuilder<List<ColorCategory>>(
+                      valueListenable: widget.userColorCategoriesNotifier,
+                      builder: (context, currentColorCategoryList, child) {
+                        // Note: currentColorCategoryList is available if needed, but button display
+                        // mainly depends on _getSelectedColorCategoryObject() and widget.cardData.selectedColorCategoryId
+                        return OutlinedButton(
+                          onPressed:
+                              _showColorCategorySelectionDialog, // Call the new dialog function
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 15),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8.0)),
+                            side: BorderSide(color: Colors.grey),
+                            alignment: Alignment.centerLeft,
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              // Display selected category color circle
-                              Container(
-                                width: 18,
-                                height: 18,
-                                decoration: BoxDecoration(
-                                    color:
-                                        _getColorForSelectedCategory(), // Use helper
-                                    shape: BoxShape.circle,
-                                    border: Border.all(
-                                        color: Colors.grey.shade400, width: 1)),
+                              Row(
+                                children: [
+                                  // Display selected category color circle
+                                  Container(
+                                    width: 18,
+                                    height: 18,
+                                    decoration: BoxDecoration(
+                                        color:
+                                            _getColorForSelectedCategory(), // Use helper
+                                        shape: BoxShape.circle,
+                                        border: Border.all(
+                                            color: Colors.grey.shade400,
+                                            width: 1)),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    _getSelectedColorCategoryObject()?.name ??
+                                        'Select Color Category',
+                                    style: TextStyle(
+                                      color:
+                                          widget.cardData.selectedColorCategoryId !=
+                                                  null
+                                              ? Theme.of(context)
+                                                  .textTheme
+                                                  .bodyLarge
+                                                  ?.color
+                                              : Colors.grey[600],
+                                    ),
+                                  ),
+                                ],
                               ),
-                              const SizedBox(width: 8),
-                              Text(
-                                _getSelectedColorCategoryObject()?.name ??
-                                    'Select Color Category',
-                                style: TextStyle(
-                                  color:
-                                      widget.cardData.selectedColorCategoryId !=
-                                              null
-                                          ? Theme.of(context)
-                                              .textTheme
-                                              .bodyLarge
-                                              ?.color
-                                          : Colors.grey[600],
-                                ),
-                              ),
+                              const Icon(Icons.arrow_drop_down,
+                                  color: Colors.grey),
                             ],
                           ),
-                          const Icon(Icons.arrow_drop_down, color: Colors.grey),
-                        ],
-                      ),
+                        );
+                      },
                     ),
-                    // --- END ADDED ---
+                    // --- END ADDED (with wrapper) ---
 
                     SizedBox(height: 16),
 
