@@ -105,36 +105,11 @@ class ColorCategory extends Equatable {
 
   // --- ADDED: Default Color Categories ---
   static const Map<String, String> defaultColorCategories = {
-    'Default': 'FFFF0000', // Red
-    'Been here': 'FF00FF00', // Green
-    'Favorite': 'FFFFC0CB', // Pink
+    'Want to go': 'E52020', // Red
+    'Been here already': '24C924', // Green
+    'Favorite': 'F479DA', // Pink
   };
   // --- END ADDED ---
-
-  /// Default Color Categories.
-  /// The key is the category name, the value is the suggested colorHex.
-  static const Map<String, String> defaultCategories = {
-    'Done': 'FF4CAF50', // Green
-    'To Try': 'FFFFEB3B', // Yellow
-    'Urgent': 'FFF44336', // Red
-    'Research': 'FF2196F3', // Blue
-    'Maybe': 'FF9E9E9E', // Grey
-  };
-
-  /// Creates the initial list of ColorCategory objects for a new user.
-  static List<ColorCategory> createInitialCategories(String ownerId) {
-    int index = 0;
-    return defaultCategories.entries.map((entry) {
-      return ColorCategory(
-        id: '', // No ID yet
-        name: entry.key,
-        colorHex: entry.value,
-        ownerUserId: ownerId,
-        lastUsedTimestamp: null,
-        orderIndex: index++, // Assign initial order
-      );
-    }).toList();
-  }
 
   // --- ADDED: Initializer for default Color Categories ---
   /// Creates the initial list of default ColorCategory objects for a new user.
