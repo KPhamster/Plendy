@@ -2426,6 +2426,76 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                   print(
                       "Categories loaded: Text=${_userCategories.length}, Color=${_userColorCategories.length}");
 
+                  // --- APPLY DEFAULT CATEGORIES TO NEW CARDS (REFINED) --- 
+                  if (experienceCards.isNotEmpty) {
+                    for (var cardData in experienceCards) {
+                      if (cardData.existingExperienceId == null) { // Only for new cards
+                        // Text Category Defaulting
+                        if (_userCategories.isNotEmpty &&
+                            (cardData.selectedcategory == null || 
+                            !_userCategories.any((cat) => cat.name == cardData.selectedcategory) || // If current selection is invalid w.r.t loaded categories
+                            cardData.selectedcategory == (UserCategory.defaultCategories.keys.isNotEmpty ? UserCategory.defaultCategories.keys.first : 'Other') // Or still the basic constructor default
+                            ))
+                        {
+                          UserCategory? defaultTextCategory;
+                          List<UserCategory> sortedTextCategories = List.from(_userCategories)
+                            ..sort((a, b) {
+                              if (a.lastUsedTimestamp == null && b.lastUsedTimestamp == null) return 0;
+                              if (a.lastUsedTimestamp == null) return 1; // Sort nulls to the end
+                              if (b.lastUsedTimestamp == null) return -1; // Sort nulls to the end
+                              return b.lastUsedTimestamp!.compareTo(a.lastUsedTimestamp!); // Newest first
+                            });
+
+                          if (sortedTextCategories.isNotEmpty && sortedTextCategories.first.lastUsedTimestamp != null) {
+                            defaultTextCategory = sortedTextCategories.first;
+                            print("Card ${cardData.id} [RECEIVE SCREEN]: Defaulting text to MOST RECENT: ${defaultTextCategory.name}");
+                          } else {
+                            try {
+                              defaultTextCategory = _userCategories.firstWhere((cat) => cat.name.toLowerCase() == "restaurant");
+                              print("Card ${cardData.id} [RECEIVE SCREEN]: No recent text category, defaulting to RESTAURANT: ${defaultTextCategory.name}");
+                            } catch (e) {
+                              if (_userCategories.isNotEmpty) {
+                                defaultTextCategory = _userCategories.first;
+                                print("Card ${cardData.id} [RECEIVE SCREEN]: No recent or Restaurant, defaulting to FIRST AVAILABLE text: ${defaultTextCategory.name}");
+                              }
+                            }
+                          }
+                          cardData.selectedcategory = defaultTextCategory?.name ?? 
+                                                     (UserCategory.defaultCategories.keys.isNotEmpty ? UserCategory.defaultCategories.keys.first : 'Other');
+                        }
+
+                        // Color Category Defaulting
+                        if (_userColorCategories.isNotEmpty && cardData.selectedColorCategoryId == null) { // Only if not already set
+                          ColorCategory? defaultColorCategory;
+                          List<ColorCategory> sortedColorCategories = List.from(_userColorCategories)
+                            ..sort((a, b) {
+                              if (a.lastUsedTimestamp == null && b.lastUsedTimestamp == null) return 0;
+                              if (a.lastUsedTimestamp == null) return 1;
+                              if (b.lastUsedTimestamp == null) return -1;
+                              return b.lastUsedTimestamp!.compareTo(a.lastUsedTimestamp!);
+                            });
+
+                          if (sortedColorCategories.isNotEmpty && sortedColorCategories.first.lastUsedTimestamp != null) {
+                            defaultColorCategory = sortedColorCategories.first;
+                            print("Card ${cardData.id} [RECEIVE SCREEN]: Defaulting color to MOST RECENT: ${defaultColorCategory.name}");
+                          } else {
+                            try {
+                              defaultColorCategory = _userColorCategories.firstWhere((cat) => cat.name.toLowerCase() == "want to go");
+                              print("Card ${cardData.id} [RECEIVE SCREEN]: No recent color category, defaulting to WANT TO GO: ${defaultColorCategory.name}");
+                            } catch (e) {
+                              if (_userColorCategories.isNotEmpty) {
+                                defaultColorCategory = _userColorCategories.first;
+                                print("Card ${cardData.id} [RECEIVE SCREEN]: No recent or Want to Go, defaulting to FIRST AVAILABLE color: ${defaultColorCategory.name}");
+                              }
+                            }
+                          }
+                          cardData.selectedColorCategoryId = defaultColorCategory?.id;
+                        }
+                      }
+                    }
+                  }
+                  // --- END APPLY DEFAULT CATEGORIES ---
+
                   return Column(
                     children: [
                       Expanded(
