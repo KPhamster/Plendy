@@ -335,7 +335,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
   }
 
   // UPDATED: Method to handle editing categories
-  Future<void> _handleEditCategories() async {
+  Future<bool?> _handleEditCategories() async {
     FocusScope.of(context).unfocus();
     print("DEBUG: Attempting to show EditCategoriesModal...");
     // Show the EditCategoriesModal
@@ -344,7 +344,6 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
       builder: (context) => const EditCategoriesModal(), // Show the new modal
       isScrollControlled: true,
       enableDrag: false, // PREVENT DRAG TO DISMISS
-      // Add shape etc. if desired, similar to Add modal
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
@@ -356,131 +355,137 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
       print("Categories potentially changed in Edit modal, refreshing list.");
       // Notify parent to just refresh the list
       widget.onUpdate(refreshCategories: true);
-      // Note: We don't need to explicitly select a category here
     }
+    return categoriesChanged; // ADDED: Return the result
   }
 
   // --- UPDATED: Function to show the category selection dialog ---
   Future<void> _showCategorieselectionDialog() async {
     FocusScope.of(context).unfocus(); // Dismiss keyboard
 
-    // MODIFIED: Read list from notifier
-    final currentCategories = widget.userCategoriesNotifier.value;
-    final uniqueCategoriesByName = <String, UserCategory>{};
-    for (var category in currentCategories) {
-      uniqueCategoriesByName[category.name] = category;
-    }
-    final uniqueCategoryList = uniqueCategoriesByName.values.toList();
+    // Note: _userCategoriesNotifier.value will be used by ValueListenableBuilder inside StatefulBuilder
 
     final String? selectedValue = await showDialog<String>(
       context: context,
-      builder: (BuildContext context) {
-        // Use a standard Dialog for more layout control
-        return Dialog(
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16.0)),
-          child: ConstrainedBox(
-            // Limit the dialog height to make the list scrollable
-            constraints: BoxConstraints(
-                maxHeight: MediaQuery.of(context).size.height * 0.8),
-            child: Column(
-              mainAxisSize: MainAxisSize.min, // Important for Column height
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                // Title Padding
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
-                  child: Text(
-                    'Select Category',
-                    style: Theme.of(context).textTheme.titleLarge,
+      builder: (BuildContext dialogContext) {
+        // Use StatefulBuilder to allow the dialog's content to rebuild when notifiers change
+        return StatefulBuilder(
+          builder: (stfContext, stfSetState) {
+            // Listen to the notifier for category list changes
+            return ValueListenableBuilder<List<UserCategory>>(
+              valueListenable: widget.userCategoriesNotifier,
+              builder: (context, currentCategories, child) {
+                final uniqueCategoriesByName = <String, UserCategory>{};
+                for (var category in currentCategories) {
+                  uniqueCategoriesByName[category.name] = category;
+                }
+                final uniqueCategoryList = uniqueCategoriesByName.values.toList();
+
+                return Dialog(
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16.0)),
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                        maxHeight: MediaQuery.of(stfContext).size.height * 0.8),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+                          child: Text(
+                            'Select Category',
+                            style: Theme.of(stfContext).textTheme.titleLarge,
+                          ),
+                        ),
+                        Expanded(
+                          child: ListView.builder(
+                            shrinkWrap: true,
+                            itemCount: uniqueCategoryList.length,
+                            itemBuilder: (context, index) {
+                              final category = uniqueCategoryList[index];
+                              final bool isSelected = category.name ==
+                                  widget.cardData.selectedcategory;
+                              return ListTile(
+                                leading: Text(category.icon,
+                                    style: const TextStyle(fontSize: 20)),
+                                title: Text(category.name),
+                                trailing: isSelected
+                                    ? const Icon(Icons.check, color: Colors.blue)
+                                    : null,
+                                onTap: () {
+                                  Navigator.pop(dialogContext, category.name);
+                                },
+                                visualDensity: VisualDensity.compact,
+                              );
+                            },
+                          ),
+                        ),
+                        const Divider(height: 1),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8.0, vertical: 8.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              TextButton.icon(
+                                icon: Icon(Icons.add, size: 20, color: Colors.blue[700]),
+                                label: Text('Add New Category',
+                                    style: TextStyle(color: Colors.blue[700])),
+                                onPressed: () {
+                                  Navigator.pop(dialogContext, _dialogActionAdd);
+                                },
+                                style: TextButton.styleFrom(
+                                    alignment: Alignment.centerLeft,
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 12, vertical: 12)),
+                              ),
+                              TextButton.icon(
+                                icon: Icon(Icons.edit, size: 20, color: Colors.orange[700]),
+                                label: Text('Edit Categories',
+                                    style: TextStyle(color: Colors.orange[700])),
+                                onPressed: () async {
+                                  final bool? categoriesActuallyChanged = await _handleEditCategories();
+                                  // _handleEditCategories already calls widget.onUpdate(refreshCategories: true)
+                                  // which updates the notifier. The ValueListenableBuilder above will rebuild.
+                                  // No need to pop dialogContext here if changes were made,
+                                  // as the goal is to keep the dialog open and show the refreshed list.
+                                  if (categoriesActuallyChanged == true) {
+                                      // Optional: if you want to do something specific in the dialog after edit modal closes with changes
+                                      // For example, scroll to a newly selected/edited item if possible.
+                                      // stfSetState(() {}); // Could be used if local dialog state needs refresh not covered by ValueListenableBuilder
+                                  }
+                                },
+                                style: TextButton.styleFrom(
+                                    alignment: Alignment.centerLeft,
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 12, vertical: 12)),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                // Scrollable List Area
-                Expanded(
-                  child: ListView.builder(
-                    shrinkWrap: true,
-                    itemCount: uniqueCategoryList.length,
-                    itemBuilder: (context, index) {
-                      final category = uniqueCategoryList[index];
-                      final bool isSelected =
-                          category.name == widget.cardData.selectedcategory;
-                      return ListTile(
-                        leading: Text(category.icon,
-                            style: const TextStyle(fontSize: 20)),
-                        title: Text(category.name),
-                        trailing: isSelected
-                            ? const Icon(Icons.check, color: Colors.blue)
-                            : null,
-                        onTap: () {
-                          Navigator.pop(
-                              context, category.name); // Return category name
-                        },
-                        // Visual density can make items feel slightly shorter
-                        visualDensity: VisualDensity.compact,
-                      );
-                    },
-                  ),
-                ),
-                // Separator
-                const Divider(height: 1),
-                // Fixed Bottom Action Buttons
-                Padding(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 8.0, vertical: 8.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      TextButton.icon(
-                        icon:
-                            Icon(Icons.add, size: 20, color: Colors.blue[700]),
-                        label: Text('Add New Category',
-                            style: TextStyle(color: Colors.blue[700])),
-                        onPressed: () {
-                          Navigator.pop(context, _dialogActionAdd);
-                        },
-                        style: TextButton.styleFrom(
-                            alignment: Alignment.centerLeft,
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 12)),
-                      ),
-                      TextButton.icon(
-                        icon: Icon(Icons.edit,
-                            size: 20, color: Colors.orange[700]),
-                        label: Text('Edit Categories',
-                            style: TextStyle(color: Colors.orange[700])),
-                        onPressed: () {
-                          Navigator.pop(context, _dialogActionEdit);
-                        },
-                        style: TextButton.styleFrom(
-                            alignment: Alignment.centerLeft,
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 12)),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
+                );
+              },
+            );
+          },
         );
       },
     );
 
-    // --- Handle the dialog result ---
+    // --- Handle the dialog result --- (This part remains largely the same)
     if (selectedValue != null) {
       if (selectedValue == _dialogActionAdd) {
-        // User selected Add New
-        _handleAddCategory(); // This already handles refresh if needed
+        _handleAddCategory();
       } else if (selectedValue == _dialogActionEdit) {
-        // User selected Edit
-        _handleEditCategories(); // This already handles refresh if needed
+        // This case is less likely to be hit if we don't pop from edit action anymore unless intended
+        // However, _handleEditCategories already calls onUpdate which should refresh the parent.
+        print("CategorySelectionDialog popped with _dialogActionEdit, parent will refresh categories via onUpdate.");
       } else {
-        // User selected an actual category
         if (widget.cardData.selectedcategory != selectedValue) {
-          // REMOVED setState
-          // setState(() {
           widget.cardData.selectedcategory = selectedValue;
-          // });
           widget.onUpdate(refreshCategories: false);
         }
       }
@@ -548,12 +553,12 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
   }
 
   // --- ADDED: Method to handle editing color categories ---
-  Future<void> _handleEditColorCategories() async {
+  Future<bool?> _handleEditColorCategories() async {
     FocusScope.of(context).unfocus();
-    // TODO: Implement EditColorCategoriesModal
+    
     final bool? categoriesChanged = await showModalBottomSheet<bool>(
       context: context,
-      builder: (context) => const EditColorCategoriesModal(), // Use placeholder
+      builder: (context) => const EditColorCategoriesModal(), 
       isScrollControlled: true,
       enableDrag: false, // PREVENT DRAG TO DISMISS
       shape: const RoundedRectangleBorder(
@@ -568,117 +573,125 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
           "Color Categories potentially changed in Edit modal, refreshing list.");
       widget.onUpdate(refreshCategories: true);
     }
+    return categoriesChanged; // ADDED: Return the result
   }
 
   // --- ADDED: Function to show the color category selection dialog ---
   Future<void> _showColorCategorySelectionDialog() async {
     FocusScope.of(context).unfocus(); // Dismiss keyboard
 
-    // Sort categories for display (e.g., by orderIndex or name)
-    // We assume userColorCategories is already sorted by the parent
-    // MODIFIED: Read list from notifier
-    final List<ColorCategory> categoriesToShow =
-        List.from(widget.userColorCategoriesNotifier.value);
-    // Example sort: by name if orderIndex is null or same
-    // categoriesToShow.sort((a, b) {
-    //   if (a.orderIndex != null && b.orderIndex != null) {
-    //      return a.orderIndex!.compareTo(b.orderIndex!);
-    //   }
-    //   return a.name.compareTo(b.name);
-    // });
-
     final String? selectedValue = await showDialog<String>(
       context: context,
-      builder: (BuildContext context) {
-        return Dialog(
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16.0)),
-          child: ConstrainedBox(
-            constraints: BoxConstraints(
-                maxHeight: MediaQuery.of(context).size.height * 0.8),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
-                  child: Text(
-                    'Select Color Category', // Changed Title
-                    style: Theme.of(context).textTheme.titleLarge,
-                  ),
-                ),
-                Expanded(
-                  child: ListView.builder(
-                    shrinkWrap: true,
-                    itemCount: categoriesToShow.length,
-                    itemBuilder: (context, index) {
-                      final category = categoriesToShow[index];
-                      final bool isSelected = category.id ==
-                          widget.cardData.selectedColorCategoryId;
-                      return ListTile(
-                        leading: Container(
-                          width: 24,
-                          height: 24,
-                          decoration: BoxDecoration(
-                              color: category.color,
-                              shape: BoxShape.circle,
-                              border: Border.all(
-                                  color: Colors.grey.shade400, width: 1)),
+      builder: (BuildContext dialogContext) {
+        // Use StatefulBuilder to allow the dialog's content to rebuild when notifiers change
+        return StatefulBuilder(
+          builder: (stfContext, stfSetState) {
+            // Listen to the notifier for color category list changes
+            return ValueListenableBuilder<List<ColorCategory>>(
+              valueListenable: widget.userColorCategoriesNotifier,
+              builder: (context, currentColorCategories, child) {
+                final List<ColorCategory> categoriesToShow =
+                    List.from(currentColorCategories);
+
+                return Dialog(
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16.0)),
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                        maxHeight: MediaQuery.of(stfContext).size.height * 0.8),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+                          child: Text(
+                            'Select Color Category',
+                            style: Theme.of(stfContext).textTheme.titleLarge,
+                          ),
                         ),
-                        title: Text(category.name),
-                        trailing: isSelected
-                            ? const Icon(Icons.check, color: Colors.blue)
-                            : null,
-                        onTap: () {
-                          Navigator.pop(
-                              context, category.id); // Return category ID
-                        },
-                        visualDensity: VisualDensity.compact,
-                      );
-                    },
+                        Expanded(
+                          child: ListView.builder(
+                            shrinkWrap: true,
+                            itemCount: categoriesToShow.length,
+                            itemBuilder: (context, index) {
+                              final category = categoriesToShow[index];
+                              final bool isSelected = category.id ==
+                                  widget.cardData.selectedColorCategoryId;
+                              return ListTile(
+                                leading: Container(
+                                  width: 24,
+                                  height: 24,
+                                  decoration: BoxDecoration(
+                                      color: category.color,
+                                      shape: BoxShape.circle,
+                                      border: Border.all(
+                                          color: Colors.grey.shade400,
+                                          width: 1)),
+                                ),
+                                title: Text(category.name),
+                                trailing: isSelected
+                                    ? const Icon(Icons.check, color: Colors.blue)
+                                    : null,
+                                onTap: () {
+                                  Navigator.pop(dialogContext, category.id);
+                                },
+                                visualDensity: VisualDensity.compact,
+                              );
+                            },
+                          ),
+                        ),
+                        const Divider(height: 1),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8.0, vertical: 8.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              TextButton.icon(
+                                icon: Icon(Icons.add_circle_outline,
+                                    size: 20, color: Colors.blue[700]),
+                                label: Text('Add New Color Category',
+                                    style: TextStyle(color: Colors.blue[700])),
+                                onPressed: () {
+                                  Navigator.pop(
+                                      dialogContext, _addColorCategoryValue);
+                                },
+                                style: TextButton.styleFrom(
+                                    alignment: Alignment.centerLeft,
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 12, vertical: 12)),
+                              ),
+                              TextButton.icon(
+                                icon: Icon(Icons.edit_outlined,
+                                    size: 20, color: Colors.orange[700]),
+                                label: Text('Edit Color Categories',
+                                    style: TextStyle(color: Colors.orange[700])),
+                                onPressed: () async {
+                                  final bool? categoriesActuallyChanged = await _handleEditColorCategories();
+                                  // _handleEditColorCategories already calls widget.onUpdate(refreshCategories: true)
+                                  // which updates the notifier. The ValueListenableBuilder above will rebuild.
+                                  // No need to pop dialogContext here if changes were made,
+                                  // as the goal is to keep the dialog open and show the refreshed list.
+                                  if (categoriesActuallyChanged == true) {
+                                    // Optional: stfSetState(() {}); if local dialog state needs a nudge not covered by ValueListenableBuilder
+                                  }
+                                },
+                                style: TextButton.styleFrom(
+                                    alignment: Alignment.centerLeft,
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 12, vertical: 12)),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                const Divider(height: 1),
-                Padding(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 8.0, vertical: 8.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      TextButton.icon(
-                        icon: Icon(Icons.add_circle_outline,
-                            size: 20, color: Colors.blue[700]),
-                        label: Text('Add New Color Category',
-                            style: TextStyle(color: Colors.blue[700])),
-                        onPressed: () {
-                          Navigator.pop(
-                              context, _addColorCategoryValue); // Use constant
-                        },
-                        style: TextButton.styleFrom(
-                            alignment: Alignment.centerLeft,
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 12)),
-                      ),
-                      TextButton.icon(
-                        icon: Icon(Icons.edit_outlined,
-                            size: 20, color: Colors.orange[700]),
-                        label: Text('Edit Color Categories',
-                            style: TextStyle(color: Colors.orange[700])),
-                        onPressed: () {
-                          Navigator.pop(context,
-                              _editColorCategoriesValue); // Use constant
-                        },
-                        style: TextButton.styleFrom(
-                            alignment: Alignment.centerLeft,
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 12)),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
+                );
+              },
+            );
+          },
         );
       },
     );
@@ -688,16 +701,14 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
       if (selectedValue == _addColorCategoryValue) {
         _handleAddColorCategory();
       } else if (selectedValue == _editColorCategoriesValue) {
-        _handleEditColorCategories();
+         // This case is less likely to be hit if we don't pop from edit action anymore unless intended
+        print("ColorCategorySelectionDialog popped with _editColorCategoriesValue, parent will refresh categories via onUpdate.");
       } else {
         // User selected an actual category ID
         if (widget.cardData.selectedColorCategoryId != selectedValue) {
-          // Directly update the card data
           widget.cardData.selectedColorCategoryId = selectedValue;
-          // Call onUpdate without the category ID to prevent explicit provider call
           widget.onUpdate(
             refreshCategories: false,
-            // selectedColorCategoryId: selectedValue, // REMOVED
           );
         }
       }
