@@ -152,7 +152,10 @@ class _ExperienceCardsSection extends StatelessWidget {
                 child: OutlinedButton.icon(
                   icon: const Icon(Icons.add),
                   label: const Text('Add Another Experience'),
-                  onPressed: addExperienceCard,
+                  onPressed: () { // MODIFIED: Added print statement
+                    print("ReceiveShareScreen: 'Add Another Experience' button pressed in _ExperienceCardsSection.");
+                    addExperienceCard();
+                  },
                   style: OutlinedButton.styleFrom(
                     padding: const EdgeInsets.symmetric(
                         vertical: 12, horizontal: 24),
@@ -331,6 +334,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
   @override
   void initState() {
+    print("ReceiveShareScreen initState: START"); // ADDED
     super.initState();
     // Initialize with the files passed to the widget
     _currentSharedFiles = widget.sharedFiles;
@@ -345,14 +349,20 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     // --- END ADDED ---
 
     // RENAMED: Fetch user Categories
+    print("ReceiveShareScreen initState: BEFORE _loadUserCategories"); // ADDED
     _loadUserCategories();
+    print("ReceiveShareScreen initState: AFTER _loadUserCategories"); // ADDED
     // --- ADDED --- Call to load color categories ---
+    print("ReceiveShareScreen initState: BEFORE _loadUserColorCategories"); // ADDED
     _loadUserColorCategories();
+    print("ReceiveShareScreen initState: AFTER _loadUserColorCategories"); // ADDED
     // --- END ADDED ---
 
     // --- ADDED: Initialize combined future --- 
     // Ensure individual futures are initialized by _loadUser... methods before this call
+    print("ReceiveShareScreen initState: BEFORE _initializeCombinedFuture"); // ADDED
     _initializeCombinedFuture();
+    print("ReceiveShareScreen initState: AFTER _initializeCombinedFuture"); // ADDED
     // --- END ADDED ---
 
     // Access provider - DO NOT listen here, just need read access
@@ -722,6 +732,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   }
 
   void _addExperienceCard() {
+    print("ReceiveShareScreen: _addExperienceCard method called."); // ADDED
     context.read<ReceiveShareProvider>().addExperienceCard();
   }
 
@@ -2150,7 +2161,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
   @override
   Widget build(BuildContext context) {
-    print('ReceiveShareScreen build called'); 
+    print('ReceiveShareScreen build called. Current card count from provider: ${context.watch<ReceiveShareProvider>().experienceCards.length}'); // MODIFIED
 
     return _wrapWithWillPopScope(Scaffold(
       appBar: AppBar(
@@ -2217,6 +2228,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
+                              // Re-enable the shared files preview list
                               if (_currentSharedFiles.isEmpty)
                                 const Padding(
                                   padding: EdgeInsets.all(16.0),
@@ -2288,7 +2300,6 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                     );
                                   }
                                 ),
-                              // MODIFIED: Wrap _ExperienceCardsSection with Selector
                               Selector<ReceiveShareProvider, List<ExperienceCardData>>(
                                 key: const ValueKey('experience_cards_selector'), // Keep this key or change if you prefer
                                 selector: (_, provider) {
@@ -2490,6 +2501,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     }
 
     if (url.contains('instagram.com')) {
+      // print("DEBUG: Instagram URL detected, preview temporarily disabled.");
+      // return const SizedBox(height: 50, child: Center(child: Text("Instagram Preview Disabled")));
       return InstagramPreviewWrapper(
         key: ValueKey(url), 
         url: url,
