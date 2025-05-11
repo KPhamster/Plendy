@@ -339,7 +339,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   // Setup the intent listener
   void _setupIntentListener() {
     // Cancel any existing subscription first
-    _intentDataStreamSubscription?.cancel();
+    if (_intentDataStreamSubscription != null) {
+      print("SHARE DEBUG: Cancelling existing intent stream subscription");
+      _intentDataStreamSubscription!.cancel();
+      _intentDataStreamSubscription = null;
+    }
 
     print("SHARE DEBUG: Setting up new intent stream listener");
 
@@ -347,8 +351,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     _intentDataStreamSubscription = ReceiveSharingIntent.instance
         .getMediaStream()
         .listen((List<SharedMediaFile> value) {
-      print(
-          '🔄 STREAM LISTENER: Stream received ${value.length} files. Mounted: $mounted');
+      print('🔄 STREAM LISTENER: Stream received ${value.length} files. Mounted: $mounted');
 
       if (mounted && value.isNotEmpty) {
         // --- ADDED: Compare incoming data with current data ---
@@ -368,8 +371,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             }
           }
         } else {
-          print(
-              '🔄 STREAM LISTENER: Lengths differ (${_currentSharedFiles.length} vs ${value.length})');
+          print('🔄 STREAM LISTENER: Lengths differ (${_currentSharedFiles.length} vs ${value.length})');
           // isDifferent remains true (initialized value)
         }
         // Handle case where current is empty but incoming is not
@@ -386,31 +388,30 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           print('🔄 STREAM LISTENER: Processing DIFFERENT stream content.');
           // Use provider to reset cards
           context.read<ReceiveShareProvider>().resetExperienceCards();
-          setState(() {
-            _currentSharedFiles = value; // Update with the latest files
-            // Reset UI state NOT related to cards
-            _businessDataCache.clear(); // Clear cache for new content
-            _yelpPreviewFutures.clear();
-            // Process the new content
-            _processSharedContent(_currentSharedFiles);
-          });
+          if (mounted) {
+            setState(() {
+              _currentSharedFiles = value; // Update with the latest files
+              // Reset UI state NOT related to cards
+              _businessDataCache.clear(); // Clear cache for new content
+              _yelpPreviewFutures.clear();
+              // Process the new content
+              _processSharedContent(_currentSharedFiles);
+            });
+          }
 
           // Reset intent only if processed (and not iOS)
           if (!Platform.isIOS) {
             ReceiveSharingIntent.instance.reset();
             print("SHARE DEBUG: Stream - Intent stream processed and reset.");
           } else {
-            print(
-                "SHARE DEBUG: On iOS - not resetting intent to ensure it persists");
+            print("SHARE DEBUG: On iOS - not resetting intent to ensure it persists");
           }
         } else {
-          print(
-              '🔄 STREAM LISTENER: Content is the same as current. Ignoring stream event.');
+          print('🔄 STREAM LISTENER: Content is the same as current. Ignoring stream event.');
         }
         // --- END COMPARISON ---
       } else {
-        print(
-            "SHARE DEBUG: Stream - Listener fired but not processing (mounted: $mounted, value empty: ${value.isEmpty})");
+        print("SHARE DEBUG: Stream - Listener fired but not processing (mounted: $mounted, value empty: ${value.isEmpty})");
       }
     }, onError: (err) {
       print("SHARE DEBUG: Error receiving intent stream: $err");
@@ -468,20 +469,107 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       print("SHARE DEBUG: App resumed - recreating intent listener");
       _setupIntentListener();
       // RENAMED: Reload user Categories
-      _loadUserCategories();
+      // _loadUserCategories(); // MODIFIED: Replaced with conditional reload
       // --- ADDED --- Reload color categories ---
-      _loadUserColorCategories();
+      // _loadUserColorCategories(); // MODIFIED: Replaced with conditional reload
       // --- END ADDED ---
+      _conditionallyReloadCategories(); // ADDED: Call to conditional reload
     }
   }
+
+  // ADDED: Method to conditionally reload categories on app resume
+  Future<void> _conditionallyReloadCategories() async {
+    bool categoriesChanged = false;
+    bool colorCategoriesChanged = false;
+    bool needsSetState = false;
+
+    // Temporarily hold new categories to avoid modifying state mid-flight if errors occur
+    List<UserCategory>? newCategoriesData;
+    List<ColorCategory>? newColorCategoriesData;
+
+    // Load User Categories
+    try {
+      final fetchedCategories = await _experienceService.getUserCategories();
+      if (mounted) {
+        if (!const DeepCollectionEquality().equals(fetchedCategories, _userCategories)) {
+          newCategoriesData = fetchedCategories;
+          categoriesChanged = true;
+          print("SHARE DEBUG: User categories reloaded and changed on resume.");
+        } else {
+          print("SHARE DEBUG: User categories reloaded on resume, but are the same.");
+        }
+      }
+    } catch (error) {
+      print("Error reloading user categories on resume: $error");
+      if (mounted) {
+        newCategoriesData = []; // Reset on error
+        categoriesChanged = true; // Treat error as a change to reset
+      }
+    }
+
+    // Load User Color Categories
+    try {
+      final fetchedColorCategories = await _experienceService.getUserColorCategories();
+      if (mounted) {
+        if (!const DeepCollectionEquality().equals(fetchedColorCategories, _userColorCategories)) {
+          newColorCategoriesData = fetchedColorCategories;
+          colorCategoriesChanged = true;
+          print("SHARE DEBUG: User color categories reloaded and changed on resume.");
+        } else {
+          print("SHARE DEBUG: User color categories reloaded on resume, but are the same.");
+        }
+      }
+    } catch (error) {
+      print("Error reloading user color categories on resume: $error");
+      if (mounted) {
+        newColorCategoriesData = []; // Reset on error
+        colorCategoriesChanged = true; // Treat error as a change
+      }
+    }
+
+    // If anything changed, prepare to call setState
+    if (mounted) {
+      if (categoriesChanged) {
+        _userCategories = newCategoriesData!;
+        _userCategoriesNotifier.value = _userCategories;
+        if (newCategoriesData.isNotEmpty) { // Only call if there are categories to process
+          _updateCardDefaultCategoriesIfNeeded(_userCategories);
+        }
+        needsSetState = true;
+      }
+      if (colorCategoriesChanged) {
+        _userColorCategories = newColorCategoriesData!;
+        _userColorCategoriesNotifier.value = _userColorCategories;
+        needsSetState = true;
+      }
+
+      if (needsSetState) {
+        setState(() {
+          // Update futures to reflect the new (or error) state for FutureBuilder
+          // This ensures FutureBuilder gets a new future instance and rebuilds.
+          _userCategoriesFuture = Future.value(_userCategories);
+          _userColorCategoriesFuture = Future.value(_userColorCategories);
+          print("SHARE DEBUG: Categories changed on resume, calling setState to refresh FutureBuilder.");
+        });
+      } else {
+        print("SHARE DEBUG: No category changes on resume, setState NOT called, FutureBuilder not explicitly refreshed.");
+      }
+    }
+  }
+  // --- END ADDED ---
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    print("SHARE DEBUG: didChangeDependencies called");
+    print("SHARE DEBUG: didChangeDependencies called - Current subscription state: ${_intentDataStreamSubscription != null ? 'Active' : 'Null'}");
 
-    // Ensure the intent listener is setup (in case it was lost)
-    _setupIntentListener();
+    // Only set up the intent listener if it hasn't been set up yet
+    if (_intentDataStreamSubscription == null) {
+      print("SHARE DEBUG: Setting up new intent stream listener");
+      _setupIntentListener();
+    } else {
+      print("SHARE DEBUG: Intent listener already active, skipping setup");
+    }
   }
 
   @override
@@ -2352,6 +2440,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
   @override
   Widget build(BuildContext context) {
+    print('ReceiveShareScreen build called'); // Diagnosis print statement
     final shareProvider = context.watch<ReceiveShareProvider>();
     final experienceCards = shareProvider.experienceCards;
 
@@ -2637,7 +2726,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                             final card = experienceCards[i];
                                             // ADDED Key based on the category list to force rebuild
                                             return ExperienceCardForm(
-                                              key: ObjectKey(card.id), // Use a stable key per card
+                                              key: ValueKey(card.id), // Use a stable ValueKey per card
                                               cardData: card,
                                               isFirstCard: i == 0,
                                               canRemove:
@@ -2940,10 +3029,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     if (url.contains('instagram.com')) {
       // --- MODIFIED: Return the new wrapper widget ---
       return InstagramPreviewWrapper(
+        key: ValueKey(url), // <<< ADD THIS LINE
         url: url,
         launchUrlCallback: _launchUrl,
       );
-      // --- END MODIFICATION ---
     }
 
     // Generic URL
