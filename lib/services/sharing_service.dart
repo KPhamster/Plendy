@@ -26,6 +26,7 @@ class SharingService {
   BuildContext?
       _lastKnownContext; // Store the last known context for navigation
   bool _isInitialized = false;
+  bool _isReceiveShareScreenOpen = false; // ADDED: Flag to track if screen is open
 
   ValueListenable<List<SharedMediaFile>?> get sharedFiles =>
       _sharedFilesController;
@@ -66,19 +67,18 @@ class SharingService {
         (List<SharedMediaFile> value) {
       print("SHARE SERVICE: Received shared files in stream: ${value.length}");
       if (value.isNotEmpty) {
-        print("SHARE SERVICE: First file path: ${value.first.path}");
         _sharedFilesController.value = List.from(value);
 
         // If we have a context, navigate directly to the receive screen
-        if (_lastKnownContext != null) {
-          // Use a short delay to ensure we're not in the middle of a build cycle
-          Future.delayed(Duration(milliseconds: 100), () {
-            print(
-                "SHARE SERVICE: Navigating to ReceiveShareScreen with ${value.length} files");
-            showReceiveShareScreen(_lastKnownContext!, value);
-          });
+        if (_lastKnownContext != null && !_isReceiveShareScreenOpen) { // MODIFIED: Check flag
+          // REMOVED: Future.delayed
+          print(
+              "SHARE SERVICE: Attempting to navigate to ReceiveShareScreen with ${value.length} files");
+          showReceiveShareScreen(_lastKnownContext!, value);
+        } else if (_isReceiveShareScreenOpen) {
+          print("SHARE SERVICE: ReceiveShareScreen is already open or navigation pending. Ignoring new stream event.");
         } else {
-          print("SHARE SERVICE: No context available for navigation");
+          print("SHARE SERVICE: No context available for navigation.");
         }
       }
     }, onError: (err) {
@@ -151,37 +151,48 @@ class SharingService {
   // Show the receive share screen as a modal bottom sheet or full screen
   Future<void> showReceiveShareScreen(
       BuildContext context, List<SharedMediaFile> files) async {
+    if (_isReceiveShareScreenOpen) { // ADDED: Defensive check
+      print("SHARE SERVICE: showReceiveShareScreen called, but screen is already considered open. Aborting.");
+      return;
+    }
     print(
         "SHARE SERVICE: showReceiveShareScreen called with ${files.length} files.");
     // Dismiss any existing snackbar/dialog before showing new screen
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
 
     if (context.mounted) {
-      // Always push as a full screen route
-      await Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => ChangeNotifierProvider(
-            create: (_) => ReceiveShareProvider(), // Create the provider
-            child: ReceiveShareScreen(
-              sharedFiles: files,
-              onCancel: () {
-                print(
-                    "SHARE SERVICE: onCancel called. Navigating to MainScreen.");
-                // Reset shared items when cancelling
-                resetSharedItems();
-                // Navigate to MainScreen and remove all previous routes
-                Navigator.pushAndRemoveUntil(
-                  context,
-                  MaterialPageRoute(builder: (context) => const MainScreen()),
-                  (Route<dynamic> route) => false, // Remove all routes
-                );
-              },
+      _isReceiveShareScreenOpen = true; // ADDED: Set flag before push
+      try {
+        // Always push as a full screen route
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            settings: const RouteSettings(name: '/receiveShareScreen'), // ADDED: RouteSettings
+            builder: (context) => ChangeNotifierProvider(
+              create: (_) => ReceiveShareProvider(), // Create the provider
+              child: ReceiveShareScreen(
+                sharedFiles: files,
+                onCancel: () {
+                  print(
+                      "SHARE SERVICE: onCancel called. Navigating to MainScreen.");
+                  // Reset shared items when cancelling
+                  resetSharedItems();
+                  // Navigate to MainScreen and remove all previous routes
+                  Navigator.pushAndRemoveUntil(
+                    context,
+                    MaterialPageRoute(builder: (context) => const MainScreen()),
+                    (Route<dynamic> route) => false, // Remove all routes
+                  );
+                },
+              ),
             ),
           ),
-        ),
-      );
-      print("SHARE SERVICE: Navigator.push for ReceiveShareScreen finished.");
+        );
+        print("SHARE SERVICE: Navigator.push for ReceiveShareScreen finished.");
+      } finally {
+        _isReceiveShareScreenOpen = false; // ADDED: Reset flag after push completes (pop)
+        print("SHARE SERVICE: Navigator.push for ReceiveShareScreen finished / popped. Flag reset.");
+      }
     }
   }
 

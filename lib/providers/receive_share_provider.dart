@@ -1,9 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:plendy/screens/receive_share_screen.dart'; // For ExperienceCardData
 import 'package:plendy/models/experience.dart'; // For Location
+// TODO: Adjust these import paths if they are incorrect for your project structure
+import '../models/user_category.dart';
+import '../models/color_category.dart';
 
 class ReceiveShareProvider extends ChangeNotifier {
   final List<ExperienceCardData> _experienceCards = [];
+
+  List<UserCategory> _userCategories = []; // ADDED
+  List<ColorCategory> _userColorCategories = []; // ADDED
 
   List<ExperienceCardData> get experienceCards => _experienceCards;
 
@@ -14,9 +20,115 @@ class ReceiveShareProvider extends ChangeNotifier {
     }
   }
 
+  // ADDED: Method to update user categories (call this from ReceiveShareScreen after fetching)
+  void updateUserCategories(List<UserCategory> newCategories) {
+    _userCategories = newCategories;
+    _reconcileDefaultsForAllCards(); // Apply defaults to existing cards if needed
+    notifyListeners();
+  }
+
+  // ADDED: Method to update user color categories (call this from ReceiveShareScreen after fetching)
+  void updateUserColorCategories(List<ColorCategory> newColorCategories) {
+    _userColorCategories = newColorCategories;
+    _reconcileDefaultsForAllCards(); // Apply defaults to existing cards if needed
+    notifyListeners();
+  }
+
+  // ADDED: Helper method to apply default categories to a single card
+  void _applyDefaultsToCard(ExperienceCardData cardData) {
+    // Don't apply to cards already linked to an existing experience
+    if (cardData.existingExperienceId != null) {
+      return;
+    }
+
+    // Text Category Defaulting (uses _userCategories from the provider)
+    if (_userCategories.isNotEmpty &&
+        (cardData.selectedcategory == null ||
+        !_userCategories.any((cat) => cat.name == cardData.selectedcategory) ||
+        cardData.selectedcategory == (UserCategory.defaultCategories.keys.isNotEmpty ? UserCategory.defaultCategories.keys.first : 'Other')))
+    {
+      UserCategory? defaultTextCategory;
+      // Sort by lastUsedTimestamp descending (most recent first)
+      List<UserCategory> sortedTextCategories = List.from(_userCategories)
+        ..sort((a, b) {
+          if (a.lastUsedTimestamp == null && b.lastUsedTimestamp == null) return 0;
+          if (a.lastUsedTimestamp == null) return 1; // b is more recent or both null
+          if (b.lastUsedTimestamp == null) return -1; // a is more recent
+          return b.lastUsedTimestamp!.compareTo(a.lastUsedTimestamp!);
+        });
+
+      if (sortedTextCategories.isNotEmpty && sortedTextCategories.first.lastUsedTimestamp != null) {
+        defaultTextCategory = sortedTextCategories.first; // Most recently used
+      } else {
+        // Fallback: try "Restaurant", then first in list
+        try {
+          defaultTextCategory = _userCategories.firstWhere((cat) => cat.name.toLowerCase() == "restaurant");
+        } catch (e) {
+          if (_userCategories.isNotEmpty) {
+            defaultTextCategory = _userCategories.first;
+          }
+        }
+      }
+      cardData.selectedcategory = defaultTextCategory?.name ??
+                                 (UserCategory.defaultCategories.keys.isNotEmpty ? UserCategory.defaultCategories.keys.first : 'Other');
+    }
+
+    // Color Category Defaulting (uses _userColorCategories from the provider)
+    // Apply only if a color category isn't already set for the card
+    if (_userColorCategories.isNotEmpty && cardData.selectedColorCategoryId == null) {
+      ColorCategory? defaultColorCategory;
+      // Sort by lastUsedTimestamp descending
+      List<ColorCategory> sortedColorCategories = List.from(_userColorCategories)
+        ..sort((a, b) {
+          if (a.lastUsedTimestamp == null && b.lastUsedTimestamp == null) return 0;
+          if (a.lastUsedTimestamp == null) return 1;
+          if (b.lastUsedTimestamp == null) return -1;
+          return b.lastUsedTimestamp!.compareTo(a.lastUsedTimestamp!);
+        });
+
+      if (sortedColorCategories.isNotEmpty && sortedColorCategories.first.lastUsedTimestamp != null) {
+        defaultColorCategory = sortedColorCategories.first; // Most recently used
+      } else {
+        // Fallback: try "Want to Go", then first in list
+        try {
+          defaultColorCategory = _userColorCategories.firstWhere((cat) => cat.name.toLowerCase() == "want to go");
+        } catch (e) {
+          if (_userColorCategories.isNotEmpty) {
+            defaultColorCategory = _userColorCategories.first;
+          }
+        }
+      }
+      cardData.selectedColorCategoryId = defaultColorCategory?.id;
+    }
+  }
+
+  // ADDED: Reconciliation logic for existing cards
+  void _reconcileDefaultsForAllCards() {
+    bool didChangeAnything = false;
+    for (var cardData in _experienceCards) {
+      String? originalSelectedCategory = cardData.selectedcategory;
+      String? originalSelectedColorCategoryId = cardData.selectedColorCategoryId;
+
+      _applyDefaultsToCard(cardData);
+
+      if (cardData.selectedcategory != originalSelectedCategory ||
+          cardData.selectedColorCategoryId != originalSelectedColorCategoryId) {
+        didChangeAnything = true;
+      }
+    }
+    // NotifyListeners will be called by the public updateUserCategories/updateUserColorCategories
+    // but if this method is called from elsewhere and changes things, it should notify.
+    // For now, assuming it's only called by the public updaters.
+    // If direct calls to _reconcileDefaultsForAllCards (that modify data) are added,
+    // uncomment the line below or ensure the caller notifies.
+    // if (didChangeAnything) notifyListeners();
+  }
+
   // Add a new experience card
   void addExperienceCard() {
-    _experienceCards.add(ExperienceCardData());
+    final newCard = ExperienceCardData(); // MODIFIED
+    _applyDefaultsToCard(newCard); // ADDED: Apply defaults when a new card is added
+    _experienceCards.add(newCard);
     notifyListeners(); // Notify listeners about the change
   }
 
@@ -227,6 +339,52 @@ class ReceiveShareProvider extends ChangeNotifier {
     _experienceCards.clear();
     addExperienceCard(); // Adds one card and notifies listeners
   }
+
+  // --- ADDED METHOD ---
+  void updateCardFromShareDetails({
+    required String cardId,
+    required Location location,
+    required String title, // This will be the businessName or placeName
+    String? yelpUrl,      // Nullable, used if the source was Yelp
+    String? mapsUrl,      // Nullable, used if the source was Maps
+    String? website,
+    required String? placeIdForPreview, // The key for the preview Future
+    String? searchQueryText, // Text for the card's search/location display field
+  }) {
+    final cardIndex = _experienceCards.indexWhere((c) => c.id == cardId);
+    if (cardIndex != -1) {
+      final card = _experienceCards[cardIndex];
+
+      // Update controllers and properties directly on the card object
+      card.titleController.text = title;
+      card.selectedLocation = location; // This is your Location model instance
+
+      if (yelpUrl != null) {
+        card.yelpUrlController.text = yelpUrl;
+      }
+      if (website != null) {
+        card.websiteController.text = website;
+      }
+      // Update the text field that shows the location/address in the card form
+      if (searchQueryText != null) {
+        card.searchController.text = searchQueryText;
+      } else {
+        card.searchController.text = location.address ?? 'Address not found';
+      }
+
+      card.placeIdForPreview = placeIdForPreview; // Crucial for preview widget keying
+
+      // If you track originalShareType on the card, you might set it here too
+      // e.g., if (yelpUrl != null) card.originalShareType = ShareType.yelp;
+      // else if (mapsUrl != null) card.originalShareType = ShareType.maps;
+
+      print("PROVIDER: updateCardFromShareDetails for card ${card.id}, new title: $title, new placeIdForPreview: $placeIdForPreview");
+      notifyListeners(); // This will trigger rebuilds in widgets listening to the provider
+    } else {
+      print("PROVIDER ERROR: updateCardFromShareDetails - Card not found with ID: $cardId");
+    }
+  }
+  // --- END ADDED METHOD ---
 
   @override
   void dispose() {
