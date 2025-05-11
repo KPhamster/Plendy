@@ -10,12 +10,12 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:dio/dio.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
-import 'package:provider/provider.dart'; // Import Provider
-import '../providers/receive_share_provider.dart'; // Import the provider
+import 'package:provider/provider.dart';
+import '../providers/receive_share_provider.dart';
 import '../models/experience.dart';
-import '../models/user_category.dart'; // RENAMED Import
-import '../models/color_category.dart'; // ADDED Import
-import '../models/shared_media_item.dart'; // ADDED Import
+import '../models/user_category.dart';
+import '../models/color_category.dart';
+import '../models/shared_media_item.dart';
 import '../services/experience_service.dart';
 import '../services/google_maps_service.dart';
 import '../widgets/google_maps_widget.dart';
@@ -34,11 +34,198 @@ import 'receive_share/widgets/experience_card_form.dart';
 import 'package:plendy/screens/select_saved_experience_screen.dart';
 import 'receive_share/widgets/instagram_preview_widget.dart'
     as instagram_widget;
-import 'main_screen.dart'; // Add this import
-import '../models/public_experience.dart'; // ADDED Import
-// ADDED: Import AuthService
+import 'main_screen.dart';
+import '../models/public_experience.dart';
 import '../services/auth_service.dart';
 import 'package:collection/collection.dart';
+
+// Ensures _ExperienceCardsSection is defined at the top-level
+class _ExperienceCardsSection extends StatelessWidget {
+  final List<UserCategory> userCategories;
+  final List<ColorCategory> userColorCategories;
+  final ValueNotifier<List<UserCategory>> userCategoriesNotifier;
+  final ValueNotifier<List<ColorCategory>> userColorCategoriesNotifier;
+  final void Function(ExperienceCardData) removeExperienceCard;
+  final Future<void> Function(ExperienceCardData) showLocationPicker;
+  final Future<void> Function(ExperienceCardData) selectSavedExperienceForCard;
+  final void Function({
+    required String cardId,
+    bool refreshCategories,
+    String? newCategoryName,
+    String? selectedColorCategoryId,
+  }) handleCardFormUpdate;
+  final void Function() addExperienceCard;
+  final bool Function(String) isSpecialUrl;
+  final String? Function(String) extractFirstUrl;
+  final List<SharedMediaFile> currentSharedFiles;
+
+  const _ExperienceCardsSection({
+    Key? key,
+    required this.userCategories,
+    required this.userColorCategories,
+    required this.userCategoriesNotifier,
+    required this.userColorCategoriesNotifier,
+    required this.removeExperienceCard,
+    required this.showLocationPicker,
+    required this.selectSavedExperienceForCard,
+    required this.handleCardFormUpdate,
+    required this.addExperienceCard,
+    required this.isSpecialUrl,
+    required this.extractFirstUrl,
+    required this.currentSharedFiles,
+  }) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    final shareProvider = context.watch<ReceiveShareProvider>();
+    final experienceCards = shareProvider.experienceCards;
+
+    // Apply default categories to new cards
+    if (experienceCards.isNotEmpty) {
+      for (var cardData in experienceCards) {
+        if (cardData.existingExperienceId == null) { // Only for new cards
+          // Text Category Defaulting
+          if (userCategories.isNotEmpty &&
+              (cardData.selectedcategory == null ||
+              !userCategories.any((cat) => cat.name == cardData.selectedcategory) ||
+              cardData.selectedcategory == (UserCategory.defaultCategories.keys.isNotEmpty ? UserCategory.defaultCategories.keys.first : 'Other')
+              ))
+          {
+            UserCategory? defaultTextCategory;
+            List<UserCategory> sortedTextCategories = List.from(userCategories)
+              ..sort((a, b) {
+                if (a.lastUsedTimestamp == null && b.lastUsedTimestamp == null) return 0;
+                if (a.lastUsedTimestamp == null) return 1;
+                if (b.lastUsedTimestamp == null) return -1;
+                return b.lastUsedTimestamp!.compareTo(a.lastUsedTimestamp!);
+              });
+
+            if (sortedTextCategories.isNotEmpty && sortedTextCategories.first.lastUsedTimestamp != null) {
+              defaultTextCategory = sortedTextCategories.first;
+            } else {
+              try {
+                defaultTextCategory = userCategories.firstWhere((cat) => cat.name.toLowerCase() == "restaurant");
+              } catch (e) {
+                if (userCategories.isNotEmpty) {
+                  defaultTextCategory = userCategories.first;
+                }
+              }
+            }
+            cardData.selectedcategory = defaultTextCategory?.name ??
+                                       (UserCategory.defaultCategories.keys.isNotEmpty ? UserCategory.defaultCategories.keys.first : 'Other');
+          }
+
+          // Color Category Defaulting
+          if (userColorCategories.isNotEmpty && cardData.selectedColorCategoryId == null) { // Only if not already set
+            ColorCategory? defaultColorCategory;
+            List<ColorCategory> sortedColorCategories = List.from(userColorCategories)
+              ..sort((a, b) {
+                if (a.lastUsedTimestamp == null && b.lastUsedTimestamp == null) return 0;
+                if (a.lastUsedTimestamp == null) return 1;
+                if (b.lastUsedTimestamp == null) return -1;
+                return b.lastUsedTimestamp!.compareTo(a.lastUsedTimestamp!);
+              });
+
+            if (sortedColorCategories.isNotEmpty && sortedColorCategories.first.lastUsedTimestamp != null) {
+              defaultColorCategory = sortedColorCategories.first;
+            } else {
+              try {
+                defaultColorCategory = userColorCategories.firstWhere((cat) => cat.name.toLowerCase() == "want to go");
+              } catch (e) {
+                if (userColorCategories.isNotEmpty) {
+                  defaultColorCategory = userColorCategories.first;
+                }
+              }
+            }
+            cardData.selectedColorCategoryId = defaultColorCategory?.id;
+          }
+        }
+      }
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (experienceCards.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 16.0, bottom: 8.0),
+              child: Text(
+                  experienceCards.length > 1
+                      ? 'Save to Experiences'
+                      : 'Save to Experience',
+                  style: Theme.of(context).textTheme.titleLarge),
+            )
+          else
+            const Padding(
+                padding: EdgeInsets.only(top: 16.0, bottom: 8.0),
+                child: Text("No Experience Card")),
+          const SizedBox(height: 8),
+          if (experienceCards.isEmpty)
+            const Center(
+                child: Padding(
+              padding: EdgeInsets.symmetric(vertical: 20.0),
+              child: Text("Error: No experience card available.",
+                  style: TextStyle(color: Colors.red)),
+            ))
+          else
+            ListView.builder(
+                padding: EdgeInsets.zero,
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: experienceCards.length,
+                itemBuilder: (context, i) {
+                  final card = experienceCards[i];
+                  return ExperienceCardForm(
+                    key: ValueKey(card.id),
+                    cardData: card,
+                    isFirstCard: i == 0,
+                    canRemove: experienceCards.length > 1,
+                    userCategoriesNotifier: userCategoriesNotifier,
+                    userColorCategoriesNotifier: userColorCategoriesNotifier,
+                    onRemove: removeExperienceCard,
+                    onLocationSelect: showLocationPicker,
+                    onSelectSavedExperience: selectSavedExperienceForCard,
+                    onUpdate: ({
+                      bool refreshCategories = false,
+                      String? newCategoryName,
+                      String? selectedColorCategoryId,
+                    }) {
+                      handleCardFormUpdate(
+                        cardId: card.id,
+                        refreshCategories: refreshCategories,
+                        newCategoryName: newCategoryName,
+                        selectedColorCategoryId: selectedColorCategoryId,
+                      );
+                    },
+                    formKey: card.formKey,
+                  );
+                }),
+          if (!isSpecialUrl(currentSharedFiles.isNotEmpty
+              ? extractFirstUrl(currentSharedFiles.first.path) ?? ''
+              : ''))
+            Padding(
+              padding: const EdgeInsets.only(top: 12.0, bottom: 16.0),
+              child: Center(
+                child: OutlinedButton.icon(
+                  icon: const Icon(Icons.add),
+                  label: const Text('Add Another Experience'),
+                  onPressed: addExperienceCard,
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(
+                        vertical: 12, horizontal: 24),
+                    side: BorderSide(
+                        color: Theme.of(context).colorScheme.primary),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
 
 // Enum to track the source of the shared content
 enum ShareType { none, yelp, maps, instagram, genericUrl, image, video, file }
@@ -2438,11 +2625,54 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     }
   }
 
+  // ADDED: Helper method for ExperienceCardForm onUpdate callback
+  void _handleExperienceCardFormUpdate({
+    required String cardId,
+    bool refreshCategories = false,
+    String? newCategoryName,
+    String? selectedColorCategoryId,
+  }) {
+    print(
+        "ReceiveShareScreen._handleExperienceCardFormUpdate called: cardId=$cardId, refreshCategories=$refreshCategories, newCategoryName=$newCategoryName, selectedColorCategoryId=$selectedColorCategoryId");
+    if (selectedColorCategoryId != null) {
+      print(
+          "  Updating color category for card $cardId to $selectedColorCategoryId via provider.");
+      context
+          .read<ReceiveShareProvider>()
+          .updateCardColorCategory(cardId, selectedColorCategoryId);
+    } else if (refreshCategories) {
+      print("  Refreshing Categories via Notifiers...");
+      Future.wait([
+        _refreshUserCategoriesFromDialog(),
+        _refreshUserColorCategoriesFromDialog()
+      ]).then((_) {
+        print("  Category Notifiers updated.");
+        if (mounted) {
+          print(
+              "  Component is mounted after category refresh via notifiers.");
+          if (newCategoryName != null) {
+            print(
+                "  Attempting to set selected TEXT category for card $cardId to: $newCategoryName");
+            context
+                .read<ReceiveShareProvider>()
+                .updateCardTextCategory(cardId, newCategoryName);
+          }
+        } else {
+          print(
+              "  Component is NOT mounted after category refresh via notifiers.");
+        }
+      });
+    } else {
+      print(
+          "ReceiveShareScreen._handleExperienceCardFormUpdate: Non-category/color update. No special action here.");
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     print('ReceiveShareScreen build called'); // Diagnosis print statement
-    final shareProvider = context.watch<ReceiveShareProvider>();
-    final experienceCards = shareProvider.experienceCards;
+    // REMOVED: final shareProvider = context.watch<ReceiveShareProvider>();
+    // REMOVED: final experienceCards = shareProvider.experienceCards;
 
     return _wrapWithWillPopScope(Scaffold(
       appBar: AppBar(
@@ -2458,20 +2688,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         ),
         automaticallyImplyLeading:
             false, // We handle the leading button manually
-        actions: [
-          // Add button - only show if not special content
-          /* REMOVED: Add button logic
-          if (!_isSpecialUrl(_currentSharedFiles.isNotEmpty
-              ? _extractFirstUrl(_currentSharedFiles.first.path) ?? ''
-              : '')) // Check if first file content contains a special URL
-            IconButton(
-              icon: const Icon(Icons.add),
-              tooltip: 'Add Another Experience',
-              // Use the corrected method name
-              onPressed: _addExperienceCard,
-            ),
-          */ // End REMOVED block
-        ],
+        actions: [],
       ),
       body: SafeArea(
         child: _isSaving
@@ -2485,105 +2702,28 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                   ],
                 ),
               )
-            // RENAMED: FutureBuilder for User Categories
-            // --- MODIFIED: Use Future.wait to load both category types ---
             : FutureBuilder<List<dynamic>>(
-                future: Future.wait([ // Use Future.wait
-                  _userCategoriesFuture ?? Future.value([]), // Handle null future
-                  _userColorCategoriesFuture ?? Future.value([]) // Handle null future
+                future: Future.wait([ 
+                  _userCategoriesFuture ?? Future.value([]), 
+                  _userColorCategoriesFuture ?? Future.value([]) 
                 ]),
                 builder: (context, snapshot) {
                   if (snapshot.connectionState == ConnectionState.waiting) {
                     return const Center(child: CircularProgressIndicator());
                   }
                   if (snapshot.hasError) {
-                    // Handle error for combined future
                     print("FutureBuilder Error (Combined): ${snapshot.error}");
-                    // Show an error message or fallback UI
                     return Center(
                         child: Text(
                             "Error loading categories: ${snapshot.error}"));
                   }
-                  // We expect snapshot.data to be a List<List<dynamic>> if successful
                   if (!snapshot.hasData || snapshot.data!.length < 2) {
-                    // Handle unexpected data format
                     return const Center(
                         child: Text("Error: Could not load category data."));
                   }
 
-                  // Data is loaded, _userCategories and _userColorCategories should be populated by the loaders
                   print(
                       "Categories loaded: Text=${_userCategories.length}, Color=${_userColorCategories.length}");
-
-                  // --- APPLY DEFAULT CATEGORIES TO NEW CARDS (REFINED) --- 
-                  if (experienceCards.isNotEmpty) {
-                    for (var cardData in experienceCards) {
-                      if (cardData.existingExperienceId == null) { // Only for new cards
-                        // Text Category Defaulting
-                        if (_userCategories.isNotEmpty &&
-                            (cardData.selectedcategory == null || 
-                            !_userCategories.any((cat) => cat.name == cardData.selectedcategory) || // If current selection is invalid w.r.t loaded categories
-                            cardData.selectedcategory == (UserCategory.defaultCategories.keys.isNotEmpty ? UserCategory.defaultCategories.keys.first : 'Other') // Or still the basic constructor default
-                            ))
-                        {
-                          UserCategory? defaultTextCategory;
-                          List<UserCategory> sortedTextCategories = List.from(_userCategories)
-                            ..sort((a, b) {
-                              if (a.lastUsedTimestamp == null && b.lastUsedTimestamp == null) return 0;
-                              if (a.lastUsedTimestamp == null) return 1; // Sort nulls to the end
-                              if (b.lastUsedTimestamp == null) return -1; // Sort nulls to the end
-                              return b.lastUsedTimestamp!.compareTo(a.lastUsedTimestamp!); // Newest first
-                            });
-
-                          if (sortedTextCategories.isNotEmpty && sortedTextCategories.first.lastUsedTimestamp != null) {
-                            defaultTextCategory = sortedTextCategories.first;
-                            print("Card ${cardData.id} [RECEIVE SCREEN]: Defaulting text to MOST RECENT: ${defaultTextCategory.name}");
-                          } else {
-                            try {
-                              defaultTextCategory = _userCategories.firstWhere((cat) => cat.name.toLowerCase() == "restaurant");
-                              print("Card ${cardData.id} [RECEIVE SCREEN]: No recent text category, defaulting to RESTAURANT: ${defaultTextCategory.name}");
-                            } catch (e) {
-                              if (_userCategories.isNotEmpty) {
-                                defaultTextCategory = _userCategories.first;
-                                print("Card ${cardData.id} [RECEIVE SCREEN]: No recent or Restaurant, defaulting to FIRST AVAILABLE text: ${defaultTextCategory.name}");
-                              }
-                            }
-                          }
-                          cardData.selectedcategory = defaultTextCategory?.name ?? 
-                                                     (UserCategory.defaultCategories.keys.isNotEmpty ? UserCategory.defaultCategories.keys.first : 'Other');
-                        }
-
-                        // Color Category Defaulting
-                        if (_userColorCategories.isNotEmpty && cardData.selectedColorCategoryId == null) { // Only if not already set
-                          ColorCategory? defaultColorCategory;
-                          List<ColorCategory> sortedColorCategories = List.from(_userColorCategories)
-                            ..sort((a, b) {
-                              if (a.lastUsedTimestamp == null && b.lastUsedTimestamp == null) return 0;
-                              if (a.lastUsedTimestamp == null) return 1;
-                              if (b.lastUsedTimestamp == null) return -1;
-                              return b.lastUsedTimestamp!.compareTo(a.lastUsedTimestamp!);
-                            });
-
-                          if (sortedColorCategories.isNotEmpty && sortedColorCategories.first.lastUsedTimestamp != null) {
-                            defaultColorCategory = sortedColorCategories.first;
-                            print("Card ${cardData.id} [RECEIVE SCREEN]: Defaulting color to MOST RECENT: ${defaultColorCategory.name}");
-                          } else {
-                            try {
-                              defaultColorCategory = _userColorCategories.firstWhere((cat) => cat.name.toLowerCase() == "want to go");
-                              print("Card ${cardData.id} [RECEIVE SCREEN]: No recent color category, defaulting to WANT TO GO: ${defaultColorCategory.name}");
-                            } catch (e) {
-                              if (_userColorCategories.isNotEmpty) {
-                                defaultColorCategory = _userColorCategories.first;
-                                print("Card ${cardData.id} [RECEIVE SCREEN]: No recent or Want to Go, defaulting to FIRST AVAILABLE color: ${defaultColorCategory.name}");
-                              }
-                            }
-                          }
-                          cardData.selectedColorCategoryId = defaultColorCategory?.id;
-                        }
-                      }
-                    }
-                  }
-                  // --- END APPLY DEFAULT CATEGORIES ---
 
                   return Column(
                     children: [
@@ -2593,7 +2733,6 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              // Preview section
                               if (_currentSharedFiles.isEmpty)
                                 const Padding(
                                   padding: EdgeInsets.all(16.0),
@@ -2602,251 +2741,87 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                           Text('No shared content received')),
                                 )
                               else
-                                // REMOVED Outer Padding around ListView
-                                ListView.builder(
-                                  padding: EdgeInsets.zero, // Ensure ListView itself has no padding
-                                  shrinkWrap: true,
-                                  physics: const NeverScrollableScrollPhysics(),
-                                  itemCount: _currentSharedFiles.length,
-                                  itemBuilder: (context, index) {
-                                    final file = _currentSharedFiles[index];
+                                Consumer<ReceiveShareProvider>(
+                                  builder: (context, provider, child) {
+                                    final experienceCards = provider.experienceCards;
                                     final firstCard = experienceCards.isNotEmpty
                                         ? experienceCards.first
                                         : null;
 
-                                    // --- ADDED: Conditional Padding Logic ---
-                                    bool isInstagram = false;
-                                    if (file.type == SharedMediaType.text ||
-                                        file.type == SharedMediaType.url) {
-                                      String? url = _extractFirstUrl(file.path);
-                                      if (url != null &&
-                                          url.contains('instagram.com')) {
-                                        isInstagram = true;
-                                      }
-                                    }
-                                    final double horizontalPadding =
-                                        isInstagram ? 0.0 : 16.0;
-                                    final double verticalPadding =
-                                        8.0; // Consistent vertical padding
-                                    // --- END Conditional Padding Logic ---
-
-                                    // Apply padding conditionally around the Card
-                                    return Padding(
-                                      // ADDED: Use ValueKey based on the file path
-                                      key: ValueKey(file.path),
-                                      padding: EdgeInsets.symmetric(
-                                        horizontal: horizontalPadding,
-                                        vertical: verticalPadding,
-                                      ),
-                                      child: Card(
-                                        elevation: 2.0,
-                                        // SET margin based on type
-                                        margin: isInstagram
-                                            ? EdgeInsets.zero
-                                            : const EdgeInsets.only(
-                                                bottom:
-                                                    0), // Keep original vertical logic if any was intended, else just use EdgeInsets.zero for instagram
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(
-                                              isInstagram ? 0 : 8),
-                                        ),
-                                        clipBehavior: isInstagram
-                                            ? Clip.antiAlias
-                                            : Clip.none,
-                                        child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            if (firstCard != null)
-                                              _buildMediaPreview(
-                                                  file, firstCard, index)
-                                            else
-                                              // Fallback: Pass index here too
-                                              _buildMediaPreview(
-                                                  file, null, index),
-                                          ],
-                                        ),
-                                      ),
-                                    );
-                                  },
-                                ),
-
-                              // Experience association form section
-                              Padding(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 16.0),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    if (experienceCards.isNotEmpty)
-                                      // --- Restored Title Placeholder ---
-                                      Padding(
-                                        padding: const EdgeInsets.only(
-                                            top: 16.0, bottom: 8.0),
-                                        child: Text(
-                                            experienceCards.length > 1
-                                                ? 'Save to Experiences'
-                                                : 'Save to Experience',
-                                            style: Theme.of(context)
-                                                .textTheme
-                                                .titleLarge),
-                                      )
-                                    // --- End Title Placeholder ---
-                                    else
-                                      // --- Restored No Cards Title ---\
-                                      const Padding(
-                                          padding: EdgeInsets.only(
-                                              top: 16.0, bottom: 8.0),
-                                          child: Text(
-                                              "No Experience Card")), // <<< ADDED COMMA HERE
-                                    // --- End No Cards Title ---
-
-                                    const SizedBox(height: 8),
-
-                                    if (experienceCards.isEmpty)
-                                      // --- Restored Error Placeholder ---
-                                      const Center(
-                                          child: Padding(
-                                        padding: EdgeInsets.symmetric(
-                                            vertical: 20.0),
-                                        child: Text(
-                                            "Error: No experience card available.",
-                                            style:
-                                                TextStyle(color: Colors.red)),
-                                      ))
-                                    // --- End Error Placeholder ---
-                                    else
-                                      ListView.builder(
-                                          padding: EdgeInsets.zero,
-                                          shrinkWrap: true,
-                                          physics:
-                                              const NeverScrollableScrollPhysics(),
-                                          itemCount: experienceCards.length,
-                                          itemBuilder: (context, i) {
-                                            final card = experienceCards[i];
-                                            // ADDED Key based on the category list to force rebuild
-                                            return ExperienceCardForm(
-                                              key: ValueKey(card.id), // Use a stable ValueKey per card
-                                              cardData: card,
-                                              isFirstCard: i == 0,
-                                              canRemove:
-                                                  experienceCards.length > 1,
-                                              // --- MODIFIED: Pass Notifiers ---
-                                              userCategoriesNotifier:
-                                                  _userCategoriesNotifier, 
-                                              userColorCategoriesNotifier:
-                                                  _userColorCategoriesNotifier, 
-                                              // --- END MODIFIED ---
-                                              onRemove: _removeExperienceCard,
-                                              onLocationSelect:
-                                                  _showLocationPicker,
-                                              onSelectSavedExperience:
-                                                  _selectSavedExperienceForCard,
-                                              // UPDATED onUpdate handling:
-                                              onUpdate: ({
-                                                bool refreshCategories = false,
-                                                String? newCategoryName,
-                                                String?
-                                                    selectedColorCategoryId, // ADDED parameter
-                                              }) {
-                                                print(// Log entry
-                                                    "onUpdate called: refreshCategories=$refreshCategories, newCategoryName=$newCategoryName, selectedColorCategoryId=$selectedColorCategoryId"); // ADDED log
-                                                if (selectedColorCategoryId !=
-                                                    null) {
-                                                  // ADDED handling
-                                                  print(// Log provider call
-                                                      "  Updating color category for card ${card.id} to $selectedColorCategoryId via provider.");
-                                                  context
-                                                      .read<
-                                                          ReceiveShareProvider>()
-                                                      .updateCardColorCategory(
-                                                          card.id,
-                                                          selectedColorCategoryId);
-                                                } else if (refreshCategories) {
-                                                  print(
-                                                      "  Refreshing Categories via Notifiers...");
-                                                  // --- MODIFIED: Call methods that update Notifiers ---
-                                                  Future.wait([
-                                                    _refreshUserCategoriesFromDialog(), 
-                                                    _refreshUserColorCategoriesFromDialog() 
-                                                  ]).then((_) {
-                                                    // --- END MODIFIED ---
-                                                    print(
-                                                        "  Category Notifiers updated.");
-                                                    if (mounted) {
-                                                      print(
-                                                          "  Component is mounted after category refresh via notifiers.");
-                                                      // NO setState() for ReceiveShareScreen
-                                                      print(
-                                                          "  Categories refreshed from dialog. Notifiers updated. No screen setState needed.");
-                                                      if (newCategoryName !=
-                                                          null) {
-                                                        print(
-                                                            "  Attempting to set selected TEXT category for card ${card.id} to: $newCategoryName");
-                                                        context
-                                                            .read<
-                                                                ReceiveShareProvider>()
-                                                            .updateCardTextCategory(
-                                                                card.id,
-                                                                newCategoryName);
-                                                      }
-                                                    } else {
-                                                      print(
-                                                          "  Component is NOT mounted after category refresh via notifiers.");
-                                                    }
-                                                  });
-                                                } else {
-                                                  print(
-                                                      "onUpdate: Non-category/color update. No setState needed here."); 
-                                                }
-                                              },
-                                              formKey: card.formKey,
-                                            );
-                                          }),
-
-                                    // Add another experience button
-                                    // --- Restored _isSpecialUrl check ---\
-                                    if (!_isSpecialUrl(_currentSharedFiles
-                                            .isNotEmpty
-                                        ? _extractFirstUrl(_currentSharedFiles
-                                                .first.path) ??
-                                            ''
-                                        : ''))
-                                      // --- End Restored Check ---\
-                                      // --- Restored Button Placeholder ---\
-                                      Padding(
-                                        padding: const EdgeInsets.only(
-                                            top: 12.0, bottom: 16.0),
-                                        child: Center(
-                                          child: OutlinedButton.icon(
-                                            icon: const Icon(Icons.add),
-                                            label: const Text(
-                                                'Add Another Experience'),
-                                            onPressed: _addExperienceCard,
-                                            style: OutlinedButton.styleFrom(
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                      vertical: 12,
-                                                      horizontal: 24),
-                                              side: BorderSide(
-                                                  color: Theme.of(context)
-                                                      .colorScheme
-                                                      .primary),
+                                    return ListView.builder(
+                                      padding: EdgeInsets.zero, 
+                                      shrinkWrap: true,
+                                      physics: const NeverScrollableScrollPhysics(),
+                                      itemCount: _currentSharedFiles.length,
+                                      itemBuilder: (context, index) {
+                                        final file = _currentSharedFiles[index];
+                                        
+                                        bool isInstagram = false;
+                                        if (file.type == SharedMediaType.text ||
+                                            file.type == SharedMediaType.url) {
+                                          String? url = _extractFirstUrl(file.path);
+                                          if (url != null &&
+                                              url.contains('instagram.com')) {
+                                            isInstagram = true;
+                                          }
+                                        }
+                                        final double horizontalPadding =
+                                            isInstagram ? 0.0 : 16.0;
+                                        final double verticalPadding =
+                                            8.0; 
+                                        
+                                        return Padding(
+                                          key: ValueKey(file.path),
+                                          padding: EdgeInsets.symmetric(
+                                            horizontal: horizontalPadding,
+                                            vertical: verticalPadding,
+                                          ),
+                                          child: Card(
+                                            elevation: 2.0,
+                                            margin: isInstagram
+                                                ? EdgeInsets.zero
+                                                : const EdgeInsets.only(
+                                                    bottom:
+                                                        0), 
+                                            shape: RoundedRectangleBorder(
+                                              borderRadius: BorderRadius.circular(
+                                                  isInstagram ? 0 : 8),
+                                            ),
+                                            clipBehavior: isInstagram
+                                                ? Clip.antiAlias
+                                                : Clip.none,
+                                            child: Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: [
+                                                _buildMediaPreview(
+                                                    file, firstCard, index),
+                                              ],
                                             ),
                                           ),
-                                        ),
-                                      )
-                                    // --- End Button Placeholder ---\
-                                    ,
-                                  ],
+                                        );
+                                      },
+                                    );
+                                  }
                                 ),
+                              _ExperienceCardsSection(
+                                userCategories: _userCategories,
+                                userColorCategories: _userColorCategories,
+                                userCategoriesNotifier: _userCategoriesNotifier,
+                                userColorCategoriesNotifier: _userColorCategoriesNotifier,
+                                removeExperienceCard: _removeExperienceCard,
+                                showLocationPicker: _showLocationPicker,
+                                selectSavedExperienceForCard: _selectSavedExperienceForCard,
+                                handleCardFormUpdate: _handleExperienceCardFormUpdate,
+                                addExperienceCard: _addExperienceCard,
+                                isSpecialUrl: _isSpecialUrl,
+                                extractFirstUrl: _extractFirstUrl,
+                                currentSharedFiles: _currentSharedFiles,
                               ),
                             ],
                           ),
                         ),
                       ),
-                      // Action buttons (Save/Cancel) - Fixed at the bottom
-                      // --- Restored Buttons Container ---\
                       Container(
                         padding: const EdgeInsets.symmetric(
                             horizontal: 16.0, vertical: 12.0),
@@ -2893,12 +2868,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                           ],
                         ),
                       )
-                      // --- End Buttons Container ---\
                     ],
                   );
                 },
               ),
-        // --- END FutureBuilder ---\
       ),
     ));
   }
@@ -3321,6 +3294,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   }
   // --- END ADDED ---
 } // End _ReceiveShareScreenState
+
+// --- ADDED: _ExperienceCardsSection widget ---
+// (This should be defined above _ReceiveShareScreenState or at the top of the file)
+// class _ExperienceCardsSection extends StatelessWidget { ... } // Definition was provided earlier
 
 // --- ADDED: StatefulWidget to manage Instagram preview expansion state ---
 class InstagramPreviewWrapper extends StatefulWidget {
