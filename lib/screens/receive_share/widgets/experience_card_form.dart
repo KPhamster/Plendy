@@ -746,19 +746,13 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
             // Header row with expand/collapse and delete functionality
             InkWell(
               onTap: () {
-                // REMOVED setState
-                // setState(() {
-                // _isExpanded = !_isExpanded; // This variable is removed
-                // });
-                // Directly update the cardData which should trigger parent rebuild
-                widget.cardData.isExpanded = !widget.cardData.isExpanded;
-                // Unfocus any active fields when collapsing
-                if (!widget.cardData.isExpanded) {
-                  FocusScope.of(context).unfocus();
-                }
-                widget.onUpdate(
-                    refreshCategories:
-                        false); // Notify parent, no refresh needed
+                setState(() {
+                  widget.cardData.isExpanded = !widget.cardData.isExpanded;
+                  // Unfocus any active fields when collapsing
+                  if (!widget.cardData.isExpanded) {
+                    FocusScope.of(context).unfocus();
+                  }
+                });
               },
               child: Padding(
                 padding:
@@ -900,10 +894,6 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                 value: widget.cardData
                                     .locationEnabled, // Read directly from cardData
                                 onChanged: (value) {
-                                  // REMOVED setState
-                                  // setState(() {
-                                  //   _locationEnabled = value; // Variable removed
-                                  // });
                                   widget.cardData.locationEnabled =
                                       value; // Update model
                                   widget.onUpdate(
