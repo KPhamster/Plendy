@@ -129,6 +129,8 @@ class ReceiveShareProvider extends ChangeNotifier {
     final newCard = ExperienceCardData(); // MODIFIED
     _applyDefaultsToCard(newCard); // ADDED: Apply defaults when a new card is added
     _experienceCards.add(newCard);
+    // ADDED: Detailed print statement
+    print("ReceiveShareProvider: addExperienceCard. Cards count: ${_experienceCards.length}. IDs: ${_experienceCards.map((c) => c.id.substring(c.id.length - 4)).toList()} BEFORE notifyListeners.");
     notifyListeners(); // Notify listeners about the change
   }
 
