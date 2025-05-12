@@ -82,7 +82,7 @@ class SharingService {
             print("SHARE SERVICE: Navigation error: $e");
           });
         } else if (_isReceiveShareScreenOpen) {
-          print("SHARE SERVICE: ReceiveShareScreen is already open. Updating sharedFiles controller.");
+          //print("SHARE SERVICE: ReceiveShareScreen is already open. Updating sharedFiles controller.");
           // The controller update will be detected by the screen
         } else if (_isNavigatingToReceiveScreen) {
           print("SHARE SERVICE: Already navigating to ReceiveShareScreen. Ignoring new stream event.");
@@ -165,19 +165,19 @@ class SharingService {
   Future<void> showReceiveShareScreen(
       BuildContext context, List<SharedMediaFile> files) async {
     if (_isReceiveShareScreenOpen) {
-      print("SHARE SERVICE: ReceiveShareScreen is already open. Updating sharedFiles controller.");
+      //print("SHARE SERVICE: ReceiveShareScreen is already open. Updating sharedFiles controller.");
       
       // Just update the shared files controller
       _sharedFilesController.value = List.from(files);
       
       try {
         // Show a snackbar to indicate new content was received
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('New shared content received'),
-            duration: Duration(seconds: 2),
-          ),
-        );
+        // ScaffoldMessenger.of(context).showSnackBar(
+        //   const SnackBar(
+        //     content: Text('New shared content received'),
+        //     duration: Duration(seconds: 2),
+        //   ),
+        // );
       } catch (e) {
         print("SHARE SERVICE: Error showing snackbar: $e");
       }

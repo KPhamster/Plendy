@@ -64,15 +64,26 @@ class ReceiveShareProvider extends ChangeNotifier {
     // cardData.selectedcategory is already "Restaurant" from its constructor.
 
     bool categorySetFromPref = false;
-    if (_lastUsedCategoryNamePreference != null && _userCategories.any((cat) => cat.name == _lastUsedCategoryNamePreference)) {
-      cardData.selectedcategory = _lastUsedCategoryNamePreference;
-      categorySetFromPref = true;
-      print("ReceiveShareProvider: Card ${cardData.id} - Text category set from preference: $_lastUsedCategoryNamePreference");
+    if (_lastUsedCategoryNamePreference != null) {
+      if (_userCategories.isEmpty) {
+        // When category list is empty, trust the preference and apply it anyway
+        cardData.selectedcategory = _lastUsedCategoryNamePreference;
+        categorySetFromPref = true;
+        print("ReceiveShareProvider: Card ${cardData.id} - Text category set from preference without validation (empty list): $_lastUsedCategoryNamePreference");
+      } 
+      else if (_userCategories.any((cat) => cat.name == _lastUsedCategoryNamePreference)) {
+        cardData.selectedcategory = _lastUsedCategoryNamePreference;
+        categorySetFromPref = true;
+        print("ReceiveShareProvider: Card ${cardData.id} - Text category set from preference: $_lastUsedCategoryNamePreference");
+      }
+      else {
+        print("ReceiveShareProvider: Card ${cardData.id} - Preference category '$_lastUsedCategoryNamePreference' not found in loaded categories list.");
+      }
     }
 
     // If not set from preference, it remains "Restaurant".
     // Now, ensure "Restaurant" (or the preference) is valid. If not, pick the first available.
-    if (!categorySetFromPref) { // Only if not set by preference
+    if (!categorySetFromPref && !_userCategories.isEmpty) { // Only validate if user categories are available
         // If current (Restaurant or other) is not in the list, pick first available
         if (!_userCategories.any((cat) => cat.name == cardData.selectedcategory)) {
             if (_userCategories.isNotEmpty) {
@@ -92,13 +103,24 @@ class ReceiveShareProvider extends ChangeNotifier {
     // cardData.selectedColorCategoryId is null from its constructor.
 
     bool colorCategorySetFromPref = false;
-    if (_lastUsedColorCategoryIdPreference != null && _userColorCategories.any((cat) => cat.id == _lastUsedColorCategoryIdPreference)) {
-      cardData.selectedColorCategoryId = _lastUsedColorCategoryIdPreference;
-      colorCategorySetFromPref = true;
-      print("ReceiveShareProvider: Card ${cardData.id} - Color category set from preference: $_lastUsedColorCategoryIdPreference");
+    if (_lastUsedColorCategoryIdPreference != null) {
+      if (_userColorCategories.isEmpty) {
+        // When color category list is empty, trust the preference and apply it anyway
+        cardData.selectedColorCategoryId = _lastUsedColorCategoryIdPreference;
+        colorCategorySetFromPref = true;
+        print("ReceiveShareProvider: Card ${cardData.id} - Color category set from preference without validation (empty list): $_lastUsedColorCategoryIdPreference");
+      }
+      else if (_userColorCategories.any((cat) => cat.id == _lastUsedColorCategoryIdPreference)) {
+        cardData.selectedColorCategoryId = _lastUsedColorCategoryIdPreference;
+        colorCategorySetFromPref = true;
+        print("ReceiveShareProvider: Card ${cardData.id} - Color category set from preference: $_lastUsedColorCategoryIdPreference");
+      }
+      else {
+        print("ReceiveShareProvider: Card ${cardData.id} - Preference color category ID '$_lastUsedColorCategoryIdPreference' not found in loaded color categories list.");
+      }
     }
 
-    if (!colorCategorySetFromPref) {
+    if (!colorCategorySetFromPref && !_userColorCategories.isEmpty) { // Only proceed with "Want to go" logic if not already set
       // Try "Want to go"
       try {
         final wantToGoCategory = _userColorCategories.firstWhere(
