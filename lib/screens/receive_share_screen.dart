@@ -231,10 +231,10 @@ class ExperienceCardData {
   // Constructor can set initial values if needed
   // Set default category name
   ExperienceCardData() {
-    // Initialize with the name of the first default category, or 'Other'
-    selectedcategory = UserCategory.defaultCategories.keys.isNotEmpty
-        ? UserCategory.defaultCategories.keys.first
-        : 'Other';
+    // Initialize with "Restaurant" as the default category
+    selectedcategory = 'Restaurant';
+    // selectedColorCategoryId will be null by default and should be set by the provider
+    // based on SharedPreferences or "Want to go" default logic.
   }
 
   // Dispose resources
@@ -271,6 +271,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   final SharingService _sharingService = SharingService();
   // ADDED: AuthService instance
   final AuthService _authService = AuthService();
+
+  // SharedPreferences keys for last used category/color category
+  static const String _lastUsedCategoryNameKey = 'last_used_category_name';
+  static const String _lastUsedColorCategoryIdKey = 'last_used_color_category_id';
 
   // Remove local experience card list - managed by Provider now
   // List<ExperienceCardData> _experienceCards = [];
@@ -589,6 +593,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       ReceiveSharingIntent.instance.reset();
       // print("SHARE DEBUG: Intent reset in dispose");
     }
+
+    // Reset sharing service state on dispose
+    _sharingService.resetSharedItems();
 
     _userCategoriesNotifier.dispose();
     _userColorCategoriesNotifier.dispose();
@@ -1391,6 +1398,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
   void _fillFormWithBusinessData(
       Location location, String businessName, String yelpUrl) {
+    // Check mounted HERE before using context or calling setState
+    if (!mounted) return;
+
     final provider = context.read<ReceiveShareProvider>();
 
     ExperienceCardData? targetCard;
@@ -1454,6 +1464,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
   void _fillFormWithGoogleMapsData(Location location, String placeName,
       String websiteUrl, String originalMapsUrl) {
+    // Check mounted HERE
+    if (!mounted) return;
+
     final provider = context.read<ReceiveShareProvider>();
     final firstCard = provider.experienceCards.isNotEmpty
         ? provider.experienceCards.first
@@ -1517,6 +1530,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     final String? currentUserId = _authService.currentUser?.uid;
     if (currentUserId == null) {
+      if (!mounted) return; // Check mounted
       _showSnackBar(
           context, 'Error: Could not identify user. Please log in again.');
       return;
@@ -1529,23 +1543,27 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         break;
       }
       if (card.selectedcategory == null || card.selectedcategory!.isEmpty) {
+        if (!mounted) return; // Check mounted
         _showSnackBar(context, 'Please select a category for each card.');
         allValid = false;
         break;
       }
       if (card.locationEnabled && card.selectedLocation == null) {
+        if (!mounted) return; // Check mounted
         _showSnackBar(context,
-            'Please select a location for experience card: "${card.titleController.text}"');
+            'Please select a location for experience card: "${card.titleController.text}" ');
         allValid = false;
         break;
       }
     }
 
     if (!allValid) {
+      if (!mounted) return; // Check mounted
       _showSnackBar(context, 'Please fill in required fields correctly');
       return;
     }
 
+    if (!mounted) return; // Check mounted before setState
     setState(() {
       _isSaving = true;
     });
@@ -1555,6 +1573,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     List<String> errors = [];
 
     try {
+      if (!mounted) return; // Check mounted at start of try
+
       final now = DateTime.now();
       final uniqueSharedPaths =
           _currentSharedFiles.map((f) => f.path).toSet().toList();
@@ -1571,6 +1591,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                 "SAVE_DEBUG: Checking for existing SharedMediaItem for path: $path AND owner: $currentUserId");
             SharedMediaItem? foundItem =
                 await _experienceService.findSharedMediaItemByPath(path);
+            if (!mounted) return; // Check mounted after await
 
             if (foundItem != null && foundItem.ownerUserId == currentUserId) {
               existingItem = foundItem;
@@ -1601,6 +1622,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             );
             String newItemId =
                 await _experienceService.createSharedMediaItem(newItem);
+            if (!mounted) return; // Check mounted after await
             mediaPathToItemIdMap[path] = newItemId;
             print("SAVE_DEBUG: Created new item ID: $newItemId");
           }
@@ -1678,10 +1700,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               );
               targetExperienceId =
                   await _experienceService.createExperience(newExperience);
+              if (!mounted) return; // Check mounted after await
               currentExperienceData = newExperience
                   .copyWith(); 
               currentExperienceData = await _experienceService.getExperience(
                   targetExperienceId); 
+              if (!mounted) return; // Check mounted after await
               print(
                   "SAVE_DEBUG: Created NEW Experience ID: $targetExperienceId");
               successCount++;
@@ -1692,6 +1716,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                   "SAVE_DEBUG: Using EXISTING experience ID: $targetExperienceId");
               currentExperienceData =
                   await _experienceService.getExperience(targetExperienceId);
+              if (!mounted) return; // Check mounted after await
               if (currentExperienceData == null) {
                 print(
                     "SAVE_DEBUG: ERROR - Could not find existing experience $targetExperienceId");
@@ -1749,6 +1774,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                   updatedAt: now,
                 );
                 await _experienceService.updateExperience(experienceToUpdate);
+                if (!mounted) return; // Check mounted after await
               } else {
                 print(
                     "SAVE_DEBUG: No changes to media links for existing Experience $targetExperienceId. Skipping update.");
@@ -1766,6 +1792,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               try {
                 await _experienceService.addExperienceLinkToMediaItem(
                     mediaItemId, targetExperienceId);
+                 if (!mounted) return; // Check mounted after await
               } catch (e) {
                 print(
                     "SAVE_DEBUG: Error linking media $mediaItemId to experience $targetExperienceId: $e");
@@ -1777,6 +1804,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                   "SAVE_DEBUG: Processing Public Experience logic for PlaceID: $placeId");
               PublicExperience? existingPublicExp = await _experienceService
                   .findPublicExperienceByPlaceId(placeId);
+              if (!mounted) return; // Check mounted after await
               if (existingPublicExp == null) {
                 String publicName = locationToSave.getPlaceName();
                 PublicExperience newPublicExperience = PublicExperience(
@@ -1792,6 +1820,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                 print("SAVE_DEBUG: Creating Public Experience: $publicName");
                 await _experienceService
                     .createPublicExperience(newPublicExperience);
+                if (!mounted) return; // Check mounted after await
               } else {
                 print(
                     "SAVE_DEBUG: Found existing Public Experience ID: ${existingPublicExp.id}. Adding media paths.");
@@ -1799,6 +1828,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                     existingPublicExp.id,
                     uniqueSharedPaths, 
                     newYelpUrl: cardYelpUrl.isNotEmpty ? cardYelpUrl : null);
+                if (!mounted) return; // Check mounted after await
               }
             } else {
               print(
@@ -1809,6 +1839,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               try {
                 await _experienceService
                     .updateCategoryLastUsedTimestamp(selectedCategoryObject.id);
+                 if (!mounted) return; // Check mounted after await
                 print(
                     "SAVE_DEBUG [Card ${card.id}]: Updated timestamp for category: ${selectedCategoryObject.name}");
               } catch (e) {
@@ -1824,6 +1855,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               try {
                 await _experienceService.updateColorCategoryLastUsedTimestamp(
                     colorCategoryIdToSave);
+                if (!mounted) return; // Check mounted after await
                 print(
                     "SAVE_DEBUG [Card ${card.id}]: Updated timestamp for color category ID: $colorCategoryIdToSave");
               } catch (e) {
@@ -1858,8 +1890,43 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         message += '${errors.length} failed.';
         print('Save errors: ${errors.join('\n')}');
       }
+      if (!mounted) return; // Check mounted before _showSnackBar
       _showSnackBar(context, message);
 
+      // Save the last used category and color category
+      if (experienceCards.isNotEmpty && (successCount > 0 || updateCount > 0)) {
+        // Find the last card that was part of a successful save operation.
+        // This could be the actual last card if all were successful, or requires more sophisticated tracking if partial saves are possible.
+        // For simplicity, we\'ll take the category/color from the last card in the list processed, assuming it reflects user\'s latest choices if a save occurred.
+        final lastProcessedCard = experienceCards.last;
+        final prefs = await SharedPreferences.getInstance();
+        if (!mounted) return; // Check mounted after await
+
+        if (lastProcessedCard.selectedcategory != null) {
+          await prefs.setString(_lastUsedCategoryNameKey, lastProcessedCard.selectedcategory!);
+           if (!mounted) return; // Check mounted after await
+          print("ReceiveShareScreen: Saved last used category: ${lastProcessedCard.selectedcategory}");
+        } else {
+          // If it was explicitly set to null, we might want to remove the preference
+          await prefs.remove(_lastUsedCategoryNameKey);
+           if (!mounted) return; // Check mounted after await
+           print("ReceiveShareScreen: Last used category was null, removed preference.");
+        }
+
+        if (lastProcessedCard.selectedColorCategoryId != null) {
+          await prefs.setString(_lastUsedColorCategoryIdKey, lastProcessedCard.selectedColorCategoryId!);
+           if (!mounted) return; // Check mounted after await
+          print("ReceiveShareScreen: Saved last used color category ID: ${lastProcessedCard.selectedColorCategoryId}");
+        } else {
+          // If it was explicitly set to null, remove the preference
+          await prefs.remove(_lastUsedColorCategoryIdKey);
+           if (!mounted) return; // Check mounted after await
+          print("ReceiveShareScreen: Last used color category ID was null, removed preference.");
+        }
+      }
+
+      if (!mounted) return; // Check mounted before resetting and Navigator
+      _sharingService.resetSharedItems(); // Reset SharingService state before navigating
       Navigator.pushAndRemoveUntil(
         context,
         MaterialPageRoute(builder: (context) => const MainScreen()),
@@ -1867,9 +1934,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       );
     } catch (e) {
       print('Error saving experiences: $e');
+      if (!mounted) return; // Check mounted before _showSnackBar
       _showSnackBar(context, 'Error saving experiences: $e');
     } finally {
-      if (mounted) {
+      if (mounted) { // Check mounted before setState in finally
         setState(() {
           _isSaving = false;
         });
@@ -1892,18 +1960,24 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     try {
       final results = await _mapsService.searchPlaces(query);
 
-      setState(() {
-        card.searchResults = results;
-      });
+      if (mounted) {
+        setState(() {
+          card.searchResults = results;
+        });
+      }
     } catch (e) {
       print('Error searching places: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error searching places')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error searching places')),
+        );
+      }
     } finally {
-      setState(() {
-        card.isSelectingLocation = false;
-      });
+      if (mounted) {
+        setState(() {
+          card.isSelectingLocation = false;
+        });
+      }
     }
   }
 
@@ -1915,19 +1989,25 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     try {
       final location = await _mapsService.getPlaceDetails(placeId);
 
-      setState(() {
-        card.selectedLocation = location;
-        card.searchController.text = location.address ?? '';
-      });
+      if (mounted) {
+        setState(() {
+          card.selectedLocation = location;
+          card.searchController.text = location.address ?? '';
+        });
+      }
     } catch (e) {
       print('Error getting place details: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error selecting location')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error selecting location')),
+        );
+      }
     } finally {
-      setState(() {
-        card.isSelectingLocation = false;
-      });
+      if (mounted) {
+        setState(() {
+          card.isSelectingLocation = false;
+        });
+      }
     }
   }
 
@@ -1951,7 +2031,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     );
 
     if (result != null && mounted) {
-      Future.microtask(() => FocusScope.of(context).unfocus());
+      Future.microtask(() {
+        if (mounted) { // Check mounted before using context
+          FocusScope.of(context).unfocus();
+        }
+      });
 
       final Location selectedLocation =
           result is Map ? result['location'] : result as Location;
@@ -1969,6 +2053,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
           Location detailedLocation =
               await _mapsService.getPlaceDetails(selectedLocation.placeId!);
+          
+          if (!mounted) return; // Check mounted after await
 
           final String businessName = detailedLocation.getPlaceName();
           final String yelpUrl = card.yelpUrlController.text.trim();
@@ -2006,8 +2092,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           }
         } catch (e) {
           print("Error getting place details or updating card: $e");
-          _showSnackBar(
-              context, "Error updating location details from Yelp context: $e");
+          if (mounted) {
+            _showSnackBar(
+                context, "Error updating location details from Yelp context: $e");
+          }
           provider.updateCardData(card, location: selectedLocation);
         }
       } else {
@@ -2026,6 +2114,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
           Location detailedLocation =
               await _mapsService.getPlaceDetails(selectedLocation.placeId!);
+
+          if (!mounted) return; // Check mounted after await
 
           final String title = detailedLocation.getPlaceName();
           final String? website = detailedLocation.website;
@@ -2069,7 +2159,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         } catch (e) {
           print(
               "Error getting place details or updating card in non-Yelp context: $e");
-          _showSnackBar(context, "Error updating location details: $e");
+          if (mounted) {
+            _showSnackBar(context, "Error updating location details: $e");
+          }
           provider.updateCardData(card,
               location: selectedLocation,
               searchQuery: selectedLocation.address ?? 'Selected Location');

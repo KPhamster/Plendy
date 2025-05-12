@@ -4,134 +4,147 @@ import 'package:plendy/models/experience.dart'; // For Location
 // TODO: Adjust these import paths if they are incorrect for your project structure
 import '../models/user_category.dart';
 import '../models/color_category.dart';
+import 'package:shared_preferences/shared_preferences.dart'; // ADDED
 
 class ReceiveShareProvider extends ChangeNotifier {
   final List<ExperienceCardData> _experienceCards = [];
 
-  List<UserCategory> _userCategories = []; // ADDED
-  List<ColorCategory> _userColorCategories = []; // ADDED
+  List<UserCategory> _userCategories = [];
+  List<ColorCategory> _userColorCategories = [];
+
+  // SharedPreferences keys - should match ReceiveShareScreen
+  static const String _lastUsedCategoryNameKey = 'last_used_category_name';
+  static const String _lastUsedColorCategoryIdKey = 'last_used_color_category_id';
+
+  // Preferences loaded from SharedPreferences
+  String? _lastUsedCategoryNamePreference;
+  String? _lastUsedColorCategoryIdPreference;
 
   List<ExperienceCardData> get experienceCards => _experienceCards;
 
   ReceiveShareProvider() {
-    // Initialize with one card if the list is empty
-    if (_experienceCards.isEmpty) {
-      addExperienceCard();
-    }
+    _loadPreferencesAndInitializeCards();
   }
 
-  // ADDED: Method to update user categories (call this from ReceiveShareScreen after fetching)
+  Future<void> _loadPreferencesAndInitializeCards() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      _lastUsedCategoryNamePreference = prefs.getString(_lastUsedCategoryNameKey);
+      _lastUsedColorCategoryIdPreference = prefs.getString(_lastUsedColorCategoryIdKey);
+      print("ReceiveShareProvider: Loaded prefs - LastCategoryName: $_lastUsedCategoryNamePreference, LastColorCategoryID: $_lastUsedColorCategoryIdPreference");
+    } catch (e) {
+      print("ReceiveShareProvider: Error loading SharedPreferences: $e");
+    }
+
+    if (_experienceCards.isEmpty) {
+      addExperienceCard(); // This will call _applyDefaultsToCard which now uses the loaded prefs
+    }
+    // notifyListeners(); // addExperienceCard will notify if it adds a card. If no card added, no immediate UI change needed from just loading prefs.
+  }
+
   void updateUserCategories(List<UserCategory> newCategories) {
     _userCategories = newCategories;
-    _reconcileDefaultsForAllCards(); // Apply defaults to existing cards if needed
+    _reconcileDefaultsForAllCards();
     notifyListeners();
   }
 
-  // ADDED: Method to update user color categories (call this from ReceiveShareScreen after fetching)
   void updateUserColorCategories(List<ColorCategory> newColorCategories) {
     _userColorCategories = newColorCategories;
-    _reconcileDefaultsForAllCards(); // Apply defaults to existing cards if needed
+    _reconcileDefaultsForAllCards();
     notifyListeners();
   }
 
-  // ADDED: Helper method to apply default categories to a single card
   void _applyDefaultsToCard(ExperienceCardData cardData) {
-    // Don't apply to cards already linked to an existing experience
     if (cardData.existingExperienceId != null) {
+      print("ReceiveShareProvider: Card ${cardData.id} has existingExperienceId, skipping default override.");
       return;
     }
 
-    // Text Category Defaulting (uses _userCategories from the provider)
-    if (_userCategories.isNotEmpty &&
-        (cardData.selectedcategory == null ||
-        !_userCategories.any((cat) => cat.name == cardData.selectedcategory) ||
-        cardData.selectedcategory == (UserCategory.defaultCategories.keys.isNotEmpty ? UserCategory.defaultCategories.keys.first : 'Other')))
-    {
-      UserCategory? defaultTextCategory;
-      // Sort by lastUsedTimestamp descending (most recent first)
-      List<UserCategory> sortedTextCategories = List.from(_userCategories)
-        ..sort((a, b) {
-          if (a.lastUsedTimestamp == null && b.lastUsedTimestamp == null) return 0;
-          if (a.lastUsedTimestamp == null) return 1; // b is more recent or both null
-          if (b.lastUsedTimestamp == null) return -1; // a is more recent
-          return b.lastUsedTimestamp!.compareTo(a.lastUsedTimestamp!);
-        });
+    // --- Text Category Defaulting ---
+    // cardData.selectedcategory is already "Restaurant" from its constructor.
 
-      if (sortedTextCategories.isNotEmpty && sortedTextCategories.first.lastUsedTimestamp != null) {
-        defaultTextCategory = sortedTextCategories.first; // Most recently used
-      } else {
-        // Fallback: try "Restaurant", then first in list
-        try {
-          defaultTextCategory = _userCategories.firstWhere((cat) => cat.name.toLowerCase() == "restaurant");
-        } catch (e) {
-          if (_userCategories.isNotEmpty) {
-            defaultTextCategory = _userCategories.first;
-          }
-        }
-      }
-      cardData.selectedcategory = defaultTextCategory?.name ??
-                                 (UserCategory.defaultCategories.keys.isNotEmpty ? UserCategory.defaultCategories.keys.first : 'Other');
+    bool categorySetFromPref = false;
+    if (_lastUsedCategoryNamePreference != null && _userCategories.any((cat) => cat.name == _lastUsedCategoryNamePreference)) {
+      cardData.selectedcategory = _lastUsedCategoryNamePreference;
+      categorySetFromPref = true;
+      print("ReceiveShareProvider: Card ${cardData.id} - Text category set from preference: $_lastUsedCategoryNamePreference");
     }
 
-    // Color Category Defaulting (uses _userColorCategories from the provider)
-    // Apply only if a color category isn't already set for the card
-    if (_userColorCategories.isNotEmpty && cardData.selectedColorCategoryId == null) {
-      ColorCategory? defaultColorCategory;
-      // Sort by lastUsedTimestamp descending
-      List<ColorCategory> sortedColorCategories = List.from(_userColorCategories)
-        ..sort((a, b) {
-          if (a.lastUsedTimestamp == null && b.lastUsedTimestamp == null) return 0;
-          if (a.lastUsedTimestamp == null) return 1;
-          if (b.lastUsedTimestamp == null) return -1;
-          return b.lastUsedTimestamp!.compareTo(a.lastUsedTimestamp!);
-        });
+    // If not set from preference, it remains "Restaurant".
+    // Now, ensure "Restaurant" (or the preference) is valid. If not, pick the first available.
+    if (!categorySetFromPref) { // Only if not set by preference
+        // If current (Restaurant or other) is not in the list, pick first available
+        if (!_userCategories.any((cat) => cat.name == cardData.selectedcategory)) {
+            if (_userCategories.isNotEmpty) {
+                cardData.selectedcategory = _userCategories.first.name;
+                print("ReceiveShareProvider: Card ${cardData.id} - Default text category '${cardData.selectedcategory}' (constructor) not in list. Set to first available: ${_userCategories.first.name}");
+            } else {
+                 print("ReceiveShareProvider: Card ${cardData.id} - No user categories available to validate/set text category.");
+                 // Stays as "Restaurant" from constructor, though it's not in an empty list.
+            }
+        } else {
+           print("ReceiveShareProvider: Card ${cardData.id} - Text category '${cardData.selectedcategory}' (from constructor) is valid or no pref available.");
+        }
+    }
 
-      if (sortedColorCategories.isNotEmpty && sortedColorCategories.first.lastUsedTimestamp != null) {
-        defaultColorCategory = sortedColorCategories.first; // Most recently used
-      } else {
-        // Fallback: try "Want to Go", then first in list
-        try {
-          defaultColorCategory = _userColorCategories.firstWhere((cat) => cat.name.toLowerCase() == "want to go");
-        } catch (e) {
-          if (_userColorCategories.isNotEmpty) {
-            defaultColorCategory = _userColorCategories.first;
-          }
+
+    // --- Color Category Defaulting ---
+    // cardData.selectedColorCategoryId is null from its constructor.
+
+    bool colorCategorySetFromPref = false;
+    if (_lastUsedColorCategoryIdPreference != null && _userColorCategories.any((cat) => cat.id == _lastUsedColorCategoryIdPreference)) {
+      cardData.selectedColorCategoryId = _lastUsedColorCategoryIdPreference;
+      colorCategorySetFromPref = true;
+      print("ReceiveShareProvider: Card ${cardData.id} - Color category set from preference: $_lastUsedColorCategoryIdPreference");
+    }
+
+    if (!colorCategorySetFromPref) {
+      // Try "Want to go"
+      try {
+        final wantToGoCategory = _userColorCategories.firstWhere(
+            (cat) => cat.name.toLowerCase() == "want to go");
+        cardData.selectedColorCategoryId = wantToGoCategory.id;
+        print("ReceiveShareProvider: Card ${cardData.id} - Color category set to 'Want to go': ${wantToGoCategory.id}");
+      } catch (e) {
+        // "Want to go" not found, try the first available color category
+        if (_userColorCategories.isNotEmpty) {
+          cardData.selectedColorCategoryId = _userColorCategories.first.id;
+          print("ReceiveShareProvider: Card ${cardData.id} - Color category 'Want to go' not found. Set to first available: ${_userColorCategories.first.id}");
+        } else {
+          cardData.selectedColorCategoryId = null; // Explicitly null if no categories
+          print("ReceiveShareProvider: Card ${cardData.id} - No color categories available to set default.");
         }
       }
-      cardData.selectedColorCategoryId = defaultColorCategory?.id;
     }
+    print("ReceiveShareProvider: Card ${cardData.id} final defaults - Text: ${cardData.selectedcategory}, ColorID: ${cardData.selectedColorCategoryId}");
   }
 
-  // ADDED: Reconciliation logic for existing cards
   void _reconcileDefaultsForAllCards() {
-    bool didChangeAnything = false;
+    // bool didChangeAnything = false; // Not strictly needed now as _applyDefaultsToCard prints changes
     for (var cardData in _experienceCards) {
-      String? originalSelectedCategory = cardData.selectedcategory;
-      String? originalSelectedColorCategoryId = cardData.selectedColorCategoryId;
-
+      // String? originalSelectedCategory = cardData.selectedcategory; // For debugging
+      // String? originalSelectedColorCategoryId = cardData.selectedColorCategoryId; // For debugging
+      
       _applyDefaultsToCard(cardData);
 
-      if (cardData.selectedcategory != originalSelectedCategory ||
-          cardData.selectedColorCategoryId != originalSelectedColorCategoryId) {
-        didChangeAnything = true;
-      }
+      // if (cardData.selectedcategory != originalSelectedCategory ||
+      //     cardData.selectedColorCategoryId != originalSelectedColorCategoryId) {
+      //   didChangeAnything = true;
+      // }
     }
-    // NotifyListeners will be called by the public updateUserCategories/updateUserColorCategories
-    // but if this method is called from elsewhere and changes things, it should notify.
-    // For now, assuming it's only called by the public updaters.
-    // If direct calls to _reconcileDefaultsForAllCards (that modify data) are added,
-    // uncomment the line below or ensure the caller notifies.
-    // if (didChangeAnything) notifyListeners();
+    // if (didChangeAnything) {
+    //    notifyListeners(); // Will be called by the public updateUserCategories/ColorCategories
+    // }
   }
 
-  // Add a new experience card
   void addExperienceCard() {
-    final newCard = ExperienceCardData(); // MODIFIED
-    _applyDefaultsToCard(newCard); // ADDED: Apply defaults when a new card is added
+    final newCard = ExperienceCardData();
+    // Preferences should be loaded by now via _loadPreferencesAndInitializeCards.
+    // _applyDefaultsToCard will use these loaded preferences or fallbacks.
+    _applyDefaultsToCard(newCard);
     _experienceCards.add(newCard);
-    // ADDED: Detailed print statement
-    print("ReceiveShareProvider: addExperienceCard. Cards count: ${_experienceCards.length}. IDs: ${_experienceCards.map((c) => c.id.substring(c.id.length - 4)).toList()} BEFORE notifyListeners.");
-    notifyListeners(); // Notify listeners about the change
+    print("ReceiveShareProvider: addExperienceCard. Cards count: ${_experienceCards.length}. New card ID: ${newCard.id.substring(newCard.id.length - 4)}. BEFORE notifyListeners.");
+    notifyListeners();
   }
 
   // Remove an experience card
