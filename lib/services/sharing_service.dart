@@ -117,6 +117,10 @@ class SharingService {
   void resetSharedItems() {
     print("SHARE SERVICE: Resetting shared items");
     _sharedFilesController.value = null;
+    
+    // Reset the flag that tracks if the screen is open
+    _isReceiveShareScreenOpen = false;
+    print("SHARE SERVICE: Reset _isReceiveShareScreenOpen flag to false");
 
     // Only reset for Android - iOS needs the intent to persist
     if (!Platform.isIOS) {
