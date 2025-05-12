@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'dart:io'; // For Platform checks
+import 'dart:async'; // For cancellation
 
 // Renamed class to reflect its focus
 class InstagramWebView extends StatefulWidget {
@@ -27,15 +28,30 @@ class InstagramWebView extends StatefulWidget {
 class _InstagramWebViewState extends State<InstagramWebView> {
   late final WebViewController controller;
   bool isLoading = true; // Still manage internal loading indicator
+  
+  // Add cancellation tokens for operations
+  int _simulateTapOperationId = 0;
+  int _loadingDelayOperationId = 0;
+  
+  // Add a dispose flag as an extra safety check
+  bool _isDisposed = false;
 
   @override
   void initState() {
     super.initState();
     _initWebViewController();
   }
+  
+  @override
+  void dispose() {
+    _isDisposed = true; // Mark as disposed first
+    super.dispose();
+  }
 
   // Method to simulate a tap (might still be useful for auto-play)
   void _simulateEmbedTap() {
+    if (!mounted || _isDisposed) return; // Safety check
+    
     controller.runJavaScript('''
       (function() {
         try {
@@ -104,11 +120,17 @@ class _InstagramWebViewState extends State<InstagramWebView> {
           console.error('Error in auto-click script:', e);
         }
       })();
-    ''');
+    ''').catchError((error) {
+      // Safely handle JavaScript errors
+      print("JavaScript error during tap simulation: $error");
+    });
   }
 
   void _initWebViewController() {
     controller = WebViewController();
+    
+    if (!mounted || _isDisposed) return; // Safety check
+    
     widget.onWebViewCreated(controller); // Pass controller to parent
 
     controller
@@ -120,53 +142,80 @@ class _InstagramWebViewState extends State<InstagramWebView> {
         NavigationDelegate(
           onProgress: (int progress) {},
           onPageStarted: (String url) {
-            if (mounted) {
-              setState(() {
-                isLoading = true;
-              });
-            }
+            if (!mounted || _isDisposed) return; // Safety check
+            
+            setState(() {
+              isLoading = true;
+            });
           },
           onPageFinished: (String url) {
-            widget.onPageFinished(url); // Notify parent
+            if (!mounted || _isDisposed) return; // Safety check
+            
+            // Safely call the callback
+            try {
+              widget.onPageFinished(url); // Notify parent
+            } catch (e) {
+              print("Error in onPageFinished callback: $e");
+            }
+            
             // Set loading to false after a short delay to allow rendering
+            // Use cancellation approach
+            final currentLoadingOperationId = ++_loadingDelayOperationId;
+            
             Future.delayed(const Duration(milliseconds: 0), () {
-              if (mounted) {
-                setState(() {
-                  isLoading = false;
-                });
-                // RE-ADD: Simulate tap after loading
-                Future.delayed(
-                    const Duration(milliseconds: 0), _simulateEmbedTap);
-                // Optionally add the second delayed call too if needed
-                // Future.delayed(const Duration(seconds: 2500), () {
-                //   if (mounted) {
-                //     _simulateEmbedTap();
-                //   }
-                // });
-              }
+              // Check if this is still the current operation and widget is still mounted
+              if (!mounted || _isDisposed || _loadingDelayOperationId != currentLoadingOperationId) return;
+              
+              setState(() {
+                isLoading = false;
+              });
+              
+              // RE-ADD: Simulate tap after loading with cancellation
+              final currentTapOperationId = ++_simulateTapOperationId;
+              
+              Future.delayed(const Duration(milliseconds: 0), () {
+                // Check again before executing
+                if (!mounted || _isDisposed || _simulateTapOperationId != currentTapOperationId) return;
+                _simulateEmbedTap();
+              });
             });
           },
           onWebResourceError: (WebResourceError error) {
             print("WebView Error: ${error.description}");
-            if (mounted) {
-              setState(() {
-                isLoading = false; // Stop loading on error
-              });
-            }
+            
+            if (!mounted || _isDisposed) return; // Safety check
+            
+            setState(() {
+              isLoading = false; // Stop loading on error
+            });
           },
           onNavigationRequest: (NavigationRequest request) {
             // Intercept navigation to external links
             if (!request.url.contains('instagram.com') &&
                 !request.url.contains('cdn.instagram.com') &&
                 !request.url.contains('cdninstagram.com')) {
-              widget.launchUrlCallback(request.url);
+              
+              // Check if mounted before attempting callback
+              if (mounted && !_isDisposed) {
+                // Use a try-catch for the callback
+                try {
+                  widget.launchUrlCallback(request.url);
+                } catch (e) {
+                  print("Error in launchUrlCallback: $e");
+                }
+              }
+              
               return NavigationDecision.prevent;
             }
             return NavigationDecision.navigate;
           },
         ),
-      )
-      ..loadHtmlString(_generateInstagramEmbedHtml(widget.url));
+      );
+      
+    // Final check before loading HTML
+    if (!mounted || _isDisposed) return;
+    
+    controller.loadHtmlString(_generateInstagramEmbedHtml(widget.url));
   }
 
   // Clean Instagram URL (keep this helper)
@@ -335,7 +384,4 @@ class _InstagramWebViewState extends State<InstagramWebView> {
       ],
     );
   }
-
-  // Removed unused helper methods (_isInstagramReel, _extractInstagramId)
-  // <<< HELPER METHODS >>>
 }

@@ -272,6 +272,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   // ADDED: AuthService instance
   final AuthService _authService = AuthService();
 
+  // Add a field to track the current reload operation
+  int _currentReloadOperationId = 0;
+
   // SharedPreferences keys for last used category/color category
   static const String _lastUsedCategoryNameKey = 'last_used_category_name';
   static const String _lastUsedColorCategoryIdKey = 'last_used_color_category_id';
@@ -377,46 +380,41 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     // print("SHARE DEBUG: initState processing initial widget.sharedFiles (count: ${_currentSharedFiles.length})"); // CLEANED
     _processSharedContent(_currentSharedFiles);
 
-    // Handle the initial intent - COMMENTED OUT as SharingService should handle this
-    // ReceiveSharingIntent.instance
-    //     .getInitialMedia()
-    //     .then((List<SharedMediaFile>? value) {
-    //   print(
-    //       '🔄 INIT STATE: getInitialMedia().then() fired.'); 
-    //   if (mounted && value != null) {
-    //     print(
-    //         "SHARE DEBUG: getInitialMedia returned ${value.length} files. Current: ${_currentSharedFiles.length}");
-    //     bool isDifferent = value.isNotEmpty &&
-    //         (_currentSharedFiles
-    //                 .isEmpty || 
-    //             value.length !=
-    //                 _currentSharedFiles.length || 
-    //             value.first.path !=
-    //                 _currentSharedFiles
-    //                     .first.path); 
-    //     if (isDifferent) {
-    //       print(
-    //           '🔄 INIT STATE: getInitialMedia() - Processing DIFFERENT content.');
-    //       print(
-    //           "SHARE DEBUG: getInitialMedia has different content - updating UI");
-    //       context.read<ReceiveShareProvider>().resetExperienceCards();
-    //       setState(() {
-    //         _currentSharedFiles = value;
-    //         _businessDataCache.clear();
-    //         _yelpPreviewFutures.clear();
-    //         _processSharedContent(_currentSharedFiles); 
-    //       });
-    //     } else {
-    //       print('🔄 INIT STATE: getInitialMedia() - Content is NOT different.');
-    //       print(
-    //           "SHARE DEBUG: getInitialMedia - no different content to process");
-    //     }
-    //   } else if (value == null) {
-    //     print("SHARE DEBUG: getInitialMedia returned null");
-    //   } else {
-    //     print("SHARE DEBUG: getInitialMedia - component not mounted, ignoring");
-    //   }
-    // });
+    // Listen for changes to the sharedFiles controller in SharingService
+    _sharingService.sharedFiles.addListener(_handleSharedFilesUpdate);
+  }
+
+  // Handle updates to the sharedFiles controller from SharingService
+  void _handleSharedFilesUpdate() {
+    final updatedFiles = _sharingService.sharedFiles.value;
+    if (updatedFiles != null && 
+        updatedFiles.isNotEmpty && 
+        !_areSharedFilesEqual(updatedFiles, _currentSharedFiles)) {
+      
+      print("ReceiveShareScreen: Received updated shared files. Processing...");
+      
+      // Reset the provider with new content
+      final provider = context.read<ReceiveShareProvider>();
+      provider.resetExperienceCards();
+      
+      setState(() {
+        _currentSharedFiles = updatedFiles;
+        _businessDataCache.clear();
+        _yelpPreviewFutures.clear();
+      });
+      
+      // Process the new content
+      _processSharedContent(_currentSharedFiles);
+    }
+  }
+  
+  // Helper method to compare shared files lists
+  bool _areSharedFilesEqual(List<SharedMediaFile> a, List<SharedMediaFile> b) {
+    if (a.length != b.length) return false;
+    for (int i = 0; i < a.length; i++) {
+      if (a[i].path != b[i].path) return false;
+    }
+    return true;
   }
 
   Future<void> _loadUserCategories() {
@@ -501,7 +499,14 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   }
 
   Future<void> _conditionallyReloadCategories() async {
-    // print("SHARE DEBUG: _conditionallyReloadCategories CALLED"); // CLEANED
+    // Exit early if the widget is no longer mounted (ensures no operations start on unmounted widget)
+    if (!mounted) return;
+
+    // Store the current instance as a variable to track if this operation should continue
+    final int operationId = DateTime.now().millisecondsSinceEpoch;
+    // Update the class member to track this operation
+    _currentReloadOperationId = operationId;
+
     bool categoriesChanged = false;
     bool colorCategoriesChanged = false;
     bool needsSetState = false;
@@ -509,20 +514,24 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     List<UserCategory>? newCategoriesData;
     List<ColorCategory>? newColorCategoriesData;
 
+    // Helper function to check if this operation should continue
+    bool _shouldContinue() {
+      // If the widget is unmounted or a newer reload operation was started, abort
+      return mounted && _currentReloadOperationId == operationId;
+    }
+
     try {
       final fetchedCategories = await _experienceService.getUserCategories();
-      if (mounted) {
-        if (!const DeepCollectionEquality().equals(fetchedCategories, _userCategories)) {
-          newCategoriesData = fetchedCategories;
-          categoriesChanged = true;
-          // print("SHARE DEBUG: User categories reloaded and changed on resume."); // CLEANED
-        } else {
-          // print("SHARE DEBUG: User categories reloaded on resume, but are the same."); // CLEANED
-        }
+      // Check if we should continue after the async operation
+      if (!_shouldContinue()) return;
+
+      if (!const DeepCollectionEquality().equals(fetchedCategories, _userCategories)) {
+        newCategoriesData = fetchedCategories;
+        categoriesChanged = true;
       }
     } catch (error) {
-      // print("Error reloading user categories on resume: $error"); // CLEANED
-      if (mounted) {
+      print("Error reloading user categories on resume: $error");
+      if (_shouldContinue()) {
         newCategoriesData = []; 
         categoriesChanged = true; 
       }
@@ -530,50 +539,49 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     try {
       final fetchedColorCategories = await _experienceService.getUserColorCategories();
-      if (mounted) {
-        if (!const DeepCollectionEquality().equals(fetchedColorCategories, _userColorCategories)) {
-          newColorCategoriesData = fetchedColorCategories;
-          colorCategoriesChanged = true;
-          // print("SHARE DEBUG: User color categories reloaded and changed on resume."); // CLEANED
-        } else {
-          // print("SHARE DEBUG: User color categories reloaded on resume, but are the same."); // CLEANED
-        }
+      // Check if we should continue after the async operation
+      if (!_shouldContinue()) return;
+
+      if (!const DeepCollectionEquality().equals(fetchedColorCategories, _userColorCategories)) {
+        newColorCategoriesData = fetchedColorCategories;
+        colorCategoriesChanged = true;
       }
     } catch (error) {
-      // print("Error reloading user color categories on resume: $error"); // CLEANED
-      if (mounted) {
+      print("Error reloading user color categories on resume: $error");
+      if (_shouldContinue()) {
         newColorCategoriesData = []; 
         colorCategoriesChanged = true; 
       }
     }
 
-    if (mounted) {
-      if (categoriesChanged) {
-        _userCategories = newCategoriesData!;
-        _userCategoriesNotifier.value = _userCategories;
-        if (newCategoriesData.isNotEmpty) { 
-          _updateCardDefaultCategoriesIfNeeded(_userCategories);
-        }
-        needsSetState = true;
-      }
-      if (colorCategoriesChanged) {
-        _userColorCategories = newColorCategoriesData!;
-        _userColorCategoriesNotifier.value = _userColorCategories;
-        needsSetState = true;
-      }
+    // Final check before updating state
+    if (!_shouldContinue()) return;
 
-      if (needsSetState) {
-        setState(() {
-          // Update futures to reflect the new (or error) state for FutureBuilder
-          // This ensures FutureBuilder gets a new future instance and rebuilds.
-          _userCategoriesFuture = Future.value(_userCategories);
-          _userColorCategoriesFuture = Future.value(_userColorCategories);
-          _initializeCombinedFuture(); // ADDED: Re-initialize combined future
-          // print("SHARE DEBUG: Categories changed on resume, calling setState to refresh FutureBuilder."); // CLEANED
-        });
-      } else {
-        // print("SHARE DEBUG: No category changes on resume, setState NOT called, FutureBuilder not explicitly refreshed."); // CLEANED
+    if (categoriesChanged) {
+      _userCategories = newCategoriesData!;
+      _userCategoriesNotifier.value = _userCategories;
+      if (newCategoriesData.isNotEmpty) { 
+        _updateCardDefaultCategoriesIfNeeded(_userCategories);
       }
+      needsSetState = true;
+    }
+    if (colorCategoriesChanged) {
+      _userColorCategories = newColorCategoriesData!;
+      _userColorCategoriesNotifier.value = _userColorCategories;
+      needsSetState = true;
+    }
+
+    if (needsSetState) {
+      // One final check before trying to setState
+      if (!_shouldContinue()) return;
+      
+      setState(() {
+        // Update futures to reflect the new (or error) state for FutureBuilder
+        // This ensures FutureBuilder gets a new future instance and rebuilds.
+        _userCategoriesFuture = Future.value(_userCategories);
+        _userColorCategoriesFuture = Future.value(_userColorCategories);
+        _initializeCombinedFuture(); // Re-initialize combined future
+      });
     }
   }
 
@@ -587,7 +595,14 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   @override
   void dispose() {
     // print("SHARE DEBUG: dispose called - cleaning up resources"); // CLEANED
+    
+    // Invalidate any in-progress operations by setting an invalid operation ID
+    _currentReloadOperationId = -1;
+    
     WidgetsBinding.instance.removeObserver(this);
+
+    // Remove listener for sharedFiles updates
+    _sharingService.sharedFiles.removeListener(_handleSharedFilesUpdate);
 
     if (!Platform.isIOS) {
       ReceiveSharingIntent.instance.reset();
@@ -2874,6 +2889,44 @@ class InstagramPreviewWrapper extends StatefulWidget {
 
 class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
   bool _isExpanded = false; 
+  bool _isDisposed = false;
+  late WebViewController _controller;
+
+  @override
+  void dispose() {
+    _isDisposed = true;
+    super.dispose();
+  }
+
+  // Safe setState that checks if the widget is still mounted
+  void _safeSetState(Function fn) {
+    if (mounted && !_isDisposed) {
+      setState(() {
+        fn();
+      });
+    }
+  }
+
+  // Safe callback for webview
+  void _handleWebViewCreated(WebViewController controller) {
+    if (!mounted || _isDisposed) return;
+    _controller = controller;
+  }
+
+  // Safe callback for page finished
+  void _handlePageFinished(String url) {
+    // No state updates here, just a pass-through
+  }
+  
+  // Safe callback for URL launching
+  Future<void> _handleUrlLaunch(String url) async {
+    if (!mounted || _isDisposed) return;
+    try {
+      await widget.launchUrlCallback(url);
+    } catch (e) {
+      print("Error in InstagramPreviewWrapper URL launch: $e");
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -2888,9 +2941,9 @@ class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
         instagram_widget.InstagramWebView(
           url: widget.url,
           height: height, 
-          launchUrlCallback: widget.launchUrlCallback,
-          onWebViewCreated: (controller) {},
-          onPageFinished: (url) {},
+          launchUrlCallback: _handleUrlLaunch,
+          onWebViewCreated: _handleWebViewCreated,
+          onPageFinished: _handlePageFinished,
         ),
         const SizedBox(height: 8),
         Row(
@@ -2905,7 +2958,7 @@ class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
               constraints: const BoxConstraints(),
               padding:
                   EdgeInsets.zero, 
-              onPressed: () => widget.launchUrlCallback(widget.url),
+              onPressed: () => _handleUrlLaunch(widget.url),
             ),
             IconButton(
               icon:
@@ -2916,7 +2969,7 @@ class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
               constraints: const BoxConstraints(),
               padding: const EdgeInsets.symmetric(horizontal: 12),
               onPressed: () {
-                setState(() {
+                _safeSetState(() {
                   _isExpanded = !_isExpanded;
                 });
               },

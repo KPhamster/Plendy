@@ -58,11 +58,18 @@ class _MainScreenState extends State<MainScreen> {
 
   // Handle shared files
   void _handleSharedFiles(List<SharedMediaFile> sharedFiles) {
-    // Navigate to the dedicated receive share screen
-    _sharingService.showReceiveShareScreen(context, sharedFiles);
+    // Note: This gets called via the ValueNotifier listener
+    // Don't access ReceiveShareProvider directly from here
+    
+    // Instead of directly using Provider.of, let the SharingService handle the ReceiveShareProvider
+    // This ensures the provider is created at the right time
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        // Navigate to the dedicated receive share screen
+        _sharingService.showReceiveShareScreen(context, sharedFiles);
+      }
+    });
   }
-
-  // This method is removed as we're now using the dedicated screen
 
   @override
   Widget build(BuildContext context) {
