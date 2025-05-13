@@ -101,7 +101,7 @@ class SharingService {
       final initialMedia =
           await ReceiveSharingIntent.instance.getInitialMedia();
 
-      if (initialMedia != null && initialMedia.isNotEmpty) {
+      if (initialMedia.isNotEmpty) {
         print(
             "SHARE SERVICE: Found initial intent with ${initialMedia.length} files");
         print("SHARE SERVICE: First file path: ${initialMedia.first.path}");

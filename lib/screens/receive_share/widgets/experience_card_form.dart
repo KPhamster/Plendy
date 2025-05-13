@@ -259,18 +259,43 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
     return uri != null && (uri.isScheme('http') || uri.isScheme('https'));
   }
 
-  // Helper method to launch Yelp URLs
+  // Helper method to launch Yelp URLs or search Yelp
   Future<void> _launchYelpUrl() async {
-    String urlString = widget.cardData.yelpUrlController.text.trim();
+    String yelpUrlString = widget.cardData.yelpUrlController.text.trim();
     Uri uri;
 
-    // Check if the entered text is a valid Yelp URL
-    if (_isValidUrl(urlString) &&
-        (urlString.contains('yelp.com') || urlString.contains('yelp.to'))) {
-      uri = Uri.parse(urlString);
+    if (yelpUrlString.isNotEmpty) {
+      // Current behavior: field is not empty
+      if (_isValidUrl(yelpUrlString) &&
+          (yelpUrlString.contains('yelp.com') || yelpUrlString.contains('yelp.to'))) {
+        uri = Uri.parse(yelpUrlString);
+      } else {
+        // Fallback to Yelp homepage if URL in field is invalid
+        uri = Uri.parse('https://www.yelp.com');
+      }
     } else {
-      // Fallback to Yelp homepage
-      uri = Uri.parse('https://www.yelp.com');
+      // New behavior: Yelp URL field is empty. Search using title and/or address.
+      String titleString = widget.cardData.titleController.text.trim();
+      // Get the Location object from cardData
+      Location? currentLocation = widget.cardData.selectedLocation;
+      // Get address from the currentLocation, can be null or empty if not set
+      String? addressString = currentLocation?.address?.trim();
+
+      if (titleString.isNotEmpty) {
+        String searchDesc = Uri.encodeComponent(titleString);
+        if (addressString != null && addressString.isNotEmpty) {
+          // Both title and address are available
+          String searchLoc = Uri.encodeComponent(addressString);
+          uri = Uri.parse('https://www.yelp.com/search?find_desc=$searchDesc&find_loc=$searchLoc');
+        } else {
+          // Only title is available, address is not
+          uri = Uri.parse('https://www.yelp.com/search?find_desc=$searchDesc');
+        }
+      } else {
+        // Title is empty. Fallback to Yelp homepage.
+        // (If title is empty, searching "along with title" is not possible)
+        uri = Uri.parse('https://www.yelp.com');
+      }
     }
 
     try {
@@ -281,7 +306,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
         // Optionally show a snackbar to the user
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Could not open Yelp link')),
+            SnackBar(content: Text('Could not open Yelp link/search')),
           );
         }
       }
@@ -1144,19 +1169,15 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
 
                               // Yelp launch button (remains last)
                               InkWell(
-                                onTap: yelpUrlController.text.isNotEmpty
-                                    ? _launchYelpUrl
-                                    : null,
-                                borderRadius: BorderRadius.circular(16), // Only enable if field not empty
+                                onTap: _launchYelpUrl, // Always calls _launchYelpUrl
+                                borderRadius: BorderRadius.circular(16), 
                                 child: Padding(
                                   padding: const EdgeInsets.only(
                                       right:
                                           8.0), // Add padding only on the right end
                                   child: Icon(FontAwesomeIcons.yelp,
                                       size: 18,
-                                      color: yelpUrlController.text.isNotEmpty
-                                          ? Colors.red[700]
-                                          : Colors.grey), // Dim if inactive
+                                      color: Colors.red[700]), // Always active color
                                 ),
                               ),
                             ],
