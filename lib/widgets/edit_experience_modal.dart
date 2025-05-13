@@ -477,32 +477,61 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
   // --- END ADDED ---
 
   // --- ADDED: Helper method to launch Yelp URLs ---
+  // MODIFIED: Replaced with the comprehensive version from ExperienceCardForm
   Future<void> _launchYelpUrl() async {
-    String urlString = _cardData.yelpUrlController.text.trim();
-    if (!_isValidUrl(urlString)) {
-      // Optionally show a message or try to search if not a valid URL
-      print("Invalid URL, cannot launch: $urlString");
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Invalid Yelp URL entered')),
-      );
-      return;
-    }
+    String yelpUrlString = _cardData.yelpUrlController.text.trim();
+    Uri uri;
 
-    Uri uri = Uri.parse(urlString);
+    if (yelpUrlString.isNotEmpty) {
+      // Behavior when Yelp URL field is NOT empty
+      if (_isValidUrl(yelpUrlString) &&
+          (yelpUrlString.toLowerCase().contains('yelp.com/biz') || yelpUrlString.toLowerCase().contains('yelp.to/'))) { // Ensure it's a Yelp specific link for direct launch
+        uri = Uri.parse(yelpUrlString);
+      } else {
+        // Fallback to Yelp homepage if URL in field is invalid or not a specific Yelp business link
+        // Or, consider showing an error: "Please enter a valid Yelp business page URL."
+        uri = Uri.parse('https://www.yelp.com');
+         if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Invalid or non-specific Yelp URL. Opening Yelp home.')),
+          );
+        }
+      }
+    } else {
+      // Behavior when Yelp URL field IS empty: Search Yelp
+      String titleString = _cardData.titleController.text.trim();
+      Location? currentLocation = _cardData.selectedLocation;
+      String? addressString = currentLocation?.address?.trim();
+
+      if (titleString.isNotEmpty) {
+        String searchDesc = Uri.encodeComponent(titleString);
+        if (addressString != null && addressString.isNotEmpty) {
+          // Both title and address are available
+          String searchLoc = Uri.encodeComponent(addressString);
+          uri = Uri.parse('https://www.yelp.com/search?find_desc=$searchDesc&find_loc=$searchLoc');
+        } else {
+          // Only title is available, address is not
+          uri = Uri.parse('https://www.yelp.com/search?find_desc=$searchDesc');
+        }
+      } else {
+        // Title is empty. Fallback to Yelp homepage.
+        uri = Uri.parse('https://www.yelp.com');
+      }
+    }
 
     try {
       bool launched =
           await launchUrl(uri, mode: LaunchMode.externalApplication);
       if (!launched) {
-        print('Could not launch $uri');
+        // print('Could not launch $uri');
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Could not open Yelp link')),
+            SnackBar(content: Text('Could not open Yelp link/search')),
           );
         }
       }
     } catch (e) {
-      print('Error launching URL: $e');
+      // print('Error launching URL: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error opening link: $e')),
@@ -1130,20 +1159,15 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
 
                         // Yelp launch button (remains last)
                         InkWell(
-                          onTap: _cardData.yelpUrlController.text.isNotEmpty
-                              ? _launchYelpUrl
-                              : null,
-                          borderRadius: BorderRadius.circular(16), // Only enable if field not empty
+                          onTap: _launchYelpUrl, // MODIFIED: Always call _launchYelpUrl
+                          borderRadius: BorderRadius.circular(16),
                           child: Padding(
                             padding: const EdgeInsets.only(
                                 right:
-                                    8.0), // Add padding only on the right end
+                                    8.0),
                             child: Icon(FontAwesomeIcons.yelp,
                                 size: 18,
-                                color:
-                                    _cardData.yelpUrlController.text.isNotEmpty
-                                        ? Colors.red[700]
-                                        : Colors.grey), // Dim if inactive
+                                color: Colors.red[700]), // MODIFIED: Always active color
                           ),
                         ),
                       ],
