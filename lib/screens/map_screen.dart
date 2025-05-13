@@ -43,7 +43,7 @@ class _MapScreenState extends State<MapScreen> {
   final AuthService _authService = AuthService();
   final GoogleMapsService _mapsService =
       GoogleMapsService(); // ADDED: Maps Service
-  Map<String, Marker> _markers = {}; // Use String keys for marker IDs
+  final Map<String, Marker> _markers = {}; // Use String keys for marker IDs
   bool _isLoading = true;
   List<Experience> _experiences = [];
   List<UserCategory> _categories = [];
@@ -325,7 +325,7 @@ class _MapScreenState extends State<MapScreen> {
                           });
                         },
                       );
-                    }).toList(), // This creates List<CheckboxListTile>
+                    }), // This creates List<CheckboxListTile>
                     const SizedBox(height: 16),
                     const Text('By Color:',
                         style: TextStyle(fontWeight: FontWeight.bold)),
@@ -363,7 +363,7 @@ class _MapScreenState extends State<MapScreen> {
                           });
                         },
                       );
-                    }).toList(),
+                    }),
                   ],
                 ),
               );
@@ -425,20 +425,21 @@ class _MapScreenState extends State<MapScreen> {
       // Filter experiences based on selected IDs
       final filteredExperiences = _experiences.where((exp) {
         // Find the category ID based on the experience's category name
-        String? expCategoryId;
-        try {
-          expCategoryId =
-              _categories.firstWhere((cat) => cat.name == exp.category).id;
-        } catch (e) {
-          // Handle case where category name doesn't match any known category
-          expCategoryId = null;
-          print(
-              "🗺️ MAP SCREEN: Warning - Could not find category ID for category name: ${exp.category}");
-        }
+        // String? expCategoryId; // REMOVED: No longer need to look up by name
+        // try {
+        //   expCategoryId = 
+        //       _categories.firstWhere((cat) => cat.name == exp.category).id;
+        // } catch (e) {
+        //   // Handle case where category name doesn't match any known category
+        //   expCategoryId = null;
+        //   print(
+        //       "🗺️ MAP SCREEN: Warning - Could not find category ID for category name: ${exp.category}");
+        // }
 
+        // MODIFIED: Use exp.categoryId directly
         final bool categoryMatch = _selectedCategoryIds.isEmpty ||
-            (expCategoryId != null &&
-                _selectedCategoryIds.contains(expCategoryId));
+            (exp.categoryId != null && // Check if categoryId exists
+                _selectedCategoryIds.contains(exp.categoryId)); // Check if it's in the selected set
 
         final bool colorMatch = _selectedColorCategoryIds.isEmpty ||
             (exp.colorCategoryId != null &&
@@ -493,11 +494,11 @@ class _MapScreenState extends State<MapScreen> {
         continue; // Skip markers with default/invalid coordinates
       }
 
+      // MODIFIED: Find category using categoryId
       final category = _categories.firstWhere(
-        (cat) =>
-            cat.name == experience.category, // Use category name for matching
+        (cat) => cat.id == experience.categoryId, // Use categoryId for matching
         orElse: () =>
-            UserCategory(id: '', name: 'Unknown', icon: '❓', ownerUserId: ''),
+            UserCategory(id: '', name: 'Uncategorized', icon: '❓', ownerUserId: ''), // Updated fallback
       );
 
       // Find the corresponding color category *based on the experience's property*

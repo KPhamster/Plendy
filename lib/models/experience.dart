@@ -19,7 +19,7 @@ class Location extends Equatable {
   final String? photoUrl; // URL to the place's photo
   final String? website; // Add website field
 
-  Location({
+  const Location({
     this.placeId,
     required this.latitude,
     required this.longitude,
@@ -103,8 +103,9 @@ class Location extends Equatable {
 
     if (city != null && city!.isNotEmpty) parts.add(city!);
     if (state != null && state!.isNotEmpty) parts.add(state!);
-    if (country != null && country!.isNotEmpty && parts.isEmpty)
+    if (country != null && country!.isNotEmpty && parts.isEmpty) {
       parts.add(country!);
+    }
 
     return parts.isNotEmpty ? parts.join(', ') : null;
   }
@@ -116,7 +117,7 @@ class Experience {
   final String name;
   final String description;
   final Location location;
-  final String category; // RENAMED
+  final String? categoryId; // NEW: Stores the ID of the UserCategory
   final List<String> editorUserIds;
 
   // External ratings and links
@@ -159,7 +160,7 @@ class Experience {
     required this.name,
     required this.description,
     required this.location,
-    required this.category, // RENAMED
+    this.categoryId, // NEW
     this.yelpUrl,
     this.yelpRating,
     this.yelpReviewCount,
@@ -195,7 +196,7 @@ class Experience {
       name: data['name'] ?? '',
       description: data['description'] ?? '',
       location: Location.fromMap(data['location'] ?? {}),
-      category: data['category'] ?? 'Other', // RENAMED field in Firestore
+      categoryId: data['categoryId'] as String?, // NEW field from Firestore
       yelpUrl: data['yelpUrl'],
       yelpRating: _parseRating(data['yelpRating']),
       yelpReviewCount: data['yelpReviewCount'],
@@ -229,7 +230,7 @@ class Experience {
       'name': name,
       'description': description,
       'location': location.toMap(),
-      'category': category, // RENAMED field for Firestore
+      'categoryId': categoryId, // NEW field for Firestore
       'editorUserIds': editorUserIds,
       'yelpUrl': yelpUrl,
       'yelpRating': yelpRating,
@@ -262,7 +263,8 @@ class Experience {
     String? name,
     String? description,
     Location? location,
-    String? category, // RENAMED
+    String? categoryId, // NEW
+    bool clearCategoryId = false, // Option to explicitly set categoryId to null
     String? yelpUrl,
     double? yelpRating,
     int? yelpReviewCount,
@@ -292,7 +294,7 @@ class Experience {
       name: name ?? this.name,
       description: description ?? this.description,
       location: location ?? this.location,
-      category: category ?? this.category, // RENAMED
+      categoryId: clearCategoryId ? null : (categoryId ?? this.categoryId), // NEW
       yelpUrl: yelpUrl ?? this.yelpUrl,
       yelpRating: yelpRating ?? this.yelpRating,
       yelpReviewCount: yelpReviewCount ?? this.yelpReviewCount,

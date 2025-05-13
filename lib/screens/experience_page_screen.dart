@@ -441,7 +441,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     // Determine header height (adjust as needed)
     const double headerHeight = 320.0;
 
-    return Container(
+    return SizedBox(
       height: headerHeight,
       child: Stack(
         children: [
@@ -853,12 +853,14 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       // ADDED: Log input to formatter
       // print(
       //     '    🔄 formatReservable: Input value: $reservableValue (${reservableValue?.runtimeType})');
-      if (reservableValue == null)
+      if (reservableValue == null) {
         return 'Not specified'; // Changed from Not available
+      }
       // Handle String 'true'/'false' in case toString() was used in getDetail
       if (reservableValue is String) {
-        if (reservableValue.toLowerCase() == 'true')
+        if (reservableValue.toLowerCase() == 'true') {
           return 'Takes reservations';
+        }
         if (reservableValue.toLowerCase() == 'false') return 'No reservations';
       }
       if (reservableValue is bool) {
@@ -1503,9 +1505,9 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
               onPressed: () => Navigator.of(context).pop(false), // Return false
             ),
             TextButton(
-              child: const Text('Delete'),
               style: TextButton.styleFrom(foregroundColor: Colors.red),
-              onPressed: () => Navigator.of(context).pop(true), // Return true
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Delete'), // Return true
             ),
           ],
         );
@@ -1682,9 +1684,10 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                             !_isLoadingOtherExperiences &&
                                 otherExperiences.isNotEmpty;
 
-                        if (!shouldShowSection)
+                        if (!shouldShowSection) {
                           return const SizedBox
                               .shrink(); // Don't show if not applicable
+                        }
 
                         return Padding(
                           padding:
@@ -1710,12 +1713,14 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                               ),
                               // List the other experiences
                               ...otherExperiences.map((exp) {
-                                final categoryName = exp.category;
-                                // Use the specific category cache for media tab
-                                final categoryIcon =
-                                    _fetchedCategoriesForMedia[categoryName]
-                                            ?.icon ??
-                                        '❓';
+                                // final categoryName = exp.category; // OLD
+                                // Use the specific category cache for media tab, now keyed by ID
+                                final UserCategory? categoryForMediaItem = 
+                                  _fetchedCategoriesForMedia[exp.categoryId]; // NEW: Lookup by ID
+                                
+                                final categoryIcon = categoryForMediaItem?.icon ?? '❓';
+                                final categoryName = categoryForMediaItem?.name ?? 'Uncategorized';
+
                                 final address = exp.location.address;
                                 final bool hasAddress =
                                     address != null && address.isNotEmpty;
@@ -1728,14 +1733,22 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                                     onTap: () async {
                                       print(
                                           'Tapped on other experience ${exp.name} from exp page tab');
-                                      final category =
-                                          _fetchedCategoriesForMedia[
-                                                  categoryName] ??
-                                              UserCategory(
-                                                  id: '',
-                                                  name: categoryName,
-                                                  icon: '❓',
-                                                  ownerUserId: '');
+                                      // final category = // OLD
+                                      //     _fetchedCategoriesForMedia[
+                                      //             categoryName] ??
+                                      //         UserCategory(
+                                      //             id: '',
+                                      //             name: categoryName,
+                                      //             icon: '❓',
+                                      //             ownerUserId: '');
+                                      final UserCategory categoryForNavigation = 
+                                        _fetchedCategoriesForMedia[exp.categoryId] ?? // NEW: Lookup by ID
+                                        UserCategory(
+                                            id: exp.categoryId ?? '', // Use the ID if available for fallback
+                                            name: 'Uncategorized',
+                                            icon: '❓',
+                                            ownerUserId: ''
+                                        );
 
                                       final result = await Navigator.push<bool>(
                                         context,
@@ -1743,7 +1756,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                                           builder: (context) =>
                                               ExperiencePageScreen(
                                             experience: exp,
-                                            category: category,
+                                            category: categoryForNavigation,
                                             userColorCategories:
                                                 widget.userColorCategories,
                                           ),
@@ -1803,7 +1816,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                                     ),
                                   ),
                                 );
-                              }).toList(),
+                              }),
                             ],
                           ),
                         );
@@ -2227,7 +2240,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
 
     final Map<String, List<Experience>> otherExperiencesMap = {};
     final Set<String> otherExperienceIds = {};
-    final Set<String> requiredCategoryNames = {};
+    // final Set<String> requiredCategoryNames = {}; // OLD: Was Set of names
+    final Set<String?> requiredCategoryIds = {}; // NEW: Set of category IDs (nullable)
 
     print(
         "[ExpPage - _loadOtherExperienceData] Comparing against current Experience ID: ${_currentExperience.id}");
@@ -2262,8 +2276,11 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
             "[ExpPage - _loadOtherExperienceData] Fetched ${experiences.length} other experiences.");
         fetchedExperiencesById = {for (var exp in experiences) exp.id: exp};
         for (final exp in experiences) {
-          if (exp.category.isNotEmpty) {
-            requiredCategoryNames.add(exp.category);
+          // if (exp.category.isNotEmpty) { // OLD
+          //   requiredCategoryNames.add(exp.category); // OLD
+          // }
+          if (exp.categoryId != null && exp.categoryId!.isNotEmpty) { // NEW
+            requiredCategoryIds.add(exp.categoryId); // NEW
           }
         }
       } catch (e) {
@@ -2272,21 +2289,27 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     }
 
     // 3. Fetch required categories if any exist (use existing _userCategories or fetch)
-    Map<String, UserCategory> categoryLookupMap = {};
-    // Use already loaded categories if available
+    // Map<String, UserCategory> categoryLookupMap = {}; // OLD: Keyed by name
+    Map<String, UserCategory> categoryLookupMapById = {}; // NEW: Keyed by ID
+
+    // Use already loaded categories if available and create a map by ID
     if (_userCategories.isNotEmpty) {
-      categoryLookupMap = {for (var cat in _userCategories) cat.name: cat};
+      categoryLookupMapById = {for (var cat in _userCategories) cat.id: cat};
       print(
-          "[ExpPage - _loadOtherExperienceData] Using already loaded categories (${_userCategories.length}).");
-    } else if (requiredCategoryNames.isNotEmpty) {
-      // Fallback: Fetch all categories if not loaded (though they should be by now)
-      print(
-          "[ExpPage - _loadOtherExperienceData] Warning: _userCategories empty, fetching all categories again.");
+          "[ExpPage - _loadOtherExperienceData] Using already loaded categories (${_userCategories.length}) and mapped by ID.");
+    }
+
+    // Check if all requiredCategoryIds are covered by the existing lookup map
+    bool allRequiredCategoriesFound = requiredCategoryIds.every((id) => id == null || categoryLookupMapById.containsKey(id));
+
+    if (!allRequiredCategoriesFound && requiredCategoryIds.whereNotNull().isNotEmpty) {
+        print(
+            "[ExpPage - _loadOtherExperienceData] Not all required categories found in local cache. Fetching all categories again to ensure completeness.");
       try {
         final allUserCategories = await _experienceService.getUserCategories();
-        categoryLookupMap = {for (var cat in allUserCategories) cat.name: cat};
+        categoryLookupMapById = {for (var cat in allUserCategories) cat.id: cat}; // Rebuild map with all categories by ID
         print(
-            "[ExpPage - _loadOtherExperienceData] Fetched ${categoryLookupMap.length} categories.");
+            "[ExpPage - _loadOtherExperienceData] Fetched ${categoryLookupMapById.length} categories and mapped by ID.");
       } catch (e) {
         print("Error fetching user categories: $e");
       }
@@ -2315,15 +2338,14 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     if (mounted) {
       setState(() {
         _otherAssociatedExperiences = otherExperiencesMap;
-        _fetchedCategoriesForMedia =
-            categoryLookupMap; // Store the category lookup
+        _fetchedCategoriesForMedia = categoryLookupMapById; // Store the category lookup by ID
         _isLoadingOtherExperiences = false;
         print(
             "[ExpPage - _loadOtherExperienceData] Set state: isLoading=false");
       });
     }
   }
-  // --- ADDED: Method to load data about other experiences linked to the media items --- END ---
+  // --- ADDED: Method to load data about other experiences linked to the media items --- END --- 
 }
 
 // --- ADDED Helper class for SliverPersistentHeader (for TabBar) ---

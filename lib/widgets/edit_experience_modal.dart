@@ -14,6 +14,7 @@ import 'package:plendy/widgets/edit_color_categories_modal.dart'; // Placeholder
 import 'package:plendy/widgets/add_category_modal.dart';
 import 'package:plendy/widgets/edit_categories_modal.dart';
 import 'package:plendy/services/experience_service.dart';
+import 'package:collection/collection.dart'; // ADDED: Import for firstWhereOrNull
 
 class EditExperienceModal extends StatefulWidget {
   final Experience experience;
@@ -69,7 +70,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
     _cardData.yelpUrlController.text = widget.experience.yelpUrl ?? '';
     _cardData.websiteController.text = widget.experience.website ?? '';
     _cardData.notesController.text = widget.experience.additionalNotes ?? '';
-    _cardData.selectedcategory = widget.experience.category;
+    _cardData.selectedCategoryId = widget.experience.categoryId;
     _cardData.selectedColorCategoryId = widget.experience.colorCategoryId;
     _cardData.selectedLocation = widget.experience.location;
     _cardData.locationEnabled = widget.experience.location.latitude != 0.0 ||
@@ -296,8 +297,8 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                     itemCount: displayCategories.length,
                     itemBuilder: (context, index) {
                       final category = displayCategories[index];
-                      final bool isSelected =
-                          category.name == _cardData.selectedcategory;
+                      final bool isSelected = 
+                          category.id == _cardData.selectedCategoryId; // Compare IDs
                       return ListTile(
                         leading: Text(category.icon,
                             style: const TextStyle(fontSize: 20)),
@@ -306,8 +307,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                             ? const Icon(Icons.check, color: Colors.blue)
                             : null,
                         onTap: () {
-                          Navigator.pop(
-                              context, category.name); // Return category name
+                          Navigator.pop(context, category.id); // Return category ID
                         },
                         visualDensity: VisualDensity.compact,
                       );
@@ -366,10 +366,10 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
       } else if (selectedValue == _dialogActionEdit) {
         _handleEditCategories(); // Call the handler
       } else {
-        // User selected an actual category name
-        if (_cardData.selectedcategory != selectedValue) {
+        // User selected an actual category ID
+        if (_cardData.selectedCategoryId != selectedValue) { 
           setState(() {
-            _cardData.selectedcategory = selectedValue;
+            _cardData.selectedCategoryId = selectedValue; 
           });
         }
       }
@@ -379,11 +379,11 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
 
   // Helper to get category icon
   String _getIconForSelectedCategory() {
-    final selectedName = _cardData.selectedcategory;
-    if (selectedName == null) return '❓';
+    final selectedId = _cardData.selectedCategoryId; 
+    if (selectedId == null) return '❓'; 
     try {
       final matchingCategory = _currentUserCategories.firstWhere(
-        (category) => category.name == selectedName,
+        (category) => category.id == selectedId, // Find by ID
       );
       return matchingCategory.icon;
     } catch (e) {
@@ -406,14 +406,8 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
     if (newCategory != null && mounted) {
       print(
           "Edit Modal: New user category added: ${newCategory.name} (${newCategory.icon})");
-      // In the modal, we can't easily refresh the parent's list and pass it back down.
-      // Simplest approach: Show a message, user needs to close/reopen modal
-      // or select the category if it magically appears (state mgmt dependent).
-      // Or, ideally, the AddCategoryModal updates a global state provider.
-      // For now, just select it if the name matches.
       setState(() {
-        _cardData.selectedcategory = newCategory.name;
-        // We assume widget.userCategories might be updated by a provider later
+        _cardData.selectedCategoryId = newCategory.id; // Select by ID
       });
       // --- MODIFIED: Refresh local list ---
       _loadUserCategories(); // Refresh the list within this modal
@@ -441,15 +435,11 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
 
     if (categoriesChanged == true && mounted) {
       print("Edit Modal: User Categories potentially changed.");
-      // Similar to adding, we can't easily refresh the list here.
-      // If the currently selected category was deleted/renamed, we might need to clear selection.
-      // Check if the current selection still exists in the (potentially updated) list
       final currentSelectionExists = _currentUserCategories
-          .any((cat) => cat.name == _cardData.selectedcategory);
-      if (!currentSelectionExists && _cardData.selectedcategory != null) {
+          .any((cat) => cat.id == _cardData.selectedCategoryId); // Check by ID
+      if (!currentSelectionExists && _cardData.selectedCategoryId != null) { 
         setState(() {
-          _cardData.selectedcategory =
-              null; // Clear selection if it was removed/renamed
+          _cardData.selectedCategoryId = null; 
         });
       } else {
         // Force a rebuild in case category icons changed etc.
@@ -842,7 +832,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
 
       final updatedExperience = widget.experience.copyWith(
         name: _cardData.titleController.text.trim(),
-        category: _cardData.selectedcategory, // Already a string
+        categoryId: _cardData.selectedCategoryId,
         location: locationToSave,
         yelpUrl: _cardData.yelpUrlController.text.trim().isNotEmpty
             ? _cardData.yelpUrlController.text.trim()
@@ -1019,9 +1009,9 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                             style: const TextStyle(fontSize: 18)),
                         const SizedBox(width: 8),
                         Text(
-                          _cardData.selectedcategory ?? 'Select Category',
+                          _currentUserCategories.firstWhereOrNull((cat) => cat.id == _cardData.selectedCategoryId)?.name ?? 'Select Category',
                           style: TextStyle(
-                              color: _cardData.selectedcategory != null
+                              color: _cardData.selectedCategoryId != null
                                   ? Theme.of(context).textTheme.bodyLarge?.color
                                   : Colors.grey[600]),
                         ),
@@ -1109,13 +1099,13 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                               _cardData.yelpUrlController.clear();
                               // Listener will call _triggerRebuild
                             },
+                            borderRadius: BorderRadius.circular(16),
                             child: Padding(
                               padding: const EdgeInsets.symmetric(
                                   horizontal:
                                       0), // No horizontal padding needed here
                               child: Icon(Icons.clear, size: 18),
                             ),
-                            borderRadius: BorderRadius.circular(16),
                           ),
                         // Spacer
                         if (_cardData.yelpUrlController.text
@@ -1125,6 +1115,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                         // Paste button (now second)
                         InkWell(
                           onTap: _pasteYelpUrlFromClipboard,
+                          borderRadius: BorderRadius.circular(16),
                           child: Padding(
                             padding: const EdgeInsets.symmetric(
                                 horizontal:
@@ -1132,7 +1123,6 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                             child: Icon(Icons.content_paste,
                                 size: 18, color: Colors.blue[700]),
                           ),
-                          borderRadius: BorderRadius.circular(16),
                         ),
 
                         // Spacer
@@ -1142,7 +1132,8 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                         InkWell(
                           onTap: _cardData.yelpUrlController.text.isNotEmpty
                               ? _launchYelpUrl
-                              : null, // Only enable if field not empty
+                              : null,
+                          borderRadius: BorderRadius.circular(16), // Only enable if field not empty
                           child: Padding(
                             padding: const EdgeInsets.only(
                                 right:
@@ -1154,7 +1145,6 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                                         ? Colors.red[700]
                                         : Colors.grey), // Dim if inactive
                           ),
-                          borderRadius: BorderRadius.circular(16),
                         ),
                       ],
                     )
@@ -1193,12 +1183,12 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                             onTap: () {
                               _cardData.websiteController.clear();
                             },
+                            borderRadius: BorderRadius.circular(16),
                             child: Padding(
                               padding:
                                   const EdgeInsets.symmetric(horizontal: 0),
                               child: Icon(Icons.clear, size: 18),
                             ),
-                            borderRadius: BorderRadius.circular(16),
                           ),
                         // Spacer
                         if (_cardData.websiteController.text.isNotEmpty)
@@ -1207,12 +1197,12 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                         // Paste button (second)
                         InkWell(
                           onTap: _pasteWebsiteUrlFromClipboard,
+                          borderRadius: BorderRadius.circular(16),
                           child: Padding(
                             padding: const EdgeInsets.symmetric(horizontal: 0),
                             child: Icon(Icons.content_paste,
                                 size: 18, color: Colors.blue[700]),
                           ),
-                          borderRadius: BorderRadius.circular(16),
                         ),
 
                         // Spacer
@@ -1226,6 +1216,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                               ? () => _launchUrl(
                                   _cardData.websiteController.text.trim())
                               : null,
+                          borderRadius: BorderRadius.circular(16),
                           child: Padding(
                             padding: const EdgeInsets.only(right: 8.0),
                             child: Icon(Icons.launch,
@@ -1238,7 +1229,6 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                                     ? Colors.blue[700]
                                     : Colors.grey),
                           ),
-                          borderRadius: BorderRadius.circular(16),
                         ),
                       ],
                     )
@@ -1283,11 +1273,11 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                   const SizedBox(width: 8),
                   ElevatedButton(
                     onPressed: _saveAndClose,
-                    child: const Text('Save Changes'),
                     style: ElevatedButton.styleFrom(
                         // backgroundColor: Theme.of(context).primaryColor, // Optional styling
                         // foregroundColor: Colors.white,
                         ),
+                    child: const Text('Save Changes'),
                   ),
                 ],
               ),
@@ -1364,11 +1354,11 @@ class LocationPickerScreen extends StatelessWidget {
   final String? businessNameHint;
 
   const LocationPickerScreen({
-    Key? key,
+    super.key,
     this.initialLocation,
     required this.onLocationSelected,
     this.businessNameHint,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {
