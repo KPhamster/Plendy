@@ -41,7 +41,9 @@ class _EditColorCategoriesModalState extends State<EditColorCategoriesModal> {
       final categories = await _experienceService.getUserColorCategories();
       print(
           "_loadColorCategories - Received ${categories.length} categories from service:");
-      categories.forEach((c) => print("  - ${c.name} (ID: ${c.id})"));
+      for (var c in categories) {
+        print("  - ${c.name} (ID: ${c.id})");
+      }
 
       if (mounted) {
         setState(() {
@@ -342,7 +344,6 @@ class _EditColorCategoriesModalState extends State<EditColorCategoriesModal> {
               SizedBox(
                 width: double.infinity,
                 child: OutlinedButton(
-                  child: const Text('Close'),
                   onPressed: () async {
                     bool result = await _handleCloseLogic();
                     if (mounted) {
@@ -353,6 +354,7 @@ class _EditColorCategoriesModalState extends State<EditColorCategoriesModal> {
                     padding: const EdgeInsets.symmetric(vertical: 12),
                     side: BorderSide(color: Colors.grey),
                   ),
+                  child: const Text('Close'),
                 ),
               ),
               const SizedBox(height: 16),

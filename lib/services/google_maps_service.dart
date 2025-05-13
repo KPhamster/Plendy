@@ -7,7 +7,6 @@ import 'package:dio/dio.dart';
 import 'dart:convert';
 import '../config/api_secrets.dart';
 import '../models/experience.dart';
-import 'package:flutter/foundation.dart';
 
 /// Service class for Google Maps functionality
 class GoogleMapsService {
