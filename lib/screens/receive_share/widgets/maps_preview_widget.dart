@@ -203,7 +203,7 @@ class _MapsPreviewWidgetState extends State<MapsPreviewWidget> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 // Photo or map preview
-                Container(
+                SizedBox(
                   height: 180,
                   width: double.infinity,
                   child: ClipRRect(

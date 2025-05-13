@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:any_link_preview/any_link_preview.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 class GenericUrlPreviewWidget extends StatelessWidget {
   final String url;

@@ -92,8 +92,9 @@ class ColorCategory extends Equatable {
   // Helper to get the Color object from the hex string
   Color get color {
     final buffer = StringBuffer();
-    if (colorHex.length == 6 || colorHex.length == 7)
+    if (colorHex.length == 6 || colorHex.length == 7) {
       buffer.write('ff'); // Add alpha if missing
+    }
     buffer.write(colorHex.replaceFirst('#', ''));
     try {
       return Color(int.parse(buffer.toString(), radix: 16));

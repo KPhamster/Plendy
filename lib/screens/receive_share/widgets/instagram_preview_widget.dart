@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
-import 'dart:io'; // For Platform checks
+// For Platform checks
 import 'dart:async'; // For cancellation
 
 // Renamed class to reflect its focus

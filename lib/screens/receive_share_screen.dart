@@ -59,6 +59,7 @@ class _ExperienceCardsSection extends StatelessWidget {
   final String? Function(String) extractFirstUrl;
   final List<SharedMediaFile> currentSharedFiles;
   final List<ExperienceCardData> experienceCards; // ADDED: To receive cards directly
+  final GlobalKey? sectionKey; // ADDED for scrolling
 
   const _ExperienceCardsSection({
     super.key,
@@ -75,6 +76,7 @@ class _ExperienceCardsSection extends StatelessWidget {
     required this.extractFirstUrl,
     required this.currentSharedFiles,
     required this.experienceCards, // ADDED: To constructor
+    this.sectionKey, // ADDED for scrolling
   });
 
   @override
@@ -85,6 +87,7 @@ class _ExperienceCardsSection extends StatelessWidget {
     print("ReceiveShareScreen: _ExperienceCardsSection build called. Cards count: ${experienceCards.length}");
 
     return Padding(
+      key: sectionKey, // ADDED for scrolling
       padding: const EdgeInsets.symmetric(horizontal: 16.0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -284,6 +287,16 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   static const String _lastUsedCategoryNameKey = 'last_used_category_name';
   static const String _lastUsedColorCategoryIdKey = 'last_used_color_category_id';
 
+  // --- ADDED FOR SCROLLING FAB ---
+  late ScrollController _scrollController;
+  final GlobalKey _mediaPreviewListKey = GlobalKey(); // Key for the first media item/list itself
+  final GlobalKey _experienceCardsSectionKey = GlobalKey();
+  bool _showUpArrowForFab = false;
+  bool _isInstagramPreviewExpanded = false;
+  Map<String, GlobalKey> _instagramPreviewKeys = {}; // To store keys for active Instagram previews
+  String? _currentVisibleInstagramUrl; // To track which Instagram preview is potentially visible
+  // --- END ADDED FOR SCROLLING FAB ---
+
   // Remove local experience card list - managed by Provider now
   // List<ExperienceCardData> _experienceCards = [];
 
@@ -348,6 +361,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   void initState() {
     print("ReceiveShareScreen initState: START"); // ADDED
     super.initState();
+
+    // --- ADDED FOR SCROLLING FAB ---
+    _scrollController = ScrollController();
+    _scrollController.addListener(_scrollListener);
+    // --- END ADDED FOR SCROLLING FAB ---
+
     // Initialize with the files passed to the widget
     _currentSharedFiles = widget.sharedFiles;
 
@@ -2299,6 +2318,140 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     // print("ReceiveShareScreen._handleExperienceCardFormUpdate: LOGIC TEMPORARILY COMMENTED OUT"); // REMOVE THIS LINE
   }
 
+  // --- ADDED FOR SCROLLING FAB ---
+  void _scrollListener() {
+    if (!_scrollController.hasClients || !mounted) return;
+
+    final experienceCardsContext = _experienceCardsSectionKey.currentContext;
+    if (experienceCardsContext != null) {
+      final RenderBox experienceBox = experienceCardsContext.findRenderObject() as RenderBox;
+      final double experienceBoxTopOffsetInViewport = experienceBox.localToGlobal(Offset.zero).dy;
+      final double screenHeight = MediaQuery.of(context).size.height;
+      final double threshold = screenHeight * 0.60;
+
+      // print("ScrollListener: experienceBoxTopOffsetInViewport: $experienceBoxTopOffsetInViewport, threshold: $threshold"); // DEBUG
+
+      bool shouldShowUpArrow;
+      if (experienceBoxTopOffsetInViewport < threshold) {
+        shouldShowUpArrow = true;
+      } else {
+        shouldShowUpArrow = false;
+      }
+
+      if (_showUpArrowForFab != shouldShowUpArrow) {
+        // print("ScrollListener: Changing _showUpArrowForFab to $shouldShowUpArrow"); // DEBUG
+        setState(() {
+          _showUpArrowForFab = shouldShowUpArrow;
+        });
+      }
+    } else {
+      // print("ScrollListener: experienceCardsContext is null"); // DEBUG
+    }
+  }
+
+  void _handleFabPress() {
+    print("FAB_DEBUG: _handleFabPress called. _showUpArrowForFab: $_showUpArrowForFab"); // DEBUG
+    if (!_scrollController.hasClients || !mounted) {
+      print("FAB_DEBUG: Scroll controller no clients or not mounted. Bailing."); // DEBUG
+      return;
+    }
+
+    if (_showUpArrowForFab) { // Scroll Up
+      print("FAB_DEBUG: Trying to scroll UP."); // DEBUG
+      if (_isInstagramPreviewExpanded && _currentVisibleInstagramUrl != null && _instagramPreviewKeys.containsKey(_currentVisibleInstagramUrl)) {
+        final instagramKey = _instagramPreviewKeys[_currentVisibleInstagramUrl]!;
+        final instagramContext = instagramKey.currentContext;
+        print("FAB_DEBUG: Instagram preview is expanded. URL: $_currentVisibleInstagramUrl. Context null? ${instagramContext == null}"); // DEBUG
+        if (instagramContext != null) {
+          print("FAB_DEBUG: Current Scroll Offset before Insta calc: ${_scrollController.offset}"); // DIAGNOSTIC
+
+          final RenderBox instagramRenderBox = instagramContext.findRenderObject() as RenderBox;
+          final RenderObject? scrollableRenderObject = _scrollController.position.context.storageContext.findRenderObject();
+
+          if (scrollableRenderObject == null || scrollableRenderObject is! RenderBox) {
+            print("FAB_DEBUG: Could not find scrollable RenderBox for Instagram.");
+            _scrollToMediaPreviewTop(); // Fallback
+            return;
+          }
+          final RenderBox scrollableBox = scrollableRenderObject;
+
+          // Offset of the Instagram widget relative to the screen
+          final double instagramGlobalOffsetY = instagramRenderBox.localToGlobal(Offset.zero).dy;
+          // Offset of the Scrollable area itself relative to the screen
+          final double scrollableGlobalOffsetY = scrollableBox.localToGlobal(Offset.zero).dy;
+          // Offset of the Instagram widget relative to the top of the VISIBLE part of the scrollable area
+          final double instagramOffsetYInViewport = instagramGlobalOffsetY - scrollableGlobalOffsetY;
+          // Absolute offset of the Instagram widget from the VERY TOP of all scrollable content
+          final double instagramTopOffsetInScrollableContent = _scrollController.offset + instagramOffsetYInViewport;
+          
+          print("FAB_DEBUG: InstaGlobalY: $instagramGlobalOffsetY, ScrollableGlobalY: $scrollableGlobalOffsetY, InstaInViewportY: $instagramOffsetYInViewport");
+          print("FAB_DEBUG: Instagram Top in Scrollable Content: $instagramTopOffsetInScrollableContent"); 
+          
+          const double instagramExpandedHeight = 1200.0;
+          double calculatedTargetOffset = instagramTopOffsetInScrollableContent + (instagramExpandedHeight / 2.5);
+          print("FAB_DEBUG: Instagram Calculated Target Offset (before clamp): $calculatedTargetOffset");
+          
+          double targetOffset = calculatedTargetOffset.clamp(0.0, _scrollController.position.maxScrollExtent);
+
+          print("FAB_DEBUG: Scrolling for Instagram. TargetOffset: $targetOffset, MaxScroll: ${_scrollController.position.maxScrollExtent}");
+          _scrollController.animateTo(
+            targetOffset,
+            duration: const Duration(milliseconds: 500),
+            curve: Curves.easeInOut,
+          );
+
+        } else { // Fallback if key context is lost
+          print("FAB_DEBUG: Instagram context was null, falling back to scroll to media preview top."); // DEBUG
+          _scrollToMediaPreviewTop();
+        }
+      } else {
+         print("FAB_DEBUG: Not an expanded Instagram preview, or URL/key issue. Scrolling to media preview top."); // DEBUG
+         _scrollToMediaPreviewTop();
+      }
+    } else { // Scroll Down (_showUpArrowForFab is false)
+      print("FAB_DEBUG: Trying to scroll DOWN."); // DEBUG
+      final experienceCardsSectionContext = _experienceCardsSectionKey.currentContext;
+      print("FAB_DEBUG: Experience cards section context null? ${experienceCardsSectionContext == null}"); // DEBUG
+      if (experienceCardsSectionContext != null) {
+        // Reverting to Scrollable.ensureVisible with bottom alignment for the whole section
+        print("FAB_DEBUG: Scroll Down using ensureVisible to bottom of ExperienceCardsSection.");
+        Scrollable.ensureVisible(
+          experienceCardsSectionContext,
+          duration: const Duration(milliseconds: 500),
+          curve: Curves.easeInOut,
+          alignment: 1.0, // Align bottom of the section with bottom of viewport
+          alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
+        );
+        print("FAB_DEBUG: Called Scrollable.ensureVisible for experience cards section bottom.");
+      }
+    }
+  }
+
+  void _scrollToMediaPreviewTop(){
+    final mediaPreviewContext = _mediaPreviewListKey.currentContext; // This is key for the *first* media item.
+    print("FAB_DEBUG: _scrollToMediaPreviewTop called. Context null? ${mediaPreviewContext == null}"); // DEBUG
+    if (mediaPreviewContext != null) {
+      Scrollable.ensureVisible(
+        mediaPreviewContext,
+        duration: const Duration(milliseconds: 500),
+        curve: Curves.easeInOut,
+        alignment: 0.0, // Align to top
+        alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtStart,
+      );
+      print("FAB_DEBUG: Called Scrollable.ensureVisible for media preview top."); // DEBUG
+    }
+  }
+
+  void _onInstagramExpansionChanged(bool isExpanded, String url) {
+    if (mounted) {
+      setState(() {
+        _isInstagramPreviewExpanded = isExpanded;
+        _currentVisibleInstagramUrl = url; // Keep track of the URL for the key
+      });
+    }
+  }
+  // --- END ADDED FOR SCROLLING FAB ---
+
   @override
   Widget build(BuildContext context) {
     print('ReceiveShareScreen build called. Current card count from provider: ${context.watch<ReceiveShareProvider>().experienceCards.length}'); // MODIFIED
@@ -2363,135 +2516,153 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                   return Column(
                     children: [
                       Expanded(
-                        child: SingleChildScrollView(
-                          padding: const EdgeInsets.only(bottom: 80),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              // Re-enable the shared files preview list
-                              if (_currentSharedFiles.isEmpty)
-                                const Padding(
-                                  padding: EdgeInsets.all(16.0),
-                                  child: Center(
-                                      child:
-                                          Text('No shared content received')),
-                                )
-                              else
-                                Consumer<ReceiveShareProvider>(
-                                  builder: (context, provider, child) {
-                                    final experienceCards = provider.experienceCards;
-                                    final firstCard = experienceCards.isNotEmpty
-                                        ? experienceCards.first
-                                        : null;
+                        child: Stack( // WRAPPED IN STACK FOR FAB
+                          children: [
+                            SingleChildScrollView(
+                              controller: _scrollController, // ATTACHED SCROLL CONTROLLER
+                              padding: const EdgeInsets.only(bottom: 80),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  // Re-enable the shared files preview list
+                                  if (_currentSharedFiles.isEmpty)
+                                    const Padding(
+                                      padding: EdgeInsets.all(16.0),
+                                      child: Center(
+                                          child:
+                                              Text('No shared content received')),
+                                    )
+                                  else
+                                    Consumer<ReceiveShareProvider>(
+                                      key: _mediaPreviewListKey, // MOVED KEY HERE
+                                      builder: (context, provider, child) {
+                                        final experienceCards = provider.experienceCards;
+                                        final firstCard = experienceCards.isNotEmpty
+                                            ? experienceCards.first
+                                            : null;
 
-                                    return ListView.builder(
-                                      padding: EdgeInsets.zero, 
-                                      shrinkWrap: true,
-                                      physics: const NeverScrollableScrollPhysics(),
-                                      itemCount: _currentSharedFiles.length,
-                                      itemBuilder: (context, index) {
-                                        final file = _currentSharedFiles[index];
-                                        
-                                        bool isInstagram = false;
-                                        if (file.type == SharedMediaType.text ||
-                                            file.type == SharedMediaType.url) {
-                                          String? url = _extractFirstUrl(file.path);
-                                          if (url != null &&
-                                              url.contains('instagram.com')) {
-                                            isInstagram = true;
-                                          }
-                                        }
-                                        final double horizontalPadding =
-                                            isInstagram ? 0.0 : 16.0;
-                                        final double verticalPadding =
-                                            8.0; 
-                                        
-                                        return Padding(
-                                          key: ValueKey(file.path),
-                                          padding: EdgeInsets.symmetric(
-                                            horizontal: horizontalPadding,
-                                            vertical: verticalPadding,
-                                          ),
-                                          child: Card(
-                                            elevation: 2.0,
-                                            margin: isInstagram
-                                                ? EdgeInsets.zero
-                                                : const EdgeInsets.only(
-                                                    bottom:
-                                                        0), 
-                                            shape: RoundedRectangleBorder(
-                                              borderRadius: BorderRadius.circular(
-                                                  isInstagram ? 0 : 8),
-                                            ),
-                                            clipBehavior: isInstagram
-                                                ? Clip.antiAlias
-                                                : Clip.none,
-                                            child: Column(
-                                              crossAxisAlignment:
-                                                  CrossAxisAlignment.start,
-                                              children: [
-                                                _buildMediaPreview(
-                                                    file, firstCard, index),
-                                              ],
-                                            ),
-                                          ),
+                                        return ListView.builder(
+                                          padding: EdgeInsets.zero, 
+                                          shrinkWrap: true,
+                                          physics: const NeverScrollableScrollPhysics(),
+                                          itemCount: _currentSharedFiles.length,
+                                          itemBuilder: (context, index) {
+                                            final file = _currentSharedFiles[index];
+                                            
+                                            bool isInstagram = false;
+                                            if (file.type == SharedMediaType.text ||
+                                                file.type == SharedMediaType.url) {
+                                              String? url = _extractFirstUrl(file.path);
+                                              if (url != null &&
+                                                  url.contains('instagram.com')) {
+                                                isInstagram = true;
+                                              }
+                                            }
+                                            final double horizontalPadding =
+                                                isInstagram ? 0.0 : 16.0;
+                                            final double verticalPadding =
+                                                8.0; 
+                                            
+                                            return Padding(
+                                              key: ValueKey(file.path),
+                                              padding: EdgeInsets.symmetric(
+                                                horizontal: horizontalPadding,
+                                                vertical: verticalPadding,
+                                              ),
+                                              child: Card(
+                                                elevation: 2.0,
+                                                margin: isInstagram
+                                                    ? EdgeInsets.zero
+                                                    : const EdgeInsets.only(
+                                                        bottom:
+                                                            0), 
+                                                shape: RoundedRectangleBorder(
+                                                  borderRadius: BorderRadius.circular(
+                                                      isInstagram ? 0 : 8),
+                                                ),
+                                                clipBehavior: isInstagram
+                                                    ? Clip.antiAlias
+                                                    : Clip.none,
+                                                child: Column(
+                                                  crossAxisAlignment:
+                                                      CrossAxisAlignment.start,
+                                                  children: [
+                                                    _buildMediaPreview(
+                                                        file, firstCard, index),
+                                                  ],
+                                                ),
+                                              ),
+                                            );
+                                          },
                                         );
-                                      },
-                                    );
-                                  }
-                                ),
-                              Selector<ReceiveShareProvider, List<ExperienceCardData>>(
-                                key: const ValueKey('experience_cards_selector'), // Keep this key or change if you prefer
-                                selector: (_, provider) {
-                                  // print("ReceiveShareScreen: Selector retrieving cards. Provider HASH: ${provider.hashCode}"); // Can be removed
-                                  return provider.experienceCards;
-                                },
-                                shouldRebuild: (previous, next) {
-                                  if (previous.length != next.length) {
-                                    // print("ReceiveShareScreen: Selector WILL REBUILD (list lengths different).");
-                                    return true;
-                                  }
-                                  for (int i = 0; i < previous.length; i++) {
-                                    final pCard = previous[i];
-                                    final nCard = next[i];
-                                    // Compare relevant fields that determine if UI for a card should change
-                                    if (pCard.id != nCard.id ||
-                                        pCard.titleController.text != nCard.titleController.text ||
-                                        pCard.selectedCategoryId != nCard.selectedCategoryId ||
-                                        pCard.selectedColorCategoryId != nCard.selectedColorCategoryId ||
-                                        pCard.existingExperienceId != nCard.existingExperienceId || // If it's linked/unlinked
-                                        pCard.placeIdForPreview != nCard.placeIdForPreview || // If preview should change
-                                        pCard.selectedLocation?.placeId != nCard.selectedLocation?.placeId || // If location changed
-                                        pCard.searchController.text != nCard.searchController.text // If search text/displayed location changed
-                                        ) {
-                                      // print("ReceiveShareScreen: Selector WILL REBUILD (card data different at index $i).");
-                                      return true;
+                                      }
+                                    ),
+                                  Selector<ReceiveShareProvider, List<ExperienceCardData>>(
+                                    key: const ValueKey('experience_cards_selector'), // Keep this key or change if you prefer
+                                    selector: (_, provider) {
+                                      // print("ReceiveShareScreen: Selector retrieving cards. Provider HASH: ${provider.hashCode}"); // Can be removed
+                                      return provider.experienceCards;
+                                    },
+                                    shouldRebuild: (previous, next) {
+                                      if (previous.length != next.length) {
+                                        // print("ReceiveShareScreen: Selector WILL REBUILD (list lengths different).");
+                                        return true;
+                                      }
+                                      for (int i = 0; i < previous.length; i++) {
+                                        final pCard = previous[i];
+                                        final nCard = next[i];
+                                        // Compare relevant fields that determine if UI for a card should change
+                                        if (pCard.id != nCard.id ||
+                                            pCard.titleController.text != nCard.titleController.text ||
+                                            pCard.selectedCategoryId != nCard.selectedCategoryId ||
+                                            pCard.selectedColorCategoryId != nCard.selectedColorCategoryId ||
+                                            pCard.existingExperienceId != nCard.existingExperienceId || // If it's linked/unlinked
+                                            pCard.placeIdForPreview != nCard.placeIdForPreview || // If preview should change
+                                            pCard.selectedLocation?.placeId != nCard.selectedLocation?.placeId || // If location changed
+                                            pCard.searchController.text != nCard.searchController.text // If search text/displayed location changed
+                                            ) {
+                                          // print("ReceiveShareScreen: Selector WILL REBUILD (card data different at index $i).");
+                                          return true;
+                                        }
+                                      }
+                                      // print("ReceiveShareScreen: Selector WILL NOT REBUILD (lists appear identical by check).");
+                                      return false;
+                                    },
+                                    builder: (context, selectedExperienceCards, child) {
+                                      print("ReceiveShareScreen: Selector for _ExperienceCardsSection rebuilding. Cards count: ${selectedExperienceCards.length}");
+                                      return _ExperienceCardsSection(
+                                        userCategories: _userCategories,
+                                        userColorCategories: _userColorCategories,
+                                        userCategoriesNotifier: _userCategoriesNotifier,
+                                        userColorCategoriesNotifier: _userColorCategoriesNotifier,
+                                        removeExperienceCard: _removeExperienceCard,
+                                        showLocationPicker: _showLocationPicker,
+                                        selectSavedExperienceForCard: _selectSavedExperienceForCard,
+                                        handleCardFormUpdate: _handleExperienceCardFormUpdate,
+                                        addExperienceCard: _addExperienceCard,
+                                        isSpecialUrl: _isSpecialUrl,
+                                        extractFirstUrl: _extractFirstUrl,
+                                        currentSharedFiles: _currentSharedFiles,
+                                        experienceCards: selectedExperienceCards, // Pass selected cards from Selector
+                                        sectionKey: _experienceCardsSectionKey, // PASSING THE KEY
+                                      );
                                     }
-                                  }
-                                  // print("ReceiveShareScreen: Selector WILL NOT REBUILD (lists appear identical by check).");
-                                  return false;
-                                },
-                                builder: (context, selectedExperienceCards, child) {
-                                  print("ReceiveShareScreen: Selector for _ExperienceCardsSection rebuilding. Cards count: ${selectedExperienceCards.length}");
-                                  return _ExperienceCardsSection(
-                                    userCategories: _userCategories,
-                                    userColorCategories: _userColorCategories,
-                                    userCategoriesNotifier: _userCategoriesNotifier,
-                                    userColorCategoriesNotifier: _userColorCategoriesNotifier,
-                                    removeExperienceCard: _removeExperienceCard,
-                                    showLocationPicker: _showLocationPicker,
-                                    selectSavedExperienceForCard: _selectSavedExperienceForCard,
-                                    handleCardFormUpdate: _handleExperienceCardFormUpdate,
-                                    addExperienceCard: _addExperienceCard,
-                                    isSpecialUrl: _isSpecialUrl,
-                                    extractFirstUrl: _extractFirstUrl,
-                                    currentSharedFiles: _currentSharedFiles,
-                                    experienceCards: selectedExperienceCards, // Pass selected cards from Selector
-                                  );
-                                }
+                                  ),
+                                ],
                               ),
-                            ],
-                          ),
+                            ),
+                            // --- ADDED FAB ---
+                            Positioned(
+                              bottom: 16, // Adjust as needed
+                              right: 16,  // Adjust as needed
+                              child: FloatingActionButton(
+                                shape: const CircleBorder(), // ENSURE CIRCULAR
+                                onPressed: _handleFabPress,
+                                child: Icon(_showUpArrowForFab ? Icons.arrow_upward : Icons.arrow_downward),
+                              ),
+                            ),
+                            // --- END ADDED FAB ---
+                          ],
                         ),
                       ),
                       Container(
@@ -2643,10 +2814,18 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     if (url.contains('instagram.com')) {
       // print("DEBUG: Instagram URL detected, preview temporarily disabled.");
       // return const SizedBox(height: 50, child: Center(child: Text("Instagram Preview Disabled")));
+      if (!_instagramPreviewKeys.containsKey(url)) { // Ensure key exists
+        _instagramPreviewKeys[url] = GlobalKey();
+      }
+      // If this is the first media item and it's instagram, update _currentVisibleInstagramUrl
+      // This logic is a bit tricky here as _buildMediaPreview is called inside a loop.
+      // We set _currentVisibleInstagramUrl more reliably in the ListView builder.
+      
       return InstagramPreviewWrapper(
-        key: ValueKey(url), 
+        key: _instagramPreviewKeys[url], // Use the specific key for this Instagram preview
         url: url,
         launchUrlCallback: _launchUrl,
+        onExpansionChanged: (isExpanded, instaUrl) => _onInstagramExpansionChanged(isExpanded, instaUrl), // CORRECTED: Match signature
       );
     }
 
@@ -2908,11 +3087,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 class InstagramPreviewWrapper extends StatefulWidget {
   final String url;
   final Future<void> Function(String) launchUrlCallback;
+  final void Function(bool, String)? onExpansionChanged; // MODIFIED to include URL
 
   const InstagramPreviewWrapper({
-    super.key,
+    super.key, // Ensure super.key is passed
     required this.url,
     required this.launchUrlCallback,
+    this.onExpansionChanged,
   });
 
   @override
@@ -3004,6 +3185,7 @@ class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
               onPressed: () {
                 _safeSetState(() {
                   _isExpanded = !_isExpanded;
+                  widget.onExpansionChanged?.call(_isExpanded, widget.url); // CALL CALLBACK with URL
                 });
               },
             ),

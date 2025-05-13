@@ -42,7 +42,7 @@ class SharePermission extends Equatable {
     final data = doc.data() as Map<String, dynamic>;
 
     // Helper to safely convert String to enum, defaulting to view/experience
-    ShareableItemType _parseItemType(String? typeStr) {
+    ShareableItemType parseItemType(String? typeStr) {
       if (typeStr == 'category') return ShareableItemType.category;
       // Default to experience if null, empty, or unrecognized
       if (typeStr == null || typeStr.isEmpty || typeStr != 'experience') {
@@ -54,7 +54,7 @@ class SharePermission extends Equatable {
       return ShareableItemType.experience;
     }
 
-    ShareAccessLevel _parseAccessLevel(String? levelStr) {
+    ShareAccessLevel parseAccessLevel(String? levelStr) {
       if (levelStr == 'edit') return ShareAccessLevel.edit;
       // Default to view if null, empty, or unrecognized
       if (levelStr == null || levelStr.isEmpty || levelStr != 'view') {
@@ -70,11 +70,11 @@ class SharePermission extends Equatable {
       id: doc.id,
       itemId: data['itemId'] ?? '',
       // Convert string from Firestore back to enum
-      itemType: _parseItemType(data['itemType'] as String?),
+      itemType: parseItemType(data['itemType'] as String?),
       ownerUserId: data['ownerUserId'] ?? '',
       sharedWithUserId: data['sharedWithUserId'] ?? '',
       // Convert string from Firestore back to enum
-      accessLevel: _parseAccessLevel(data['accessLevel'] as String?),
+      accessLevel: parseAccessLevel(data['accessLevel'] as String?),
       createdAt: data['createdAt'] ?? Timestamp.now(),
       updatedAt: data['updatedAt'] ?? Timestamp.now(),
     );
@@ -83,20 +83,20 @@ class SharePermission extends Equatable {
   /// Converts SharePermission to a map for Firestore.
   Map<String, dynamic> toMap() {
     // Helper to convert enum to string
-    String _itemTypeToString(ShareableItemType type) {
+    String itemTypeToString(ShareableItemType type) {
       return type == ShareableItemType.category ? 'category' : 'experience';
     }
 
-    String _accessLevelToString(ShareAccessLevel level) {
+    String accessLevelToString(ShareAccessLevel level) {
       return level == ShareAccessLevel.edit ? 'edit' : 'view';
     }
 
     return {
       'itemId': itemId,
-      'itemType': _itemTypeToString(itemType), // Store enum as string
+      'itemType': itemTypeToString(itemType), // Store enum as string
       'ownerUserId': ownerUserId,
       'sharedWithUserId': sharedWithUserId,
-      'accessLevel': _accessLevelToString(accessLevel), // Store enum as string
+      'accessLevel': accessLevelToString(accessLevel), // Store enum as string
       'createdAt': createdAt,
       'updatedAt': updatedAt,
       // Add server timestamp fields if needed for auto-update on write

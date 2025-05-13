@@ -223,7 +223,7 @@ class _YelpPreviewWidgetState extends State<YelpPreviewWidget> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 // Business photo instead of map
-                Container(
+                SizedBox(
                   height: 180,
                   width: double.infinity,
                   child: ClipRRect(
@@ -299,7 +299,7 @@ class _YelpPreviewWidgetState extends State<YelpPreviewWidget> {
                       SizedBox(height: 8),
 
                       // Address
-                      if (finalAddress != null && finalAddress.isNotEmpty) ...[
+                      if (finalAddress.isNotEmpty) ...[
                         Row(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
@@ -632,9 +632,9 @@ class _YelpPreviewWidgetState extends State<YelpPreviewWidget> {
   // Generate a seed for consistent photo selection
   String _createPhotoSeed(String businessName, Location location) {
     String seed = businessName;
-    if (location.latitude != null && location.longitude != null) {
+    if (location.longitude != null) {
       String locationStr =
-          '${location.latitude!.toStringAsFixed(3)}_${location.longitude!.toStringAsFixed(3)}';
+          '${location.latitude.toStringAsFixed(3)}_${location.longitude.toStringAsFixed(3)}';
       seed = '$seed-$locationStr';
     }
     return seed.hashCode.abs().toString();
@@ -835,7 +835,7 @@ class _YelpPreviewWidgetState extends State<YelpPreviewWidget> {
       url = 'https://yelp.com';
     } else if (!url.startsWith('http')) {
       // Make sure it starts with http:// or https://
-      url = 'https://' + url;
+      url = 'https://$url';
     }
 
     // Check if this is a Yelp URL for potential app deep linking
