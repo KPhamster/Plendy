@@ -2,10 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../models/experience.dart';
 import '../services/experience_service.dart';
+import '../models/user_category.dart';
 // import '../widgets/experience_list_item.dart'; // Commented out - using ListTile
 
 class SelectSavedExperienceScreen extends StatefulWidget {
-  const SelectSavedExperienceScreen({Key? key}) : super(key: key);
+  const SelectSavedExperienceScreen({super.key});
 
   @override
   _SelectSavedExperienceScreenState createState() =>
@@ -19,6 +20,7 @@ class _SelectSavedExperienceScreenState
   Future<List<Experience>>? _userExperiencesFuture;
   List<Experience> _filteredExperiences = [];
   List<Experience> _allExperiences = [];
+  List<UserCategory> _userCategories = [];
 
   final TextEditingController _searchController = TextEditingController();
 
@@ -32,24 +34,30 @@ class _SelectSavedExperienceScreenState
   void _loadUserExperiences() {
     final userId = _auth.currentUser?.uid;
     if (userId != null) {
-      _userExperiencesFuture = _experienceService.getExperiencesByUser(userId)
-        ..then((experiences) {
-          setState(() {
-            _allExperiences = experiences;
-            _filteredExperiences = experiences;
-          });
-        }).catchError((error) {
-          print("Error loading user experiences: $error");
-          // Handle error appropriately, e.g., show a snackbar
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Error loading your experiences: $error')),
-          );
-          // Set to empty list on error to avoid breaking UI
-          setState(() {
-            _allExperiences = [];
-            _filteredExperiences = [];
-          });
+      final experiencesFuture = _experienceService.getExperiencesByUser(userId);
+      final categoriesFuture = _experienceService.getUserCategories();
+
+      _userExperiencesFuture = Future.wait([experiencesFuture, categoriesFuture]).then((results) {
+        final experiences = results[0] as List<Experience>;
+        final categories = results[1] as List<UserCategory>;
+        setState(() {
+          _allExperiences = experiences;
+          _filteredExperiences = experiences;
+          _userCategories = categories;
         });
+        return experiences;
+      }).catchError((error) {
+        print("Error loading user experiences or categories: $error");
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error loading data: $error')),
+        );
+        setState(() {
+          _allExperiences = [];
+          _filteredExperiences = [];
+          _userCategories = [];
+        });
+        return <Experience>[];
+      });
     } else {
       // Handle case where user is not logged in
       print("User not logged in, cannot load experiences.");
@@ -77,7 +85,17 @@ class _SelectSavedExperienceScreenState
           final notesLower = exp.additionalNotes?.toLowerCase() ?? '';
           final addressLower = exp.location.address?.toLowerCase() ?? '';
           final cityLower = exp.location.city?.toLowerCase() ?? '';
-          final categoryLower = exp.category.toLowerCase();
+          
+          String categoryLower = '';
+          if (exp.categoryId != null && _userCategories.isNotEmpty) {
+            try {
+              final category = _userCategories.firstWhere((cat) => cat.id == exp.categoryId);
+              categoryLower = category.name.toLowerCase();
+            } catch (e) {
+              // Category not found or _userCategories is empty, leave categoryLower as ''
+              // This means items with non-matching/null categoryId won't match on category search term
+            }
+          }
 
           return nameLower.contains(query) ||
               notesLower.contains(query) ||

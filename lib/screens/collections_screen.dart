@@ -59,7 +59,7 @@ class GroupedContentItem {
 }
 
 class CollectionsScreen extends StatefulWidget {
-  CollectionsScreen({super.key});
+  const CollectionsScreen({super.key});
 
   @override
   State<CollectionsScreen> createState() => _CollectionsScreenState();
@@ -394,7 +394,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   }
 
   int _getExperienceCountForCategory(UserCategory category) {
-    return _experiences.where((exp) => exp.category == category.name).length;
+    // MODIFIED: Filter by categoryId
+    return _experiences.where((exp) => exp.categoryId == category.id).length;
   }
 
   Widget _buildCategoriesList() {
@@ -619,56 +620,54 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     }
 
     // 4. Calculate Distances and Sort
-    if (currentPosition != null) {
-      // Use a temporary list or map to store experiences with distances
-      List<Map<String, dynamic>> experiencesWithDistance = [];
+    // Use a temporary list or map to store experiences with distances
+    List<Map<String, dynamic>> experiencesWithDistance = [];
 
-      // Use the passed-in list
-      for (var exp in experiencesToSort) {
-        double? distance;
-        // Check if the experience has valid coordinates
-        if (exp.location.latitude != 0.0 || exp.location.longitude != 0.0) {
-          try {
-            distance = Geolocator.distanceBetween(
-              currentPosition!.latitude,
-              currentPosition!.longitude,
-              exp.location.latitude,
-              exp.location.longitude,
-            );
-          } catch (e) {
-            print("Error calculating distance for ${exp.name}: $e");
-            distance = null; // Treat calculation error as unknown distance
-          }
-        } else {
-          print("Experience ${exp.name} has no valid coordinates.");
-          distance = null; // No coordinates, unknown distance
+    // Use the passed-in list
+    for (var exp in experiencesToSort) {
+      double? distance;
+      // Check if the experience has valid coordinates
+      if (exp.location.latitude != 0.0 || exp.location.longitude != 0.0) {
+        try {
+          distance = Geolocator.distanceBetween(
+            currentPosition!.latitude,
+            currentPosition!.longitude,
+            exp.location.latitude,
+            exp.location.longitude,
+          );
+        } catch (e) {
+          print("Error calculating distance for ${exp.name}: $e");
+          distance = null; // Treat calculation error as unknown distance
         }
-        experiencesWithDistance.add({'experience': exp, 'distance': distance});
+      } else {
+        print("Experience ${exp.name} has no valid coordinates.");
+        distance = null; // No coordinates, unknown distance
       }
-
-      // Sort the temporary list
-      experiencesWithDistance.sort((a, b) {
-        final distA = a['distance'] as double?;
-        final distB = b['distance'] as double?;
-
-        // Handle null distances (experiences w/o location or errors)
-        if (distA == null && distB == null) return 0; // Keep relative order
-        if (distA == null) return 1; // Nulls go to the end
-        if (distB == null) return -1; // Nulls go to the end
-
-        return distA.compareTo(distB); // Sort by distance ascending
-      });
-
-      // Update the *original* list passed in (experiencesToSort) with the sorted order
-      // This modifies the list in place (either _experiences or _filteredExperiences)
-      experiencesToSort.clear();
-      experiencesToSort.addAll(experiencesWithDistance
-          .map((item) => item['experience'] as Experience)
-          .toList());
-
-      print("Experiences sorted by distance successfully.");
+      experiencesWithDistance.add({'experience': exp, 'distance': distance});
     }
-  }
+
+    // Sort the temporary list
+    experiencesWithDistance.sort((a, b) {
+      final distA = a['distance'] as double?;
+      final distB = b['distance'] as double?;
+
+      // Handle null distances (experiences w/o location or errors)
+      if (distA == null && distB == null) return 0; // Keep relative order
+      if (distA == null) return 1; // Nulls go to the end
+      if (distB == null) return -1; // Nulls go to the end
+
+      return distA.compareTo(distB); // Sort by distance ascending
+    });
+
+    // Update the *original* list passed in (experiencesToSort) with the sorted order
+    // This modifies the list in place (either _experiences or _filteredExperiences)
+    experiencesToSort.clear();
+    experiencesToSort.addAll(experiencesWithDistance
+        .map((item) => item['experience'] as Experience)
+        .toList());
+
+    print("Experiences sorted by distance successfully.");
+    }
   // --- END ADDED ---
 
   // --- REFACTORED: Method to apply sorting to the grouped content items list ---
@@ -699,9 +698,12 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         // Sort by the name of the *first* associated experience (ascending)
         listToSort.sort((a, b) {
           if (a.associatedExperiences.isEmpty &&
-              b.associatedExperiences.isEmpty) return 0;
-          if (a.associatedExperiences.isEmpty)
+              b.associatedExperiences.isEmpty) {
+            return 0;
+          }
+          if (a.associatedExperiences.isEmpty) {
             return 1; // Items without experiences go last
+          }
           if (b.associatedExperiences.isEmpty) return -1;
           return a.associatedExperiences.first.name
               .toLowerCase()
@@ -796,54 +798,52 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       return;
     }
 
-    if (currentPosition != null) {
-      // Calculate minimum distance for each grouped item in the list to sort
-      for (var group in contentToSort) {
-        double? minGroupDistance;
-        for (var exp in group.associatedExperiences) {
-          double? distance;
-          final location = exp.location;
-          if (location.latitude != 0.0 || location.longitude != 0.0) {
-            try {
-              distance = Geolocator.distanceBetween(
-                currentPosition.latitude,
-                currentPosition.longitude,
-                location.latitude,
-                location.longitude,
-              );
-              // Update minimum distance for the group
-              if (minGroupDistance == null || distance < minGroupDistance) {
-                minGroupDistance = distance;
-              }
-            } catch (e) {
-              print("Error calculating distance for ${exp.name}: $e");
-              // Distance remains null or the previous minGroupDistance
+    // Calculate minimum distance for each grouped item in the list to sort
+    for (var group in contentToSort) {
+      double? minGroupDistance;
+      for (var exp in group.associatedExperiences) {
+        double? distance;
+        final location = exp.location;
+        if (location.latitude != 0.0 || location.longitude != 0.0) {
+          try {
+            distance = Geolocator.distanceBetween(
+              currentPosition.latitude,
+              currentPosition.longitude,
+              location.latitude,
+              location.longitude,
+            );
+            // Update minimum distance for the group
+            if (minGroupDistance == null || distance < minGroupDistance) {
+              minGroupDistance = distance;
             }
-          } else {
-            print(
-                "Experience ${exp.name} in group ${group.mediaItem.path} has no valid coordinates.");
+          } catch (e) {
+            print("Error calculating distance for ${exp.name}: $e");
+            // Distance remains null or the previous minGroupDistance
           }
+        } else {
+          print(
+              "Experience ${exp.name} in group ${group.mediaItem.path} has no valid coordinates.");
         }
-        // Store the calculated minimum distance in the object
-        group.minDistance = minGroupDistance;
       }
-
-      // Sort the list passed in (contentToSort) based on the calculated minDistance
-      contentToSort.sort((a, b) {
-        final distA = a.minDistance;
-        final distB = b.minDistance;
-
-        if (distA == null && distB == null)
-          return 0; // Keep relative order if both unknown
-        if (distA == null) return 1; // Nulls (unknown distances) go to the end
-        if (distB == null) return -1; // Nulls go to the end
-
-        return distA.compareTo(distB); // Sort by distance ascending
-      });
-
-      print("Grouped content items sorted by distance successfully.");
+      // Store the calculated minimum distance in the object
+      group.minDistance = minGroupDistance;
     }
-  }
+
+    // Sort the list passed in (contentToSort) based on the calculated minDistance
+    contentToSort.sort((a, b) {
+      final distA = a.minDistance;
+      final distB = b.minDistance;
+
+      if (distA == null && distB == null)
+        return 0; // Keep relative order if both unknown
+      if (distA == null) return 1; // Nulls (unknown distances) go to the end
+      if (distB == null) return -1; // Nulls go to the end
+
+      return distA.compareTo(distB); // Sort by distance ascending
+    });
+
+    print("Grouped content items sorted by distance successfully.");
+    }
   // --- END REFACTORED ---
 
   @override
@@ -1012,15 +1012,18 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                       print('Selected experience: ${suggestion.name}');
                       // ADDED: Navigate to the experience page
 
-                      // Find the matching category for the selected experience
+                      // Find the matching category for the selected experience using categoryId
                       final category = _categories.firstWhere(
-                          (cat) => cat.name == suggestion.category,
+                          (cat) => cat.id == suggestion.categoryId, // Use categoryId
                           orElse: () => UserCategory(
-                              id: '',
-                              name: suggestion.category,
-                              icon: '❓',
-                              ownerUserId: '') // Fallback
-                          );
+                              id: '', // Fallback ID if no categoryId or not found
+                              name: suggestion.categoryId != null 
+                                  ? 'Category Not Found' // Placeholder if ID existed but no match
+                                  : 'Uncategorized', // Placeholder if categoryId was null
+                              icon: '❓', 
+                              ownerUserId: '' // Needs a valid owner or handle this case
+                          )
+                      );
 
                       // Await result and refresh if needed
                       final result = await Navigator.push<bool>(
@@ -1139,13 +1142,18 @@ class _CollectionsScreenState extends State<CollectionsScreen>
 
   // REFACTORED: Extracted list item builder for reuse
   Widget _buildExperienceListItem(Experience experience) {
-    // Find the matching category icon
-    final categoryIcon = _categories
-        .firstWhere((cat) => cat.name == experience.category,
-            orElse: () => UserCategory(
-                id: '', name: '', icon: '❓', ownerUserId: '') // Default icon
-            )
-        .icon;
+    // Find the matching category icon and name using categoryId
+    final UserCategory category = _categories.firstWhere(
+      (cat) => cat.id == experience.categoryId,
+      orElse: () => UserCategory(
+        id: '', // Default/fallback category
+        name: 'Uncategorized',
+        icon: '❓',
+        ownerUserId: '', // Should be filled if applicable, or handle differently
+      ),
+    );
+    final categoryIcon = category.icon;
+    final categoryName = category.name;
 
     // Get the full address
     final fullAddress = experience.location.address;
@@ -1240,7 +1248,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
               style: Theme.of(context).textTheme.bodySmall,
             ),
           Text(
-            '$categoryIcon ${experience.category}',
+            '$categoryIcon $categoryName', // Use looked-up category name
             style: Theme.of(context).textTheme.bodySmall,
           ),
           // ADDED: Display notes if available
@@ -1264,15 +1272,16 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         print('Tapped on Experience: ${experience.name}');
         // ADDED: Navigation logic to the ExperiencePageScreen
 
-        // Find the matching category for the tapped experience
-        final category = _categories.firstWhere(
-            (cat) => cat.name == experience.category,
-            orElse: () => UserCategory(
-                id: '',
-                name: experience.category,
-                icon: '❓',
-                ownerUserId: '') // Fallback
-            );
+        // Find the matching category for the tapped experience using categoryId
+        final UserCategory resolvedCategory = _categories.firstWhere(
+          (cat) => cat.id == experience.categoryId,
+          orElse: () => UserCategory(
+            id: '',
+            name: 'Uncategorized', // Fallback name
+            icon: '❓', // Fallback icon
+            ownerUserId: '', // Needs a valid owner or handle this case
+          ),
+        );
 
         // Await result and refresh if needed
         final result = await Navigator.push<bool>(
@@ -1280,7 +1289,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
           MaterialPageRoute(
             builder: (context) => ExperiencePageScreen(
               experience: experience,
-              category: category, // Pass the found category
+              category: resolvedCategory, // Pass the resolved category
               userColorCategories: _colorCategories,
             ),
           ),
@@ -1318,7 +1327,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   // ADDED: Widget to display experiences for a specific category
   Widget _buildCategoryExperiencesList(UserCategory category) {
     final categoryExperiences = _experiences
-        .where((exp) => exp.category == category.name)
+        .where((exp) => exp.categoryId == category.id) // MODIFIED: Filter by categoryId
         .toList(); // Filter experiences
 
     // Apply the current experience sort order to this sublist
@@ -1513,15 +1522,15 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                           // Generate a list of Text Widgets for each experience
                           ...associatedExperiences.map((exp) {
                             // Find the matching category icon
-                            final categoryIcon = _categories
-                                .firstWhere((cat) => cat.name == exp.category,
-                                    orElse: () => UserCategory(
-                                        id: '',
-                                        name: '',
-                                        icon: '❓',
-                                        ownerUserId: '') // Default icon
-                                    )
-                                .icon;
+                            final UserCategory resolvedCategoryForContent = _categories.firstWhere(
+                                (cat) => cat.id == exp.categoryId, // MODIFIED: Use categoryId
+                                orElse: () => UserCategory(
+                                    id: '',
+                                    name: 'Uncategorized',
+                                    icon: '❓',
+                                    ownerUserId: '') // Default icon
+                                );
+                            final categoryIcon = resolvedCategoryForContent.icon;
                             final address = exp.location.address;
                             final bool hasAddress =
                                 address != null && address.isNotEmpty;
@@ -1534,13 +1543,13 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                                 onTap: () async {
                                   print(
                                       'Tapped on experience ${exp.name} within content group');
-                                  // Find the matching category
-                                  final category = _categories.firstWhere(
-                                      (cat) => cat.name == exp.category,
+                                  // Find the matching category using categoryId
+                                  final UserCategory categoryForNavigation = _categories.firstWhere(
+                                      (cat) => cat.id == exp.categoryId, // MODIFIED: Use categoryId
                                       orElse: () => UserCategory(
                                           id: '',
-                                          name: exp.category,
-                                          icon: '❓',
+                                          name: 'Uncategorized', // Fallback name
+                                          icon: '❓', // Fallback icon
                                           ownerUserId: ''));
                                   // Navigate to the specific experience page
                                   final result = await Navigator.push<bool>(
@@ -1549,7 +1558,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                                       builder: (context) =>
                                           ExperiencePageScreen(
                                         experience: exp,
-                                        category: category,
+                                        category: categoryForNavigation, // Pass resolved category
                                         userColorCategories: _colorCategories,
                                       ),
                                     ),
@@ -1605,7 +1614,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                                 ),
                               ),
                             );
-                          }).toList(),
+                          }),
                         ],
                       ),
                     ),
@@ -2185,7 +2194,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                           });
                         },
                       );
-                    }).toList(),
+                    }),
                     const SizedBox(height: 16),
                     const Text('By Color:',
                         style: TextStyle(fontWeight: FontWeight.bold)),
@@ -2233,7 +2242,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                           });
                         },
                       );
-                    }).toList(),
+                    }),
                   ],
                 ),
               );
@@ -2283,18 +2292,10 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     print("🎨 COLLECTIONS SCREEN: Applying filters...");
     // Filter experiences
     final filteredExperiences = _experiences.where((exp) {
-      // Find the category ID for the experience (same logic as map_screen filter)
-      String? expCategoryId;
-      try {
-        expCategoryId =
-            _categories.firstWhere((cat) => cat.name == exp.category).id;
-      } catch (e) {
-        expCategoryId = null;
-      }
-
+      // MODIFIED: Directly use exp.categoryId for matching
       final bool categoryMatch = _selectedCategoryIds.isEmpty ||
-          (expCategoryId != null &&
-              _selectedCategoryIds.contains(expCategoryId));
+          (exp.categoryId != null &&
+              _selectedCategoryIds.contains(exp.categoryId));
 
       final bool colorMatch = _selectedColorCategoryIds.isEmpty ||
           (exp.colorCategoryId != null &&
@@ -2307,17 +2308,10 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     final filteredGroupedContent = _groupedContentItems.where((group) {
       // Include the group if ANY of its associated experiences match the filters
       return group.associatedExperiences.any((exp) {
-        String? expCategoryId;
-        try {
-          expCategoryId =
-              _categories.firstWhere((cat) => cat.name == exp.category).id;
-        } catch (e) {
-          expCategoryId = null;
-        }
-
+        // MODIFIED: Directly use exp.categoryId for matching
         final bool categoryMatch = _selectedCategoryIds.isEmpty ||
-            (expCategoryId != null &&
-                _selectedCategoryIds.contains(expCategoryId));
+            (exp.categoryId != null &&
+                _selectedCategoryIds.contains(exp.categoryId));
 
         final bool colorMatch = _selectedColorCategoryIds.isEmpty ||
             (exp.colorCategoryId != null &&
@@ -2352,7 +2346,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     if (!launchableUrl.startsWith('http://') &&
         !launchableUrl.startsWith('https://')) {
       // Assume https if no scheme provided
-      launchableUrl = 'https://' + launchableUrl;
+      launchableUrl = 'https://$launchableUrl';
       print("Prepended 'https://' to URL: $launchableUrl");
     }
 
@@ -2374,9 +2368,23 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       return [];
     }
     // Simple case-insensitive search on the name (using the full list)
-    return _experiences
+    List<Experience> suggestions = _experiences
         .where((exp) => exp.name.toLowerCase().contains(pattern.toLowerCase()))
         .toList();
+
+    // Sort suggestions: those matching _selectedCategoryIds first, then by name
+    if (_selectedCategory != null) {
+      suggestions.sort((a, b) {
+        bool aMatchesSelected = a.categoryId == _selectedCategory!.id;
+        bool bMatchesSelected = b.categoryId == _selectedCategory!.id;
+        if (aMatchesSelected && !bMatchesSelected) return -1;
+        if (!aMatchesSelected && bMatchesSelected) return 1;
+        return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+      });
+    } else {
+        suggestions.sort((a,b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    }
+    return suggestions;
   }
   // --- END ADDED ---
 }

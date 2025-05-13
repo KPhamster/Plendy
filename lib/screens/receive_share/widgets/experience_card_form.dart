@@ -298,13 +298,13 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
   // RENAMED: Helper to find icon for selected category
   String _getIconForSelectedCategory() {
     // Use renamed field
-    final selectedName = widget.cardData.selectedcategory;
-    if (selectedName == null) {
+    final selectedId = widget.cardData.selectedCategoryId;
+    if (selectedId == null) {
       return '❓'; // Default icon
     }
     // Use renamed parameter and class
     final matchingCategory = widget.userCategoriesNotifier.value.firstWhere(
-      (category) => category.name == selectedName,
+      (category) => category.id == selectedId,
       orElse: () => UserCategory(
           id: '',
           name: '',
@@ -404,8 +404,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                             itemCount: uniqueCategoryList.length,
                             itemBuilder: (context, index) {
                               final category = uniqueCategoryList[index];
-                              final bool isSelected = category.name ==
-                                  widget.cardData.selectedcategory;
+                              final bool isSelected = category.id == widget.cardData.selectedCategoryId;
                               return ListTile(
                                 leading: Text(category.icon,
                                     style: const TextStyle(fontSize: 20)),
@@ -414,7 +413,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                     ? const Icon(Icons.check, color: Colors.blue)
                                     : null,
                                 onTap: () {
-                                  Navigator.pop(dialogContext, category.name);
+                                  Navigator.pop(dialogContext, category.id);
                                 },
                                 visualDensity: VisualDensity.compact,
                               );
@@ -484,8 +483,8 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
         // However, _handleEditCategories already calls onUpdate which should refresh the parent.
         print("CategorySelectionDialog popped with _dialogActionEdit, parent will refresh categories via onUpdate.");
       } else {
-        if (widget.cardData.selectedcategory != selectedValue) {
-          widget.cardData.selectedcategory = selectedValue;
+        if (widget.cardData.selectedCategoryId != selectedValue) {
+          widget.cardData.selectedCategoryId = selectedValue;
           widget.onUpdate(refreshCategories: false);
         }
       }
@@ -958,6 +957,17 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                       builder: (context, currentCategoryList, child) {
                         // Note: currentCategoryList is available if needed, but button display
                         // mainly depends on widget.cardData.selectedcategory
+                        UserCategory? selectedCategoryObject;
+                        if (widget.cardData.selectedCategoryId != null) {
+                          try {
+                            selectedCategoryObject = currentCategoryList.firstWhere(
+                              (cat) => cat.id == widget.cardData.selectedCategoryId
+                            );
+                          } catch (e) {
+                            // Category ID from cardData not found in current list, leave selectedCategoryObject null
+                          }
+                        }
+
                         return OutlinedButton(
                           onPressed: _showCategorieselectionDialog,
                           style: OutlinedButton.styleFrom(
@@ -984,13 +994,11 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                       style: const TextStyle(fontSize: 18)),
                                   const SizedBox(width: 8),
                                   Text(
-                                    widget.cardData.selectedcategory ??
-                                        'Select Category',
+                                    selectedCategoryObject?.name ?? 'Select Category',
                                     style: TextStyle(
                                       // Ensure text color matches default button text color or form field color
                                       color:
-                                          widget.cardData.selectedcategory !=
-                                                  null
+                                          selectedCategoryObject != null
                                               ? Theme.of(context)
                                                   .textTheme
                                                   .bodyLarge
@@ -1107,12 +1115,12 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                     yelpUrlController.clear();
                                     widget.onUpdate(refreshCategories: false);
                                   },
+                                  borderRadius: BorderRadius.circular(16),
                                   child: Padding(
                                     padding: const EdgeInsets.symmetric(
                                         horizontal: 0), // No horizontal padding
                                     child: Icon(Icons.clear, size: 18),
                                   ),
-                                  borderRadius: BorderRadius.circular(16),
                                 ),
                               // Spacer
                               if (yelpUrlController.text
@@ -1122,13 +1130,13 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                               // Paste Button (now second)
                               InkWell(
                                 onTap: _pasteYelpUrlFromClipboard,
+                                borderRadius: BorderRadius.circular(16),
                                 child: Padding(
                                   padding: const EdgeInsets.symmetric(
                                       horizontal: 0), // No horizontal padding
                                   child: Icon(Icons.content_paste,
                                       size: 18, color: Colors.blue[700]),
                                 ),
-                                borderRadius: BorderRadius.circular(16),
                               ),
 
                               // Spacer
@@ -1138,7 +1146,8 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                               InkWell(
                                 onTap: yelpUrlController.text.isNotEmpty
                                     ? _launchYelpUrl
-                                    : null, // Only enable if field not empty
+                                    : null,
+                                borderRadius: BorderRadius.circular(16), // Only enable if field not empty
                                 child: Padding(
                                   padding: const EdgeInsets.only(
                                       right:
@@ -1149,7 +1158,6 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                           ? Colors.red[700]
                                           : Colors.grey), // Dim if inactive
                                 ),
-                                borderRadius: BorderRadius.circular(16),
                               ),
                             ],
                           )),
@@ -1194,12 +1202,12 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                   websiteController.clear();
                                   widget.onUpdate(refreshCategories: false);
                                 },
+                                borderRadius: BorderRadius.circular(16),
                                 child: Padding(
                                   padding:
                                       const EdgeInsets.symmetric(horizontal: 0),
                                   child: Icon(Icons.clear, size: 18),
                                 ),
-                                borderRadius: BorderRadius.circular(16),
                               ),
                             // Spacer
                             if (websiteController.text.isNotEmpty)
@@ -1208,13 +1216,13 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                             // Paste button (second)
                             InkWell(
                               onTap: _pasteWebsiteUrlFromClipboard,
+                              borderRadius: BorderRadius.circular(16),
                               child: Padding(
                                 padding:
                                     const EdgeInsets.symmetric(horizontal: 0),
                                 child: Icon(Icons.content_paste,
                                     size: 18, color: Colors.blue[700]),
                               ),
-                              borderRadius: BorderRadius.circular(16),
                             ),
 
                             // Spacer
@@ -1245,6 +1253,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                       }
                                     }
                                   : null,
+                              borderRadius: BorderRadius.circular(16),
                               child: Padding(
                                 padding: const EdgeInsets.only(right: 8.0),
                                 child: Icon(Icons.launch, // Use launch icon
@@ -1255,7 +1264,6 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                         ? Colors.blue[700]
                                         : Colors.grey),
                               ),
-                              borderRadius: BorderRadius.circular(16),
                             ),
                           ],
                         ),

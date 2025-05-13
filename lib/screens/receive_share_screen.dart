@@ -61,7 +61,7 @@ class _ExperienceCardsSection extends StatelessWidget {
   final List<ExperienceCardData> experienceCards; // ADDED: To receive cards directly
 
   const _ExperienceCardsSection({
-    Key? key,
+    super.key,
     required this.userCategories,
     required this.userColorCategories,
     required this.userCategoriesNotifier,
@@ -75,7 +75,7 @@ class _ExperienceCardsSection extends StatelessWidget {
     required this.extractFirstUrl,
     required this.currentSharedFiles,
     required this.experienceCards, // ADDED: To constructor
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -193,7 +193,7 @@ class ExperienceCardData {
   final FocusNode titleFocusNode = FocusNode();
 
   // Category selection
-  String? selectedcategory; // RENAMED
+  String? selectedCategoryId; // NEW: Stores the ID of the UserCategory
 
   // Rating
   double rating = 0.0; // Added (or use double? rating)
@@ -232,20 +232,25 @@ class ExperienceCardData {
   // Set default category name
   ExperienceCardData() {
     // Initialize with "Restaurant" as the default category
-    selectedcategory = 'Restaurant';
+    selectedCategoryId = 'Restaurant';
     // selectedColorCategoryId will be null by default and should be set by the provider
     // based on SharedPreferences or "Want to go" default logic.
   }
 
   // Dispose resources
   void dispose() {
+    // Dispose all controllers
     titleController.dispose();
     yelpUrlController.dispose();
     websiteController.dispose(); // Added
     searchController.dispose();
     locationController.dispose();
     notesController.dispose(); // Added
+
+    // Dispose focus nodes
     titleFocusNode.dispose();
+    // No need to explicitly handle selectedCategoryId in dispose,
+    // as it is just a simple String? type and not a controller/listener.
   }
 }
 
@@ -254,10 +259,10 @@ class ReceiveShareScreen extends StatefulWidget {
   final VoidCallback onCancel; // Callback to handle closing/canceling
 
   const ReceiveShareScreen({
-    Key? key,
+    super.key,
     required this.sharedFiles,
     required this.onCancel,
-  }) : super(key: key);
+  });
 
   @override
   _ReceiveShareScreenState createState() => _ReceiveShareScreenState();
@@ -283,7 +288,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   // List<ExperienceCardData> _experienceCards = [];
 
   // Track filled business data to avoid duplicates but also cache results
-  Map<String, Map<String, dynamic>> _businessDataCache = {};
+  final Map<String, Map<String, dynamic>> _businessDataCache = {};
 
   // Form validation key - Now managed within the list of cards?
   // Consider if this should be per-card or one overall key.
@@ -439,12 +444,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     final provider = context.read<ReceiveShareProvider>();
     if (provider.experienceCards.isEmpty || loadedCategories.isEmpty) return;
 
-    final firstLoadedCategoryName = loadedCategories.first.name;
+    // MODIFIED: Default to the ID of the first loaded category
+    final firstLoadedCategoryId = loadedCategories.first.id; 
 
     for (var card in provider.experienceCards) {
-      if (!loadedCategories.any((c) => c.name == card.selectedcategory)) {
-        // print("Card default category '${card.selectedcategory}' not found in loaded list. Resetting to '$firstLoadedCategoryName'."); // CLEANED
-        card.selectedcategory = firstLoadedCategoryName;
+      // MODIFIED: Check if the card's selectedCategoryId is valid within the loadedCategories
+      if (!loadedCategories.any((c) => c.id == card.selectedCategoryId)) {
+        card.selectedCategoryId = firstLoadedCategoryId;
       }
     }
   }
@@ -515,7 +521,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     List<ColorCategory>? newColorCategoriesData;
 
     // Helper function to check if this operation should continue
-    bool _shouldContinue() {
+    bool shouldContinue() {
       // If the widget is unmounted or a newer reload operation was started, abort
       return mounted && _currentReloadOperationId == operationId;
     }
@@ -523,7 +529,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     try {
       final fetchedCategories = await _experienceService.getUserCategories();
       // Check if we should continue after the async operation
-      if (!_shouldContinue()) return;
+      if (!shouldContinue()) return;
 
       if (!const DeepCollectionEquality().equals(fetchedCategories, _userCategories)) {
         newCategoriesData = fetchedCategories;
@@ -531,7 +537,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
     } catch (error) {
       print("Error reloading user categories on resume: $error");
-      if (_shouldContinue()) {
+      if (shouldContinue()) {
         newCategoriesData = []; 
         categoriesChanged = true; 
       }
@@ -540,7 +546,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     try {
       final fetchedColorCategories = await _experienceService.getUserColorCategories();
       // Check if we should continue after the async operation
-      if (!_shouldContinue()) return;
+      if (!shouldContinue()) return;
 
       if (!const DeepCollectionEquality().equals(fetchedColorCategories, _userColorCategories)) {
         newColorCategoriesData = fetchedColorCategories;
@@ -548,14 +554,14 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
     } catch (error) {
       print("Error reloading user color categories on resume: $error");
-      if (_shouldContinue()) {
+      if (shouldContinue()) {
         newColorCategoriesData = []; 
         colorCategoriesChanged = true; 
       }
     }
 
     // Final check before updating state
-    if (!_shouldContinue()) return;
+    if (!shouldContinue()) return;
 
     if (categoriesChanged) {
       _userCategories = newCategoriesData!;
@@ -573,7 +579,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     if (needsSetState) {
       // One final check before trying to setState
-      if (!_shouldContinue()) return;
+      if (!shouldContinue()) return;
       
       setState(() {
         // Update futures to reflect the new (or error) state for FutureBuilder
@@ -704,7 +710,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     String normalizedUrl = url.trim();
     if (!normalizedUrl.startsWith('http')) {
-      normalizedUrl = 'https://' + normalizedUrl;
+      normalizedUrl = 'https://$normalizedUrl';
     }
 
     if (normalizedUrl.contains('yelp.com/biz') ||
@@ -797,7 +803,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       print('📊 YELP DATA: Empty URL, aborting');
       return null;
     } else if (!url.startsWith('http')) {
-      url = 'https://' + url;
+      url = 'https://$url';
       print('📊 YELP DATA: Added https:// to URL: $url');
     }
 
@@ -1112,7 +1118,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             if (!googleNameLower.contains(yelpNameLower) &&
                 !yelpNameLower.contains(googleNameLower.split(' ')[0])) {
               print(
-                  '📊 YELP DATA: Name verification failed. Google name \"${foundLocation.displayName}\" doesn\'t align well with Yelp name \"$businessName\"');
+                  '📊 YELP DATA: Name verification failed. Google name "${foundLocation.displayName}" doesn\'t align well with Yelp name "${businessName}"');
             } else {
               print(
                   '📊 YELP DATA: Name check passed (containment): Google="${foundLocation.displayName}", Yelp="$businessName"');
@@ -1126,7 +1132,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               if (!googleCityLower.contains(yelpCityLower) &&
                   !yelpCityLower.contains(googleCityLower)) {
                 print(
-                    '📊 YELP DATA: City verification failed for chain. Google city \"${foundLocation.city}\" doesn\'t match Yelp city \"$businessCity\"');
+                    '📊 YELP DATA: City verification failed for chain. Google city "${foundLocation.city}" doesn\'t match Yelp city "${businessCity}"');
                 isCorrectBusiness = false;
                 print('📊 YELP DATA: Will try next search strategy');
               } else {
@@ -1216,7 +1222,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
       final response = await dio.get(shortUrl);
 
-      if (response.statusCode == 200 && response.realUri != null) {
+      if (response.statusCode == 200) {
         final finalUrl = response.realUri.toString();
         if (finalUrl != shortUrl) {
           print(
@@ -1295,9 +1301,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
       Position? position = await Geolocator.getLastKnownPosition();
 
-      if (position == null) {
-        position = await Geolocator.getCurrentPosition();
-      }
+      position ??= await Geolocator.getCurrentPosition();
 
       print(
           '📊 YELP DATA: Got user position: ${position.latitude}, ${position.longitude}');
@@ -1557,7 +1561,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         allValid = false;
         break;
       }
-      if (card.selectedcategory == null || card.selectedcategory!.isEmpty) {
+      if (card.selectedCategoryId == null || card.selectedCategoryId!.isEmpty) {
         if (!mounted) return; // Check mounted
         _showSnackBar(context, 'Please select a category for each card.');
         allValid = false;
@@ -1670,16 +1674,17 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             final String cardYelpUrl = card.yelpUrlController.text.trim();
             final String cardWebsite = card.websiteController.text.trim();
             final String notes = card.notesController.text.trim();
-            final String categoryNameToSave = card.selectedcategory!;
-            bool canProcessPublicExperience =
-                placeId.isNotEmpty && cardLocation != null;
+            final String categoryIdToSave = card.selectedCategoryId!; // Use a clearer variable name for the ID
+            // ADDED BACK: Declaration of canProcessPublicExperience
+            bool canProcessPublicExperience = placeId.isNotEmpty && cardLocation != null; 
 
             final String? colorCategoryIdToSave = card.selectedColorCategoryId;
 
             UserCategory? selectedCategoryObject;
             try {
+              // MODIFIED: Find by ID
               selectedCategoryObject = _userCategories
-                  .firstWhere((cat) => cat.name == categoryNameToSave);
+                  .firstWhere((cat) => cat.id == categoryIdToSave);
             } catch (e) {
               selectedCategoryObject = null;
             }
@@ -1696,14 +1701,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             if (card.existingExperienceId == null ||
                 card.existingExperienceId!.isEmpty) {
               isNewExperience = true;
-              print("SAVE_DEBUG: Creating NEW experience for card: $cardTitle");
               Experience newExperience = Experience(
                 id: '',
                 name: cardTitle,
                 description:
                     notes.isNotEmpty ? notes : 'Created from shared content',
                 location: locationToSave,
-                category: categoryNameToSave,
+                categoryId: categoryIdToSave, // Ensure this uses the ID
                 yelpUrl: cardYelpUrl.isNotEmpty ? cardYelpUrl : null,
                 website: cardWebsite.isNotEmpty ? cardWebsite : null,
                 additionalNotes: notes.isNotEmpty ? notes : null,
@@ -1738,7 +1742,33 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                 errors.add('Could not update "$cardTitle" (not found).');
                 continue; 
               }
-              updateCount++; 
+
+              // Now update the fetched existing experience data with form values
+              Experience updatedExpData = currentExperienceData.copyWith(
+                  name: cardTitle, // Always update name from card
+                  // Only update description if card notes are not empty
+                  description: notes.isNotEmpty ? notes : currentExperienceData.description,
+                  location: locationToSave, // Always update location from card (even if it's default)
+                  categoryId: categoryIdToSave, // Ensure this uses the ID
+                  yelpUrl: cardYelpUrl.isNotEmpty ? cardYelpUrl : null, // Update Yelp URL
+                  website: cardWebsite.isNotEmpty ? cardWebsite : null, // Update website
+                  // Update notes: if card notes are empty, it will set to null (clearing existing if any)
+                  // If card notes have value, it updates. If you want to keep existing notes if card notes are empty, adjust logic.
+                  additionalNotes: notes.isNotEmpty ? notes : null, 
+                  updatedAt: now, // Always update the timestamp
+                  // Ensure current user is an editor
+                  editorUserIds: currentExperienceData.editorUserIds.contains(currentUserId)
+                      ? currentExperienceData.editorUserIds
+                      : [...currentExperienceData.editorUserIds, currentUserId],
+                  colorCategoryId: colorCategoryIdToSave // Update color category ID
+                  );
+
+              await _experienceService.updateExperience(updatedExpData);
+              currentExperienceData = updatedExpData; // Reflect the update locally for media linking
+              if (!mounted) return; // Check mounted after await
+              print(
+                  "SAVE_DEBUG: Updated EXISTING Experience ID: $targetExperienceId");
+              updateCount++;
             }
 
             final List<String> relevantMediaItemIds = uniqueSharedPaths
@@ -1766,9 +1796,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                   location: !isNewExperience
                       ? locationToSave
                       : currentExperienceData.location,
-                  category: !isNewExperience
-                      ? categoryNameToSave
-                      : currentExperienceData.category,
+                  categoryId: !isNewExperience
+                      ? categoryIdToSave
+                      : currentExperienceData.categoryId,
                   yelpUrl: !isNewExperience && cardYelpUrl.isNotEmpty
                       ? cardYelpUrl
                       : currentExperienceData.yelpUrl,
@@ -1863,7 +1893,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               }
             } else {
               print(
-                  "Warning: Could not find category object for '${categoryNameToSave}' to update timestamp.");
+                  // MODIFIED: Use categoryIdToSave for the warning message
+                  "Warning: Could not find category object for ID '$categoryIdToSave' to update timestamp.");
             }
 
             if (colorCategoryIdToSave != null) {
@@ -1882,10 +1913,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             print(
                 "SAVE_DEBUG: Error processing card '${card.titleController.text}': $e");
             errors.add('Error saving "${card.titleController.text}".');
-            if (isNewExperience)
+            if (isNewExperience) {
               successCount--;
-            else
+            } else {
               updateCount--;
+            }
           }
         } 
       } 
@@ -1893,8 +1925,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       String message;
       if (errors.isEmpty) {
         message = '';
-        if (successCount > 0)
+        if (successCount > 0) {
           message += '$successCount experience(s) created. ';
+        }
         if (updateCount > 0) message += '$updateCount experience(s) updated. ';
         message = message.trim();
         if (message.isEmpty) message = 'No changes saved.';
@@ -1917,10 +1950,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         final prefs = await SharedPreferences.getInstance();
         if (!mounted) return; // Check mounted after await
 
-        if (lastProcessedCard.selectedcategory != null) {
-          await prefs.setString(_lastUsedCategoryNameKey, lastProcessedCard.selectedcategory!);
+        if (lastProcessedCard.selectedCategoryId != null) {
+          await prefs.setString(_lastUsedCategoryNameKey, lastProcessedCard.selectedCategoryId!);
            if (!mounted) return; // Check mounted after await
-          print("ReceiveShareScreen: Saved last used category: ${lastProcessedCard.selectedcategory}");
+          print("ReceiveShareScreen: Saved last used category: ${lastProcessedCard.selectedCategoryId}");
         } else {
           // If it was explicitly set to null, we might want to remove the preference
           await prefs.remove(_lastUsedCategoryNameKey);
@@ -2424,7 +2457,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                     // Compare relevant fields that determine if UI for a card should change
                                     if (pCard.id != nCard.id ||
                                         pCard.titleController.text != nCard.titleController.text ||
-                                        pCard.selectedcategory != nCard.selectedcategory ||
+                                        pCard.selectedCategoryId != nCard.selectedCategoryId ||
                                         pCard.selectedColorCategoryId != nCard.selectedColorCategoryId ||
                                         pCard.existingExperienceId != nCard.existingExperienceId || // If it's linked/unlinked
                                         pCard.placeIdForPreview != nCard.placeIdForPreview || // If preview should change
@@ -2480,10 +2513,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                           children: [
                             OutlinedButton(
                               onPressed: widget.onCancel,
-                              child: const Text('Cancel'),
                               style: OutlinedButton.styleFrom(
                                 foregroundColor: Colors.grey[700],
                               ),
+                              child: const Text('Cancel'),
                             ),
                             ElevatedButton.icon(
                               onPressed: _isSaving ? null : _saveExperience,
@@ -2877,10 +2910,10 @@ class InstagramPreviewWrapper extends StatefulWidget {
   final Future<void> Function(String) launchUrlCallback;
 
   const InstagramPreviewWrapper({
-    Key? key,
+    super.key,
     required this.url,
     required this.launchUrlCallback,
-  }) : super(key: key);
+  });
 
   @override
   _InstagramPreviewWrapperState createState() =>
@@ -2990,8 +3023,9 @@ extension LocationNameHelper on Location {
     }
     if (address != null) {
       final parts = address!.split(',');
-      if (parts.isNotEmpty)
-        return parts.first.trim(); 
+      if (parts.isNotEmpty) {
+        return parts.first.trim();
+      } 
     }
     return 'Unnamed Location'; 
   }

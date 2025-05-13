@@ -68,7 +68,7 @@ class _MediaFullscreenScreenState extends State<MediaFullscreenScreen> {
 
     final Map<String, List<Experience>> otherExperiencesMap = {};
     final Set<String> otherExperienceIds = {};
-    final Set<String> requiredCategoryNames = {};
+    final Set<String?> requiredCategoryIds = {};
 
     print(
         "[_loadOtherExperienceData] Comparing against current Experience ID: ${widget.experience.id}"); // DEBUG
@@ -105,10 +105,12 @@ class _MediaFullscreenScreenState extends State<MediaFullscreenScreen> {
             "[_loadOtherExperienceData] Fetched ${experiences.length} other experiences."); // DEBUG
 
         fetchedExperiencesById = {for (var exp in experiences) exp.id: exp};
-        // Collect required category names from fetched experiences
+        // Collect required category IDs from fetched experiences
         for (final exp in experiences) {
-          if (exp.category.isNotEmpty) {
-            requiredCategoryNames.add(exp.category);
+          if (exp.categoryId != null && exp.categoryId!.isNotEmpty) {
+            requiredCategoryIds.add(exp.categoryId);
+          } else {
+            requiredCategoryIds.add(null);
           }
         }
       } catch (e) {
@@ -118,17 +120,21 @@ class _MediaFullscreenScreenState extends State<MediaFullscreenScreen> {
     }
 
     // 3. Fetch required categories if any exist
-    Map<String, UserCategory> fetchedCategoriesByName = {};
-    if (requiredCategoryNames.isNotEmpty) {
+    Map<String, UserCategory> fetchedCategoriesById = {};
+
+    // Get non-null category IDs required
+    final Set<String> nonNullRequiredIds = requiredCategoryIds.whereType<String>().toSet(); 
+
+    if (nonNullRequiredIds.isNotEmpty) {
       try {
-        // Fetch ALL categories once and create a lookup map
+        // Fetch ALL categories once and create a lookup map by ID
         final allUserCategories =
             await widget.experienceService.getUserCategories();
-        fetchedCategoriesByName = {
-          for (var cat in allUserCategories) cat.name: cat
+        fetchedCategoriesById = {
+          for (var cat in allUserCategories) cat.id: cat
         };
         print(
-            "[_loadOtherExperienceData] Fetched ${fetchedCategoriesByName.length} categories."); // DEBUG
+            "[_loadOtherExperienceData] Fetched ${fetchedCategoriesById.length} categories and mapped by ID."); // DEBUG
       } catch (e) {
         print("Error fetching user categories: $e");
         // Handle error - icons might be missing
@@ -158,7 +164,7 @@ class _MediaFullscreenScreenState extends State<MediaFullscreenScreen> {
     if (mounted) {
       setState(() {
         _otherAssociatedExperiences = otherExperiencesMap;
-        _fetchedCategories = fetchedCategoriesByName;
+        _fetchedCategories = fetchedCategoriesById;
         _isLoadingOtherExperiences = false;
         print("[_loadOtherExperienceData] Set state: isLoading=false"); // DEBUG
       });
@@ -209,9 +215,9 @@ class _MediaFullscreenScreenState extends State<MediaFullscreenScreen> {
               onPressed: () => Navigator.of(context).pop(false),
             ),
             TextButton(
-              child: const Text('Delete'),
               style: TextButton.styleFrom(foregroundColor: Colors.red),
               onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Delete'),
             ),
           ],
         );
@@ -398,10 +404,11 @@ class _MediaFullscreenScreenState extends State<MediaFullscreenScreen> {
                           ),
                           // List the other experiences
                           ...otherExperiences.map((exp) {
-                            final categoryName = exp.category;
-                            final categoryIcon =
-                                _fetchedCategories[categoryName]?.icon ??
-                                    '❓'; // Use fetched icon or default
+                            // NEW: Lookup category by ID from the refactored _fetchedCategories map
+                            final UserCategory? categoryForDisplay = _fetchedCategories[exp.categoryId];
+                            final String categoryIcon = categoryForDisplay?.icon ?? '❓';
+                            final String categoryName = categoryForDisplay?.name ?? 'Uncategorized';
+
                             final address = exp.location.address;
                             final bool hasAddress =
                                 address != null && address.isNotEmpty;
@@ -412,14 +419,15 @@ class _MediaFullscreenScreenState extends State<MediaFullscreenScreen> {
                                 onTap: () async {
                                   print(
                                       'Tapped on other experience ${exp.name} from fullscreen');
-                                  final category =
-                                      _fetchedCategories[categoryName] ??
-                                          UserCategory(
-                                              id: '',
-                                              name: categoryName,
-                                              icon: '❓',
-                                              ownerUserId:
-                                                  ''); // Fallback category
+                                  // NEW: Lookup category by ID for navigation
+                                  final UserCategory categoryForNavigation = 
+                                      _fetchedCategories[exp.categoryId] ?? // Use ID for lookup
+                                      UserCategory(
+                                          id: exp.categoryId ?? '', // Fallback with actual ID if present
+                                          name: 'Uncategorized',
+                                          icon: '❓',
+                                          ownerUserId: ''
+                                      );
 
                                   // Await result and potentially refresh if the main screen needs it (though unlikely from here)
                                   final result = await Navigator.push<bool>(
@@ -429,7 +437,7 @@ class _MediaFullscreenScreenState extends State<MediaFullscreenScreen> {
                                           ExperiencePageScreen(
                                         experience: exp,
                                         category:
-                                            category, // Pass the found/fallback category
+                                            categoryForNavigation, // Pass the found/fallback category
                                         // --- ADDED: Pass color categories --- START ---
                                         userColorCategories:
                                             _userColorCategories,
@@ -486,7 +494,7 @@ class _MediaFullscreenScreenState extends State<MediaFullscreenScreen> {
                                 ),
                               ),
                             );
-                          }).toList(),
+                          }),
                         ],
                       ),
                     ),

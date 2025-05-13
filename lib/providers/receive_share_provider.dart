@@ -5,6 +5,7 @@ import 'package:plendy/models/experience.dart'; // For Location
 import '../models/user_category.dart';
 import '../models/color_category.dart';
 import 'package:shared_preferences/shared_preferences.dart'; // ADDED
+import 'package:collection/collection.dart'; // ADDED for firstWhereOrNull
 
 class ReceiveShareProvider extends ChangeNotifier {
   final List<ExperienceCardData> _experienceCards = [];
@@ -31,7 +32,7 @@ class ReceiveShareProvider extends ChangeNotifier {
       final prefs = await SharedPreferences.getInstance();
       _lastUsedCategoryNamePreference = prefs.getString(_lastUsedCategoryNameKey);
       _lastUsedColorCategoryIdPreference = prefs.getString(_lastUsedColorCategoryIdKey);
-      print("ReceiveShareProvider: Loaded prefs - LastCategoryName: $_lastUsedCategoryNamePreference, LastColorCategoryID: $_lastUsedColorCategoryIdPreference");
+      print("ReceiveShareProvider: Loaded prefs - LastCategoryID: $_lastUsedCategoryNamePreference, LastColorCategoryID: $_lastUsedColorCategoryIdPreference");
     } catch (e) {
       print("ReceiveShareProvider: Error loading SharedPreferences: $e");
     }
@@ -44,112 +45,57 @@ class ReceiveShareProvider extends ChangeNotifier {
 
   void updateUserCategories(List<UserCategory> newCategories) {
     _userCategories = newCategories;
-    _reconcileDefaultsForAllCards();
-    notifyListeners();
+    print("ReceiveShareProvider: updateUserCategories called with ${newCategories.length} categories.");
+    _reconcileDefaultsForAllCards(); // Re-check defaults for all cards
+    notifyListeners(); 
   }
 
   void updateUserColorCategories(List<ColorCategory> newColorCategories) {
     _userColorCategories = newColorCategories;
-    _reconcileDefaultsForAllCards();
-    notifyListeners();
+     print("ReceiveShareProvider: updateUserColorCategories called with ${newColorCategories.length} color categories.");
+    _reconcileDefaultsForAllCards(); // Re-check defaults for all cards
+    notifyListeners(); 
   }
 
   void _applyDefaultsToCard(ExperienceCardData cardData) {
-    if (cardData.existingExperienceId != null) {
-      print("ReceiveShareProvider: Card ${cardData.id} has existingExperienceId, skipping default override.");
-      return;
+    // Apply last used category ID (formerly name)
+    if (_lastUsedCategoryNamePreference != null &&
+        _userCategories.any((cat) => cat.id == _lastUsedCategoryNamePreference)) {
+      cardData.selectedCategoryId = _lastUsedCategoryNamePreference; 
+      print("Provider: Applied last used category ID: ${_lastUsedCategoryNamePreference} to card ${cardData.id.substring(cardData.id.length-4)}");
+    } else if (_userCategories.isNotEmpty) {
+      cardData.selectedCategoryId = _userCategories.first.id; // Default to first category ID in the list
+      print("Provider: Applied DEFAULT (first) category ID: ${cardData.selectedCategoryId} to card ${cardData.id.substring(cardData.id.length-4)}");
+    } else {
+      cardData.selectedCategoryId = null; // Or some placeholder ID if categories are empty
+      print("Provider: No categories available to apply default category ID to card ${cardData.id.substring(cardData.id.length-4)}");
     }
 
-    // --- Text Category Defaulting ---
-    // cardData.selectedcategory is already "Restaurant" from its constructor.
-
-    bool categorySetFromPref = false;
-    if (_lastUsedCategoryNamePreference != null) {
-      if (_userCategories.isEmpty) {
-        // When category list is empty, trust the preference and apply it anyway
-        cardData.selectedcategory = _lastUsedCategoryNamePreference;
-        categorySetFromPref = true;
-        print("ReceiveShareProvider: Card ${cardData.id} - Text category set from preference without validation (empty list): $_lastUsedCategoryNamePreference");
-      } 
-      else if (_userCategories.any((cat) => cat.name == _lastUsedCategoryNamePreference)) {
-        cardData.selectedcategory = _lastUsedCategoryNamePreference;
-        categorySetFromPref = true;
-        print("ReceiveShareProvider: Card ${cardData.id} - Text category set from preference: $_lastUsedCategoryNamePreference");
-      }
-      else {
-        print("ReceiveShareProvider: Card ${cardData.id} - Preference category '$_lastUsedCategoryNamePreference' not found in loaded categories list.");
-      }
+    // Apply last used color category ID
+    if (_lastUsedColorCategoryIdPreference != null && 
+        _userColorCategories.any((cat) => cat.id == _lastUsedColorCategoryIdPreference)) {
+      cardData.selectedColorCategoryId = _lastUsedColorCategoryIdPreference;
+      print("Provider: Applied last used color category ID: ${_lastUsedColorCategoryIdPreference} to card ${cardData.id.substring(cardData.id.length-4)}");
+    } else if (_userColorCategories.isNotEmpty) {
+      // Find "Want to go" or default to first color category in the list
+      final wantToGo = _userColorCategories.firstWhereOrNull((cat) => cat.name.toLowerCase() == 'want to go');
+      cardData.selectedColorCategoryId = wantToGo?.id ?? _userColorCategories.first.id;
+      print("Provider: Applied DEFAULT color category ID: ${cardData.selectedColorCategoryId} to card ${cardData.id.substring(cardData.id.length-4)}");
+    } else {
+      cardData.selectedColorCategoryId = null;
+      print("Provider: No color categories available to apply default color ID to card ${cardData.id.substring(cardData.id.length-4)}");
     }
-
-    // If not set from preference, it remains "Restaurant".
-    // Now, ensure "Restaurant" (or the preference) is valid. If not, pick the first available.
-    if (!categorySetFromPref && !_userCategories.isEmpty) { // Only validate if user categories are available
-        // If current (Restaurant or other) is not in the list, pick first available
-        if (!_userCategories.any((cat) => cat.name == cardData.selectedcategory)) {
-            if (_userCategories.isNotEmpty) {
-                cardData.selectedcategory = _userCategories.first.name;
-                print("ReceiveShareProvider: Card ${cardData.id} - Default text category '${cardData.selectedcategory}' (constructor) not in list. Set to first available: ${_userCategories.first.name}");
-            } else {
-                 print("ReceiveShareProvider: Card ${cardData.id} - No user categories available to validate/set text category.");
-                 // Stays as "Restaurant" from constructor, though it's not in an empty list.
-            }
-        } else {
-           print("ReceiveShareProvider: Card ${cardData.id} - Text category '${cardData.selectedcategory}' (from constructor) is valid or no pref available.");
-        }
-    }
-
-
-    // --- Color Category Defaulting ---
-    // cardData.selectedColorCategoryId is null from its constructor.
-
-    bool colorCategorySetFromPref = false;
-    if (_lastUsedColorCategoryIdPreference != null) {
-      if (_userColorCategories.isEmpty) {
-        // When color category list is empty, trust the preference and apply it anyway
-        cardData.selectedColorCategoryId = _lastUsedColorCategoryIdPreference;
-        colorCategorySetFromPref = true;
-        print("ReceiveShareProvider: Card ${cardData.id} - Color category set from preference without validation (empty list): $_lastUsedColorCategoryIdPreference");
-      }
-      else if (_userColorCategories.any((cat) => cat.id == _lastUsedColorCategoryIdPreference)) {
-        cardData.selectedColorCategoryId = _lastUsedColorCategoryIdPreference;
-        colorCategorySetFromPref = true;
-        print("ReceiveShareProvider: Card ${cardData.id} - Color category set from preference: $_lastUsedColorCategoryIdPreference");
-      }
-      else {
-        print("ReceiveShareProvider: Card ${cardData.id} - Preference color category ID '$_lastUsedColorCategoryIdPreference' not found in loaded color categories list.");
-      }
-    }
-
-    if (!colorCategorySetFromPref && !_userColorCategories.isEmpty) { // Only proceed with "Want to go" logic if not already set
-      // Try "Want to go"
-      try {
-        final wantToGoCategory = _userColorCategories.firstWhere(
-            (cat) => cat.name.toLowerCase() == "want to go");
-        cardData.selectedColorCategoryId = wantToGoCategory.id;
-        print("ReceiveShareProvider: Card ${cardData.id} - Color category set to 'Want to go': ${wantToGoCategory.id}");
-      } catch (e) {
-        // "Want to go" not found, try the first available color category
-        if (_userColorCategories.isNotEmpty) {
-          cardData.selectedColorCategoryId = _userColorCategories.first.id;
-          print("ReceiveShareProvider: Card ${cardData.id} - Color category 'Want to go' not found. Set to first available: ${_userColorCategories.first.id}");
-        } else {
-          cardData.selectedColorCategoryId = null; // Explicitly null if no categories
-          print("ReceiveShareProvider: Card ${cardData.id} - No color categories available to set default.");
-        }
-      }
-    }
-    print("ReceiveShareProvider: Card ${cardData.id} final defaults - Text: ${cardData.selectedcategory}, ColorID: ${cardData.selectedColorCategoryId}");
   }
 
   void _reconcileDefaultsForAllCards() {
     // bool didChangeAnything = false; // Not strictly needed now as _applyDefaultsToCard prints changes
     for (var cardData in _experienceCards) {
-      // String? originalSelectedCategory = cardData.selectedcategory; // For debugging
+      // String? originalSelectedCategory = cardData.selectedCategoryId; // For debugging
       // String? originalSelectedColorCategoryId = cardData.selectedColorCategoryId; // For debugging
       
       _applyDefaultsToCard(cardData);
 
-      // if (cardData.selectedcategory != originalSelectedCategory ||
+      // if (cardData.selectedCategoryId != originalSelectedCategory ||
       //     cardData.selectedColorCategoryId != originalSelectedColorCategoryId) {
       //   didChangeAnything = true;
       // }
@@ -303,7 +249,7 @@ class ReceiveShareProvider extends ChangeNotifier {
       targetCard.titleController.text = selectedExperience.name;
       targetCard.selectedLocation =
           selectedExperience.location; // Assign the whole Location object
-      targetCard.selectedcategory = selectedExperience.category;
+      targetCard.selectedCategoryId = selectedExperience.categoryId;
       targetCard.yelpUrlController.text = selectedExperience.yelpUrl ?? '';
       targetCard.websiteController.text = selectedExperience.website ?? '';
       targetCard.notesController.text =
@@ -341,14 +287,14 @@ class ReceiveShareProvider extends ChangeNotifier {
   }
 
   /// Updates the selected text category for a specific experience card.
-  void updateCardTextCategory(String cardId, String? newTextCategoryName) {
+  void updateCardTextCategory(String cardId, String? newTextCategoryId) {
     // Allow null to clear
     final index = _experienceCards.indexWhere((card) => card.id == cardId);
     if (index != -1) {
-      if (_experienceCards[index].selectedcategory != newTextCategoryName) {
-        _experienceCards[index].selectedcategory = newTextCategoryName;
+      if (_experienceCards[index].selectedCategoryId != newTextCategoryId) {
+        _experienceCards[index].selectedCategoryId = newTextCategoryId;
         print(
-            "Provider: Updated text category for card $cardId to $newTextCategoryName");
+            "Provider: Updated text category for card $cardId to $newTextCategoryId");
         notifyListeners(); // Notify listeners about the change
       }
     } else {
