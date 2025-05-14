@@ -1115,7 +1115,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                     prefixIcon: Icon(FontAwesomeIcons.yelp),
                     // --- ADDED: Suffix Icons ---
                     suffixIconConstraints: BoxConstraints.tightFor(
-                        width: 90, // Keep width for three icons
+                        width: 110, // Keep width for three icons
                         height: 48),
                     suffixIcon: Row(
                       mainAxisSize: MainAxisSize.min,
@@ -1130,43 +1130,37 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                             },
                             borderRadius: BorderRadius.circular(16),
                             child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal:
-                                      0), // No horizontal padding needed here
-                              child: Icon(Icons.clear, size: 18),
+                              padding: const EdgeInsets.all(4.0), // No horizontal padding needed here
+                              child: Icon(Icons.clear, size: 22),
                             ),
                           ),
                         // Spacer
                         if (_cardData.yelpUrlController.text
                             .isNotEmpty) // Only show spacer if clear button is shown
-                          const SizedBox(width: 8),
+                          const SizedBox(width: 4),
 
                         // Paste button (now second)
                         InkWell(
                           onTap: _pasteYelpUrlFromClipboard,
                           borderRadius: BorderRadius.circular(16),
                           child: Padding(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal:
-                                    0), // No horizontal padding needed here
+                            padding: const EdgeInsets.all(4.0), // No horizontal padding needed here
                             child: Icon(Icons.content_paste,
-                                size: 18, color: Colors.blue[700]),
+                                size: 22, color: Colors.blue[700]),
                           ),
                         ),
 
                         // Spacer
-                        const SizedBox(width: 8),
+                        const SizedBox(width: 4),
 
                         // Yelp launch button (remains last)
                         InkWell(
                           onTap: _launchYelpUrl, // MODIFIED: Always call _launchYelpUrl
                           borderRadius: BorderRadius.circular(16),
                           child: Padding(
-                            padding: const EdgeInsets.only(
-                                right:
-                                    8.0),
+                            padding: const EdgeInsets.fromLTRB(4.0, 4.0, 8.0, 4.0),
                             child: Icon(FontAwesomeIcons.yelp,
-                                size: 18,
+                                size: 22,
                                 color: Colors.red[700]), // MODIFIED: Always active color
                           ),
                         ),
@@ -1195,7 +1189,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                     prefixIcon: Icon(Icons.language),
                     // --- MODIFIED: Add Paste button to suffix ---
                     suffixIconConstraints: BoxConstraints.tightFor(
-                        width: 90, // Keep width for three icons
+                        width: 110, // Keep width for three icons
                         height: 48),
                     suffixIcon: Row(
                       mainAxisSize: MainAxisSize.min,
@@ -1210,27 +1204,27 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                             borderRadius: BorderRadius.circular(16),
                             child: Padding(
                               padding:
-                                  const EdgeInsets.symmetric(horizontal: 0),
-                              child: Icon(Icons.clear, size: 18),
+                                  const EdgeInsets.all(4.0),
+                              child: Icon(Icons.clear, size: 22),
                             ),
                           ),
                         // Spacer
                         if (_cardData.websiteController.text.isNotEmpty)
-                          const SizedBox(width: 8),
+                          const SizedBox(width: 4),
 
                         // Paste button (second)
                         InkWell(
                           onTap: _pasteWebsiteUrlFromClipboard,
                           borderRadius: BorderRadius.circular(16),
                           child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 0),
+                            padding: const EdgeInsets.all(4.0),
                             child: Icon(Icons.content_paste,
-                                size: 18, color: Colors.blue[700]),
+                                size: 22, color: Colors.blue[700]),
                           ),
                         ),
 
                         // Spacer
-                        const SizedBox(width: 8),
+                        const SizedBox(width: 4),
 
                         // Launch button (last)
                         InkWell(
@@ -1242,9 +1236,9 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                               : null,
                           borderRadius: BorderRadius.circular(16),
                           child: Padding(
-                            padding: const EdgeInsets.only(right: 8.0),
+                            padding: const EdgeInsets.fromLTRB(4.0, 4.0, 8.0, 4.0),
                             child: Icon(Icons.launch,
-                                size: 18,
+                                size: 22,
                                 color: _cardData.websiteController.text
                                             .isNotEmpty &&
                                         _isValidUrl(_cardData
