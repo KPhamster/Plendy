@@ -53,6 +53,7 @@ class _ExperienceCardsSection extends StatelessWidget {
     bool refreshCategories,
     String? newCategoryName,
     String? selectedColorCategoryId,
+    String? newTitleFromCard, // ADDED to match new signature
   }) handleCardFormUpdate;
   final void Function() addExperienceCard;
   final bool Function(String) isSpecialUrl;
@@ -135,12 +136,14 @@ class _ExperienceCardsSection extends StatelessWidget {
                       bool refreshCategories = false,
                       String? newCategoryName,
                       String? selectedColorCategoryId,
+                      String? newTitleFromCard, // ADDED to match new signature
                     }) {
                       handleCardFormUpdate(
                         cardId: card.id,
                         refreshCategories: refreshCategories,
                         newCategoryName: newCategoryName,
                         selectedColorCategoryId: selectedColorCategoryId,
+                        newTitleFromCard: newTitleFromCard, // Pass it through
                       );
                     },
                     formKey: card.formKey,
@@ -1473,7 +1476,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   }
 
   void _fillFormWithBusinessData(
-      Location location, String businessName, String yelpUrl) {
+      Location location, String businessName, String yelpUrl) async { // ADDED async
     // Check mounted HERE before using context or calling setState
     if (!mounted) return;
 
@@ -1493,6 +1496,35 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       print("WARN: _fillFormWithBusinessData - No target card found.");
       return;
     }
+
+    // --- ADDED: Duplicate Check ---
+    Experience? existingExperience = await _checkForDuplicateExperienceDialog(
+      context: context,
+      card: targetCard,
+      placeIdToCheck: location.placeId,
+    );
+
+    if (existingExperience != null) {
+      provider.updateCardWithExistingExperience(targetCard.id, existingExperience);
+      // Potentially update _yelpPreviewFutures if the existing experience has a different placeId/structure
+      // For now, we assume the existingExperience's details are sufficient and don't re-trigger preview future updates here.
+      print("Yelp Fill: Used existing experience by Place ID: ${existingExperience.id}");
+      return; // Early return
+    }
+
+    // If no match by placeId, or user chose "Create New", check by title
+    existingExperience = await _checkForDuplicateExperienceDialog(
+      context: context,
+      card: targetCard,
+      titleToCheck: location.displayName ?? businessName,
+    );
+
+    if (existingExperience != null) {
+      provider.updateCardWithExistingExperience(targetCard.id, existingExperience);
+      print("Yelp Fill: Used existing experience by Title: ${existingExperience.id}");
+      return; // Early return
+    }
+    // --- END ADDED ---
 
     print('====> 📝 YELP FILL: Filling card for Yelp URL: $yelpUrl');
     print('====> 📝 YELP FILL:   Location Display Name: ${location.displayName}');
@@ -1539,7 +1571,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   }
 
   void _fillFormWithGoogleMapsData(Location location, String placeName,
-      String websiteUrl, String originalMapsUrl) {
+      String websiteUrl, String originalMapsUrl) async { // ADDED async
     // Check mounted HERE
     if (!mounted) return;
 
@@ -1552,6 +1584,34 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       print("WARN: _fillFormWithGoogleMapsData - No card found.");
       return; 
     }
+
+    // --- ADDED: Duplicate Check ---
+    Experience? existingExperience = await _checkForDuplicateExperienceDialog(
+      context: context,
+      card: firstCard,
+      placeIdToCheck: location.placeId,
+    );
+
+    if (existingExperience != null) {
+      provider.updateCardWithExistingExperience(firstCard.id, existingExperience);
+      // Similar to Yelp, preview futures might need updating based on existingExperience.
+      print("Maps Fill: Used existing experience by Place ID: ${existingExperience.id}");
+      return; // Early return
+    }
+
+    // If no match by placeId, or user chose "Create New", check by title
+    existingExperience = await _checkForDuplicateExperienceDialog(
+      context: context,
+      card: firstCard,
+      titleToCheck: location.displayName ?? placeName,
+    );
+
+    if (existingExperience != null) {
+      provider.updateCardWithExistingExperience(firstCard.id, existingExperience);
+      print("Maps Fill: Used existing experience by Title: ${existingExperience.id}");
+      return; // Early return
+    }
+    // --- END ADDED ---
 
     print('🗺️ MAPS FILL: Filling card for Maps Location: ${location.displayName ?? placeName}');
     print('🗺️ MAPS FILL:   Location Address: ${location.address}');
@@ -2142,9 +2202,26 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         }
       });
 
-      final Location selectedLocation =
+      final Location selectedLocationFromResult =
           result is Map ? result['location'] : result as Location;
       final provider = context.read<ReceiveShareProvider>();
+
+      // --- ADDED: Duplicate Check based on selected location's Place ID ---
+      if (selectedLocationFromResult.placeId != null && selectedLocationFromResult.placeId!.isNotEmpty) {
+        final Experience? existingExperienceByPlaceId = await _checkForDuplicateExperienceDialog(
+          context: context,
+          card: card,
+          placeIdToCheck: selectedLocationFromResult.placeId,
+        );
+        if (mounted && existingExperienceByPlaceId != null) {
+          provider.updateCardWithExistingExperience(card.id, existingExperienceByPlaceId);
+          print("LocationPicker: Used existing experience by Place ID: ${existingExperienceByPlaceId.id}");
+          return; // Stop further processing if existing experience is used
+        }
+      }
+      // --- END ADDED ---
+
+      final Location selectedLocation = selectedLocationFromResult; // Use the original variable name for clarity below
 
       if (isOriginalShareYelp) {
         print("LocationPicker returned from Yelp context: Updating info.");
@@ -2306,10 +2383,19 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     if (selectedExperience != null && mounted) {
       Future.microtask(() => FocusScope.of(context).unfocus());
 
+      // --- ADDED: Duplicate check if an existing experience is selected by its title ---
+      // This scenario implies the user explicitly chose an existing experience.
+      // We might still want to confirm if by chance the *card's current title* (if different from selectedExperience.name)
+      // also matches another experience. However, the primary action here is to use the *selectedExperience*.
+      // For now, we directly update with the selected experience as the user made an explicit choice.
+      // If further checks are needed based on the card's potentially *different* current title field before this selection,
+      // that would be a separate logic branch.
+
       context.read<ReceiveShareProvider>().updateCardWithExistingExperience(
             card.id, 
             selectedExperience,
           );
+      print("ReceiveShareScreen: Card ${card.id} updated with explicitly selected existing experience: ${selectedExperience.id}");
     }
   }
 
@@ -2318,10 +2404,44 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     bool refreshCategories = false,
     String? newCategoryName,
     String? selectedColorCategoryId,
-  }) {
+    String? newTitleFromCard, // ADDED
+  }) async { // ADDED async
     print(
-        "ReceiveShareScreen._handleExperienceCardFormUpdate called: cardId=$cardId, refreshCategories=$refreshCategories, newCategoryName=$newCategoryName, selectedColorCategoryId=$selectedColorCategoryId");
-    if (selectedColorCategoryId != null) { // UNCOMMENTED
+        "ReceiveShareScreen._handleExperienceCardFormUpdate called: cardId=$cardId, refreshCategories=$refreshCategories, newCategoryName=$newCategoryName, selectedColorCategoryId=$selectedColorCategoryId, newTitleFromCard=$newTitleFromCard");
+
+    final provider = context.read<ReceiveShareProvider>();
+    final card = provider.experienceCards.firstWhere((c) => c.id == cardId, orElse: () {
+      // This should ideally not happen if cardId is always valid
+      print("Error in _handleExperienceCardFormUpdate: Card with ID $cardId not found.");
+      // Return a dummy/empty card or throw to prevent null errors, though provider should handle this.
+      // For safety, let's assume if card not found, we can't proceed with title check.
+      throw Exception("Card not found for ID $cardId in _handleExperienceCardFormUpdate");
+    });
+
+    // --- ADDED: Duplicate Check for Title Submission ---
+    if (newTitleFromCard != null && newTitleFromCard.isNotEmpty) {
+      if (!mounted) return;
+      Experience? existingExperience = await _checkForDuplicateExperienceDialog(
+        context: context,
+        card: card,
+        titleToCheck: newTitleFromCard,
+      );
+      if (mounted && existingExperience != null) {
+        provider.updateCardWithExistingExperience(card.id, existingExperience);
+        print("ReceiveShareScreen: Card ${card.id} updated with existing experience by title check: ${existingExperience.id}");
+        // If an existing experience is used, we might not need to proceed with other updates below,
+        // or we might want to merge (e.g., category change could still apply to the chosen existing experience).
+        // For now, if user selects an existing one, we prioritize that and skip further category/color updates in this call.
+        return; 
+      }
+      // If no duplicate used, the title controller on the card in the provider ALREADY has the newTitleFromCard
+      // because the ExperienceCardForm's titleController is directly from ExperienceCardData.
+      // The provider just needs to be notified if other UI depends on a specific title update event, but the data is there.
+      // Provider listeners will trigger rebuilds if necessary.
+    }
+    // --- END ADDED ---
+
+    if (selectedColorCategoryId != null) { 
       print(
           "  Updating color category for card $cardId to $selectedColorCategoryId via provider.");
       context
@@ -3119,7 +3239,105 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     _combinedCategoriesFuture = Future.wait([f1, f2]);
   }
   // --- END ADDED ---
-} 
+
+  // ADDED: Helper method for duplicate checking and dialog
+  Future<Experience?> _checkForDuplicateExperienceDialog({
+    required BuildContext context,
+    required ExperienceCardData card,
+    String? placeIdToCheck,
+    String? titleToCheck,
+  }) async {
+    if (!mounted) return null;
+
+    final String? currentUserId = _authService.currentUser?.uid;
+    if (currentUserId == null) {
+      _showSnackBar(context, 'Cannot check for duplicates: User not identified.');
+      return null;
+    }
+
+    print(
+        '_checkForDuplicateExperienceDialog: Checking for card ${card.id}, placeId: $placeIdToCheck, title: $titleToCheck');
+
+    List<Experience> userExperiences = [];
+    try {
+      userExperiences = await _experienceService.getUserExperiences();
+    } catch (e) {
+      print('Error fetching user experiences for duplicate check: $e');
+      _showSnackBar(context, 'Could not load your experiences to check for duplicates.');
+      return null; // Cannot proceed without experiences
+    }
+
+    if (!mounted) return null;
+
+    Experience? foundDuplicate;
+    String? duplicateReason;
+
+    for (final existingExp in userExperiences) {
+      // Skip if checking an existing experience against itself
+      if (card.existingExperienceId != null && card.existingExperienceId == existingExp.id) {
+        continue;
+      }
+
+      bool match = false;
+      if (placeIdToCheck != null &&
+          placeIdToCheck.isNotEmpty &&
+          existingExp.location.placeId == placeIdToCheck) {
+        match = true;
+        // MODIFIED: duplicateReason no longer needed for specific attribute
+        // duplicateReason = 'location (Place ID: $placeIdToCheck)'; 
+        print('Duplicate check: Matched by Place ID: ${existingExp.id} - ${existingExp.name}');
+      }
+      if (!match && 
+          titleToCheck != null &&
+          titleToCheck.trim().toLowerCase() == existingExp.name.trim().toLowerCase()) {
+        match = true;
+        // MODIFIED: duplicateReason no longer needed for specific attribute
+        // duplicateReason = 'title "${existingExp.name}"';
+        print('Duplicate check: Matched by Title: ${existingExp.id} - ${existingExp.name}');
+      }
+
+      if (match) {
+        foundDuplicate = existingExp;
+        break;
+      }
+    }
+
+    if (foundDuplicate != null) {
+      if (!mounted) return null;
+      final bool? useExisting = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false, // User must choose an action
+        builder: (BuildContext dialogContext) {
+          return AlertDialog(
+            title: const Text('Potential Duplicate Found'),
+            // MODIFIED: Dialog content to show both title and address
+            content: Text(
+                'You already saved an experience named "${foundDuplicate!.name}" located at "${foundDuplicate.location.address ?? 'No address provided'}." Do you want to use this existing experience?'),
+            actions: <Widget>[
+              TextButton(
+                child: const Text('Create New'),
+                onPressed: () {
+                  Navigator.of(dialogContext).pop(false); // Don't use existing
+                },
+              ),
+              ElevatedButton(
+                child: const Text('Use Existing'),
+                onPressed: () {
+                  Navigator.of(dialogContext).pop(true); // Use existing
+                },
+              ),
+            ],
+          );
+        },
+      );
+      if (useExisting == true) {
+        return foundDuplicate;
+      }
+    }
+    return null; // No duplicate found, or user chose to create new
+  }
+  // END ADDED
+}
 
 class InstagramPreviewWrapper extends StatefulWidget {
   final String url;
