@@ -349,6 +349,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
   // UPDATED: Method to handle adding a new category
   Future<void> _handleAddCategory() async {
     FocusScope.of(context).unfocus();
+    await Future.microtask(() {});
     print("DEBUG: Attempting to show AddCategoryModal...");
     final newCategory = await showModalBottomSheet<UserCategory>(
       context: context,
@@ -369,6 +370,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
   // UPDATED: Method to handle editing categories
   Future<bool?> _handleEditCategories() async {
     FocusScope.of(context).unfocus();
+    await Future.microtask(() {});
     print("DEBUG: Attempting to show EditCategoriesModal...");
     // Show the EditCategoriesModal
     final bool? categoriesChanged = await showModalBottomSheet<bool>(
@@ -393,7 +395,8 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
 
   // --- UPDATED: Function to show the category selection dialog ---
   Future<void> _showCategorieselectionDialog() async {
-    FocusScope.of(context).unfocus(); // Dismiss keyboard
+    FocusScope.of(context).unfocus();
+    await Future.microtask(() {});
 
     // Note: _userCategoriesNotifier.value will be used by ValueListenableBuilder inside StatefulBuilder
 
@@ -557,6 +560,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
   // --- ADDED: Method to handle adding a new color category ---
   Future<void> _handleAddColorCategory() async {
     FocusScope.of(context).unfocus();
+    await Future.microtask(() {});
     // TODO: Implement AddColorCategoryModal
     final newCategory = await showModalBottomSheet<ColorCategory>(
       context: context,
@@ -586,6 +590,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
   // --- ADDED: Method to handle editing color categories ---
   Future<bool?> _handleEditColorCategories() async {
     FocusScope.of(context).unfocus();
+    await Future.microtask(() {});
     
     final bool? categoriesChanged = await showModalBottomSheet<bool>(
       context: context,
@@ -609,7 +614,8 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
 
   // --- ADDED: Function to show the color category selection dialog ---
   Future<void> _showColorCategorySelectionDialog() async {
-    FocusScope.of(context).unfocus(); // Dismiss keyboard
+    FocusScope.of(context).unfocus();
+    await Future.microtask(() {});
 
     final String? selectedValue = await showDialog<String>(
       context: context,
@@ -766,411 +772,497 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
     // print("FORM_DEBUG (${widget.cardData.id}): widget.cardData.selectedLocation: ${currentLocation?.displayName}");
     // print("FORM_DEBUG (${widget.cardData.id}): websiteController text: '${websiteController.text}'");
 
-    return Card(
-      margin: EdgeInsets.only(bottom: 16),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-      elevation: 2,
-      child: Form(
-        key: widget.formKey, // Use the passed form key
-        child: Column(
-          children: [
-            // Header row with expand/collapse and delete functionality
-            InkWell(
-              onTap: () {
-                setState(() {
-                  widget.cardData.isExpanded = !widget.cardData.isExpanded;
-                  // Unfocus any active fields when collapsing
-                  if (!widget.cardData.isExpanded) {
-                    FocusScope.of(context).unfocus();
-                  }
-                });
-              },
-              child: Padding(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                child: Row(
-                  children: [
-                    Icon(
-                      widget.cardData.isExpanded // Read directly from cardData
-                          ? Icons.keyboard_arrow_up
-                          : Icons.keyboard_arrow_down,
-                      color: Colors.blue,
-                    ),
-                    SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        titleController.text.isNotEmpty
-                            ? titleController.text
-                            : "New Experience",
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
+    return GestureDetector(
+      onTap: () {
+        FocusManager.instance.primaryFocus?.unfocus();
+      },
+      child: Card(
+        margin: EdgeInsets.only(bottom: 16),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        elevation: 2,
+        child: Form(
+          key: widget.formKey, // Use the passed form key
+          child: Column(
+            children: [
+              // Header row with expand/collapse and delete functionality
+              InkWell(
+                onTap: () {
+                  setState(() {
+                    widget.cardData.isExpanded = !widget.cardData.isExpanded;
+                    // Unfocus any active fields when collapsing
+                    if (!widget.cardData.isExpanded) {
+                      FocusManager.instance.primaryFocus?.unfocus();
+                    }
+                  });
+                },
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  child: Row(
+                    children: [
+                      Icon(
+                        widget.cardData.isExpanded // Read directly from cardData
+                            ? Icons.keyboard_arrow_up
+                            : Icons.keyboard_arrow_down,
+                        color: Colors.blue,
+                      ),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          titleController.text.isNotEmpty
+                              ? titleController.text
+                              : "New Experience",
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 1,
                         ),
-                        overflow: TextOverflow.ellipsis,
-                        maxLines: 1,
                       ),
-                    ),
-                    // Use the passed flag to control delete button
-                    if (widget.canRemove)
-                      IconButton(
-                        icon:
-                            Icon(Icons.delete_outline, color: Colors.red[400]),
-                        onPressed: () => widget.onRemove(widget.cardData),
-                        tooltip: 'Remove experience',
-                      ),
-                  ],
+                      // Use the passed flag to control delete button
+                      if (widget.canRemove)
+                        IconButton(
+                          icon:
+                              Icon(Icons.delete_outline, color: Colors.red[400]),
+                          onPressed: () => widget.onRemove(widget.cardData),
+                          tooltip: 'Remove experience',
+                        ),
+                    ],
+                  ),
                 ),
               ),
-            ),
 
-            // Expandable content
-            if (widget.cardData.isExpanded) // Read directly from cardData
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Button to choose saved experience
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: OutlinedButton.icon(
-                        icon: Icon(Icons.bookmark_outline),
-                        label: Text('Choose a saved experience'),
-                        onPressed: () =>
-                            widget.onSelectSavedExperience(widget.cardData),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: Colors.blue,
-                          padding:
-                              EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                          visualDensity: VisualDensity.compact,
+              // Expandable content
+              if (widget.cardData.isExpanded) // Read directly from cardData
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Button to choose saved experience
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: OutlinedButton.icon(
+                          icon: Icon(Icons.bookmark_outline),
+                          label: Text('Choose a saved experience'),
+                          onPressed: () =>
+                              widget.onSelectSavedExperience(widget.cardData),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.blue,
+                            padding:
+                                EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            visualDensity: VisualDensity.compact,
+                          ),
                         ),
                       ),
-                    ),
-                    SizedBox(height: 12),
+                      SizedBox(height: 12),
 
-                    // Location selection with preview
-                    GestureDetector(
-                      // Call the parent's location selection logic
-                      onTap: (widget.cardData
-                              .locationEnabled) // Read directly from cardData
-                          ? () => widget.onLocationSelect(widget.cardData)
-                          : null,
-                      child: Container(
-                        decoration: BoxDecoration(
-                          border: Border.all(
-                              color: widget.cardData
-                                      .locationEnabled // Read directly from cardData
-                                  ? Colors.grey
-                                  : Colors.grey.shade300),
-                          borderRadius: BorderRadius.circular(4),
-                          color: Colors.transparent,
-                        ),
-                        padding:
-                            EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                        child: Row(
-                          children: [
-                            Icon(Icons.location_on,
+                      // Location selection with preview
+                      GestureDetector(
+                        // Call the parent's location selection logic
+                        onTap: (widget.cardData
+                                .locationEnabled) // Read directly from cardData
+                            ? () => widget.onLocationSelect(widget.cardData)
+                            : null,
+                        child: Container(
+                          decoration: BoxDecoration(
+                            border: Border.all(
                                 color: widget.cardData
                                         .locationEnabled // Read directly from cardData
-                                    ? Colors.grey[600]
-                                    : Colors.grey[400]),
-                            SizedBox(width: 12),
-                            Expanded(
-                              child: currentLocation != null
-                                  ? Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        // Place name in bold
-                                        Text(
-                                          currentLocation.getPlaceName(),
-                                          style: TextStyle(
-                                            fontWeight: FontWeight.bold,
-                                            color: widget.cardData
-                                                    .locationEnabled // Read directly from cardData
-                                                ? Colors.black
-                                                : Colors.grey[500],
-                                          ),
-                                        ),
-                                        // Address
-                                        if (currentLocation.address != null)
+                                    ? Colors.grey
+                                    : Colors.grey.shade300),
+                            borderRadius: BorderRadius.circular(4),
+                            color: Colors.transparent,
+                          ),
+                          padding:
+                              EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                          child: Row(
+                            children: [
+                              Icon(Icons.location_on,
+                                  color: widget.cardData
+                                          .locationEnabled // Read directly from cardData
+                                      ? Colors.grey[600]
+                                      : Colors.grey[400]),
+                              SizedBox(width: 12),
+                              Expanded(
+                                child: currentLocation != null
+                                    ? Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          // Place name in bold
                                           Text(
-                                            currentLocation.address!,
+                                            currentLocation.getPlaceName(),
                                             style: TextStyle(
-                                              fontSize: 12,
+                                              fontWeight: FontWeight.bold,
                                               color: widget.cardData
                                                       .locationEnabled // Read directly from cardData
-                                                  ? Colors.black87
+                                                  ? Colors.black
                                                   : Colors.grey[500],
                                             ),
-                                            maxLines: 1, // Limit address lines
-                                            overflow: TextOverflow.ellipsis,
                                           ),
-                                      ],
-                                    )
-                                  : Text(
-                                      'Select location',
-                                      style: TextStyle(
-                                          color: widget.cardData
-                                                  .locationEnabled // Read directly from cardData
-                                              ? Colors.grey[600]
-                                              : Colors.grey[400]),
-                                    ),
-                            ),
-                            // Toggle switch inside the location field
-                            Transform.scale(
-                              scale: 0.8,
-                              child: Switch(
-                                value: widget.cardData
-                                    .locationEnabled, // Read directly from cardData
-                                onChanged: (value) {
-                                  widget.cardData.locationEnabled =
-                                      value; // Update model
-                                  widget.onUpdate(
-                                      refreshCategories:
-                                          false); // Notify parent, no refresh needed
-                                },
-                                activeColor: Colors.blue,
-                                materialTapTargetSize:
-                                    MaterialTapTargetSize.shrinkWrap,
+                                          // Address
+                                          if (currentLocation.address != null)
+                                            Text(
+                                              currentLocation.address!,
+                                              style: TextStyle(
+                                                fontSize: 12,
+                                                color: widget.cardData
+                                                        .locationEnabled // Read directly from cardData
+                                                    ? Colors.black87
+                                                    : Colors.grey[500],
+                                              ),
+                                              maxLines: 1, // Limit address lines
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                        ],
+                                      )
+                                    : Text(
+                                        'Select location',
+                                        style: TextStyle(
+                                            color: widget.cardData
+                                                    .locationEnabled // Read directly from cardData
+                                                ? Colors.grey[600]
+                                                : Colors.grey[400]),
+                                      ),
                               ),
-                            ),
-                          ],
+                              // Toggle switch inside the location field
+                              Transform.scale(
+                                scale: 0.8,
+                                child: Switch(
+                                  value: widget.cardData
+                                      .locationEnabled, // Read directly from cardData
+                                  onChanged: (value) {
+                                    widget.cardData.locationEnabled =
+                                        value; // Update model
+                                    widget.onUpdate(
+                                        refreshCategories:
+                                            false); // Notify parent, no refresh needed
+                                  },
+                                  activeColor: Colors.blue,
+                                  materialTapTargetSize:
+                                      MaterialTapTargetSize.shrinkWrap,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
-                    ),
-                    SizedBox(height: 16),
+                      SizedBox(height: 16),
 
-                    // Experience title
-                    TextFormField(
-                      controller: titleController, // Use controller from widget
-                      focusNode: titleFocusNode, // Use focus node from widget
-                      decoration: InputDecoration(
-                        labelText: 'Experience Title',
-                        hintText: 'Enter title',
-                        border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.title),
-                        suffixIcon: titleController.text.isNotEmpty
-                            ? IconButton(
-                                icon: Icon(Icons.clear, size: 18),
-                                onPressed: () {
-                                  // Directly clear controller from widget.cardData
-                                  titleController.clear();
-                                  // Listener will call _triggerRebuild
-                                  widget.onUpdate(
-                                      refreshCategories:
-                                          false); // Notify parent, no refresh needed
-                                },
-                              )
-                            : null,
-                      ),
-                      validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'Please enter a title';
-                        }
-                        return null;
-                      },
-                      onChanged: (value) {
-                        // Notify parent for UI updates (like header title) as user types,
-                        // but don't trigger duplicate check on every keystroke.
-                        widget.onUpdate(refreshCategories: false);
-                      },
-                      onFieldSubmitted: (value) {
-                        // When field is submitted (e.g., user presses done/next on keyboard),
-                        // trigger onUpdate with the new title to initiate duplicate check.
-                        widget.onUpdate(refreshCategories: false, newTitleFromCard: value.trim());
-                      },
-                    ),
-                    SizedBox(height: 16),
-
-                    // --- REPLACED Dropdown with a Button wrapped in ValueListenableBuilder ---
-                    Text('Category',
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                            color: Colors.grey[600])), // Label like text field
-                    const SizedBox(height: 4),
-                    ValueListenableBuilder<List<UserCategory>>(
-                      valueListenable: widget.userCategoriesNotifier,
-                      builder: (context, currentCategoryList, child) {
-                        // Note: currentCategoryList is available if needed, but button display
-                        // mainly depends on widget.cardData.selectedcategory
-                        UserCategory? selectedCategoryObject;
-                        if (widget.cardData.selectedCategoryId != null) {
-                          try {
-                            selectedCategoryObject = currentCategoryList.firstWhere(
-                              (cat) => cat.id == widget.cardData.selectedCategoryId
-                            );
-                          } catch (e) {
-                            // Category ID from cardData not found in current list, leave selectedCategoryObject null
-                          }
-                        }
-
-                        return OutlinedButton(
-                          onPressed: _showCategorieselectionDialog,
-                          style: OutlinedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 15), // Adjust padding for height
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(
-                                  8.0), // Match field style
-                            ),
-                            side: BorderSide(
-                                color: Colors.grey), // Match field border
-                            alignment:
-                                Alignment.centerLeft, // Align content left
-                          ),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment
-                                .spaceBetween, // Space between content and arrow
-                            children: [
-                              // Display selected category icon and name
-                              Row(
-                                children: [
-                                  Text(_getIconForSelectedCategory(),
-                                      style: const TextStyle(fontSize: 18)),
-                                  const SizedBox(width: 8),
-                                  Text(
-                                    selectedCategoryObject?.name ?? 'Select Category',
-                                    style: TextStyle(
-                                      // Ensure text color matches default button text color or form field color
-                                      color:
-                                          selectedCategoryObject != null
-                                              ? Theme.of(context)
-                                                  .textTheme
-                                                  .bodyLarge
-                                                  ?.color
-                                              : Colors.grey[
-                                                  600], // Hint color if nothing selected
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              // Dropdown arrow indicator
-                              const Icon(Icons.arrow_drop_down,
-                                  color: Colors.grey),
-                            ],
-                          ),
-                        );
-                      },
-                    ),
-                    // --- END REPLACEMENT (with wrapper) ---
-
-                    SizedBox(height: 16),
-
-                    // --- ADDED: Color Category Selection Button wrapped in ValueListenableBuilder ---
-                    Text('Color Category',
-                        style: Theme.of(context)
-                            .textTheme
-                            .bodyMedium
-                            ?.copyWith(color: Colors.grey[600])),
-                    const SizedBox(height: 4),
-                    ValueListenableBuilder<List<ColorCategory>>(
-                      valueListenable: widget.userColorCategoriesNotifier,
-                      builder: (context, currentColorCategoryList, child) {
-                        // Note: currentColorCategoryList is available if needed, but button display
-                        // mainly depends on _getSelectedColorCategoryObject() and widget.cardData.selectedColorCategoryId
-                        return OutlinedButton(
-                          onPressed:
-                              _showColorCategorySelectionDialog, // Call the new dialog function
-                          style: OutlinedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 15),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8.0)),
-                            side: BorderSide(color: Colors.grey),
-                            alignment: Alignment.centerLeft,
-                          ),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Row(
-                                children: [
-                                  // Display selected category color circle
-                                  Container(
-                                    width: 18,
-                                    height: 18,
-                                    decoration: BoxDecoration(
-                                        color:
-                                            _getColorForSelectedCategory(), // Use helper
-                                        shape: BoxShape.circle,
-                                        border: Border.all(
-                                            color: Colors.grey.shade400,
-                                            width: 1)),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Text(
-                                    _getSelectedColorCategoryObject()?.name ??
-                                        'Select Color Category',
-                                    style: TextStyle(
-                                      color:
-                                          widget.cardData.selectedColorCategoryId !=
-                                                  null
-                                              ? Theme.of(context)
-                                                  .textTheme
-                                                  .bodyLarge
-                                                  ?.color
-                                              : Colors.grey[600],
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const Icon(Icons.arrow_drop_down,
-                                  color: Colors.grey),
-                            ],
-                          ),
-                        );
-                      },
-                    ),
-                    // --- END ADDED (with wrapper) ---
-
-                    SizedBox(height: 16),
-
-                    // Yelp URL
-                    TextFormField(
-                      controller:
-                          yelpUrlController, // Use controller from widget
-                      decoration: InputDecoration(
-                          labelText: 'Yelp URL (optional)',
-                          hintText: 'https://yelp.com/...',
+                      // Experience title
+                      TextFormField(
+                        controller: titleController, // Use controller from widget
+                        focusNode: titleFocusNode, // Use focus node from widget
+                        decoration: InputDecoration(
+                          labelText: 'Experience Title',
+                          hintText: 'Enter title',
                           border: OutlineInputBorder(),
-                          prefixIcon:
-                              Icon(FontAwesomeIcons.yelp), // Use Yelp icon here
-                          suffixIconConstraints: BoxConstraints.tightFor(
-                              width: 90, // Keep width for three icons
-                              height: 48), // Increase width for both icons
-                          // Use suffix to combine clear and launch buttons
-                          suffixIcon: Row(
-                            mainAxisSize: MainAxisSize
-                                .min, // Prevent row taking full width
-                            mainAxisAlignment: MainAxisAlignment.end,
-                            children: <Widget>[
-                              // Clear button (now first)
-                              if (yelpUrlController.text.isNotEmpty)
-                                InkWell(
-                                  onTap: () {
-                                    yelpUrlController.clear();
-                                    widget.onUpdate(refreshCategories: false);
+                          prefixIcon: Icon(Icons.title),
+                          suffixIcon: titleController.text.isNotEmpty
+                              ? IconButton(
+                                  icon: Icon(Icons.clear, size: 18),
+                                  onPressed: () {
+                                    // Directly clear controller from widget.cardData
+                                    titleController.clear();
+                                    // Listener will call _triggerRebuild
+                                    widget.onUpdate(
+                                        refreshCategories:
+                                            false); // Notify parent, no refresh needed
                                   },
+                                )
+                              : null,
+                        ),
+                        validator: (value) {
+                          if (value == null || value.isEmpty) {
+                            return 'Please enter a title';
+                          }
+                          return null;
+                        },
+                        onChanged: (value) {
+                          // Notify parent for UI updates (like header title) as user types,
+                          // but don't trigger duplicate check on every keystroke.
+                          widget.onUpdate(refreshCategories: false);
+                        },
+                        onFieldSubmitted: (value) {
+                          // When field is submitted (e.g., user presses done/next on keyboard),
+                          // trigger onUpdate with the new title to initiate duplicate check.
+                          widget.onUpdate(refreshCategories: false, newTitleFromCard: value.trim());
+                        },
+                      ),
+                      SizedBox(height: 16),
+
+                      // --- REPLACED Dropdown with a Button wrapped in ValueListenableBuilder ---
+                      Text('Category',
+                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                              color: Colors.grey[600])), // Label like text field
+                      const SizedBox(height: 4),
+                      ValueListenableBuilder<List<UserCategory>>(
+                        valueListenable: widget.userCategoriesNotifier,
+                        builder: (context, currentCategoryList, child) {
+                          // Note: currentCategoryList is available if needed, but button display
+                          // mainly depends on widget.cardData.selectedcategory
+                          UserCategory? selectedCategoryObject;
+                          if (widget.cardData.selectedCategoryId != null) {
+                            try {
+                              selectedCategoryObject = currentCategoryList.firstWhere(
+                                (cat) => cat.id == widget.cardData.selectedCategoryId
+                              );
+                            } catch (e) {
+                              // Category ID from cardData not found in current list, leave selectedCategoryObject null
+                            }
+                          }
+
+                          return OutlinedButton(
+                            onPressed: _showCategorieselectionDialog,
+                            style: OutlinedButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 15), // Adjust padding for height
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(
+                                    8.0), // Match field style
+                              ),
+                              side: BorderSide(
+                                  color: Colors.grey), // Match field border
+                              alignment:
+                                  Alignment.centerLeft, // Align content left
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment
+                                  .spaceBetween, // Space between content and arrow
+                              children: [
+                                // Display selected category icon and name
+                                Row(
+                                  children: [
+                                    Text(_getIconForSelectedCategory(),
+                                        style: const TextStyle(fontSize: 18)),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      selectedCategoryObject?.name ?? 'Select Category',
+                                      style: TextStyle(
+                                        // Ensure text color matches default button text color or form field color
+                                        color:
+                                            selectedCategoryObject != null
+                                                ? Theme.of(context)
+                                                    .textTheme
+                                                    .bodyLarge
+                                                    ?.color
+                                                : Colors.grey[
+                                                    600], // Hint color if nothing selected
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                // Dropdown arrow indicator
+                                const Icon(Icons.arrow_drop_down,
+                                    color: Colors.grey),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                      // --- END REPLACEMENT (with wrapper) ---
+
+                      SizedBox(height: 16),
+
+                      // --- ADDED: Color Category Selection Button wrapped in ValueListenableBuilder ---
+                      Text('Color Category',
+                          style: Theme.of(context)
+                              .textTheme
+                              .bodyMedium
+                              ?.copyWith(color: Colors.grey[600])),
+                      const SizedBox(height: 4),
+                      ValueListenableBuilder<List<ColorCategory>>(
+                        valueListenable: widget.userColorCategoriesNotifier,
+                        builder: (context, currentColorCategoryList, child) {
+                          // Note: currentColorCategoryList is available if needed, but button display
+                          // mainly depends on _getSelectedColorCategoryObject() and widget.cardData.selectedColorCategoryId
+                          return OutlinedButton(
+                            onPressed:
+                                _showColorCategorySelectionDialog, // Call the new dialog function
+                            style: OutlinedButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 12, vertical: 15),
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(8.0)),
+                              side: BorderSide(color: Colors.grey),
+                              alignment: Alignment.centerLeft,
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Row(
+                                  children: [
+                                    // Display selected category color circle
+                                    Container(
+                                      width: 18,
+                                      height: 18,
+                                      decoration: BoxDecoration(
+                                          color:
+                                              _getColorForSelectedCategory(), // Use helper
+                                          shape: BoxShape.circle,
+                                          border: Border.all(
+                                              color: Colors.grey.shade400,
+                                              width: 1)),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      _getSelectedColorCategoryObject()?.name ??
+                                          'Select Color Category',
+                                      style: TextStyle(
+                                        color:
+                                            widget.cardData.selectedColorCategoryId !=
+                                                    null
+                                                ? Theme.of(context)
+                                                    .textTheme
+                                                    .bodyLarge
+                                                    ?.color
+                                                : Colors.grey[600],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const Icon(Icons.arrow_drop_down,
+                                    color: Colors.grey),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                      // --- END ADDED (with wrapper) ---
+
+                      SizedBox(height: 16),
+
+                      // Yelp URL
+                      TextFormField(
+                        controller:
+                            yelpUrlController, // Use controller from widget
+                        decoration: InputDecoration(
+                            labelText: 'Yelp URL (optional)',
+                            hintText: 'https://yelp.com/...',
+                            border: OutlineInputBorder(),
+                            prefixIcon:
+                                Icon(FontAwesomeIcons.yelp), // Use Yelp icon here
+                            suffixIconConstraints: BoxConstraints.tightFor(
+                                width: 90, // Keep width for three icons
+                                height: 48), // Increase width for both icons
+                            // Use suffix to combine clear and launch buttons
+                            suffixIcon: Row(
+                              mainAxisSize: MainAxisSize
+                                  .min, // Prevent row taking full width
+                              mainAxisAlignment: MainAxisAlignment.end,
+                              children: <Widget>[
+                                // Clear button (now first)
+                                if (yelpUrlController.text.isNotEmpty)
+                                  InkWell(
+                                    onTap: () {
+                                      yelpUrlController.clear();
+                                      widget.onUpdate(refreshCategories: false);
+                                    },
+                                    borderRadius: BorderRadius.circular(16),
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 0), // No horizontal padding
+                                      child: Icon(Icons.clear, size: 18),
+                                    ),
+                                  ),
+                                // Spacer
+                                if (yelpUrlController.text
+                                    .isNotEmpty) // Only show spacer if clear button is shown
+                                  const SizedBox(width: 8),
+
+                                // Paste Button (now second)
+                                InkWell(
+                                  onTap: _pasteYelpUrlFromClipboard,
                                   borderRadius: BorderRadius.circular(16),
                                   child: Padding(
                                     padding: const EdgeInsets.symmetric(
                                         horizontal: 0), // No horizontal padding
+                                    child: Icon(Icons.content_paste,
+                                        size: 18, color: Colors.blue[700]),
+                                  ),
+                                ),
+
+                                // Spacer
+                                const SizedBox(width: 8),
+
+                                // Yelp launch button (remains last)
+                                InkWell(
+                                  onTap: _launchYelpUrl, // Always calls _launchYelpUrl
+                                  borderRadius: BorderRadius.circular(16), 
+                                  child: Padding(
+                                    padding: const EdgeInsets.only(
+                                        right:
+                                            8.0), // Add padding only on the right end
+                                    child: Icon(FontAwesomeIcons.yelp,
+                                        size: 18,
+                                        color: Colors.red[700]), // Always active color
+                                  ),
+                                ),
+                              ],
+                            )),
+                        keyboardType: TextInputType.url,
+                        validator: (value) {
+                          if (value != null && value.isNotEmpty) {
+                            // Use refined _isValidUrl
+                            if (!_isValidUrl(value)) {
+                              return 'Please enter a valid URL (http/https)';
+                            }
+                          }
+                          return null;
+                        },
+                        onChanged: (value) {
+                          // REMOVED Listener calls _triggerRebuild if needed
+                          // widget.onUpdate();
+                        },
+                      ),
+                      SizedBox(height: 16),
+
+                      // Official website
+                      TextFormField(
+                        controller:
+                            websiteController, // Use controller from widget
+                        decoration: InputDecoration(
+                          labelText: 'Official Website (optional)',
+                          hintText: 'https://...',
+                          border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.language),
+                          // --- MODIFIED: Add Paste button to suffix ---
+                          suffixIconConstraints: BoxConstraints.tightFor(
+                              width: 90, // Keep width for three icons
+                              height: 48),
+                          suffixIcon: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            children: <Widget>[
+                              // Clear button (first)
+                              if (websiteController.text.isNotEmpty)
+                                InkWell(
+                                  onTap: () {
+                                    websiteController.clear();
+                                    widget.onUpdate(refreshCategories: false);
+                                  },
+                                  borderRadius: BorderRadius.circular(16),
+                                  child: Padding(
+                                    padding:
+                                        const EdgeInsets.symmetric(horizontal: 0),
                                     child: Icon(Icons.clear, size: 18),
                                   ),
                                 ),
                               // Spacer
-                              if (yelpUrlController.text
-                                  .isNotEmpty) // Only show spacer if clear button is shown
+                              if (websiteController.text.isNotEmpty)
                                 const SizedBox(width: 8),
 
-                              // Paste Button (now second)
+                              // Paste button (second)
                               InkWell(
-                                onTap: _pasteYelpUrlFromClipboard,
+                                onTap: _pasteWebsiteUrlFromClipboard,
                                 borderRadius: BorderRadius.circular(16),
                                 child: Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 0), // No horizontal padding
+                                  padding:
+                                      const EdgeInsets.symmetric(horizontal: 0),
                                   child: Icon(Icons.content_paste,
                                       size: 18, color: Colors.blue[700]),
                                 ),
@@ -1179,180 +1271,99 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                               // Spacer
                               const SizedBox(width: 8),
 
-                              // Yelp launch button (remains last)
+                              // Launch button (last)
                               InkWell(
-                                onTap: _launchYelpUrl, // Always calls _launchYelpUrl
-                                borderRadius: BorderRadius.circular(16), 
+                                onTap: websiteController.text.isNotEmpty &&
+                                        _isValidUrl(websiteController.text.trim())
+                                    ? () async {
+                                        String urlString =
+                                            websiteController.text.trim();
+                                        // No need to re-validate here, already checked in condition
+                                        try {
+                                          await launchUrl(
+                                            Uri.parse(urlString),
+                                            mode: LaunchMode.externalApplication,
+                                          );
+                                        } catch (e) {
+                                          if (mounted) {
+                                            ScaffoldMessenger.of(context)
+                                                .showSnackBar(
+                                              SnackBar(
+                                                  content: Text(
+                                                      'Error opening link: $e')),
+                                            );
+                                          }
+                                        }
+                                      }
+                                    : null,
+                                borderRadius: BorderRadius.circular(16),
                                 child: Padding(
-                                  padding: const EdgeInsets.only(
-                                      right:
-                                          8.0), // Add padding only on the right end
-                                  child: Icon(FontAwesomeIcons.yelp,
+                                  padding: const EdgeInsets.only(right: 8.0),
+                                  child: Icon(Icons.launch, // Use launch icon
                                       size: 18,
-                                      color: Colors.red[700]), // Always active color
+                                      color: websiteController.text.isNotEmpty &&
+                                              _isValidUrl(
+                                                  websiteController.text.trim())
+                                          ? Colors.blue[700]
+                                          : Colors.grey),
                                 ),
                               ),
                             ],
-                          )),
-                      keyboardType: TextInputType.url,
-                      validator: (value) {
-                        if (value != null && value.isNotEmpty) {
-                          // Use refined _isValidUrl
-                          if (!_isValidUrl(value)) {
-                            return 'Please enter a valid URL (http/https)';
-                          }
-                        }
-                        return null;
-                      },
-                      onChanged: (value) {
-                        // REMOVED Listener calls _triggerRebuild if needed
-                        // widget.onUpdate();
-                      },
-                    ),
-                    SizedBox(height: 16),
-
-                    // Official website
-                    TextFormField(
-                      controller:
-                          websiteController, // Use controller from widget
-                      decoration: InputDecoration(
-                        labelText: 'Official Website (optional)',
-                        hintText: 'https://...',
-                        border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.language),
-                        // --- MODIFIED: Add Paste button to suffix ---
-                        suffixIconConstraints: BoxConstraints.tightFor(
-                            width: 90, // Keep width for three icons
-                            height: 48),
-                        suffixIcon: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          mainAxisAlignment: MainAxisAlignment.end,
-                          children: <Widget>[
-                            // Clear button (first)
-                            if (websiteController.text.isNotEmpty)
-                              InkWell(
-                                onTap: () {
-                                  websiteController.clear();
-                                  widget.onUpdate(refreshCategories: false);
-                                },
-                                borderRadius: BorderRadius.circular(16),
-                                child: Padding(
-                                  padding:
-                                      const EdgeInsets.symmetric(horizontal: 0),
-                                  child: Icon(Icons.clear, size: 18),
-                                ),
-                              ),
-                            // Spacer
-                            if (websiteController.text.isNotEmpty)
-                              const SizedBox(width: 8),
-
-                            // Paste button (second)
-                            InkWell(
-                              onTap: _pasteWebsiteUrlFromClipboard,
-                              borderRadius: BorderRadius.circular(16),
-                              child: Padding(
-                                padding:
-                                    const EdgeInsets.symmetric(horizontal: 0),
-                                child: Icon(Icons.content_paste,
-                                    size: 18, color: Colors.blue[700]),
-                              ),
-                            ),
-
-                            // Spacer
-                            const SizedBox(width: 8),
-
-                            // Launch button (last)
-                            InkWell(
-                              onTap: websiteController.text.isNotEmpty &&
-                                      _isValidUrl(websiteController.text.trim())
-                                  ? () async {
-                                      String urlString =
-                                          websiteController.text.trim();
-                                      // No need to re-validate here, already checked in condition
-                                      try {
-                                        await launchUrl(
-                                          Uri.parse(urlString),
-                                          mode: LaunchMode.externalApplication,
-                                        );
-                                      } catch (e) {
-                                        if (mounted) {
-                                          ScaffoldMessenger.of(context)
-                                              .showSnackBar(
-                                            SnackBar(
-                                                content: Text(
-                                                    'Error opening link: $e')),
-                                          );
-                                        }
-                                      }
-                                    }
-                                  : null,
-                              borderRadius: BorderRadius.circular(16),
-                              child: Padding(
-                                padding: const EdgeInsets.only(right: 8.0),
-                                child: Icon(Icons.launch, // Use launch icon
-                                    size: 18,
-                                    color: websiteController.text.isNotEmpty &&
-                                            _isValidUrl(
-                                                websiteController.text.trim())
-                                        ? Colors.blue[700]
-                                        : Colors.grey),
-                              ),
-                            ),
-                          ],
+                          ),
+                          // --- END MODIFICATION ---
                         ),
-                        // --- END MODIFICATION ---
-                      ),
-                      keyboardType: TextInputType.url,
-                      validator: (value) {
-                        if (value != null && value.isNotEmpty) {
-                          if (!_isValidUrl(value)) {
-                            return 'Please enter a valid URL (http/https)';
+                        keyboardType: TextInputType.url,
+                        validator: (value) {
+                          if (value != null && value.isNotEmpty) {
+                            if (!_isValidUrl(value)) {
+                              return 'Please enter a valid URL (http/https)';
+                            }
                           }
-                        }
-                        return null;
-                      },
-                      onChanged: (value) {
-                        // REMOVED Listener calls _triggerRebuild if needed
-                        // widget.onUpdate();
-                      },
-                    ),
-                    SizedBox(height: 16),
-
-                    // Notes field
-                    TextFormField(
-                      controller: widget
-                          .cardData.notesController, // Use notes controller
-                      decoration: InputDecoration(
-                        labelText: 'Notes (optional)',
-                        hintText: 'Enter any additional notes...',
-                        border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.notes),
-                        alignLabelWithHint:
-                            true, // Align label top-left for multi-line
-                        suffixIcon:
-                            widget.cardData.notesController.text.isNotEmpty
-                                ? IconButton(
-                                    icon: Icon(Icons.clear, size: 18),
-                                    onPressed: () {
-                                      widget.cardData.notesController.clear();
-                                      widget.onUpdate(refreshCategories: false);
-                                    },
-                                  )
-                                : null,
+                          return null;
+                        },
+                        onChanged: (value) {
+                          // REMOVED Listener calls _triggerRebuild if needed
+                          // widget.onUpdate();
+                        },
                       ),
-                      keyboardType: TextInputType.multiline,
-                      minLines: 3, // Start with 3 lines height
-                      maxLines: null, // Allow unlimited lines
-                      // No validator needed as it's optional
-                      onChanged: (value) {
-                        // Trigger rebuild if suffix icon logic depends on it
-                        widget.onUpdate(refreshCategories: false);
-                      },
-                    ),
-                  ],
+                      SizedBox(height: 16),
+
+                      // Notes field
+                      TextFormField(
+                        controller: widget
+                            .cardData.notesController, // Use notes controller
+                        decoration: InputDecoration(
+                          labelText: 'Notes (optional)',
+                          hintText: 'Enter any additional notes...',
+                          border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.notes),
+                          alignLabelWithHint:
+                              true, // Align label top-left for multi-line
+                          suffixIcon:
+                              widget.cardData.notesController.text.isNotEmpty
+                                  ? IconButton(
+                                      icon: Icon(Icons.clear, size: 18),
+                                      onPressed: () {
+                                        widget.cardData.notesController.clear();
+                                        widget.onUpdate(refreshCategories: false);
+                                      },
+                                    )
+                                  : null,
+                        ),
+                        keyboardType: TextInputType.multiline,
+                        minLines: 3, // Start with 3 lines height
+                        maxLines: null, // Allow unlimited lines
+                        // No validator needed as it's optional
+                        onChanged: (value) {
+                          // Trigger rebuild if suffix icon logic depends on it
+                          widget.onUpdate(refreshCategories: false);
+                        },
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-          ],
+            ],
+          ),
         ),
       ),
     );
