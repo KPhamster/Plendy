@@ -1147,7 +1147,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                             prefixIcon:
                                 Icon(FontAwesomeIcons.yelp), // Use Yelp icon here
                             suffixIconConstraints: BoxConstraints.tightFor(
-                                width: 90, // Keep width for three icons
+                                width: 110, // Keep width for three icons
                                 height: 48), // Increase width for both icons
                             // Use suffix to combine clear and launch buttons
                             suffixIcon: Row(
@@ -1164,41 +1164,37 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                     },
                                     borderRadius: BorderRadius.circular(16),
                                     child: Padding(
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 0), // No horizontal padding
-                                      child: Icon(Icons.clear, size: 18),
+                                      padding: const EdgeInsets.all(4.0), // No horizontal padding
+                                      child: Icon(Icons.clear, size: 22),
                                     ),
                                   ),
                                 // Spacer
                                 if (yelpUrlController.text
                                     .isNotEmpty) // Only show spacer if clear button is shown
-                                  const SizedBox(width: 8),
+                                  const SizedBox(width: 4),
 
                                 // Paste Button (now second)
                                 InkWell(
                                   onTap: _pasteYelpUrlFromClipboard,
                                   borderRadius: BorderRadius.circular(16),
                                   child: Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 0), // No horizontal padding
+                                    padding: const EdgeInsets.all(4.0), // No horizontal padding
                                     child: Icon(Icons.content_paste,
-                                        size: 18, color: Colors.blue[700]),
+                                        size: 22, color: Colors.blue[700]),
                                   ),
                                 ),
 
                                 // Spacer
-                                const SizedBox(width: 8),
+                                const SizedBox(width: 4),
 
                                 // Yelp launch button (remains last)
                                 InkWell(
                                   onTap: _launchYelpUrl, // Always calls _launchYelpUrl
                                   borderRadius: BorderRadius.circular(16), 
                                   child: Padding(
-                                    padding: const EdgeInsets.only(
-                                        right:
-                                            8.0), // Add padding only on the right end
+                                    padding: const EdgeInsets.fromLTRB(4.0, 4.0, 8.0, 4.0), // Add padding only on the right end
                                     child: Icon(FontAwesomeIcons.yelp,
-                                        size: 18,
+                                        size: 22,
                                         color: Colors.red[700]), // Always active color
                                   ),
                                 ),
@@ -1232,7 +1228,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                           prefixIcon: Icon(Icons.language),
                           // --- MODIFIED: Add Paste button to suffix ---
                           suffixIconConstraints: BoxConstraints.tightFor(
-                              width: 90, // Keep width for three icons
+                              width: 110, // Keep width for three icons
                               height: 48),
                           suffixIcon: Row(
                             mainAxisSize: MainAxisSize.min,
@@ -1248,13 +1244,13 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                   borderRadius: BorderRadius.circular(16),
                                   child: Padding(
                                     padding:
-                                        const EdgeInsets.symmetric(horizontal: 0),
-                                    child: Icon(Icons.clear, size: 18),
+                                        const EdgeInsets.all(4.0),
+                                    child: Icon(Icons.clear, size: 22),
                                   ),
                                 ),
                               // Spacer
                               if (websiteController.text.isNotEmpty)
-                                const SizedBox(width: 8),
+                                const SizedBox(width: 4),
 
                               // Paste button (second)
                               InkWell(
@@ -1262,14 +1258,14 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                 borderRadius: BorderRadius.circular(16),
                                 child: Padding(
                                   padding:
-                                      const EdgeInsets.symmetric(horizontal: 0),
+                                      const EdgeInsets.all(4.0),
                                   child: Icon(Icons.content_paste,
-                                      size: 18, color: Colors.blue[700]),
+                                      size: 22, color: Colors.blue[700]),
                                 ),
                               ),
 
                               // Spacer
-                              const SizedBox(width: 8),
+                              const SizedBox(width: 4),
 
                               // Launch button (last)
                               InkWell(
@@ -1298,9 +1294,9 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                     : null,
                                 borderRadius: BorderRadius.circular(16),
                                 child: Padding(
-                                  padding: const EdgeInsets.only(right: 8.0),
+                                  padding: const EdgeInsets.fromLTRB(4.0, 4.0, 8.0, 4.0),
                                   child: Icon(Icons.launch, // Use launch icon
-                                      size: 18,
+                                      size: 22,
                                       color: websiteController.text.isNotEmpty &&
                                               _isValidUrl(
                                                   websiteController.text.trim())
