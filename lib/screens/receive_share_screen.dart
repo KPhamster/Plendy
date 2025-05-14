@@ -1476,7 +1476,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   }
 
   void _fillFormWithBusinessData(
-      Location location, String businessName, String yelpUrl) async { // ADDED async
+      Location location, String businessName, String yelpUrl) async { // Ensured async
     // Check mounted HERE before using context or calling setState
     if (!mounted) return;
 
@@ -1498,6 +1498,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     }
 
     // --- ADDED: Duplicate Check ---
+    FocusManager.instance.primaryFocus?.unfocus(); // MODIFIED
+    await Future.microtask(() {});      // ADDED
     Experience? existingExperience = await _checkForDuplicateExperienceDialog(
       context: context,
       card: targetCard,
@@ -1513,6 +1515,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     }
 
     // If no match by placeId, or user chose "Create New", check by title
+    FocusManager.instance.primaryFocus?.unfocus(); // MODIFIED
+    await Future.microtask(() {});      // ADDED
     existingExperience = await _checkForDuplicateExperienceDialog(
       context: context,
       card: targetCard,
@@ -1571,7 +1575,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   }
 
   void _fillFormWithGoogleMapsData(Location location, String placeName,
-      String websiteUrl, String originalMapsUrl) async { // ADDED async
+      String websiteUrl, String originalMapsUrl) async { // Ensured async
     // Check mounted HERE
     if (!mounted) return;
 
@@ -1586,6 +1590,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     }
 
     // --- ADDED: Duplicate Check ---
+    FocusManager.instance.primaryFocus?.unfocus(); // ADDED
+    await Future.microtask(() {});      // ADDED
     Experience? existingExperience = await _checkForDuplicateExperienceDialog(
       context: context,
       card: firstCard,
@@ -1600,6 +1606,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     }
 
     // If no match by placeId, or user chose "Create New", check by title
+    FocusManager.instance.primaryFocus?.unfocus(); // ADDED
+    await Future.microtask(() {});      // ADDED
     existingExperience = await _checkForDuplicateExperienceDialog(
       context: context,
       card: firstCard,
@@ -2177,7 +2185,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   }
 
   Future<void> _showLocationPicker(ExperienceCardData card) async {
-    FocusScope.of(context).unfocus(); 
+    FocusManager.instance.primaryFocus?.unfocus(); // MODIFIED
+    await Future.microtask(() {}); // ADDED
 
     bool isOriginalShareYelp = card.originalShareType == ShareType.yelp;
     print(
@@ -2208,6 +2217,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
       // --- ADDED: Duplicate Check based on selected location's Place ID ---
       if (selectedLocationFromResult.placeId != null && selectedLocationFromResult.placeId!.isNotEmpty) {
+        FocusManager.instance.primaryFocus?.unfocus(); // MODIFIED
+        await Future.microtask(() {});      // ADDED
         final Experience? existingExperienceByPlaceId = await _checkForDuplicateExperienceDialog(
           context: context,
           card: card,
@@ -2356,7 +2367,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
   Future<void> _selectSavedExperienceForCard(ExperienceCardData card) async {
     if (!mounted) return;
-    FocusScope.of(context).unfocus(); 
+    FocusManager.instance.primaryFocus?.unfocus(); // MODIFIED
+    await Future.microtask(() {}); // ADDED
 
     final selectedExperience = await showModalBottomSheet<Experience>(
       context: context,
@@ -2405,7 +2417,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     String? newCategoryName,
     String? selectedColorCategoryId,
     String? newTitleFromCard, // ADDED
-  }) async { // ADDED async
+  }) async { // Ensured async
     print(
         "ReceiveShareScreen._handleExperienceCardFormUpdate called: cardId=$cardId, refreshCategories=$refreshCategories, newCategoryName=$newCategoryName, selectedColorCategoryId=$selectedColorCategoryId, newTitleFromCard=$newTitleFromCard");
 
@@ -2421,6 +2433,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     // --- ADDED: Duplicate Check for Title Submission ---
     if (newTitleFromCard != null && newTitleFromCard.isNotEmpty) {
       if (!mounted) return;
+      FocusManager.instance.primaryFocus?.unfocus(); // MODIFIED
+      await Future.microtask(() {});      // ADDED
       Experience? existingExperience = await _checkForDuplicateExperienceDialog(
         context: context,
         card: card,
