@@ -235,7 +235,7 @@ class ExperienceCardData {
   // Set default category name
   ExperienceCardData() {
     // Initialize with "Restaurant" as the default category
-    selectedCategoryId = 'Restaurant';
+    // selectedCategoryId = 'Restaurant'; // REMOVED: Defaulting logic moved to provider
     // selectedColorCategoryId will be null by default and should be set by the provider
     // based on SharedPreferences or "Want to go" default logic.
   }
@@ -357,6 +357,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   late ValueNotifier<List<ColorCategory>> _userColorCategoriesNotifier;
   // --- END ADDED ---
 
+  SharedPreferences? _prefsInstance; // Store SharedPreferences instance
+
   @override
   void initState() {
     print("ReceiveShareScreen initState: START"); // ADDED
@@ -379,33 +381,67 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         ValueNotifier<List<ColorCategory>>(_userColorCategories);
     // --- END ADDED ---
 
-    // RENAMED: Fetch user Categories
-    print("ReceiveShareScreen initState: BEFORE _loadUserCategories"); // ADDED
-    _loadUserCategories();
-    print("ReceiveShareScreen initState: AFTER _loadUserCategories"); // ADDED
-    // --- ADDED --- Call to load color categories ---
-    print("ReceiveShareScreen initState: BEFORE _loadUserColorCategories"); // ADDED
-    _loadUserColorCategories();
-    print("ReceiveShareScreen initState: AFTER _loadUserColorCategories"); // ADDED
-    // --- END ADDED ---
-
-    // --- ADDED: Initialize combined future --- 
-    // Ensure individual futures are initialized by _loadUser... methods before this call
-    print("ReceiveShareScreen initState: BEFORE _initializeCombinedFuture"); // ADDED
-    _initializeCombinedFuture();
-    print("ReceiveShareScreen initState: AFTER _initializeCombinedFuture"); // ADDED
-    // --- END ADDED ---
-
-    // Access provider - DO NOT listen here, just need read access
-    // final provider = context.read<ReceiveShareProvider>();
-    // Cards are initialized in the provider's constructor
-
-    // Process the initial shared content
-    // print("SHARE DEBUG: initState processing initial widget.sharedFiles (count: ${_currentSharedFiles.length})"); // CLEANED
-    _processSharedContent(_currentSharedFiles);
+    // IMPORTANT: Asynchronously load dependencies and then process content
+    _initializeScreenDataAndProcessContent();
 
     // Listen for changes to the sharedFiles controller in SharingService
     _sharingService.sharedFiles.addListener(_handleSharedFilesUpdate);
+    print("ReceiveShareScreen initState: END"); // ADDED
+  }
+
+  Future<void> _initializeScreenDataAndProcessContent() async {
+    print("ReceiveShareScreen: _initializeScreenDataAndProcessContent START");
+    // Load SharedPreferences
+    _prefsInstance = await SharedPreferences.getInstance();
+    print("ReceiveShareScreen: SharedPreferences loaded.");
+
+    // Load categories (these methods update _userCategories, _userColorCategories, and their notifiers, and set the futures)
+    // Await them to ensure data is available before setting provider deps
+    try {
+      await _loadUserCategories(); // This already handles setting _userCategoriesFuture and updating _userCategories
+      print("ReceiveShareScreen: User categories loaded/updated via _loadUserCategories. Count: ${_userCategories.length}");
+      await _loadUserColorCategories(); // This already handles setting _userColorCategoriesFuture and updating _userColorCategories
+      print("ReceiveShareScreen: User color categories loaded/updated via _loadUserColorCategories. Count: ${_userColorCategories.length}");
+    } catch (e) {
+        print("ReceiveShareScreen: Error loading categories in _initializeScreenDataAndProcessContent: $e");
+        // Ensure lists are at least empty for the provider if loading failed
+        if (mounted) {
+          _userCategories = [];
+          _userCategoriesNotifier.value = [];
+          _userColorCategories = [];
+          _userColorCategoriesNotifier.value = [];
+        }
+    }
+    
+    if (mounted) {
+      // Set dependencies on the provider
+      // This assumes your ReceiveShareProvider has a method like `setDependencies`
+      try {
+        final provider = context.read<ReceiveShareProvider>();
+        await provider.setDependencies( // This method needs to be defined in ReceiveShareProvider
+          prefs: _prefsInstance!,
+          userCategories: _userCategories, 
+          userColorCategories: _userColorCategories,
+        );
+        print("ReceiveShareScreen: Called provider.setDependencies with: Prefs, ${_userCategories.length} UserCategories, ${_userColorCategories.length} ColorCategories");
+        // TODO: Remove the line below once setDependencies in ReceiveShareProvider is confirmed implemented
+        // print("ReceiveShareProvider DEPS COMMENTED OUT: Call provider.setDependencies here with: Prefs, ${_userCategories.length} UserCategories, ${_userColorCategories.length} ColorCategories");
+        
+      } catch (e) {
+        print("ReceiveShareScreen: Error during provider.setDependencies call: $e");
+      }
+      
+      // Initialize the combined future for the FutureBuilder in build()
+      // This must be called after _userCategoriesFuture and _userColorCategoriesFuture are (re)set by the _load methods
+      _initializeCombinedFuture();
+      print("ReceiveShareScreen: Combined future initialized.");
+
+      // Now it's safe to process initial shared content,
+      // as the provider (conceptually) has what it needs for default categories.
+      print("ReceiveShareScreen: Processing initial shared content.");
+      _processSharedContent(_currentSharedFiles);
+    }
+    print("ReceiveShareScreen: _initializeScreenDataAndProcessContent END");
   }
 
   // Handle updates to the sharedFiles controller from SharingService
@@ -441,21 +477,23 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     return true;
   }
 
-  Future<void> _loadUserCategories() {
-    _userCategoriesFuture = _experienceService.getUserCategories();
-    return _userCategoriesFuture!.then((Categories) {
+  Future<void> _loadUserCategories() async {
+    try {
+      final Categories = await _experienceService.getUserCategories();
       if (mounted) {
-          _userCategories = Categories; 
-          _userCategoriesNotifier.value = Categories; 
-          _updateCardDefaultCategoriesIfNeeded(Categories);
+        _userCategories = Categories;
+        _userCategoriesNotifier.value = Categories;
+        _updateCardDefaultCategoriesIfNeeded(Categories);
       }
-    }).catchError((error) {
-      // print("Error loading user Categories: $error"); // CLEANED
+      _userCategoriesFuture = Future.value(Categories); // Ensure future resolves to the fetched list
+    } catch (error) {
+      print("ReceiveShareScreen: Error loading user Categories: $error");
       if (mounted) {
-          _userCategories = [];
-          _userCategoriesNotifier.value = []; 
+        _userCategories = [];
+        _userCategoriesNotifier.value = [];
       }
-    });
+      _userCategoriesFuture = Future.value([]); // Ensure future resolves to an empty list on error
+    }
   }
 
   void _updateCardDefaultCategoriesIfNeeded(
@@ -3048,30 +3086,29 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     return coordRegex.hasMatch(text.trim());
   }
 
-  Future<void> _loadUserColorCategories() {
+  Future<void> _loadUserColorCategories() async {
     print("_loadUserColorCategories START"); 
-    _userColorCategoriesFuture = _experienceService.getUserColorCategories();
-    print(
-        "  _loadUserColorCategories: Called service method."); 
-
-    return _userColorCategoriesFuture!.then((colorCategories) {
+    try {
+      final colorCategories = await _experienceService.getUserColorCategories();
       print(
           "  _loadUserColorCategories: Service call successful, received ${colorCategories.length} items.");
       if (mounted) {
-          _userColorCategories = colorCategories;
-          _userColorCategoriesNotifier.value = colorCategories; 
-          print("  _loadUserColorCategories: setState called."); 
+        _userColorCategories = colorCategories;
+        _userColorCategoriesNotifier.value = colorCategories;
+        print("  _loadUserColorCategories: Notifier updated.");
       } else {
         print(
             "  _loadUserColorCategories: Component not mounted after service call.");
       }
-    }).catchError((error) {
-      print("Error loading user Color Categories: $error"); 
+      _userColorCategoriesFuture = Future.value(colorCategories); // Ensure future resolves to the fetched list
+    } catch (error) {
+      print("ReceiveShareScreen: Error loading user Color Categories: $error");
       if (mounted) {
-          _userColorCategories = []; 
-          _userColorCategoriesNotifier.value = []; 
+        _userColorCategories = [];
+        _userColorCategoriesNotifier.value = [];
       }
-    });
+      _userColorCategoriesFuture = Future.value([]); // Ensure future resolves to an empty list on error
+    }
   }
 
   // --- ADDED: Method to initialize/update the combined future ---

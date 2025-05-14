@@ -12,106 +12,157 @@ class ReceiveShareProvider extends ChangeNotifier {
 
   List<UserCategory> _userCategories = [];
   List<ColorCategory> _userColorCategories = [];
+  SharedPreferences? _prefs; // ADDED: To store SharedPreferences instance
 
   // SharedPreferences keys - should match ReceiveShareScreen
   static const String _lastUsedCategoryNameKey = 'last_used_category_name';
   static const String _lastUsedColorCategoryIdKey = 'last_used_color_category_id';
 
-  // Preferences loaded from SharedPreferences
-  String? _lastUsedCategoryNamePreference;
-  String? _lastUsedColorCategoryIdPreference;
-
   List<ExperienceCardData> get experienceCards => _experienceCards;
 
+  // MODIFIED: Constructor is now simpler. Dependencies are set via setDependencies.
   ReceiveShareProvider() {
-    _loadPreferencesAndInitializeCards();
+    print("ReceiveShareProvider: Instance created. Waiting for dependencies.");
+    // REMOVED: _loadPreferencesAndInitializeCards(); 
+    // Initialization logic, including adding the first card,
+    // will now be triggered after dependencies are set.
   }
 
-  Future<void> _loadPreferencesAndInitializeCards() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      _lastUsedCategoryNamePreference = prefs.getString(_lastUsedCategoryNameKey);
-      _lastUsedColorCategoryIdPreference = prefs.getString(_lastUsedColorCategoryIdKey);
-      print("ReceiveShareProvider: Loaded prefs - LastCategoryID: $_lastUsedCategoryNamePreference, LastColorCategoryID: $_lastUsedColorCategoryIdPreference");
-    } catch (e) {
-      print("ReceiveShareProvider: Error loading SharedPreferences: $e");
-    }
+  // ADDED: Method to set dependencies from ReceiveShareScreen
+  Future<void> setDependencies({
+    required SharedPreferences prefs,
+    required List<UserCategory> userCategories,
+    required List<ColorCategory> userColorCategories,
+  }) async {
+    _prefs = prefs;
+    _userCategories = userCategories;
+    _userColorCategories = userColorCategories;
+    print("ReceiveShareProvider: Dependencies set. Prefs loaded. UserCategories: ${_userCategories.length}, ColorCategories: ${_userColorCategories.length}");
 
+    // If no cards exist yet (e.g., initial setup), add the first one.
+    // This ensures defaults are applied using the now-available categories and prefs.
     if (_experienceCards.isEmpty) {
-      addExperienceCard(); // This will call _applyDefaultsToCard which now uses the loaded prefs
+      print("ReceiveShareProvider: No cards exist after setting dependencies, adding initial card.");
+      addExperienceCard();
+    } else {
+      // If cards already exist (e.g., from a previous state before a hot reload that calls setDependencies again),
+      // we might want to reconcile their defaults if the category lists have changed significantly.
+      // For now, we'll assume cards are either empty or their state is managed.
+      // Consider if _reconcileDefaultsForAllCards(); is needed here in some scenarios.
+      print("ReceiveShareProvider: Cards already exist. Count: ${_experienceCards.length}. Not adding initial card from setDependencies.");
     }
-    // notifyListeners(); // addExperienceCard will notify if it adds a card. If no card added, no immediate UI change needed from just loading prefs.
+    // notifyListeners(); // addExperienceCard will notify if it runs.
   }
 
   void updateUserCategories(List<UserCategory> newCategories) {
     _userCategories = newCategories;
     print("ReceiveShareProvider: updateUserCategories called with ${newCategories.length} categories.");
-    _reconcileDefaultsForAllCards(); // Re-check defaults for all cards
+    // REMOVED: _reconcileDefaultsForAllCards(); // Defaults are set on creation.
+    // If categories list changes, existing card selections are preserved unless user changes them.
     notifyListeners(); 
   }
 
   void updateUserColorCategories(List<ColorCategory> newColorCategories) {
     _userColorCategories = newColorCategories;
      print("ReceiveShareProvider: updateUserColorCategories called with ${newColorCategories.length} color categories.");
-    _reconcileDefaultsForAllCards(); // Re-check defaults for all cards
+    // REMOVED: _reconcileDefaultsForAllCards(); 
     notifyListeners(); 
   }
 
-  void _applyDefaultsToCard(ExperienceCardData cardData) {
-    // Apply last used category ID (formerly name)
-    if (_lastUsedCategoryNamePreference != null &&
-        _userCategories.any((cat) => cat.id == _lastUsedCategoryNamePreference)) {
-      cardData.selectedCategoryId = _lastUsedCategoryNamePreference; 
-      print("Provider: Applied last used category ID: ${_lastUsedCategoryNamePreference} to card ${cardData.id.substring(cardData.id.length-4)}");
-    } else if (_userCategories.isNotEmpty) {
-      cardData.selectedCategoryId = _userCategories.first.id; // Default to first category ID in the list
-      print("Provider: Applied DEFAULT (first) category ID: ${cardData.selectedCategoryId} to card ${cardData.id.substring(cardData.id.length-4)}");
+  void _applyDefaultsToCard(ExperienceCardData cardData, {required bool isFirstCard}) {
+    if (_prefs == null) {
+      print("Provider WARN (_applyDefaultsToCard): SharedPreferences not available. Cannot apply preference-based defaults.");
+      // Fallback to basic defaults if prefs aren't loaded (should not happen if setDependencies is called correctly)
+      if (_userCategories.isNotEmpty) {
+        final restaurantCategory = _userCategories.firstWhereOrNull((cat) => cat.name.toLowerCase() == "restaurant");
+        cardData.selectedCategoryId = restaurantCategory?.id ?? _userCategories.first.id;
+      } else {
+        cardData.selectedCategoryId = null;
+      }
+      if (_userColorCategories.isNotEmpty) {
+        final wantToGoCategory = _userColorCategories.firstWhereOrNull((cat) => cat.name.toLowerCase() == "want to go");
+        cardData.selectedColorCategoryId = wantToGoCategory?.id ?? _userColorCategories.first.id;
+      } else {
+        cardData.selectedColorCategoryId = null;
+      }
+      print("Provider (_applyDefaultsToCard): Applied basic defaults due to missing prefs. Card ID: ${cardData.id.substring(cardData.id.length-4)}");
+      return;
+    }
+    
+    String? lastUsedCategoryId = _prefs!.getString(_lastUsedCategoryNameKey);
+    String? lastUsedColorCategoryId = _prefs!.getString(_lastUsedColorCategoryIdKey);
+
+    // --- Text Category Defaulting ---
+    if (isFirstCard) {
+      // For the very first card: Use preference, then "Restaurant", then first available, then null.
+      if (lastUsedCategoryId != null && _userCategories.any((cat) => cat.id == lastUsedCategoryId)) {
+        cardData.selectedCategoryId = lastUsedCategoryId;
+        print("Provider (First Card): Applied PREFERRED category ID: $lastUsedCategoryId to card ${cardData.id.substring(cardData.id.length-4)}");
+      } else {
+        final restaurantCategory = _userCategories.firstWhereOrNull((cat) => cat.name.toLowerCase() == "restaurant");
+        if (restaurantCategory != null) {
+          cardData.selectedCategoryId = restaurantCategory.id;
+          print("Provider (First Card): Applied 'Restaurant' category ID: ${restaurantCategory.id} to card ${cardData.id.substring(cardData.id.length-4)}");
+        } else if (_userCategories.isNotEmpty) {
+          cardData.selectedCategoryId = _userCategories.first.id;
+          print("Provider (First Card): Applied FIRST AVAILABLE category ID: ${_userCategories.first.id} to card ${cardData.id.substring(cardData.id.length-4)}");
+        } else {
+          cardData.selectedCategoryId = null;
+          print("Provider (First Card): No categories available for card ${cardData.id.substring(cardData.id.length-4)}");
+        }
+      }
     } else {
-      cardData.selectedCategoryId = null; // Or some placeholder ID if categories are empty
-      print("Provider: No categories available to apply default category ID to card ${cardData.id.substring(cardData.id.length-4)}");
+      // For subsequent cards: Copy from the previous card.
+      if (_experienceCards.isNotEmpty) { // Should always be true if !isFirstCard, but good check
+        cardData.selectedCategoryId = _experienceCards.last.selectedCategoryId;
+        print("Provider (Subsequent Card): Copied category ID '${cardData.selectedCategoryId}' from previous card to card ${cardData.id.substring(cardData.id.length-4)}");
+      } else {
+         // This case should ideally not be reached if logic is correct.
+         // Fallback to first card logic if somehow it's not the first card but list is empty.
+         _applyDefaultsToCard(cardData, isFirstCard: true);
+         print("Provider (Subsequent Card - UNEXPECTED FALLBACK): Fallback to first card logic for card ${cardData.id.substring(cardData.id.length-4)}");
+         return; // Avoid double printing for color category in this specific fallback
+      }
     }
 
-    // Apply last used color category ID
-    if (_lastUsedColorCategoryIdPreference != null && 
-        _userColorCategories.any((cat) => cat.id == _lastUsedColorCategoryIdPreference)) {
-      cardData.selectedColorCategoryId = _lastUsedColorCategoryIdPreference;
-      print("Provider: Applied last used color category ID: ${_lastUsedColorCategoryIdPreference} to card ${cardData.id.substring(cardData.id.length-4)}");
-    } else if (_userColorCategories.isNotEmpty) {
-      // Find "Want to go" or default to first color category in the list
-      final wantToGo = _userColorCategories.firstWhereOrNull((cat) => cat.name.toLowerCase() == 'want to go');
-      cardData.selectedColorCategoryId = wantToGo?.id ?? _userColorCategories.first.id;
-      print("Provider: Applied DEFAULT color category ID: ${cardData.selectedColorCategoryId} to card ${cardData.id.substring(cardData.id.length-4)}");
+    // --- Color Category Defaulting ---
+    if (isFirstCard) {
+      // For the very first card: Use preference, then "Want to go", then first available, then null.
+      if (lastUsedColorCategoryId != null && _userColorCategories.any((cat) => cat.id == lastUsedColorCategoryId)) {
+        cardData.selectedColorCategoryId = lastUsedColorCategoryId;
+        print("Provider (First Card): Applied PREFERRED color category ID: $lastUsedColorCategoryId to card ${cardData.id.substring(cardData.id.length-4)}");
+      } else {
+        final wantToGoCategory = _userColorCategories.firstWhereOrNull((cat) => cat.name.toLowerCase() == "want to go");
+        if (wantToGoCategory != null) {
+          cardData.selectedColorCategoryId = wantToGoCategory.id;
+          print("Provider (First Card): Applied 'Want to go' color category ID: ${wantToGoCategory.id} to card ${cardData.id.substring(cardData.id.length-4)}");
+        } else if (_userColorCategories.isNotEmpty) {
+          cardData.selectedColorCategoryId = _userColorCategories.first.id;
+          print("Provider (First Card): Applied FIRST AVAILABLE color category ID: ${_userColorCategories.first.id} to card ${cardData.id.substring(cardData.id.length-4)}");
+        } else {
+          cardData.selectedColorCategoryId = null;
+          print("Provider (First Card): No color categories available for card ${cardData.id.substring(cardData.id.length-4)}");
+        }
+      }
     } else {
-      cardData.selectedColorCategoryId = null;
-      print("Provider: No color categories available to apply default color ID to card ${cardData.id.substring(cardData.id.length-4)}");
+      // For subsequent cards: Copy from the previous card.
+      if (_experienceCards.isNotEmpty) { // Should always be true if !isFirstCard
+        cardData.selectedColorCategoryId = _experienceCards.last.selectedColorCategoryId;
+        print("Provider (Subsequent Card): Copied color category ID '${cardData.selectedColorCategoryId}' from previous card to card ${cardData.id.substring(cardData.id.length-4)}");
+      } 
+      // No else needed here as the text category fallback above would have handled the unexpected case.
     }
-  }
-
-  void _reconcileDefaultsForAllCards() {
-    // bool didChangeAnything = false; // Not strictly needed now as _applyDefaultsToCard prints changes
-    for (var cardData in _experienceCards) {
-      // String? originalSelectedCategory = cardData.selectedCategoryId; // For debugging
-      // String? originalSelectedColorCategoryId = cardData.selectedColorCategoryId; // For debugging
-      
-      _applyDefaultsToCard(cardData);
-
-      // if (cardData.selectedCategoryId != originalSelectedCategory ||
-      //     cardData.selectedColorCategoryId != originalSelectedColorCategoryId) {
-      //   didChangeAnything = true;
-      // }
-    }
-    // if (didChangeAnything) {
-    //    notifyListeners(); // Will be called by the public updateUserCategories/ColorCategories
-    // }
   }
 
   void addExperienceCard() {
     final newCard = ExperienceCardData();
-    // Preferences should be loaded by now via _loadPreferencesAndInitializeCards.
-    // _applyDefaultsToCard will use these loaded preferences or fallbacks.
-    _applyDefaultsToCard(newCard);
+    final bool isFirstCardBeingAdded = _experienceCards.isEmpty;
+    
+    // Apply defaults based on whether it's the first card or a subsequent one.
+    _applyDefaultsToCard(newCard, isFirstCard: isFirstCardBeingAdded);
+    
     _experienceCards.add(newCard);
-    print("ReceiveShareProvider: addExperienceCard. Cards count: ${_experienceCards.length}. New card ID: ${newCard.id.substring(newCard.id.length - 4)}. BEFORE notifyListeners.");
+    print("ReceiveShareProvider: addExperienceCard. Cards count: ${_experienceCards.length}. New card ID: ${newCard.id.substring(newCard.id.length - 4)}. IsFirstCard: $isFirstCardBeingAdded. BEFORE notifyListeners.");
     notifyListeners();
   }
 
