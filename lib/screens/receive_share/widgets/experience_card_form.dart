@@ -33,6 +33,7 @@ typedef OnUpdateCallback = void Function({
   bool refreshCategories, // Flag to indicate category list needs refresh
   String? newCategoryName, // Optional new category name
   String? selectedColorCategoryId, // ADDED
+  String? newTitleFromCard, // ADDED for title submission
 });
 
 class ExperienceCardForm extends StatefulWidget {
@@ -192,18 +193,21 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
     // _isExpanded = widget.cardData.isExpanded;
     // _locationEnabled = widget.cardData.locationEnabled;
 
-    // REMOVED: Add listeners to controllers
-    // widget.cardData.titleController.addListener(_triggerRebuild);
-    // widget.cardData.yelpUrlController.addListener(_triggerRebuild);
-    // widget.cardData.websiteController.addListener(_triggerRebuild);
+    // ADDED: Listener for focus changes on the title field
+    widget.cardData.titleFocusNode.addListener(_handleTitleFocusChange);
   }
 
-  // REMOVED: _triggerRebuild method
-  // void _triggerRebuild() {
-  //   if (mounted) {
-  //     setState(() {});
-  //   }
-  // }
+  // ADDED: Handler for title field focus changes
+  void _handleTitleFocusChange() {
+    if (!widget.cardData.titleFocusNode.hasFocus) {
+      // Field lost focus, trigger update with current title for duplicate check
+      final currentTitle = widget.cardData.titleController.text.trim();
+      if (currentTitle.isNotEmpty) { // Only check if title is not empty
+        print("ExperienceCardForm: Title field lost focus. Current title: '$currentTitle'. Triggering update for potential duplicate check.");
+        widget.onUpdate(refreshCategories: false, newTitleFromCard: currentTitle);
+      }
+    }
+  }
 
   @override
   void didUpdateWidget(covariant ExperienceCardForm oldWidget) {
@@ -249,6 +253,9 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
     // widget.cardData.titleController.removeListener(_triggerRebuild);
     // widget.cardData.yelpUrlController.removeListener(_triggerRebuild);
     // widget.cardData.websiteController.removeListener(_triggerRebuild);
+
+    // ADDED: Remove focus listener
+    widget.cardData.titleFocusNode.removeListener(_handleTitleFocusChange);
     super.dispose();
   }
 
@@ -965,9 +972,14 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                         return null;
                       },
                       onChanged: (value) {
-                        // REMOVED Listener calls _triggerRebuild for UI updates (suffix icon, header)
-                        // Notify parent only if parent needs immediate reaction to text changes
-                        // widget.onUpdate();
+                        // Notify parent for UI updates (like header title) as user types,
+                        // but don't trigger duplicate check on every keystroke.
+                        widget.onUpdate(refreshCategories: false);
+                      },
+                      onFieldSubmitted: (value) {
+                        // When field is submitted (e.g., user presses done/next on keyboard),
+                        // trigger onUpdate with the new title to initiate duplicate check.
+                        widget.onUpdate(refreshCategories: false, newTitleFromCard: value.trim());
                       },
                     ),
                     SizedBox(height: 16),

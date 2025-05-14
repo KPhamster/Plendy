@@ -825,6 +825,32 @@ class ExperienceService {
     return snapshot.docs.map((doc) => Experience.fromFirestore(doc)).toList();
   }
 
+  /// Get all experiences created by the current user.
+  Future<List<Experience>> getUserExperiences() async {
+    final userId = _currentUserId;
+    if (userId == null) {
+      print("getUserExperiences: No user authenticated, returning empty list.");
+      return []; // Or throw Exception('User not authenticated');
+    }
+    try {
+      print("getUserExperiences: Fetching all experiences for user ID: $userId");
+      final snapshot = await _experiencesCollection
+          .where('editorUserIds', arrayContains: userId) // Check if user is an editor
+          .orderBy('updatedAt', descending: true) // Order by most recently updated
+          .get();
+
+      final experiences = snapshot.docs
+          .map((doc) => Experience.fromFirestore(doc))
+          .toList();
+      print(
+          "getUserExperiences: Fetched ${experiences.length} experiences for user $userId.");
+      return experiences;
+    } catch (e) {
+      print("Error fetching user experiences for user $userId: $e");
+      return []; // Return empty list on error
+    }
+  }
+
   // ======= Review-related operations =======
 
   /// Add a review to an experience
