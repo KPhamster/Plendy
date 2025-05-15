@@ -61,11 +61,34 @@ class _MapScreenState extends State<MapScreen> {
   Marker? _tappedLocationMarker;
   Location? _tappedLocationDetails;
 
+  // ADDED: State for search functionality
+  final TextEditingController _searchController = TextEditingController();
+  final FocusNode _searchFocusNode = FocusNode();
+  List<Map<String, dynamic>> _searchResults = [];
+  bool _showSearchResults = false;
+  bool _isSearching = false;
+  Timer? _debounce;
+  GoogleMapController? _mapController; // To be initialized from _mapControllerCompleter
+  bool _isProgrammaticTextUpdate = false; // RE-ADDED
+  Location? _mapWidgetInitialLocation; // ADDED: To control GoogleMapsWidget initial location
+
   @override
   void initState() {
     super.initState();
+    // Set a default initial location for the map widget
+    _mapWidgetInitialLocation = Location(latitude: 37.4219999, longitude: -122.0840575, displayName: "Default Location"); // Googleplex
     _loadDataAndGenerateMarkers();
-    _focusOnUserLocation(); // ADDED: Start focusing map on user location
+    _focusOnUserLocation(); // This will update _mapWidgetInitialLocation and animate
+    _searchController.addListener(_onSearchChanged);
+  }
+
+  @override
+  void dispose() {
+    _searchController.removeListener(_onSearchChanged); // ADDED: Remove listener here
+    _searchController.dispose();
+    _searchFocusNode.dispose();
+    _debounce?.cancel();
+    super.dispose();
   }
 
   Future<void> _loadDataAndGenerateMarkers() async {
@@ -139,21 +162,37 @@ class _MapScreenState extends State<MapScreen> {
     try {
       // Wait for the map controller to be ready
       print("🗺️ MAP SCREEN: Waiting for map controller...");
-      final GoogleMapController controller =
-          await _mapControllerCompleter.future;
+      // final GoogleMapController controller = // Commented out, will use _mapController
+      //     await _mapControllerCompleter.future;
+      if (_mapController == null) {
+        _mapController = await _mapControllerCompleter.future;
+      }
       print("🗺️ MAP SCREEN: Map controller ready. Fetching user location...");
 
       // Get current location
       final position = await _mapsService.getCurrentLocation();
       final userLatLng = LatLng(position.latitude, position.longitude);
+      final userLocationForMapWidget = Location(
+        latitude: position.latitude,
+        longitude: position.longitude,
+        displayName: "My Current Location"
+      );
       print(
           "🗺️ MAP SCREEN: User location fetched: $userLatLng. Animating camera...");
 
       // Animate camera to user location
-      controller.animateCamera(
+      _mapController!.animateCamera(
         CameraUpdate.newLatLngZoom(userLatLng, 14.0), // Zoom level 14
       );
       print("🗺️ MAP SCREEN: Camera animation initiated.");
+
+      // Update the initial location for the map widget after animation
+      if (mounted) {
+        setState(() {
+          _mapWidgetInitialLocation = userLocationForMapWidget;
+        });
+        print("🗺️ MAP SCREEN: Updated _mapWidgetInitialLocation to user's location.");
+      }
     } catch (e) {
       print(
           "🗺️ MAP SCREEN: Failed to get user location or animate camera: $e");
@@ -247,6 +286,8 @@ class _MapScreenState extends State<MapScreen> {
     } else {
       print("🗺️ MAP SCREEN: Map controller completer was already completed.");
     }
+    // ADDED: Assign to _mapController as well
+    _mapController = controller;
   }
 
   // Renamed helper to be more specific
@@ -461,6 +502,13 @@ class _MapScreenState extends State<MapScreen> {
       // if (bounds != null) {
       //   controller.animateCamera(CameraUpdate.newLatLngBounds(bounds, 50.0));
       // }
+      if (_mapController == null) {
+        _mapController = await _mapControllerCompleter.future;
+      }
+      final bounds = _calculateBoundsFromMarkers(_markers);
+      if (bounds != null && _mapController != null) {
+        _mapController!.animateCamera(CameraUpdate.newLatLngBounds(bounds, 50.0));
+      }
     } catch (e, stackTrace) {
       print("🗺️ MAP SCREEN: Error applying filters: $e");
       print(stackTrace);
@@ -583,6 +631,7 @@ class _MapScreenState extends State<MapScreen> {
         icon: categoryIconBitmap,
         // IMPORTANT: Experience marker onTap clears the temporary tapped marker
         onTap: () {
+          FocusScope.of(context).unfocus(); // ADDED: Unfocus search bar
           // When an experience marker is tapped, clear the temporary one
           setState(() {
             _tappedLocationMarker = null;
@@ -608,31 +657,86 @@ class _MapScreenState extends State<MapScreen> {
 
   // --- ADDED: Handle location selection from GoogleMapsWidget ---
   Future<void> _handleLocationSelected(Location locationDetails) async {
+    FocusScope.of(context).unfocus(); // ADDED: Unfocus search bar
     print(
         "🗺️ MAP SCREEN: Location selected via widget callback: ${locationDetails.displayName}");
-    setState(() {
-      _isLoading = true; // Show loading while creating marker
+
+    print("🗺️ MAP SCREEN: (_handleLocationSelected) Listeners BEFORE remove: ${_searchController.hasListeners}");
+    _searchController.removeListener(_onSearchChanged);
+    print("🗺️ MAP SCREEN: (_handleLocationSelected) Listeners AFTER remove: ${_searchController.hasListeners}. Will now clear text.");
+
+    // Clear the search text. If listener was still active, this would trigger _onSearchChanged.
+    _searchController.clear(); 
+    print("🗺️ MAP SCREEN: (_handleLocationSelected) Text cleared. Listeners after clear: ${_searchController.hasListeners}");
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+          print("🗺️ MAP SCREEN: (_handleLocationSelected POST-FRAME) Running. Listeners before re-add: ${_searchController.hasListeners}");
+        _searchController.addListener(_onSearchChanged);
+        print("🗺️ MAP SCREEN: (_handleLocationSelected POST-FRAME) Re-added search listener. Listeners now: ${_searchController.hasListeners}");
+      } else {
+        print("🗺️ MAP SCREEN: (_handleLocationSelected POST-FRAME) NOT RUNNING because !mounted.");
+      }
     });
 
+    _isProgrammaticTextUpdate = false; 
+
+    // Show loading immediately for this operation
+    if(mounted){
+      setState(() {
+        _isLoading = true; 
+        _searchResults = [];
+        _showSearchResults = false;
+      });
+    }
+    
+
     try {
-      _tappedLocationDetails =
-          locationDetails; // Store details received from widget
+      // MODIFIED: Fetch full details if placeId is available
+      Location finalLocationDetails = locationDetails;
+      if (locationDetails.placeId != null && locationDetails.placeId!.isNotEmpty) {
+        print("🗺️ MAP SCREEN: (_handleLocationSelected) Map tap has Place ID: ${locationDetails.placeId}. Fetching details...");
+        try {
+          finalLocationDetails = await _mapsService.getPlaceDetails(locationDetails.placeId!);
+          print("🗺️ MAP SCREEN: (_handleLocationSelected) Fetched details for map tap: ${finalLocationDetails.displayName}, Rating: ${finalLocationDetails.rating}");
+        } catch (e) {
+          print("🗺️ MAP SCREEN: (_handleLocationSelected) Error fetching details for map tap location: $e. Using initial details.");
+          // finalLocationDetails remains locationDetails (original)
+        }
+      } else {
+        print("🗺️ MAP SCREEN: (_handleLocationSelected) Map tap location has no Place ID. Using basic info.");
+      }
 
       print(
-          "🗺️ MAP SCREEN: Selected location details: Name='${locationDetails.displayName}', Address='${locationDetails.address}', PlaceID='${locationDetails.placeId}'");
+          "🗺️ MAP SCREEN: Selected location details: Name='${finalLocationDetails.displayName}', Address='${finalLocationDetails.address}', PlaceID='${finalLocationDetails.placeId}'");
+      
+      final LatLng targetLatLng = LatLng(finalLocationDetails.latitude, finalLocationDetails.longitude);
+
+      // Animate camera to the tapped location
+      // Ensure map controller is available before animating
+      GoogleMapController currentMapController;
+      if (_mapController != null) {
+          currentMapController = _mapController!;
+      } else {
+          print("🗺️ MAP SCREEN: (_handleLocationSelected) Awaiting map controller for animation...");
+          currentMapController = await _mapControllerCompleter.future;
+          print("🗺️ MAP SCREEN: (_handleLocationSelected) Map controller obtained for animation.");
+      }
+      currentMapController.animateCamera(
+        CameraUpdate.newLatLng(targetLatLng),
+      );
+
 
       // Create a new marker for the selected location
-      final tappedMarkerId = MarkerId('selected_location'); // Use specific ID
+      final tappedMarkerId = MarkerId('selected_location'); 
       final tappedMarker = Marker(
         markerId: tappedMarkerId,
-        position: LatLng(locationDetails.latitude,
-            locationDetails.longitude), // Use coords from result
+        position: targetLatLng, 
         infoWindow: InfoWindow(
           title:
-              locationDetails.getPlaceName(), // Use helper from Location model
-          // FIXED: Correct multi-line string formatting and content
+              finalLocationDetails.getPlaceName(), 
           snippet:
-              '${locationDetails.address ?? 'Unknown Address'}\nTap for Directions',
+              '${finalLocationDetails.address ?? 'Unknown Address'}\nTap for Directions',
           onTap: () {
             print(
                 "🗺️ MAP SCREEN: InfoWindow tapped for ${_tappedLocationDetails?.displayName}");
@@ -649,29 +753,22 @@ class _MapScreenState extends State<MapScreen> {
             }
           },
         ),
-        // Use a distinct marker color
         icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueViolet),
         zIndex:
-            1.0, // Ensure it appears above experience markers if overlapping
+            1.0, 
       );
 
-      // Update state to show the new marker (replace any existing tapped marker)
-      setState(() {
-        _tappedLocationMarker = tappedMarker;
-      });
-
-      // Animate camera to the tapped location (optional, widget might do this)
-      try {
-        final GoogleMapController controller =
-            await _mapControllerCompleter.future;
-        controller.animateCamera(
-          CameraUpdate.newLatLng(
-              LatLng(locationDetails.latitude, locationDetails.longitude)),
-        );
-      } catch (e) {
-        print(
-            "🗺️ MAP SCREEN: Could not animate camera to selected location: $e");
+      // Update state to show the new marker and set initial location for map widget
+      if (mounted) {
+        setState(() {
+          _mapWidgetInitialLocation = finalLocationDetails; // Update map widget's initial location
+          _tappedLocationDetails = finalLocationDetails;
+          _tappedLocationMarker = tappedMarker;
+          _isLoading = false; 
+        });
+        print("🗺️ MAP SCREEN: (_handleLocationSelected) Updated state with new tapped location and map initial location: ${finalLocationDetails.getPlaceName()}");
       }
+
     } catch (e) {
       print("🗺️ MAP SCREEN: Error handling location selection: $e");
       if (mounted) {
@@ -682,7 +779,7 @@ class _MapScreenState extends State<MapScreen> {
     } finally {
       if (mounted) {
         setState(() {
-          _isLoading = false; // Hide loading indicator
+          _isSearching = false; // Ensure loading indicator is off
         });
       }
     }
@@ -767,9 +864,260 @@ class _MapScreenState extends State<MapScreen> {
   }
   // --- END: Helper method to launch map location --- //
 
+  // --- ADDED: Search functionality from LocationPickerScreen ---
+
+  // Helper method to calculate distance between coordinates (copied from LocationPickerScreen)
+  double _calculateDistance(
+      double lat1, double lon1, double lat2, double lon2) {
+    // Simple Euclidean distance - good enough for sorting
+    return (lat1 - lat2) * (lat1 - lat2) + (lon1 - lon2) * (lon1 - lon2);
+  }
+
+  Future<void> _searchPlaces(String query) async {
+    if (_debounce?.isActive ?? false) _debounce!.cancel();
+    _debounce = Timer(const Duration(milliseconds: 500), () async {
+      print("🗺️ MAP SCREEN: (_searchPlaces DEBOUNCED) Query: '$query', _isProgrammaticTextUpdate: $_isProgrammaticTextUpdate");
+
+      if (_isProgrammaticTextUpdate) {
+        // This path should ideally not be taken if _selectSearchResult resets the flag.
+        // If it is taken, it means a search was triggered while the flag was still true.
+        print("🗺️ MAP SCREEN: (_searchPlaces) Safeguard: Detected _isProgrammaticTextUpdate = true. Suppressing search and resetting flag.");
+        if (mounted) {
+          setState(() {
+            _isSearching = false; // Ensure _isSearching is false if this path is taken.
+            _showSearchResults = false; // Ensure results list is hidden
+          });
+        }
+        _isProgrammaticTextUpdate = false; // Reset immediately.
+        print("🗺️ MAP SCREEN: (_searchPlaces) Reset _isProgrammaticTextUpdate directly inside safeguard.");
+        return;
+      }
+
+      if (query.isEmpty) {
+        print("🗺️ MAP SCREEN: (_searchPlaces DEBOUNCED) Query is empty. Clearing results.");
+        if (mounted) {
+          setState(() {
+            _searchResults = [];
+            _showSearchResults = false;
+          });
+        }
+        return;
+      }
+
+      if (mounted) {
+        setState(() {
+          _isSearching = true;
+          // This is a new user-initiated search or a map tap that cleared search, so clear previous details
+          _tappedLocationDetails = null;
+          _tappedLocationMarker = null;
+        });
+      }
+
+      print("🗺️ MAP SCREEN: (_searchPlaces DEBOUNCED) Calling _mapsService.searchPlaces for query: '$query'");
+      try {
+        final results = await _mapsService.searchPlaces(query);
+        print("🗺️ MAP SCREEN: (_searchPlaces DEBOUNCED) Received ${results.length} results from _mapsService for query: '$query'");
+        LatLng? mapCenter;
+
+        if (_mapController != null) {
+          try {
+            if (mounted) {
+                 mapCenter = await _mapController!.getLatLng(ScreenCoordinate(
+                  x: MediaQuery.of(context).size.width ~/ 2,
+                  y: MediaQuery.of(context).size.height ~/ 2));
+            }
+          } catch (e) {
+            print('🗺️ MAP SCREEN: Error getting map center for search: $e');
+          }
+        }
+
+        results.sort((a, b) {
+          final String nameA = (a['description'] ?? '').toString().toLowerCase();
+          final String nameB = (b['description'] ?? '').toString().toLowerCase();
+          final String queryLower = query.toLowerCase();
+
+          // Simplified scoring from LocationPickerScreen (no businessNameHint)
+          int getScore(String name, String currentQuery) {
+            int score = 0;
+            if (name == currentQuery) { // Exact match
+              score += 5000;
+            } else if (name.startsWith(currentQuery)) { // Starts with
+              score += 2000;
+            } else if (name.contains(currentQuery)) { // Contains
+              score += 1000;
+            } else if (currentQuery.contains(name) && name.length > 3){ // Query contains name
+              score += 500;
+            }
+            return score;
+          }
+
+          int scoreA = getScore(nameA, queryLower);
+          int scoreB = getScore(nameB, queryLower);
+
+          if (scoreA != scoreB) {
+            return scoreB.compareTo(scoreA); // Higher score first
+          }
+          if (nameA.length != nameB.length) {
+            return nameB.length.compareTo(nameA.length); // Longer name first
+          }
+
+          final double? latA = a['latitude'];
+          final double? lngA = a['longitude'];
+          final double? latB = b['latitude'];
+          final double? lngB = b['longitude'];
+
+          if (mapCenter != null && latA != null && lngA != null && latB != null && lngB != null) {
+            final distanceA = _calculateDistance(
+                mapCenter.latitude, mapCenter.longitude, latA, lngA);
+            final distanceB = _calculateDistance(
+                mapCenter.latitude, mapCenter.longitude, latB, lngB);
+            return distanceA.compareTo(distanceB);
+          }
+          return nameA.compareTo(nameB);
+        });
+
+        if (mounted) {
+          setState(() {
+            _searchResults = results;
+            _showSearchResults = results.isNotEmpty;
+            _isSearching = false;
+            print("🗺️ MAP SCREEN: (_searchPlaces DEBOUNCED) setState: _showSearchResults: $_showSearchResults, _isSearching: $_isSearching, results count: ${_searchResults.length}");
+          });
+        }
+      } catch (e) {
+        print('🗺️ MAP SCREEN: Error searching places: $e');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Error searching places: $e')),
+          );
+          setState(() {
+            _isSearching = false;
+          });
+        }
+      }
+    });
+  }
+
+  Future<void> _selectSearchResult(Map<String, dynamic> result) async {
+    _debounce?.cancel(); 
+    FocusScope.of(context).unfocus(); 
+
+    _isProgrammaticTextUpdate = true; 
+    print("🗺️ MAP SCREEN: (_selectSearchResult) Set _isProgrammaticTextUpdate = true");
+
+    print("🗺️ MAP SCREEN: (_selectSearchResult) Listeners on _searchController BEFORE remove: ${_searchController.hasListeners}");
+    _searchController.removeListener(_onSearchChanged);
+    print("🗺️ MAP SCREEN: (_selectSearchResult) Listeners on _searchController AFTER remove: ${_searchController.hasListeners}");
+
+    final placeId = result['placeId']; 
+
+    // Show loading indicator immediately for this specific operation
+    if (mounted) {
+      setState(() {
+        _isSearching = true; 
+      });
+    }
+
+    try {
+      final location = await _mapsService.getPlaceDetails(placeId);
+      final LatLng targetLatLng = LatLng(location.latitude, location.longitude);
+
+      // Animate camera BEFORE setState that updates markers/details
+      if (_mapController != null) {
+        print("🗺️ MAP SCREEN: (_selectSearchResult) Animating BEFORE setState to $targetLatLng");
+        _mapController!.animateCamera(
+          CameraUpdate.newLatLngZoom(targetLatLng, 16.0),
+        );
+      } else {
+        print("🗺️ MAP SCREEN: (_selectSearchResult) _mapController is NULL before animation. Animation might be delayed or rely on initial setup.");
+        // If controller is null here, it's unexpected as map should be ready for user interaction.
+        // Awaiting the completer here could introduce a delay if map isn't ready,
+        // but it's a fallback.
+        final GoogleMapController c = await _mapControllerCompleter.future;
+         c.animateCamera(
+          CameraUpdate.newLatLngZoom(targetLatLng, 16.0),
+        );
+      }
+
+      final tappedMarkerId = MarkerId('selected_location');
+      final tappedMarker = Marker(
+        markerId: tappedMarkerId,
+        position: targetLatLng, 
+        infoWindow: InfoWindow(
+          title: location.getPlaceName(),
+          snippet: '${location.address ?? 'Unknown Address'}\nTap for Directions',
+          onTap: () {
+            if (_tappedLocationDetails != null) {
+              _openDirectionsForLocation(_tappedLocationDetails!);
+            }
+          },
+        ),
+        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueViolet),
+        zIndex: 1.0,
+      );
+
+      print('🗺️ MAP SCREEN: (_selectSearchResult) Before setting text, location is: ${location.getPlaceName()}');
+      _searchController.text = location.displayName ?? location.address ?? 'Selected Location';
+      
+      // Reset the flag immediately after the programmatic text update & before listener is re-added.
+      _isProgrammaticTextUpdate = false;
+      print("🗺️ MAP SCREEN: (_selectSearchResult) Reset _isProgrammaticTextUpdate = false (IMMEDIATELY after text set).");
+
+      if (mounted) {
+        print('🗺️ MAP SCREEN: (_selectSearchResult) Setting state with new location details and map initial location.');
+        setState(() {
+          _mapWidgetInitialLocation = location; // Update map widget's initial location
+          _tappedLocationDetails = location;
+          _tappedLocationMarker = tappedMarker;
+          _isSearching = false; 
+          _showSearchResults = false; 
+        });
+        print('🗺️ MAP SCREEN: (_selectSearchResult) After setState, _tappedLocationDetails is: ${_tappedLocationDetails?.getPlaceName()} and _mapWidgetInitialLocation is: ${_mapWidgetInitialLocation?.getPlaceName()}');
+      }
+
+    } catch (e) {
+      print('🗺️ MAP SCREEN: Error selecting search result: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error selecting location: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSearching = false; // Ensure loading indicator is off
+        });
+      }
+
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) { // Check mounted again inside callback
+          print("🗺️ MAP SCREEN: (_selectSearchResult POST-FRAME) Running. Listeners on _searchController before re-add attempt: ${_searchController.hasListeners}");
+          // The flag should already be false here.
+          // print("🗺️ MAP SCREEN: (_selectSearchResult) State of _isProgrammaticTextUpdate in post-frame: $_isProgrammaticTextUpdate");
+
+          _searchController.addListener(_onSearchChanged);
+          print("🗺️ MAP SCREEN: (_selectSearchResult POST-FRAME) Attempted to re-add _onSearchChanged. Listeners now: ${_searchController.hasListeners}");
+        } else {
+          print("🗺️ MAP SCREEN: (_selectSearchResult POST-FRAME) NOT RUNNING because !mounted.");
+        }
+      });
+    }
+  }
+  // --- END Search functionality ---
+
+  // ADDED: Separate method for onChanged to easily add/remove listener
+  void _onSearchChanged() {
+    print("🗺️ MAP SCREEN: (_onSearchChanged) Text: '${_searchController.text}', _isProgrammaticTextUpdate: $_isProgrammaticTextUpdate");
+    _searchPlaces(_searchController.text);
+  }
+
   @override
   Widget build(BuildContext context) {
     print("🗺️ MAP SCREEN: Building widget. isLoading: $_isLoading");
+
+    // Calculate keyboard height and adjust layout accordingly
+    final double keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
+    final bool isKeyboardVisible = keyboardHeight > 0;
 
     // Combine experience markers and the tapped marker (if it exists)
     final Map<String, Marker> allMarkers = Map.from(_markers);
@@ -784,7 +1132,11 @@ class _MapScreenState extends State<MapScreen> {
     print(
         "🗺️ MAP SCREEN: Total markers being sent to widget: ${allMarkers.length}");
 
+    print("🗺️ MAP SCREEN: (build) _tappedLocationDetails is: ${_tappedLocationDetails?.getPlaceName()}");
+    print("🗺️ MAP SCREEN: (build) Condition for BottomNav/Details Panel is: ${_tappedLocationDetails != null}");
+
     return Scaffold(
+      resizeToAvoidBottomInset: true,
       appBar: AppBar(
         title: const Text('Experiences Map'),
         actions: [
@@ -793,195 +1145,345 @@ class _MapScreenState extends State<MapScreen> {
             tooltip: 'Filter Experiences',
             onPressed: () {
               print("🗺️ MAP SCREEN: Filter button pressed!");
-              // Clear the temporary tapped marker when opening filters
               setState(() {
                 _tappedLocationMarker = null;
                 _tappedLocationDetails = null;
+                _searchController.clear();
+                _searchResults = [];
+                _showSearchResults = false;
+                _searchFocusNode.unfocus();
               });
               _showFilterDialog();
             },
           ),
         ],
       ),
-      // UPDATED: Bottom Navigation Bar now shows location details panel
-      bottomNavigationBar: _tappedLocationDetails != null
-          ? Container(
-              padding: EdgeInsets.fromLTRB(
-                  16,
-                  16,
-                  16,
-                  16 +
-                      MediaQuery.of(context).padding.bottom /
-                          2), // Adjust padding for safe area
-              decoration: BoxDecoration(
-                color: Colors.white,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.1),
-                    blurRadius: 8,
-                    offset: Offset(0, -3),
-                  ),
-                ],
-              ),
-              child: Stack(
-                clipBehavior: Clip.none, // Allow button to overflow slightly
-                children: [
-                  // Column with location details
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize:
-                        MainAxisSize.min, // Important for bottom bar height
-                    children: [
-                      // Title
-                      Text(
-                        'Tapped Location',
-                        style: TextStyle(
-                          fontWeight: FontWeight.normal,
-                          fontSize: 14,
-                          color: Colors.grey[800],
-                        ),
-                      ),
-                      SizedBox(height: 12),
-
-                      // Place name
-                      Text(
-                        _tappedLocationDetails!.getPlaceName(),
-                        style: TextStyle(
-                          fontWeight: FontWeight.w500,
-                          fontSize: 16,
-                        ),
-                      ),
-                      SizedBox(height: 8),
-
-                      // Full address
-                      if (_tappedLocationDetails!.address != null &&
-                          _tappedLocationDetails!.address!.isNotEmpty) ...[
-                        Text(
-                          _tappedLocationDetails!.address!,
-                          style: TextStyle(color: Colors.grey[700]),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        SizedBox(height: 8),
-                      ],
-
-                      // Area details if available (similar to picker)
-                      Row(children: [
-                        if (_tappedLocationDetails!.city != null) ...[
-                          Icon(Icons.location_city,
-                              size: 16, color: Colors.grey[600]),
-                          SizedBox(width: 4),
-                          Text(
-                            _tappedLocationDetails!.city!,
-                            style: TextStyle(color: Colors.grey[700]),
-                          ),
-                          SizedBox(width: 16),
-                        ],
-                        if (_tappedLocationDetails!.state != null) ...[
-                          Text(
-                            _tappedLocationDetails!.state!,
-                            style: TextStyle(color: Colors.grey[700]),
-                          ),
-                          SizedBox(width: 8),
-                        ],
-                        if (_tappedLocationDetails!.country != null) ...[
-                          Text(
-                            _tappedLocationDetails!.country!,
-                            style: TextStyle(color: Colors.grey[700]),
-                          ),
-                        ],
-                      ]),
-                      SizedBox(height: 12),
-
-                      // Coordinates
-                      Row(
-                        children: [
-                          Icon(Icons.gps_fixed,
-                              size: 16, color: Colors.grey[600]),
-                          SizedBox(width: 4),
-                          Expanded(
-                            child: Text(
-                              '${_tappedLocationDetails!.latitude.toStringAsFixed(6)}, ${_tappedLocationDetails!.longitude.toStringAsFixed(6)}',
-                              style: TextStyle(
-                                color: Colors.grey[600],
-                                fontFamily: 'monospace',
-                                fontSize: 12,
+      body: SafeArea(
+        child: Column(
+          children: [
+            // --- Search bar ---
+            Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: Card(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                  child: TextField(
+                    controller: _searchController,
+                    focusNode: _searchFocusNode,
+                    decoration: InputDecoration(
+                      hintText: 'Search for a place or address',
+                      border: InputBorder.none,
+                      prefixIcon: Icon(Icons.search),
+                      suffixIcon: _isSearching // Show loading indicator in search bar
+                          ? SizedBox(
+                              width: 24,
+                              height: 24,
+                              child: Padding(
+                                padding: const EdgeInsets.all(4.0),
+                                child: CircularProgressIndicator(strokeWidth: 2),
                               ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-
-                  // Get Directions button positioned at top-right (like picker)
-                  Positioned(
-                    top: -8,
-                    right: -8,
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min, // Keep Row compact
-                      children: [
-                        // ADDED: Open in Map App button
-                        IconButton(
-                          onPressed: () {
-                            if (_tappedLocationDetails != null) {
-                              _launchMapLocation(_tappedLocationDetails!);
-                            }
-                          },
-                          icon: Icon(Icons.map_outlined,
-                              color: Colors.green[700], size: 28),
-                          tooltip: 'Open in map app',
-                          padding: const EdgeInsets.all(8), // Add padding
-                          constraints:
-                              const BoxConstraints(), // Remove default constraints
-                        ),
-                        const SizedBox(width: 4), // Spacing between icons
-                        // Existing Directions button
-                        IconButton(
-                          onPressed: () {
-                            if (_tappedLocationDetails != null) {
-                              _openDirectionsForLocation(
-                                  _tappedLocationDetails!);
-                            }
-                          },
-                          icon: Icon(Icons.directions,
-                              color: Colors.blue, size: 28),
-                          tooltip: 'Get Directions',
-                          padding: const EdgeInsets.all(8), // Add padding
-                          constraints:
-                              const BoxConstraints(), // Remove default constraints
-                        ),
-                      ],
+                            )
+                          : _searchController.text.isNotEmpty
+                              ? IconButton(
+                                  icon: Icon(Icons.clear),
+                                  onPressed: () {
+                                    setState(() {
+                                      _searchController.clear();
+                                      _searchResults = [];
+                                      _showSearchResults = false;
+                                      // Optionally, clear tapped location as well if search is cleared
+                                      // _tappedLocationDetails = null;
+                                      // _tappedLocationMarker = null;
+                                    });
+                                  },
+                                )
+                              : null,
                     ),
+                    onTap: () {
+                      // When search bar is tapped, clear any existing map-tapped location
+                      // to avoid confusion if the user then selects from search results.
+                      // However, don't clear if a search result was *just* selected.
+                      // This is now handled in _searchPlaces (clears on new query) and _selectSearchResult.
+                    },
                   ),
-                ],
-              ),
-            )
-          : null, // Show nothing if no location is tapped
-      body: Stack(
-        children: [
-          GoogleMapsWidget(
-            initialLocation: Location(
-                latitude: 37.4219999, longitude: -122.0840575), // Googleplex
-            showUserLocation: true,
-            // FIXED: Set allowSelection to true and use onLocationSelected
-            allowSelection: true,
-            onLocationSelected: _handleLocationSelected,
-            showControls: true,
-            additionalMarkers: allMarkers,
-            onMapControllerCreated: _onMapWidgetCreated,
-            // REMOVED: onTap parameter which is not supported by the widget
-            // onTap: _handleMapTap,
-          ),
-          // Show loading indicator on top if loading
-          if (_isLoading)
-            Container(
-              color: Colors.black.withOpacity(0.1),
-              child: const Center(
-                child: CircularProgressIndicator(),
+                ),
               ),
             ),
-        ],
+            // --- END Search bar ---
+
+            // --- ADDED: Search results (from LocationPickerScreen) ---
+            if (_showSearchResults)
+              Container(
+                constraints: BoxConstraints(
+                  // Adjust max height based on keyboard visibility
+                  maxHeight: isKeyboardVisible
+                      ? MediaQuery.of(context).size.height * 0.35 // More space when keyboard is up
+                      : MediaQuery.of(context).size.height * 0.3, // Less space otherwise
+                ),
+                margin: EdgeInsets.symmetric(horizontal: 8.0),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(8),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.1),
+                      blurRadius: 8,
+                      offset: Offset(0, 3),
+                    ),
+                  ],
+                ),
+                child: ListView.separated(
+                  shrinkWrap: true,
+                  padding: EdgeInsets.symmetric(vertical: 8),
+                  itemCount: _searchResults.length,
+                  separatorBuilder: (context, index) =>
+                      Divider(height: 1, indent: 56, endIndent: 16),
+                  itemBuilder: (context, index) {
+                    final result = _searchResults[index];
+                    final bool hasRating = result['rating'] != null;
+                    final double rating =
+                        hasRating ? (result['rating'] as double) : 0.0;
+                    final String? address = result['address'] ??
+                        (result['structured_formatting'] != null
+                            ? result['structured_formatting']
+                                ['secondary_text']
+                            : null);
+
+                    return Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        onTap: () => _selectSearchResult(result),
+                        borderRadius: BorderRadius.circular(8),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 4.0),
+                          child: ListTile(
+                            leading: CircleAvatar(
+                              backgroundColor: Theme.of(context)
+                                  .primaryColor
+                                  .withOpacity(0.1),
+                              child: Text(
+                                '${index + 1}', // Simple numbering for now
+                                style: TextStyle(
+                                  color: Theme.of(context).primaryColor,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
+                                ),
+                              ),
+                            ),
+                            title: Text(
+                              result['description'] ?? 'Unknown Place',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w500,
+                                fontSize: 15,
+                              ),
+                            ),
+                            subtitle: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                if (address != null)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 4.0),
+                                    child: Row(
+                                      children: [
+                                        Icon(Icons.location_on,
+                                            size: 14,
+                                            color: Colors.grey[600]),
+                                        SizedBox(width: 4),
+                                        Expanded(
+                                          child: Text(
+                                            address,
+                                            style: TextStyle(
+                                              color: Colors.grey[600],
+                                              fontSize: 13,
+                                            ),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                if (hasRating)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 4.0),
+                                    child: Row(
+                                      children: [
+                                        ...List.generate(
+                                            5,
+                                            (i) => Icon(
+                                                  i < rating.floor()
+                                                      ? Icons.star
+                                                      : (i < rating)
+                                                          ? Icons.star_half
+                                                          : Icons.star_border,
+                                                  size: 14,
+                                                  color: Colors.amber,
+                                                )),
+                                        SizedBox(width: 4),
+                                        if (result['userRatingCount'] !=
+                                            null)
+                                          Text(
+                                            '(${result['userRatingCount']})',
+                                            style: TextStyle(
+                                              color: Colors.grey[600],
+                                              fontSize: 12,
+                                            ),
+                                          ),
+                                      ],
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            // --- END Search results ---
+
+            // --- MODIFIED: Map now takes remaining space ---
+            Expanded(
+              child: Stack(
+                children: [
+                  GoogleMapsWidget(
+                    initialLocation: _mapWidgetInitialLocation, // Use the dynamic initial location
+                    showUserLocation: true,
+                    allowSelection: true,
+                    onLocationSelected: _handleLocationSelected,
+                    showControls: true,
+                    additionalMarkers: allMarkers,
+                    onMapControllerCreated: _onMapWidgetCreated,
+                  ),
+                  // Show loading indicator on top if loading (main page load, not search typing)
+                  if (_isLoading && !_isSearching) 
+                    Container(
+                      color: Colors.black.withOpacity(0.1),
+                      child: const Center(
+                        child: CircularProgressIndicator(),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+
+            // --- ADDED: Tapped Location Details Panel (moved from bottomNavigationBar) ---
+            if (_tappedLocationDetails != null && !isKeyboardVisible)
+              Container(
+                padding: EdgeInsets.fromLTRB(
+                    16, 16, 16, 16 + MediaQuery.of(context).padding.bottom / 2),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.1),
+                      blurRadius: 8,
+                      offset: Offset(0, -3), // Shadow upwards as it's at the bottom of content
+                    ),
+                  ],
+                ),
+                child: Stack(
+                  clipBehavior: Clip.none, 
+                  children: [
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min, 
+                      children: [
+                        Text(
+                          'Selected Location',
+                          style: TextStyle(
+                            fontWeight: FontWeight.normal,
+                            fontSize: 14,
+                            color: Colors.grey[800],
+                          ),
+                        ),
+                        SizedBox(height: 12),
+                        Text(
+                          _tappedLocationDetails!.getPlaceName(),
+                          style: TextStyle(
+                            fontWeight: FontWeight.w500,
+                            fontSize: 16,
+                          ),
+                        ),
+                        SizedBox(height: 8),
+                        if (_tappedLocationDetails!.address != null &&
+                            _tappedLocationDetails!.address!.isNotEmpty) ...[
+                          Text(
+                            _tappedLocationDetails!.address!,
+                            style: TextStyle(color: Colors.grey[700]),
+                          ),
+                          SizedBox(height: 8),
+                        ],
+                        // ADDED: Star Rating
+                        if (_tappedLocationDetails!.rating != null) ...[
+                          Row(
+                            children: [
+                              ...List.generate(5, (i) {
+                                final ratingValue = _tappedLocationDetails!.rating!;
+                                return Icon(
+                                  i < ratingValue.floor()
+                                      ? Icons.star
+                                      : (i < ratingValue)
+                                          ? Icons.star_half
+                                          : Icons.star_border,
+                                  size: 18, 
+                                  color: Colors.amber,
+                                );
+                              }),
+                              SizedBox(width: 8),
+                              if (_tappedLocationDetails!.userRatingCount != null && _tappedLocationDetails!.userRatingCount! > 0)
+                                Text(
+                                  '(${_tappedLocationDetails!.userRatingCount})',
+                                  style: TextStyle(
+                                    color: Colors.grey[600],
+                                    fontSize: 13,
+                                  ),
+                                ),
+                            ],
+                          ),
+                          SizedBox(height: 8), // Added SizedBox after rating like in location_picker_screen
+                        ],
+                      ],
+                    ),
+                    Positioned(
+                      top: -8,
+                      right: -8,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min, 
+                        children: [
+                          IconButton(
+                            onPressed: () {
+                              if (_tappedLocationDetails != null) {
+                                _launchMapLocation(_tappedLocationDetails!);
+                              }
+                            },
+                            icon: Icon(Icons.map_outlined, color: Colors.green[700], size: 28),
+                            tooltip: 'Open in map app',
+                            padding: const EdgeInsets.all(8),
+                            constraints: const BoxConstraints(),
+                          ),
+                          const SizedBox(width: 4),
+                          IconButton(
+                            onPressed: () {
+                              if (_tappedLocationDetails != null) {
+                                _openDirectionsForLocation(_tappedLocationDetails!);
+                              }
+                            },
+                            icon: Icon(Icons.directions, color: Colors.blue, size: 28),
+                            tooltip: 'Get Directions',
+                            padding: const EdgeInsets.all(8),
+                            constraints: const BoxConstraints(), 
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            // --- END Tapped Location Details ---
+          ],
+        ),
       ),
     );
   }

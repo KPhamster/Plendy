@@ -480,9 +480,16 @@ class GoogleMapsService {
         print(
             'Failed with status code: ${response.statusCode} for Place ID: $placeId');
       }
-    } catch (e) {
+    } on DioException catch (e, s) {
+      print('DioError getting place details for Place ID $placeId: ${e.message}');
+      print('Stack trace: $s');
+      if (e.response != null) {
+        print('DioError response: ${e.response?.data}');
+      }
+    } catch (e, s) {
       // Don't cache exceptions
       print('Error getting place details for Place ID $placeId: $e');
+      print('Stack trace: $s');
     }
 
     // Return default location if API call failed or returned error status
@@ -582,24 +589,29 @@ class GoogleMapsService {
 
       // If Places API didn't find anything, fall back to geocoding
       print('📍 GEOCODING FALLBACK: Trying geocoding API instead');
-      final placeDetails =
-          await findPlaceDetails(position.latitude, position.longitude);
+      Location? geocodedLocation;
+      try {
+        final placeDetailsMap =
+            await findPlaceDetails(position.latitude, position.longitude);
 
-      if (placeDetails != null) {
-        // IMPORTANT: Extract the coordinates from the geocoding result (not the original)
-        double lat = placeDetails['latitude'] as double;
-        double lng = placeDetails['longitude'] as double;
+        if (placeDetailsMap != null) {
+          double lat = placeDetailsMap['latitude'] as double? ?? position.latitude;
+          double lng = placeDetailsMap['longitude'] as double? ?? position.longitude;
+          print('📍 GEOCODING RESULT: Found place at $lat, $lng');
+          geocodedLocation = Location(
+            latitude: lat,
+            longitude: lng,
+            address: placeDetailsMap['address'] as String?,
+            displayName: placeDetailsMap['name'] as String?,
+            placeId: placeDetailsMap['placeId'] as String?,
+          );
+        }
+      } catch (e) {
+        print('📍 GEOCODING FALLBACK ERROR: Error during findPlaceDetails: $e');
+      }
 
-        print('📍 GEOCODING RESULT: Found place at $lat, $lng');
-
-        return Location(
-          latitude: lat, // Use geocoded coordinates, not original tap
-          longitude: lng, // Use geocoded coordinates, not original tap
-          address: placeDetails['address'] as String?,
-          displayName: placeDetails['name'] as String?,
-          placeId:
-              placeDetails['placeId'] as String?, // Add the missing placeId
-        );
+      if (geocodedLocation != null) {
+        return geocodedLocation;
       }
 
       // Last resort - return a basic location with the original coordinates
