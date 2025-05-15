@@ -1371,6 +1371,7 @@ class _MapScreenState extends State<MapScreen> {
             // --- ADDED: Tapped Location Details Panel (moved from bottomNavigationBar) ---
             if (_tappedLocationDetails != null && !isKeyboardVisible)
               Container(
+                width: double.infinity, // ADDED: Make container fill screen width
                 padding: EdgeInsets.fromLTRB(
                     16, 16, 16, 16 + MediaQuery.of(context).padding.bottom / 2),
                 decoration: BoxDecoration(
