@@ -18,6 +18,8 @@ class Location extends Equatable {
   final String? displayName; // Business or place display name
   final String? photoUrl; // URL to the place's photo
   final String? website; // Add website field
+  final double? rating; // ADDED: Google Maps rating for the place
+  final int? userRatingCount; // ADDED: Number of ratings
 
   const Location({
     this.placeId,
@@ -31,6 +33,8 @@ class Location extends Equatable {
     this.displayName,
     this.photoUrl,
     this.website, // Add to constructor
+    this.rating, // ADDED
+    this.userRatingCount, // ADDED
   });
 
   @override
@@ -45,7 +49,9 @@ class Location extends Equatable {
         zipCode,
         displayName,
         photoUrl,
-        website
+        website,
+        rating, // ADDED
+        userRatingCount, // ADDED
       ];
 
   factory Location.fromMap(Map<String, dynamic> map) {
@@ -61,6 +67,8 @@ class Location extends Equatable {
       placeId: map['placeId'],
       photoUrl: map['photoUrl'],
       website: map['website'], // Add from map
+      rating: (map['rating'] as num?)?.toDouble(), // ADDED
+      userRatingCount: map['userRatingCount'] as int?, // ADDED
     );
   }
 
@@ -77,6 +85,8 @@ class Location extends Equatable {
       'placeId': placeId,
       'photoUrl': photoUrl,
       'website': website, // Add to map
+      'rating': rating, // ADDED
+      'userRatingCount': userRatingCount, // ADDED
     };
   }
 

@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../widgets/google_maps_widget.dart';
 import '../models/experience.dart';
 import '../services/google_maps_service.dart';
+import 'dart:async';
 
 class LocationPickerScreen extends StatefulWidget {
   final Location? initialLocation;
@@ -31,102 +32,149 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
   List<Map<String, dynamic>> _searchResults = [];
   bool _showSearchResults = false;
   final TextEditingController _searchController = TextEditingController();
+  final FocusNode _searchFocusNode = FocusNode();
   bool _isSearching = false;
   GoogleMapController? _mapController;
   final Map<String, Marker> _mapMarkers = {};
+  Timer? _debounce;
 
   @override
   void initState() {
     super.initState();
     _selectedLocation = widget.initialLocation;
     _updateSelectedLocationMarker();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      FocusScope.of(context).requestFocus(_searchFocusNode);
+    });
   }
 
   @override
   void dispose() {
     _searchController.dispose();
+    _searchFocusNode.dispose();
+    _debounce?.cancel();
     super.dispose();
   }
 
   Future<void> _searchPlaces(String query) async {
-    if (query.isEmpty) {
-      setState(() {
-        _searchResults = [];
-        _showSearchResults = false;
-      });
-      return;
-    }
-
-    setState(() {
-      _isSearching = true;
-    });
-
-    try {
-      final results = await _mapsService.searchPlaces(query);
-
-      // Get current map center for distance calculation
-      LatLng? mapCenter;
-      if (_mapController != null) {
-        try {
-          mapCenter = await _mapController!.getLatLng(ScreenCoordinate(
-              x: MediaQuery.of(context).size.width ~/ 2,
-              y: MediaQuery.of(context).size.height ~/ 2));
-        } catch (e) {
-          print('Error getting map center: $e');
+    if (_debounce?.isActive ?? false) _debounce!.cancel();
+    _debounce = Timer(const Duration(milliseconds: 500), () async {
+      if (query.isEmpty) {
+        if (mounted) {
+          setState(() {
+            _searchResults = [];
+            _showSearchResults = false;
+          });
         }
+        return;
       }
 
-      // Sort results based on text priority first, then by distance
-      results.sort((a, b) {
-        final String nameA = (a['description'] ?? '').toString().toLowerCase();
-        final String nameB = (b['description'] ?? '').toString().toLowerCase();
-        final String searchLower = query.toLowerCase();
+      if (mounted) {
+        setState(() {
+          _isSearching = true;
+        });
+      }
 
-        // Check if name starts with search query
-        final bool aStartsWith = nameA.startsWith(searchLower);
-        final bool bStartsWith = nameB.startsWith(searchLower);
+      try {
+        final results = await _mapsService.searchPlaces(query);
 
-        // First priority: names starting with the search query
-        if (aStartsWith && !bStartsWith) return -1;
-        if (!aStartsWith && bStartsWith) return 1;
+        // Get current map center for distance calculation
+        LatLng? mapCenter;
+        if (_mapController != null) {
+          try {
+            // Ensure context is still valid before accessing MediaQuery
+            if (mounted) {
+              mapCenter = await _mapController!.getLatLng(ScreenCoordinate(
+                  x: MediaQuery.of(context).size.width ~/ 2,
+                  y: MediaQuery.of(context).size.height ~/ 2));
+            }
+          } catch (e) {
+            print('Error getting map center: $e');
+          }
+        }
 
-        // If both names have the same priority based on text, sort by distance
-        if (mapCenter != null) {
+        // Sort results based on text priority first, then by distance
+        results.sort((a, b) {
+          final String nameA = (a['description'] ?? '').toString().toLowerCase();
+          final String nameB = (b['description'] ?? '').toString().toLowerCase();
+          final String queryLower = query.toLowerCase();
+          final String? hintLower = widget.isFromYelpShare && widget.businessNameHint != null
+              ? widget.businessNameHint!.toLowerCase()
+              : null;
+
+          int getScore(String name, String currentQuery, String? currentHint) {
+            int score = 0;
+            // Priority 1: Business Hint Matching (highest)
+            if (currentHint != null && currentHint.isNotEmpty && name.contains(currentHint)) {
+              score += 10000;
+            }
+            // Priority 2: Exact match with query
+            if (name == currentQuery) {
+              score += 5000;
+            }
+            // Priority 3: Starts with query
+            else if (name.startsWith(currentQuery)) {
+              score += 2000;
+            }
+            // Priority 4: Contains query
+            else if (name.contains(currentQuery)) {
+              score += 1000;
+            }
+            // Priority 5: Query contains name (e.g. query="Full Place Name", name="Place")
+            else if (currentQuery.contains(name) && name.length > 3) {
+              score += 500;
+            }
+            return score;
+          }
+
+          int scoreA = getScore(nameA, queryLower, hintLower);
+          int scoreB = getScore(nameB, queryLower, hintLower);
+
+          if (scoreA != scoreB) {
+            return scoreB.compareTo(scoreA); // Higher score comes first
+          }
+
+          // Tie-breaking 1: Longer name (more specific) preferred if scores are equal
+          if (nameA.length != nameB.length) {
+            return nameB.length.compareTo(nameA.length); // Longer name first
+          }
+
+          // Tie-breaking 2: Distance (only if coordinates are available in results)
           final double? latA = a['latitude'];
           final double? lngA = a['longitude'];
           final double? latB = b['latitude'];
           final double? lngB = b['longitude'];
 
-          if (latA != null && lngA != null && latB != null && lngB != null) {
-            // Calculate distances
+          if (mapCenter != null && latA != null && lngA != null && latB != null && lngB != null) {
             final distanceA = _calculateDistance(
                 mapCenter.latitude, mapCenter.longitude, latA, lngA);
             final distanceB = _calculateDistance(
                 mapCenter.latitude, mapCenter.longitude, latB, lngB);
-
-            return distanceA.compareTo(distanceB);
+            return distanceA.compareTo(distanceB); // Closer distance first
           }
+
+          // Final tie-breaker: alphabetical (maintains some stable order)
+          return nameA.compareTo(nameB);
+        });
+        if (mounted) {
+          setState(() {
+            _searchResults = results;
+            _showSearchResults = results.isNotEmpty;
+            _isSearching = false;
+          });
         }
-
-        // If no location data or they're the same priority, keep original order
-        return 0;
-      });
-
-      setState(() {
-        _searchResults = results;
-        _showSearchResults = results.isNotEmpty;
-        _isSearching = false;
-      });
-    } catch (e) {
-      print('Error searching places: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error searching places: $e')),
-      );
-
-      setState(() {
-        _isSearching = false;
-      });
-    }
+      } catch (e) {
+        print('Error searching places: $e');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Error searching places: $e')),
+          );
+          setState(() {
+            _isSearching = false;
+          });
+        }
+      }
+    });
   }
 
   // Helper method to calculate distance between coordinates
@@ -336,6 +384,7 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
                   padding: const EdgeInsets.symmetric(horizontal: 8.0),
                   child: TextField(
                     controller: _searchController,
+                    focusNode: _searchFocusNode,
                     decoration: InputDecoration(
                       hintText: 'Search for a place',
                       border: InputBorder.none,
@@ -543,60 +592,42 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
                         SizedBox(height: 8),
 
                         // Full address
-                        if (_selectedLocation!.address != null) ...[
+                        if (_selectedLocation!.address != null && _selectedLocation!.address!.isNotEmpty) ...[
                           Text(
                             _selectedLocation!.address!,
                             style: TextStyle(color: Colors.grey[700]),
                           ),
                           SizedBox(height: 8),
                         ],
-
-                        // Area details if available
-                        Row(children: [
-                          if (_selectedLocation!.city != null) ...[
-                            Icon(Icons.location_city,
-                                size: 16, color: Colors.grey[600]),
-                            SizedBox(width: 4),
-                            Text(
-                              _selectedLocation!.city!,
-                              style: TextStyle(color: Colors.grey[700]),
-                            ),
-                            SizedBox(width: 16),
-                          ],
-                          if (_selectedLocation!.state != null) ...[
-                            Text(
-                              _selectedLocation!.state!,
-                              style: TextStyle(color: Colors.grey[700]),
-                            ),
-                            SizedBox(width: 8),
-                          ],
-                          if (_selectedLocation!.country != null) ...[
-                            Text(
-                              _selectedLocation!.country!,
-                              style: TextStyle(color: Colors.grey[700]),
-                            ),
-                          ],
-                        ]),
-                        SizedBox(height: 12),
-
-                        // Coordinates
-                        Row(
-                          children: [
-                            Icon(Icons.gps_fixed,
-                                size: 16, color: Colors.grey[600]),
-                            SizedBox(width: 4),
-                            Expanded(
-                              child: Text(
-                                '${_selectedLocation!.latitude.toStringAsFixed(6)}, ${_selectedLocation!.longitude.toStringAsFixed(6)}',
-                                style: TextStyle(
-                                  color: Colors.grey[600],
-                                  fontFamily: 'monospace',
-                                  fontSize: 12,
+                        // Star Rating
+                        if (_selectedLocation!.rating != null) ...[
+                          Row(
+                            children: [
+                              ...List.generate(5, (i) {
+                                final ratingValue = _selectedLocation!.rating!;
+                                return Icon(
+                                  i < ratingValue.floor()
+                                      ? Icons.star
+                                      : (i < ratingValue)
+                                          ? Icons.star_half
+                                          : Icons.star_border,
+                                  size: 18, // Adjusted size for this context
+                                  color: Colors.amber,
+                                );
+                              }),
+                              SizedBox(width: 8),
+                              if (_selectedLocation!.userRatingCount != null && _selectedLocation!.userRatingCount! > 0)
+                                Text(
+                                  '(${_selectedLocation!.userRatingCount})',
+                                  style: TextStyle(
+                                    color: Colors.grey[600],
+                                    fontSize: 13,
+                                  ),
                                 ),
-                              ),
-                            ),
-                          ],
-                        ),
+                            ],
+                          ),
+                          SizedBox(height: 8),
+                        ],
                       ],
                     ),
 
