@@ -201,6 +201,7 @@ class _AddCategoryModalState extends State<AddCategoryModal> {
                     : 'Name your new category',
                 border: OutlineInputBorder(),
               ),
+              textCapitalization: TextCapitalization.sentences,
               validator: (value) {
                 if (value == null || value.trim().isEmpty) {
                   return 'Please enter a category name';

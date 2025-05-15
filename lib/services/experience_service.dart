@@ -581,7 +581,7 @@ class ExperienceService {
         final snapshot = await _sharedMediaItemsCollection
             .where(FieldPath.documentId, whereIn: chunk)
             .get();
-
+        
         results.addAll(snapshot.docs
             .map((doc) => SharedMediaItem.fromFirestore(doc))
             .toList());
@@ -591,8 +591,6 @@ class ExperienceService {
         // For now, we continue and return potentially incomplete results.
       }
     }
-    print(
-        "getSharedMediaItems: Fetched total of ${results.length} items for ${uniqueIds.length} unique IDs.");
     return results;
   }
 
@@ -816,11 +814,11 @@ class ExperienceService {
   /// Get experiences created by a specific user
   Future<List<Experience>> getExperiencesByUser(String userId,
       {int limit = 50}) async {
-    final snapshot = await _experiencesCollection
+    final query = _experiencesCollection
         .where('createdBy', isEqualTo: userId)
-        .orderBy('createdAt', descending: true)
-        .limit(limit)
-        .get();
+        .orderBy('createdAt', descending: true);
+
+    final snapshot = await query.get();
 
     return snapshot.docs.map((doc) => Experience.fromFirestore(doc)).toList();
   }

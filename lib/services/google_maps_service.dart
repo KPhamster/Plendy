@@ -102,13 +102,12 @@ class GoogleMapsService {
 
       // First try the newer Places API for better results
       try {
-        print("🔎 PLACES SEARCH: Trying method 1 - Places Autocomplete API V1");
+        print("🔎 PLACES SEARCH: Trying method 1 - Places Autocomplete API V1 (Corrected Endpoint)");
 
-        // Prepare request body with structured search
+        // Prepare request body for Autocomplete
         Map<String, dynamic> requestBody = {
           "input": query,
-          "inputType": "textQuery",
-          // Removed "fields" as they are set via FieldMask header now
+          // "inputType": "textQuery", // Not used by Autocomplete (New) API
         };
 
         // Add location bias if provided
@@ -116,13 +115,11 @@ class GoogleMapsService {
           requestBody["locationBias"] = {
             "circle": {
               "center": {"latitude": latitude, "longitude": longitude},
-              // Use provided radius or default to 50km
-              "radius": radius ?? 50000.0
+              "radius": radius ?? 50000.0 
             }
           };
         } else {
           // Default bias if no specific location given (e.g., Southern California)
-          // Consider removing this if we always want unbiased search unless explicitly biased
           requestBody["locationBias"] = {
             "circle": {
               "center": {"latitude": 33.6846, "longitude": -117.8265},
@@ -130,95 +127,80 @@ class GoogleMapsService {
             }
           };
         }
+        
+        // Optionally, you can include the session token if you are managing sessions
+        // requestBody["sessionToken"] = "YOUR_SESSION_TOKEN"; // Example
 
-        print("🔎 PLACES SEARCH: Request body: ${jsonEncode(requestBody)}");
+        print("🔎 PLACES SEARCH: Autocomplete Request body: ${jsonEncode(requestBody)}");
 
-        // Call Google Places Autocomplete API
+        // Call Google Places Autocomplete API (New)
         final response = await _dio.post(
-          'https://places.googleapis.com/v1/places:searchText',
+          'https://places.googleapis.com/v1/places:autocomplete', // CORRECTED ENDPOINT
           data: requestBody,
           options: Options(
             headers: {
               'Content-Type': 'application/json',
               'X-Goog-Api-Key': apiKey,
-              'X-Goog-FieldMask': // Request specific fields
-                  'places.id,places.displayName,places.formattedAddress,places.location,places.types,places.primaryType,places.primaryTypeDisplayName,places.nationalPhoneNumber,places.websiteUri,places.rating,places.userRatingCount,places.regularOpeningHours,places.priceLevel'
+              // FieldMask for Autocomplete (New) - adjust based on what you need from suggestions
+              // This requests common fields from the PlacePrediction part of the suggestion.
+              'X-Goog-FieldMask': 'suggestions.placePrediction.placeId,suggestions.placePrediction.text,suggestions.placePrediction.structuredFormat,suggestions.placePrediction.types'
             },
           ),
         );
 
         if (response.statusCode == 200) {
-          print("🔎 PLACES SEARCH: API returned status code 200");
+          print("🔎 PLACES SEARCH (Autocomplete): API returned status code 200");
           final data = response.data;
-          print(
-              "🔎 PLACES SEARCH: Response data: ${jsonEncode(data).substring(0, min(200, jsonEncode(data).length))}...");
+          // print("🔎 PLACES SEARCH (Autocomplete): Response data: ${jsonEncode(data).substring(0, min(200, jsonEncode(data).length))}...");
 
           List<Map<String, dynamic>> results = [];
 
-          if (data['places'] != null) {
-            final places = data['places'] as List;
-            print("🔎 PLACES SEARCH: Found ${places.length} places");
+          if (data['suggestions'] != null) {
+            final suggestions = data['suggestions'] as List;
+            print("🔎 PLACES SEARCH (Autocomplete): Found ${suggestions.length} suggestions");
 
-            for (var place in places) {
-              // Extract place details with address verification
-              String? placeName = place['displayName']?['text'];
-              String? address = place['formattedAddress'];
-              String? phone = place['nationalPhoneNumber'];
-              String? website = place['websiteUri'];
-              double? rating = place['rating']?.toDouble();
-              int? userRatingCount = place['userRatingCount'];
-              String? primaryType = place['primaryType'];
-              String? primaryTypeDisplayName = place['primaryTypeDisplayName'];
-              List<String>? types = (place['types'] as List?)?.cast<String>();
-              Map<String, dynamic>? openingHours = place['regularOpeningHours'];
-              int? priceLevel = place['priceLevel'];
+            for (var suggestion in suggestions) {
+              final placePrediction = suggestion['placePrediction'];
+              if (placePrediction != null) {
+                String? placeId = placePrediction['placeId'];
+                String? description = placePrediction['text']?['text']; // Main text of the suggestion
+                String? mainText = placePrediction['structuredFormat']?['mainText']?['text'];
+                String? secondaryText = placePrediction['structuredFormat']?['secondaryText']?['text'];
+                List<String>? types = (placePrediction['types'] as List?)?.map((item) => item as String).toList();
 
-              // Get location coordinates
-              Map<String, dynamic>? location = place['location'];
-              double? lat = location?['latitude'];
-              double? lng = location?['longitude'];
 
-              // Only add places that have both name and address
-              if (placeName != null &&
-                  address != null &&
-                  lat != null &&
-                  lng != null) {
-                results.add({
-                  'placeId': place['id'] ?? '',
-                  'description': placeName,
-                  'address': address,
-                  'phone': phone,
-                  'website': website,
-                  'rating': rating,
-                  'userRatingCount': userRatingCount,
-                  'primaryType': primaryType,
-                  'primaryTypeDisplayName': primaryTypeDisplayName,
-                  'types': types,
-                  'openingHours': openingHours,
-                  'priceLevel': priceLevel,
-                  'latitude': lat,
-                  'longitude': lng,
-                  'place': place
-                });
+                // For Autocomplete, the 'description' is often a good combined field.
+                // 'address' might not be directly available here; usually, you get Place Details later using placeId.
+                // We can construct a meaningful description from main and secondary text if needed.
+                String displayDescription = description ?? (mainText != null ? (secondaryText != null ? "$mainText, $secondaryText" : mainText) : "Unknown suggestion");
+
+                if (placeId != null && displayDescription.isNotEmpty) {
+                  results.add({
+                    'placeId': placeId,
+                    'description': displayDescription, // This is the primary text from suggestion
+                    'address': secondaryText, // Secondary text often contains address-like info
+                    'types': types, 
+                    // For Autocomplete, lat/lng are not directly in suggestions.
+                    // They are fetched later with getPlaceDetails if the user selects this suggestion.
+                    // We need to ensure our LocationPickerScreen's _selectSearchResult handles this.
+                  });
+                }
               }
             }
           }
 
           if (results.isNotEmpty) {
-            print(
-                "🔎 PLACES SEARCH: Found ${results.length} verified results using Places API");
+            print("🔎 PLACES SEARCH (Autocomplete): Found ${results.length} processed suggestions");
+            // Log first few results for verification
             for (int i = 0; i < min(3, results.length); i++) {
-              print(
-                  "🔎 PLACES SEARCH: Result ${i + 1}: '${results[i]['description']}' at '${results[i]['address']}'");
+              print("🔎 PLACES SEARCH (Autocomplete): Suggestion ${i + 1}: '${results[i]['description']}' (ID: ${results[i]['placeId']})");
             }
-            return results;
+            return results; // Return suggestions
           } else {
-            print(
-                "🔎 PLACES SEARCH: No verified results from Places API despite 200 status");
+            print("🔎 PLACES SEARCH (Autocomplete): No suggestions from Autocomplete API despite 200 status, or suggestions could not be processed.");
           }
         } else {
-          print(
-              "🔎 PLACES SEARCH: API returned non-200 status code: ${response.statusCode}");
+          print("🔎 PLACES SEARCH (Autocomplete): API returned non-200 status code: ${response.statusCode}, Data: ${response.data}");
         }
       } catch (e) {
         print("🔎 PLACES SEARCH: Error with Places API: $e");
@@ -386,9 +368,9 @@ class GoogleMapsService {
         return defaultLocation;
       }
 
-      // Include 'website' in the fields parameter
+      // Include 'website', 'rating', 'user_ratings_total' in the fields parameter
       final url =
-          'https://maps.googleapis.com/maps/api/place/details/json?place_id=$placeId&fields=name,geometry,address_components,formatted_address,vicinity,website,photos&key=$apiKey';
+          'https://maps.googleapis.com/maps/api/place/details/json?place_id=$placeId&fields=name,geometry,address_components,formatted_address,vicinity,website,photos,rating,user_ratings_total&key=$apiKey';
 
       final response = await _dio.get(url);
 
@@ -446,6 +428,10 @@ class GoogleMapsService {
               print('Found website URL for place: $websiteUrl');
             }
 
+            // Get rating and userRatingCount
+            final double? rating = (result['rating'] as num?)?.toDouble();
+            final int? userRatingCount = result['user_ratings_total'] as int?;
+
             // Get the first photo reference if available
             String? photoReference;
             if (result['photos'] != null &&
@@ -475,6 +461,8 @@ class GoogleMapsService {
               placeId: placeId, // Save the place ID
               photoUrl: photoUrl, // Save the photo URL
               website: websiteUrl, // Save the website URL directly
+              rating: rating, // ADDED
+              userRatingCount: userRatingCount, // ADDED
             );
 
             // 2. Store successful result in cache before returning
