@@ -122,7 +122,7 @@ class _GoogleMapsWidgetState extends State<GoogleMapsWidget> {
       print(
           "📍 GOOGLE MAPS WIDGET: Received ${widget.additionalMarkers!.length} additional markers:");
       widget.additionalMarkers!.forEach((id, marker) {
-        print("  - Adding marker ID: $id at ${marker.position}");
+        //print("  - Adding marker ID: $id at ${marker.position}");
         _markers[MarkerId(id)] = marker;
       });
     } else {

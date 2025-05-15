@@ -65,9 +65,9 @@ class ExperienceService {
         snapshot.docs.map((doc) => UserCategory.fromFirestore(doc)).toList();
     print(
         "getUserCategories - Fetched ${fetchedCategories.length} from Firestore:"); // Log Fetched Raw
-    for (var c in fetchedCategories) {
-      print("  - ${c.name} (ID: ${c.id})");
-    }
+    // for (var c in fetchedCategories) {
+    //   print("  - ${c.name} (ID: ${c.id})");
+    // }
 
     // De-duplicate the fetched list based on name
     final uniqueCategoriesByName = <String, UserCategory>{};
@@ -93,9 +93,9 @@ class ExperienceService {
 
     print(
         "getUserCategories END - Returning ${finalCategories.length} unique categories (sorted by index/name):");
-    for (var c in finalCategories) {
-      print("  - ${c.name} (ID: ${c.id}, Index: ${c.orderIndex})");
-    }
+    // for (var c in finalCategories) {
+    //   print("  - ${c.name} (ID: ${c.id}, Index: ${c.orderIndex})");
+    // }
     return finalCategories;
   }
 
@@ -1249,9 +1249,9 @@ class ExperienceService {
         snapshot.docs.map((doc) => ColorCategory.fromFirestore(doc)).toList();
     print(
         "getUserColorCategories - Fetched ${fetchedCategories.length} from Firestore:");
-    for (var c in fetchedCategories) {
-      print("  - ${c.name} (ID: ${c.id}, Color: ${c.colorHex})");
-    }
+    // for (var c in fetchedCategories) {
+    //   print("  - ${c.name} (ID: ${c.id}, Color: ${c.colorHex})");
+    // }
 
     // De-duplicate based on name (case-insensitive)
     final uniqueCategoriesByName = <String, ColorCategory>{};
@@ -1274,10 +1274,10 @@ class ExperienceService {
 
     print(
         "getUserColorCategories END - Returning ${finalCategories.length} unique categories (sorted by index/name):");
-    for (var c in finalCategories) {
-      print(
-        "  - ${c.name} (ID: ${c.id}, Index: ${c.orderIndex}, Color: ${c.colorHex})");
-    }
+    // for (var c in finalCategories) {
+    //   print(
+    //     "  - ${c.name} (ID: ${c.id}, Index: ${c.orderIndex}, Color: ${c.colorHex})");
+    // }
     return finalCategories;
   }
 
