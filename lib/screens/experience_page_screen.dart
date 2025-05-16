@@ -41,6 +41,7 @@ import '../models/color_category.dart';
 // --- ADDED --- Import collection package
 import 'package:collection/collection.dart';
 // --- END ADDED ---
+import 'map_screen.dart'; // ADDED: Import for MapScreen
 
 // Convert to StatefulWidget
 class ExperiencePageScreen extends StatefulWidget {
@@ -1042,7 +1043,38 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                 ),
                 const SizedBox(width: 4), // Spacing
 
-                // --- ADDED Share Button ---
+                // --- MODIFIED View Location Button ---
+                ActionChip(
+                  avatar: Icon(
+                    Icons.location_pin, // New icon
+                    color: Theme.of(context)
+                        .primaryColor, // Consistent with map icon
+                    size: 18,
+                  ),
+                  label: const SizedBox.shrink(),
+                  labelPadding: EdgeInsets.zero,
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => MapScreen(
+                            initialExperienceLocation:
+                                _currentExperience.location),
+                      ),
+                    );
+                  },
+                  tooltip:
+                      'View Location on App Map', // Updated tooltip
+                  backgroundColor: Colors.white,
+                  shape: StadiumBorder(
+                      side: BorderSide(color: Colors.grey.shade300)),
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  padding: const EdgeInsets.all(4),
+                ),
+                // --- END MODIFIED View Location Button ---
+                const SizedBox(width: 4), // Spacing
+
+                // Share Button
                 ActionChip(
                   avatar: Icon(
                     Icons.share_outlined,
@@ -1069,7 +1101,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                 ),
                 const SizedBox(width: 4), // Spacing
 
-                // --- ADDED Edit Button ---
+                // Edit Button
                 ActionChip(
                   avatar: Icon(
                     Icons.edit_outlined,
@@ -1090,7 +1122,6 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                   materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                   padding: const EdgeInsets.all(4),
                 ),
-                // --- END Added Buttons ---
               ],
             ),
           ),
