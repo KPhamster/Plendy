@@ -32,7 +32,9 @@ Color _parseColor(String hexColor) {
 }
 
 class MapScreen extends StatefulWidget {
-  const MapScreen({super.key});
+  final Location? initialExperienceLocation; // ADDED: To receive a specific location
+
+  const MapScreen({super.key, this.initialExperienceLocation}); // UPDATED: Constructor
 
   @override
   State<MapScreen> createState() => _MapScreenState();
@@ -75,10 +77,37 @@ class _MapScreenState extends State<MapScreen> {
   @override
   void initState() {
     super.initState();
-    // Set a default initial location for the map widget
-    _mapWidgetInitialLocation = Location(latitude: 37.4219999, longitude: -122.0840575, displayName: "Default Location"); // Googleplex
-    _loadDataAndGenerateMarkers();
-    _focusOnUserLocation(); // This will update _mapWidgetInitialLocation and animate
+
+    if (widget.initialExperienceLocation != null) {
+      // If a specific location is passed, use it for the map's initial center
+      _mapWidgetInitialLocation = widget.initialExperienceLocation;
+      print(
+          "🗺️ MAP SCREEN: Initializing with provided experience location: ${widget.initialExperienceLocation!.getPlaceName()}");
+      // Animate to this location once the map controller is ready
+      _mapControllerCompleter.future.then((controller) {
+        if (mounted) {
+          if (!_mapControllerCompleter.isCompleted) {
+             _mapControllerCompleter.complete(controller);
+          }
+          _mapController = controller;
+          final target = LatLng(widget.initialExperienceLocation!.latitude,
+              widget.initialExperienceLocation!.longitude);
+          print(
+              "🗺️ MAP SCREEN: Animating to provided initial experience location: $target");
+          _mapController!
+              .animateCamera(CameraUpdate.newLatLngZoom(target, 15.0));
+        }
+      });
+    } else {
+      // Default behavior: set a generic initial location and then focus on user's current GPS location
+      _mapWidgetInitialLocation = Location(
+          latitude: 37.4219999,
+          longitude: -122.0840575,
+          displayName: "Default Location"); // Googleplex
+      _focusOnUserLocation();
+    }
+
+    _loadDataAndGenerateMarkers(); // Load all experiences and their markers
     _searchController.addListener(_onSearchChanged);
   }
 
