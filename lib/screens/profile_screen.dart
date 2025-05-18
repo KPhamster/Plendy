@@ -3,6 +3,7 @@ import '../services/auth_service.dart';
 import '../services/user_service.dart';
 import 'edit_profile_screen.dart';
 import 'package:provider/provider.dart';
+import 'my_people_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -108,6 +109,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   Text(
                     'Name: ${user?.displayName ?? 'No name set'}',
                     style: const TextStyle(fontSize: 18),
+                  ),
+                  const SizedBox(height: 16),
+                  ListTile(
+                    leading: const Icon(Icons.person_add),
+                    title: const Text('My People'),
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (context) => const MyPeopleScreen()),
+                      );
+                    },
                   ),
                 ],
               ),

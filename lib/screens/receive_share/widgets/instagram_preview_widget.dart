@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 // For Platform checks
 import 'dart:async'; // For cancellation
+import 'package:flutter/foundation.dart' show kIsWeb; // Import kIsWeb
+import 'package:url_launcher/url_launcher.dart'; // For launching URLs
+import 'package:font_awesome_flutter/font_awesome_flutter.dart'; // For Instagram Icon
 
 // Renamed class to reflect its focus
 class InstagramWebView extends StatefulWidget {
@@ -39,7 +42,9 @@ class _InstagramWebViewState extends State<InstagramWebView> {
   @override
   void initState() {
     super.initState();
-    _initWebViewController();
+    if (!kIsWeb) {
+      _initWebViewController();
+    }
   }
   
   @override
@@ -50,7 +55,7 @@ class _InstagramWebViewState extends State<InstagramWebView> {
 
   // Method to simulate a tap (might still be useful for auto-play)
   void _simulateEmbedTap() {
-    if (!mounted || _isDisposed) return; // Safety check
+    if (!mounted || _isDisposed || kIsWeb) return; // Safety check and web check
     
     controller.runJavaScript('''
       (function() {
@@ -127,6 +132,8 @@ class _InstagramWebViewState extends State<InstagramWebView> {
   }
 
   void _initWebViewController() {
+    if (kIsWeb) return; // Do not initialize for web
+
     controller = WebViewController();
     
     if (!mounted || _isDisposed) return; // Safety check
@@ -347,12 +354,60 @@ class _InstagramWebViewState extends State<InstagramWebView> {
     ''';
   }
 
+  Future<void> _launchInstagramUrl() async {
+    final Uri uri = Uri.parse(widget.url);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } else {
+      // Handle error or show a message
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open Instagram link: ${widget.url}')),
+        );
+      }
+      print('Could not launch ${widget.url}');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     // Use the height passed by the parent
     final double containerHeight = widget.height;
 
-    // Removed the Column and Buttons Row
+    if (kIsWeb) {
+      return GestureDetector(
+        onTap: _launchInstagramUrl,
+        child: Container(
+          height: containerHeight,
+          width: double.infinity,
+          decoration: BoxDecoration(
+            border: Border.all(color: Colors.grey[300]!),
+            borderRadius: BorderRadius.circular(8),
+            color: Colors.grey[100],
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(FontAwesomeIcons.instagram, size: 40, color: Colors.grey[700]),
+              SizedBox(height: 8),
+              Text(
+                'View on Instagram',
+                style: TextStyle(color: Colors.blue, decoration: TextDecoration.underline),
+              ),
+              SizedBox(height: 4),
+              Text(
+                widget.url,
+                style: TextStyle(color: Colors.grey[600], fontSize: 12),
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // Mobile specific WebView implementation
     return Stack(
       alignment: Alignment.center,
       children: [
