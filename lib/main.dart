@@ -12,6 +12,8 @@ import 'package:provider/provider.dart';
 import 'providers/receive_share_provider.dart';
 import 'dart:async'; // Import dart:async for StreamSubscription
 import 'services/google_maps_service.dart'; // ADDED: Import GoogleMapsService
+import 'firebase_options.dart'; // Import Firebase options
+import 'package:flutter/foundation.dart' show kIsWeb; // Import kIsWeb
 
 // Define a GlobalKey for the Navigator
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
@@ -22,7 +24,9 @@ void main() async {
   // Load environment variables
   await dotenv.load(fileName: ".env");
 
-  await Firebase.initializeApp();
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
 
   // --- ADDED: Preload user location silently --- START ---
   try {
@@ -38,7 +42,10 @@ void main() async {
   // --- ADDED: Preload user location silently --- END ---
 
   // Initialize sharing service
-  SharingService().init();
+  // Conditionally initialize SharingService if not on web
+  if (!kIsWeb) {
+    SharingService().init();
+  }
   runApp(
     Provider<AuthService>(
       create: (_) => AuthService(),
@@ -65,67 +72,77 @@ class _MyAppState extends State<MyApp> {
 
     print("MAIN: App initializing");
 
-    // Check for initial shared files when app was closed
-    ReceiveSharingIntent.instance
-        .getInitialMedia()
-        .then((List<SharedMediaFile>? value) {
-      print("MAIN: Initial media check complete");
+    if (!kIsWeb) {
+      // Check for initial shared files when app was closed
+      ReceiveSharingIntent.instance
+          .getInitialMedia()
+          .then((List<SharedMediaFile>? value) {
+        print("MAIN: Initial media check complete");
 
-      if (value != null && value.isNotEmpty) {
-        print("MAIN: Found initial shared files: ${value.length}");
-        setState(() {
-          _sharedFiles = value;
-        });
+        if (value != null && value.isNotEmpty) {
+          print("MAIN: Found initial shared files: ${value.length}");
+          if (mounted) {
+            setState(() {
+              _sharedFiles = value;
+            });
+          }
+          print("MAIN: Stored initial share data for display");
+        } else {
+          print("MAIN: No initial shared files found");
+        }
+      }).catchError((err) {
+        print("MAIN: Error getting initial media (expected on web): $err");
+      });
 
-        // Don't reset on first load to ensure we keep the data
-        // ReceiveSharingIntent.instance.reset();
-        print("MAIN: Stored initial share data for display");
-      } else {
-        print("MAIN: No initial shared files found");
-      }
-    });
+      // Listen for incoming shares while the app is running
+      _intentSub = ReceiveSharingIntent.instance.getMediaStream().listen(
+          (List<SharedMediaFile> value) {
+        if (mounted) {
+          setState(() {
+            _sharedFiles = value;
+          });
+        }
+        // Optionally, navigate immediately if context is available
+        // This might need refinement depending on app structure
+        if (navigatorKey.currentContext != null && value.isNotEmpty) {
+          _sharingService.showReceiveShareScreen(
+              navigatorKey.currentContext!, value);
+        }
+      }, onError: (err) {
+        print("getIntentDataStream error (expected on web): $err");
+      });
+    }
 
     // Listen for app going to foreground to reinitialize sharing capabilities
     WidgetsBinding.instance.addObserver(AppLifecycleObserver(
       onResumed: () {
         // Recreate listeners when app comes to foreground
         print("MAIN: App resumed - recreating sharing service listeners");
-        _sharingService.recreateListeners();
+        if (!kIsWeb) {
+          _sharingService.recreateListeners();
+        }
       },
       onPaused: () {
         print("MAIN: App paused");
       },
     ));
-
-    // Listen for incoming shares while the app is running
-    _intentSub = ReceiveSharingIntent.instance.getMediaStream().listen(
-        (List<SharedMediaFile> value) {
-      setState(() {
-        _sharedFiles = value;
-      });
-      // Optionally, navigate immediately if context is available
-      // This might need refinement depending on app structure
-      if (navigatorKey.currentContext != null && value.isNotEmpty) {
-        _sharingService.showReceiveShareScreen(
-            navigatorKey.currentContext!, value);
-      }
-    }, onError: (err) {
-      print("getIntentDataStream error: $err");
-    });
   }
 
   @override
   void dispose() {
     // Clean up observers
     WidgetsBinding.instance.removeObserver(AppLifecycleObserver());
-    _intentSub?.cancel(); // Cancel the stream subscription
+    if (!kIsWeb) {
+      _intentSub?.cancel(); // Cancel the stream subscription
+    }
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     // Check if launched from share AND there are files
-    bool launchedFromShare = _sharedFiles != null && _sharedFiles!.isNotEmpty;
+    // Only consider launchedFromShare if not on web and files are present
+    bool launchedFromShare = !kIsWeb && _sharedFiles != null && _sharedFiles!.isNotEmpty;
 
     // --- ADDED: Get AuthService from Provider ---
     final authService = Provider.of<AuthService>(context, listen: false);
@@ -146,11 +163,15 @@ class _MyAppState extends State<MyApp> {
                     // Logic to navigate back or close app
                     // Maybe SystemNavigator.pop() or navigate to MainScreen
                     print("MyApp: Closing share screen launched initially");
-                    setState(() {
-                      // Use setState to trigger rebuild
-                      _sharedFiles = null; // Clear shared files
-                    });
-                    ReceiveSharingIntent.instance.reset(); // Reset intent
+                    if (mounted) {
+                      setState(() {
+                        // Use setState to trigger rebuild
+                        _sharedFiles = null; // Clear shared files
+                      });
+                    }
+                    if (!kIsWeb) {
+                      ReceiveSharingIntent.instance.reset(); // Reset intent
+                    }
                     // No explicit navigation needed here, the StreamBuilder below will handle it
                   }),
             )
@@ -177,7 +198,9 @@ class _MyAppState extends State<MyApp> {
                       setState(() {
                         _sharedFiles = null;
                       });
-                      ReceiveSharingIntent.instance.reset();
+                      if (!kIsWeb) {
+                        ReceiveSharingIntent.instance.reset();
+                      }
                       print("MyApp: Cleared share data due to logout.");
                     }
                   });
