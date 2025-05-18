@@ -7,8 +7,8 @@ import 'package:url_launcher/url_launcher.dart'; // For launching URLs
 import 'package:font_awesome_flutter/font_awesome_flutter.dart'; // For Instagram Icon
 
 // Conditional imports for web-specific embedding
-import 'dart:ui_web' as ui_web;
-import 'dart:html' as html;
+import 'instagram_web_logic_stub.dart' 
+    if (dart.library.html) 'instagram_web_logic.dart' as instagram_web;
 
 // Renamed class to reflect its focus
 class InstagramWebView extends StatefulWidget {
@@ -55,15 +55,10 @@ class _InstagramWebViewState extends State<InstagramWebView> {
       // Using DateTime ensures uniqueness even if hashCode collides (unlikely for URLs here)
       _webEmbedViewType = 'instagram-embed-view-${widget.url.hashCode}-${DateTime.now().microsecondsSinceEpoch}';
 
-      // Register the view factory for HtmlElementView if on web.
-      // This factory creates an iframe and loads the Instagram embed HTML into it.
-      ui_web.platformViewRegistry.registerViewFactory(
+      // MODIFIED: Call the conditionally imported function
+      instagram_web.registerInstagramViewFactory(
         _webEmbedViewType!,
-        (int viewId) => html.IFrameElement()
-          ..srcdoc = _generateInstagramEmbedHtml(widget.url) // HTML includes embed.js script call
-          ..style.width = '100%'
-          ..style.height = '100%'
-          ..style.border = 'none',
+        _generateInstagramEmbedHtml(widget.url), // HTML includes embed.js script call
       );
     } else {
       _initWebViewController(); // Mobile: Initialize WebView controller
@@ -422,11 +417,8 @@ class _InstagramWebViewState extends State<InstagramWebView> {
           child: Center(child: Text("Error initializing web embed view type.")),
         );
       }
-      // Use AspectRatio for web to maintain Instagram Reel's typical 9:16 aspect ratio.
-      return AspectRatio(
-        aspectRatio: 9 / 16,
-        child: HtmlElementView(viewType: _webEmbedViewType!),
-      );
+      // MODIFIED: Call the conditionally imported function
+      return instagram_web.buildInstagramWebViewForWeb(_webEmbedViewType!);
     }
 
     // Mobile specific WebViewWidget implementation

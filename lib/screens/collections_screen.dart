@@ -451,7 +451,9 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       return const Center(child: Text('No categories found.'));
     }
 
-    if (kIsWeb) {
+    final bool isDesktopWeb = kIsWeb && MediaQuery.of(context).size.width > 600;
+
+    if (isDesktopWeb) {
       // Web: Use GridView.builder
       return GridView.builder(
         padding: const EdgeInsets.all(12.0),
@@ -1474,7 +1476,9 @@ class _CollectionsScreenState extends State<CollectionsScreen>
               : 'No experiences found. Add some!'));
     }
 
-    if (kIsWeb) {
+    final bool isDesktopWeb = kIsWeb && MediaQuery.of(context).size.width > 600;
+
+    if (isDesktopWeb) {
       // Web: Use GridView.builder
       return GridView.builder(
         padding: const EdgeInsets.all(12.0),
@@ -1574,7 +1578,9 @@ class _CollectionsScreenState extends State<CollectionsScreen>
               : 'No shared content found across experiences.'));
     }
 
-    if (kIsWeb) {
+    final bool isDesktopWeb = kIsWeb && MediaQuery.of(context).size.width > 600;
+
+    if (isDesktopWeb) {
       // Web: Use GridView.builder
       return GridView.builder(
         padding: const EdgeInsets.all(10.0),
@@ -1583,14 +1589,14 @@ class _CollectionsScreenState extends State<CollectionsScreen>
           crossAxisCount: 3,
           mainAxisSpacing: 10.0,
           crossAxisSpacing: 10.0,
-          childAspectRatio: 0.6, // Keep aspect ratio for taller content like Instagram embeds
+          childAspectRatio: 0.6, 
         ),
         itemBuilder: (context, index) {
           return _buildContentGridItem(_filteredGroupedContentItems[index], index);
         },
       );
     } else {
-      // Mobile: Use existing ListView.builder (original complex list item)
+      // Mobile or Mobile Web: Use existing ListView.builder (original complex list item)
       return ListView.builder(
         padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 16.0),
         itemCount: _filteredGroupedContentItems.length,
@@ -1609,24 +1615,14 @@ class _CollectionsScreenState extends State<CollectionsScreen>
           if (isInstagramUrl) {
             mediaWidget = instagram_widget.InstagramWebView(
               url: mediaPath,
-              height: isExpanded ? 1200 : 840, // Original height logic for list view
+              height: isExpanded ? 1200 : 840, 
               launchUrlCallback: _launchUrl,
               onWebViewCreated: (_) {},
               onPageFinished: (_) {},
             );
-            // For the web list view, the parent ConstrainedBox handles width limit.
-            // No specific ConstrainedBox needed here inside the ListView item for web,
-            // as it was previously handled by a wrapper around the whole mediaWidget in collections_screen
-            // IF mediaWidget was directly in the list. This structure might need review if that wrapper is gone.
-            // For now, this is the original list item structure.
-             if (kIsWeb) { // This check was in previous iteration, let's keep it consistent
-               mediaWidget = Center(
-                 child: ConstrainedBox(
-                   constraints: const BoxConstraints(maxWidth: 360), 
-                   child: mediaWidget,
-                 ),
-               );
-            }
+            // REMOVED: if (kIsWeb) { Center(ConstrainedBox(...)) } wrapper.
+            // Now mobile web list view for Instagram will not have the 360px width constraint,
+            // matching native mobile behavior.
           } else if (isNetworkUrl) {
             mediaWidget = Image.network(
               mediaPath,
@@ -2118,7 +2114,9 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       return const Center(child: Text('No color categories found.'));
     }
 
-    if (kIsWeb) {
+    final bool isDesktopWeb = kIsWeb && MediaQuery.of(context).size.width > 600;
+
+    if (isDesktopWeb) {
       // Web: Use GridView.builder
       return GridView.builder(
         padding: const EdgeInsets.all(12.0),
