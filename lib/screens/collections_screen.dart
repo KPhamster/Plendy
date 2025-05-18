@@ -454,27 +454,33 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     final bool isDesktopWeb = kIsWeb && MediaQuery.of(context).size.width > 600;
 
     if (isDesktopWeb) {
+      final screenWidth = MediaQuery.of(context).size.width;
+      const double contentMaxWidth = 1200.0;
+      const double defaultPadding = 12.0; // Original all-around padding was 12.0
+
+      double horizontalPadding;
+      if (screenWidth > contentMaxWidth) {
+        horizontalPadding = (screenWidth - contentMaxWidth) / 2;
+      } else {
+        horizontalPadding = defaultPadding;
+      }
+
       // Web: Use GridView.builder
-      return Center( // ADDED Center
-        child: ConstrainedBox( // ADDED ConstrainedBox
-          constraints: const BoxConstraints(maxWidth: 1200.0), // ADDED maxWidth
-          child: GridView.builder(
-            padding: const EdgeInsets.all(12.0),
-            itemCount: _categories.length,
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 5,
-              mainAxisSpacing: 10.0,
-              crossAxisSpacing: 10.0,
-              childAspectRatio: 3/3.5, // Width : Height ratio for each item
-            ),
-            itemBuilder: (context, index) {
-              // Ensure _categories is accessed safely if it can be modified elsewhere
-              // For simplicity, assuming it's stable during build or handled by setState
-              final category = _categories[index];
-              return _buildCategoryGridItem(category);
-            },
-          ),
+      return GridView.builder(
+        padding: EdgeInsets.symmetric(horizontal: horizontalPadding, vertical: defaultPadding),
+        itemCount: _categories.length,
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 5,
+          mainAxisSpacing: 10.0,
+          crossAxisSpacing: 10.0,
+          childAspectRatio: 3/3.5, // Width : Height ratio for each item
         ),
+        itemBuilder: (context, index) {
+          // Ensure _categories is accessed safely if it can be modified elsewhere
+          // For simplicity, assuming it's stable during build or handled by setState
+          final category = _categories[index];
+          return _buildCategoryGridItem(category);
+        },
       );
     } else {
       // Mobile: Use existing ReorderableListView.builder
@@ -1484,24 +1490,30 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     final bool isDesktopWeb = kIsWeb && MediaQuery.of(context).size.width > 600;
 
     if (isDesktopWeb) {
+      final screenWidth = MediaQuery.of(context).size.width;
+      const double contentMaxWidth = 1200.0;
+      const double defaultPadding = 12.0; // Original all-around padding was 12.0
+
+      double horizontalPadding;
+      if (screenWidth > contentMaxWidth) {
+        horizontalPadding = (screenWidth - contentMaxWidth) / 2;
+      } else {
+        horizontalPadding = defaultPadding;
+      }
+
       // Web: Use GridView.builder
-      return Center( // ADDED Center
-        child: ConstrainedBox( // ADDED ConstrainedBox
-          constraints: const BoxConstraints(maxWidth: 1200.0), // ADDED maxWidth
-          child: GridView.builder(
-            padding: const EdgeInsets.all(12.0),
-            itemCount: _filteredExperiences.length,
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 3,
-              mainAxisSpacing: 12.0,
-              crossAxisSpacing: 12.0,
-              childAspectRatio: 0.75, //  (width / height) - results in items being taller than wide
-            ),
-            itemBuilder: (context, index) {
-              return _buildExperienceGridItem(_filteredExperiences[index]);
-            },
-          ),
+      return GridView.builder(
+        padding: EdgeInsets.symmetric(horizontal: horizontalPadding, vertical: defaultPadding),
+        itemCount: _filteredExperiences.length,
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 3,
+          mainAxisSpacing: 12.0,
+          crossAxisSpacing: 12.0,
+          childAspectRatio: 0.75, //  (width / height) - results in items being taller than wide
         ),
+        itemBuilder: (context, index) {
+          return _buildExperienceGridItem(_filteredExperiences[index]);
+        },
       );
     } else {
       // Mobile: Use existing ListView.builder
@@ -1591,24 +1603,30 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     final bool isDesktopWeb = kIsWeb && MediaQuery.of(context).size.width > 600;
 
     if (isDesktopWeb) {
+      final screenWidth = MediaQuery.of(context).size.width;
+      const double contentMaxWidth = 1200.0;
+      const double defaultPadding = 10.0; // Original all-around padding was 10.0
+
+      double horizontalPadding;
+      if (screenWidth > contentMaxWidth) {
+        horizontalPadding = (screenWidth - contentMaxWidth) / 2;
+      } else {
+        horizontalPadding = defaultPadding;
+      }
+
       // Web: Use GridView.builder
-      return Center( // ADDED Center
-        child: ConstrainedBox( // ADDED ConstrainedBox
-          constraints: const BoxConstraints(maxWidth: 1200.0), // ADDED maxWidth
-          child: GridView.builder(
-            padding: const EdgeInsets.all(10.0),
-            itemCount: _filteredGroupedContentItems.length,
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 3,
-              mainAxisSpacing: 10.0,
-              crossAxisSpacing: 10.0,
-              childAspectRatio: 0.6, 
-            ),
-            itemBuilder: (context, index) {
-              return _buildContentGridItem(_filteredGroupedContentItems[index], index);
-            },
-          ),
+      return GridView.builder(
+        padding: EdgeInsets.symmetric(horizontal: horizontalPadding, vertical: defaultPadding),
+        itemCount: _filteredGroupedContentItems.length,
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 3,
+          mainAxisSpacing: 10.0,
+          crossAxisSpacing: 10.0,
+          childAspectRatio: 0.6, 
         ),
+        itemBuilder: (context, index) {
+          return _buildContentGridItem(_filteredGroupedContentItems[index], index);
+        },
       );
     } else {
       // Mobile or Mobile Web: Use existing ListView.builder (original complex list item)
