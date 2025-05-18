@@ -20,6 +20,7 @@ import 'receive_share/widgets/instagram_preview_widget.dart'
 import '../models/shared_media_item.dart'; // ADDED Import
 import 'package:collection/collection.dart'; // ADDED: Import for groupBy
 import 'map_screen.dart'; // ADDED: Import for MapScreen
+import 'package:flutter/foundation.dart'; // ADDED: Import for kIsWeb
 
 // Helper function to parse hex color string (copied from map_screen)
 Color _parseColor(String hexColor) {
@@ -398,79 +399,146 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     return _experiences.where((exp) => exp.categoryId == category.id).length;
   }
 
+  // ADDED: Widget builder for a Category Grid Item (for web)
+  Widget _buildCategoryGridItem(UserCategory category) {
+    final count = _getExperienceCountForCategory(category);
+    return Card(
+      key: ValueKey('category_grid_${category.id}'),
+      clipBehavior: Clip.antiAlias,
+      elevation: 2.0,
+      child: InkWell(
+        onTap: () {
+          setState(() {
+            _selectedCategory = category;
+            _showingColorCategories = false; 
+            _selectedColorCategory = null; 
+          });
+        },
+        child: Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: <Widget>[
+              Text(
+                category.icon,
+                style: const TextStyle(fontSize: 32),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                category.name,
+                style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
+                textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '$count ${count == 1 ? "exp" : "exps"}',
+                style: Theme.of(context).textTheme.bodySmall,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildCategoriesList() {
     if (_categories.isEmpty) {
       return const Center(child: Text('No categories found.'));
     }
 
-    return ReorderableListView.builder(
-      itemCount: _categories.length,
-      itemBuilder: (context, index) {
-        final category = _categories[index];
-        final count = _getExperienceCountForCategory(category);
-        return ListTile(
-          key: ValueKey(category.id),
-          leading: Text(
-            category.icon,
-            style: const TextStyle(fontSize: 24),
-          ),
-          title: Text(category.name),
-          subtitle: Text('$count ${count == 1 ? "experience" : "experiences"}'),
-          trailing: PopupMenuButton<String>(
-            icon: const Icon(Icons.more_vert),
-            tooltip: 'Category Options',
-            onSelected: (String result) {
-              switch (result) {
-                case 'edit':
-                  _showEditSingleCategoryModal(category);
-                  break;
-                case 'delete':
-                  _showDeleteCategoryConfirmation(category);
-                  break;
-              }
+    if (kIsWeb) {
+      // Web: Use GridView.builder
+      return GridView.builder(
+        padding: const EdgeInsets.all(12.0),
+        itemCount: _categories.length,
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 3,
+          mainAxisSpacing: 10.0,
+          crossAxisSpacing: 10.0,
+          childAspectRatio: 3/3.5, // Width : Height ratio for each item
+        ),
+        itemBuilder: (context, index) {
+          // Ensure _categories is accessed safely if it can be modified elsewhere
+          // For simplicity, assuming it's stable during build or handled by setState
+          final category = _categories[index];
+          return _buildCategoryGridItem(category);
+        },
+      );
+    } else {
+      // Mobile: Use existing ReorderableListView.builder
+      return ReorderableListView.builder(
+        itemCount: _categories.length,
+        itemBuilder: (context, index) {
+          final category = _categories[index];
+          final count = _getExperienceCountForCategory(category);
+          return ListTile(
+            key: ValueKey(category.id),
+            leading: Text(
+              category.icon,
+              style: const TextStyle(fontSize: 24),
+            ),
+            title: Text(category.name),
+            subtitle: Text('$count ${count == 1 ? "experience" : "experiences"}'),
+            trailing: PopupMenuButton<String>(
+              icon: const Icon(Icons.more_vert),
+              tooltip: 'Category Options',
+              onSelected: (String result) {
+                switch (result) {
+                  case 'edit':
+                    _showEditSingleCategoryModal(category);
+                    break;
+                  case 'delete':
+                    _showDeleteCategoryConfirmation(category);
+                    break;
+                }
+              },
+              itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
+                const PopupMenuItem<String>(
+                  value: 'edit',
+                  child: ListTile(
+                    leading: Icon(Icons.edit_outlined),
+                    title: Text('Edit'),
+                  ),
+                ),
+                const PopupMenuItem<String>(
+                  value: 'delete',
+                  child: ListTile(
+                    leading: Icon(Icons.delete_outline, color: Colors.red),
+                    title: Text('Delete', style: TextStyle(color: Colors.red)),
+                  ),
+                ),
+              ],
+            ),
+            onTap: () {
+              setState(() {
+                _selectedCategory = category;
+                _showingColorCategories = false; 
+                _selectedColorCategory = null; 
+              });
+              print('Tapped on ${category.name}, showing experiences.');
             },
-            itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
-              const PopupMenuItem<String>(
-                value: 'edit',
-                child: ListTile(
-                  leading: Icon(Icons.edit_outlined),
-                  title: Text('Edit'),
-                ),
-              ),
-              const PopupMenuItem<String>(
-                value: 'delete',
-                child: ListTile(
-                  leading: Icon(Icons.delete_outline, color: Colors.red),
-                  title: Text('Delete', style: TextStyle(color: Colors.red)),
-                ),
-              ),
-            ],
-          ),
-          onTap: () {
-            // MODIFIED: Set the selected category to show its experiences
-            setState(() {
-              _selectedCategory = category;
-            });
-            print('Tapped on ${category.name}, showing experiences.');
-          },
-        );
-      },
-      onReorder: (int oldIndex, int newIndex) {
-        setState(() {
-          if (newIndex > oldIndex) {
-            newIndex -= 1;
-          }
-          final UserCategory item = _categories.removeAt(oldIndex);
-          _categories.insert(newIndex, item);
+          );
+        },
+        onReorder: (int oldIndex, int newIndex) {
+          setState(() {
+            if (newIndex > oldIndex) {
+              newIndex -= 1;
+            }
+            final UserCategory item = _categories.removeAt(oldIndex);
+            _categories.insert(newIndex, item);
 
-          _updateLocalOrderIndices();
-
-          print("Categories reordered locally. Triggering save.");
-
-          _saveCategoryOrder();
-        });
-      },
-    );
+            _updateLocalOrderIndices();
+            print("Categories reordered locally. Triggering save.");
+            _saveCategoryOrder();
+          });
+        },
+      );
+    }
   }
 
   // ADDED: Method to apply sorting and save the new order
@@ -1302,11 +1370,102 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     );
   }
 
+  // ADDED: Widget builder for an Experience Grid Item (for web)
+  Widget _buildExperienceGridItem(Experience experience) {
+    final category = _categories.firstWhereOrNull((cat) => cat.id == experience.categoryId);
+    final categoryIcon = category?.icon ?? '❓';
+    final colorCategory = _colorCategories.firstWhereOrNull((cc) => cc.id == experience.colorCategoryId);
+    final color = colorCategory != null ? _parseColor(colorCategory.colorHex) : Theme.of(context).disabledColor;
+    final String? locationArea = experience.location.getFormattedArea();
+
+    return Card(
+      key: ValueKey('experience_grid_${experience.id}'),
+      clipBehavior: Clip.antiAlias,
+      elevation: 2.0,
+      child: InkWell(
+        onTap: () {
+          final resolvedCategory = category ?? UserCategory(
+            id: experience.categoryId ?? 'uncategorized',
+            name: category?.name ?? 'Uncategorized', // Use category name if available
+            icon: categoryIcon, // Use resolved icon
+            ownerUserId: category?.ownerUserId ?? _authService.currentUser?.uid ?? 'system_default',
+            orderIndex: category?.orderIndex ?? 9999, // Use category orderIndex or default
+          );
+          Navigator.push<bool>(
+            context,
+            MaterialPageRoute(
+              builder: (context) => ExperiencePageScreen(
+                experience: experience,
+                category: resolvedCategory,
+                userColorCategories: _colorCategories,
+              ),
+            ),
+          ).then((result) {
+            if (result == true && mounted) {
+              _loadData();
+            }
+          });
+        },
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            Container(
+              height: 100, 
+              color: color.withOpacity(0.15),
+              child: Center(
+                child: Text(
+                  categoryIcon,
+                  style: TextStyle(fontSize: 40, color: color),
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8.0, 8.0, 8.0, 4.0),
+              child: Text(
+                experience.name,
+                style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            if (locationArea != null && locationArea.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                child: Text(
+                  locationArea,
+                  style: Theme.of(context).textTheme.bodySmall,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            const Spacer(), 
+            if (colorCategory != null)
+              Padding(
+                padding: const EdgeInsets.all(8.0),
+                child: Row(
+                  children: [
+                    Icon(Icons.circle, color: color, size: 10),
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: Text(
+                        colorCategory.name,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(color: color),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
   // MODIFIED: Widget builder for the Experience List View uses the refactored item builder
   Widget _buildExperiencesListView() {
-    // MODIFIED: Use the filtered list
     if (_filteredExperiences.isEmpty) {
-      // Show different message depending on whether filters are active
       bool filtersActive = _selectedCategoryIds.isNotEmpty ||
           _selectedColorCategoryIds.isNotEmpty;
       return Center(
@@ -1315,13 +1474,30 @@ class _CollectionsScreenState extends State<CollectionsScreen>
               : 'No experiences found. Add some!'));
     }
 
-    // Use the refactored item builder with the filtered list
-    return ListView.builder(
-      itemCount: _filteredExperiences.length,
-      itemBuilder: (context, index) {
-        return _buildExperienceListItem(_filteredExperiences[index]);
-      },
-    );
+    if (kIsWeb) {
+      // Web: Use GridView.builder
+      return GridView.builder(
+        padding: const EdgeInsets.all(12.0),
+        itemCount: _filteredExperiences.length,
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 3,
+          mainAxisSpacing: 12.0,
+          crossAxisSpacing: 12.0,
+          childAspectRatio: 0.75, //  (width / height) - results in items being taller than wide
+        ),
+        itemBuilder: (context, index) {
+          return _buildExperienceGridItem(_filteredExperiences[index]);
+        },
+      );
+    } else {
+      // Mobile: Use existing ListView.builder
+      return ListView.builder(
+        itemCount: _filteredExperiences.length,
+        itemBuilder: (context, index) {
+          return _buildExperienceListItem(_filteredExperiences[index]);
+        },
+      );
+    }
   }
 
   // ADDED: Widget to display experiences for a specific category
@@ -1390,338 +1566,232 @@ class _CollectionsScreenState extends State<CollectionsScreen>
 
   // --- REFACTORED: Widget builder for the Content Tab Body --- ///
   Widget _buildContentTabBody() {
-    // MODIFIED: Use the filtered grouped list
     if (_filteredGroupedContentItems.isEmpty) {
-      // Show different message depending on whether filters are active
-      bool filtersActive = _selectedCategoryIds.isNotEmpty ||
-          _selectedColorCategoryIds.isNotEmpty;
+      bool filtersActive = _selectedCategoryIds.isNotEmpty || _selectedColorCategoryIds.isNotEmpty;
       return Center(
           child: Text(filtersActive
               ? 'No content matches the current filters.'
               : 'No shared content found across experiences.'));
     }
 
-    // Use ListView.builder with filtered grouped items
-    return ListView.builder(
-      padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 16.0),
-      itemCount: _filteredGroupedContentItems.length,
-      itemBuilder: (context, index) {
-        final group = _filteredGroupedContentItems[index]; // Use filtered list
-        final mediaItem = group.mediaItem;
-        final mediaPath = mediaItem.path;
-        final associatedExperiences = group.associatedExperiences;
+    if (kIsWeb) {
+      // Web: Use GridView.builder
+      return GridView.builder(
+        padding: const EdgeInsets.all(10.0),
+        itemCount: _filteredGroupedContentItems.length,
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 3,
+          mainAxisSpacing: 10.0,
+          crossAxisSpacing: 10.0,
+          childAspectRatio: 0.6, // Keep aspect ratio for taller content like Instagram embeds
+        ),
+        itemBuilder: (context, index) {
+          return _buildContentGridItem(_filteredGroupedContentItems[index], index);
+        },
+      );
+    } else {
+      // Mobile: Use existing ListView.builder (original complex list item)
+      return ListView.builder(
+        padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 16.0),
+        itemCount: _filteredGroupedContentItems.length,
+        itemBuilder: (context, index) {
+          final group = _filteredGroupedContentItems[index];
+          final mediaItem = group.mediaItem;
+          final mediaPath = mediaItem.path;
+          final associatedExperiences = group.associatedExperiences;
+          final isExpanded = _contentExpansionStates[mediaPath] ?? false;
+          final bool isInstagramUrl =
+              mediaPath.toLowerCase().contains('instagram.com');
+          bool isNetworkUrl =
+              mediaPath.startsWith('http') || mediaPath.startsWith('https');
 
-        final isExpanded = _contentExpansionStates[mediaPath] ?? false;
-        final bool isInstagramUrl =
-            mediaPath.toLowerCase().contains('instagram.com');
+          Widget mediaWidget;
+          if (isInstagramUrl) {
+            mediaWidget = instagram_widget.InstagramWebView(
+              url: mediaPath,
+              height: isExpanded ? 1200 : 840, // Original height logic for list view
+              launchUrlCallback: _launchUrl,
+              onWebViewCreated: (_) {},
+              onPageFinished: (_) {},
+            );
+            // For the web list view, the parent ConstrainedBox handles width limit.
+            // No specific ConstrainedBox needed here inside the ListView item for web,
+            // as it was previously handled by a wrapper around the whole mediaWidget in collections_screen
+            // IF mediaWidget was directly in the list. This structure might need review if that wrapper is gone.
+            // For now, this is the original list item structure.
+             if (kIsWeb) { // This check was in previous iteration, let's keep it consistent
+               mediaWidget = Center(
+                 child: ConstrainedBox(
+                   constraints: const BoxConstraints(maxWidth: 360), 
+                   child: mediaWidget,
+                 ),
+               );
+            }
+          } else if (isNetworkUrl) {
+            mediaWidget = Image.network(
+              mediaPath,
+              fit: BoxFit.cover,
+              loadingBuilder: (context, child, loadingProgress) {
+                if (loadingProgress == null) return child;
+                return const Center(child: CircularProgressIndicator());
+              },
+              errorBuilder: (context, error, stackTrace) {
+                print("Error loading image $mediaPath: $error");
+                return Container(
+                  color: Colors.grey[200],
+                  height: 200, 
+                  child: Center(
+                      child: Icon(Icons.broken_image_outlined,
+                          color: Colors.grey[600], size: 40)),
+                );
+              },
+            );
+          } else {
+            mediaWidget = Container(
+              color: Colors.grey[300],
+              height: 150, 
+              child: Center(
+                  child: Icon(Icons.description, color: Colors.grey[700], size: 40)),
+            );
+          }
 
-        bool isNetworkUrl =
-            mediaPath.startsWith('http') || mediaPath.startsWith('https');
-
-        Widget mediaWidget;
-        if (isInstagramUrl) {
-          // Use InstagramWebView for Instagram URLs
-          mediaWidget = instagram_widget.InstagramWebView(
-            url: mediaPath,
-            height: isExpanded ? 1200 : 840,
-            launchUrlCallback: _launchUrl,
-            onWebViewCreated: (_) {},
-            onPageFinished: (_) {},
-          );
-        } else if (isNetworkUrl) {
-          // Use Image.network for other network URLs
-          mediaWidget = Image.network(
-            mediaPath,
-            fit: BoxFit.cover,
-            loadingBuilder: (context, child, loadingProgress) {
-              if (loadingProgress == null) return child;
-              return const Center(child: CircularProgressIndicator());
-            },
-            errorBuilder: (context, error, stackTrace) {
-              print("Error loading image $mediaPath: $error");
-              return Container(
-                color: Colors.grey[200],
-                height: 200, // Give error placeholder some height
-                child: Center(
-                    child: Icon(Icons.broken_image_outlined,
-                        color: Colors.grey[600], size: 40)),
-              );
-            },
-          );
-        } else {
-          // Placeholder for local paths or non-image URLs
-          mediaWidget = Container(
-            color: Colors.grey[300],
-            height: 150, // Give placeholder some height
-            child: Center(
-                child:
-                    Icon(Icons.description, color: Colors.grey[700], size: 40)),
-          );
-        }
-
-        // Return a Card containing the media and associated experiences list
-        return Padding(
-          key: ValueKey(mediaPath), // Use mediaPath as key
-          padding:
-              const EdgeInsets.only(bottom: 24.0), // Spacing between list items
-          child: Column(
-            children: [
-              // --- ADDED: Centered Numbering (like Fullscreen) --- START ---
-              Padding(
-                padding:
-                    const EdgeInsets.only(bottom: 8.0), // Space below number
-                child: Center(
-                  // Center the bubble horizontally
-                  child: CircleAvatar(
-                    radius: 14, // Match fullscreen size
-                    backgroundColor:
-                        Theme.of(context).primaryColor.withOpacity(0.8),
-                    child: Text(
-                      '${index + 1}', // Number without period
-                      style: TextStyle(
-                        fontSize: 14.0,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white, // Use white like fullscreen
+          return Padding(
+            key: ValueKey(mediaPath),
+            padding: const EdgeInsets.only(bottom: 24.0),
+            child: Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8.0),
+                  child: Center(
+                    child: CircleAvatar(
+                      radius: 14,
+                      backgroundColor:
+                          Theme.of(context).primaryColor.withOpacity(0.8),
+                      child: Text(
+                        '${index + 1}',
+                        style: TextStyle(
+                          fontSize: 14.0,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
                       ),
                     ),
                   ),
                 ),
-              ),
-              // --- ADDED: Centered Numbering (like Fullscreen) --- END ---
-
-              // --- Existing Card ---
-              Card(
-                margin: EdgeInsets.zero, // Card takes full width within padding
-                elevation: 2.0,
-                clipBehavior: Clip.antiAlias,
-                child: Column(
-                  children: [
-                    // --- Section for Associated Experiences --- START ---
-                    Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 12.0, vertical: 8.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          // Title for the experience list (only show if > 1)
-                          if (associatedExperiences.length > 1)
-                            Padding(
-                              padding: const EdgeInsets.only(bottom: 6.0),
-                              child: Text(
-                                // Text only shown when count > 1, so no need for ternary
-                                'Linked Experiences (${associatedExperiences.length}):',
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .labelLarge
-                                    ?.copyWith(
-                                      fontWeight: FontWeight.bold,
-                                      color: Colors.black87,
-                                    ),
+                Card(
+                  margin: EdgeInsets.zero,
+                  elevation: 2.0,
+                  clipBehavior: Clip.antiAlias,
+                  child: Column(
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12.0, vertical: 8.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            if (associatedExperiences.length > 1)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 6.0),
+                                child: Text(
+                                  'Linked Experiences (${associatedExperiences.length}):',
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .labelLarge
+                                      ?.copyWith(
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.black87,
+                                      ),
+                                ),
                               ),
-                            ),
-                          // Generate a list of Text Widgets for each experience
-                          ...associatedExperiences.map((exp) {
-                            // Find the matching category icon
-                            final UserCategory resolvedCategoryForContent = _categories.firstWhere(
-                                (cat) => cat.id == exp.categoryId, // MODIFIED: Use categoryId
-                                orElse: () => UserCategory(
-                                    id: '',
-                                    name: 'Uncategorized',
-                                    icon: '❓',
-                                    ownerUserId: '') // Default icon
-                                );
-                            final categoryIcon = resolvedCategoryForContent.icon;
-                            final address = exp.location.address;
-                            final bool hasAddress =
-                                address != null && address.isNotEmpty;
+                            ...associatedExperiences.map((exp) {
+                              final category = _categories.firstWhereOrNull(
+                                  (cat) => cat.id == exp.categoryId);
+                              final categoryIcon = category?.icon ?? '❓';
+                              final colorCategory = _colorCategories
+                                  .firstWhereOrNull(
+                                      (cc) => cc.id == exp.colorCategoryId);
+                              final color = colorCategory != null
+                                  ? _parseColor(colorCategory.colorHex)
+                                  : Theme.of(context).disabledColor;
 
-                            return Padding(
-                              padding: const EdgeInsets.only(
-                                  bottom: 4.0), // Space between experiences
-                              child: InkWell(
-                                // Make each experience row tappable
-                                onTap: () async {
-                                  print(
-                                      'Tapped on experience ${exp.name} within content group');
-                                  // Find the matching category using categoryId
-                                  final UserCategory categoryForNavigation = _categories.firstWhere(
-                                      (cat) => cat.id == exp.categoryId, // MODIFIED: Use categoryId
-                                      orElse: () => UserCategory(
-                                          id: '',
-                                          name: 'Uncategorized', // Fallback name
-                                          icon: '❓', // Fallback icon
-                                          ownerUserId: ''));
-                                  // Navigate to the specific experience page
-                                  final result = await Navigator.push<bool>(
+                              return InkWell(
+                                onTap: () {
+                                  final resolvedCategory = category ?? UserCategory(
+                                    id: exp.categoryId ?? 'uncategorized',
+                                    name: category?.name ?? 'Uncategorized',
+                                    icon: categoryIcon,
+                                    ownerUserId: category?.ownerUserId ?? _authService.currentUser?.uid ?? 'system_default',
+                                    orderIndex: category?.orderIndex ?? 9999,
+                                  );
+                                  Navigator.push<bool>(
                                     context,
                                     MaterialPageRoute(
-                                      builder: (context) =>
-                                          ExperiencePageScreen(
+                                      builder: (context) => ExperiencePageScreen(
                                         experience: exp,
-                                        category: categoryForNavigation, // Pass resolved category
+                                        category: resolvedCategory,
                                         userColorCategories: _colorCategories,
                                       ),
                                     ),
-                                  );
-                                  // Refresh if deletion occurred
-                                  if (result == true && mounted) {
-                                    _loadData();
-                                  }
-                                },
-                                child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    // Icon/Bullet Point
-                                    Padding(
-                                      padding: const EdgeInsets.only(
-                                          right: 8.0, top: 2.0),
-                                      child: Text(categoryIcon,
-                                          style: TextStyle(fontSize: 14)),
-                                      // child: Icon(Icons.place_outlined, size: 16, color: Colors.black54),
-                                    ),
-                                    // Experience Name and Address
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            exp.name,
-                                            style: Theme.of(context)
-                                                .textTheme
-                                                .titleSmall
-                                                ?.copyWith(
-                                                    fontWeight:
-                                                        FontWeight.w500),
-                                            overflow: TextOverflow.ellipsis,
-                                            maxLines: 1,
-                                          ),
-                                          if (hasAddress)
-                                            Text(
-                                              address,
-                                              style: Theme.of(context)
-                                                  .textTheme
-                                                  .bodySmall
-                                                  ?.copyWith(
-                                                      color: Colors.black54),
-                                              overflow: TextOverflow.ellipsis,
-                                              maxLines: 1,
-                                            ),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            );
-                          }),
-                        ],
-                      ),
-                    ),
-                    // --- Section for Associated Experiences --- END ---
-
-                    const Divider(height: 1, thickness: 0.5), // Separator
-
-                    // --- Media Preview Area --- (No changes needed here)
-                    // Keep GestureDetector simple - it doesn't need to navigate anymore as individual experiences are tappable
-                    mediaWidget,
-                    // --- Buttons Row --- (Replicated layout from ExperiencePageScreen Media Tab)
-                    SizedBox(
-                      height: 48, // Standard height
-                      child: Stack(
-                        children: [
-                          // Share Button (Left of Center)
-                          Align(
-                            alignment: const Alignment(-0.5, 0.0),
-                            child: IconButton(
-                              icon: const Icon(Icons.share_outlined),
-                              iconSize: 24,
-                              color: Colors.blue, // Match Experience Page
-                              tooltip: 'Share Media',
-                              constraints: const BoxConstraints(),
-                              padding: EdgeInsets.zero,
-                              onPressed: () {
-                                // TODO: Implement share media functionality
-                                print(
-                                    'Share media button tapped for url: $mediaPath');
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                      content: Text(
-                                          'Share media not implemented yet.')),
-                                );
-                              },
-                            ),
-                          ),
-
-                          // Instagram Button (Centered)
-                          if (isInstagramUrl)
-                            Align(
-                              alignment: Alignment.center,
-                              child: IconButton(
-                                icon: const Icon(FontAwesomeIcons.instagram),
-                                color: const Color(0xFFE1306C),
-                                iconSize: 32, // Match Experience Page size
-                                tooltip: 'Open in Instagram',
-                                constraints: const BoxConstraints(),
-                                padding: EdgeInsets.zero,
-                                onPressed: () => _launchUrl(mediaPath),
-                              ),
-                            ),
-
-                          // Expand/Collapse Button (Right of Center)
-                          if (isInstagramUrl)
-                            Align(
-                              // Position like Experience Page
-                              alignment: const Alignment(0.5, 0.0),
-                              child: IconButton(
-                                icon: Icon(isExpanded
-                                    ? Icons.fullscreen_exit
-                                    : Icons.fullscreen),
-                                iconSize: 24,
-                                // Color to match Experience Page (using blue)
-                                color: Colors.blue,
-                                tooltip: isExpanded ? 'Collapse' : 'Expand',
-                                padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(),
-                                onPressed: () {
-                                  setState(() {
-                                    _contentExpansionStates[mediaPath] =
-                                        !isExpanded;
+                                  ).then((result) {
+                                    if (result == true && mounted) {
+                                      _loadData();
+                                    }
                                   });
                                 },
-                              ),
-                            ),
-
-                          // Delete Button (Right Aligned)
-                          Align(
-                            alignment: Alignment.centerRight,
-                            child: IconButton(
-                              icon: const Icon(Icons.delete_outline),
-                              iconSize: 24,
-                              color: Colors.red[700], // Match Experience Page
-                              tooltip: 'Delete Content',
-                              constraints: const BoxConstraints(),
-                              // Add padding like Experience Page for better tap target
-                              padding:
-                                  const EdgeInsets.symmetric(horizontal: 12),
-                              onPressed: () {
-                                _showDeleteContentConfirmation(group);
-                              },
-                            ),
-                          ),
-                        ],
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(vertical: 4.0),
+                                  child: Row(
+                                    children: [
+                                      Text(categoryIcon, style: const TextStyle(fontSize: 16)),
+                                      const SizedBox(width: 6),
+                                      if (colorCategory != null)
+                                        Padding(
+                                          padding: const EdgeInsets.only(right: 6.0),
+                                          child: Icon(Icons.circle, color: color, size: 10),
+                                        ),
+                                      Expanded(
+                                        child: Text(
+                                          exp.name,
+                                          style: Theme.of(context).textTheme.bodyMedium,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                      const Icon(Icons.chevron_right, color: Colors.grey, size: 18),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            }).toList(),
+                            if (associatedExperiences.isEmpty)
+                              const Text('No linked experiences.',
+                                  style: TextStyle(fontStyle: FontStyle.italic)),
+                          ],
+                        ),
                       ),
-                    ),
-                  ],
+                      GestureDetector(
+                        onTap: () {
+                          setState(() {
+                            _contentExpansionStates[mediaPath] = !isExpanded;
+                          });
+                        },
+                        child: mediaWidget,
+                      ),
+                      if (isInstagramUrl)
+                        TextButton(
+                          onPressed: () => _launchUrl(mediaPath),
+                          child: const Text('View on Instagram'),
+                        ),
+                    ],
+                  ),
                 ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
+              ],
+            ),
+          );
+        },
+      );
+    }
   }
-  // --- END REFACTORED ---
 
   // --- ADDED: Method to show delete confirmation dialog for content ---
   Future<void> _showDeleteContentConfirmation(GroupedContentItem group) async {
@@ -1990,87 +2060,154 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   }
   // --- ADDED: Helper to count experiences for a specific color category --- END ---
 
+  // --- ADDED: Widget builder for a Color Category Grid Item (for web) ---
+  Widget _buildColorCategoryGridItem(ColorCategory category) {
+    final count = _getExperienceCountForColorCategory(category);
+    return Card(
+      key: ValueKey('color_category_grid_${category.id}'),
+      clipBehavior: Clip.antiAlias,
+      elevation: 2.0,
+      child: InkWell(
+        onTap: () {
+          setState(() {
+            _selectedColorCategory = category;
+            _showingColorCategories = true; 
+            _selectedCategory = null;
+          });
+        },
+        child: Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: <Widget>[
+              Container(
+                width: 28, 
+                height: 28,
+                decoration: BoxDecoration(
+                  color: category.color, 
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Theme.of(context).dividerColor, width: 1.5),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                category.name,
+                style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
+                textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '$count ${count == 1 ? "exp" : "exps"}',
+                style: Theme.of(context).textTheme.bodySmall,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   // --- ADDED: Builder for Color Category List --- START ---
   Widget _buildColorCategoriesList() {
     if (_colorCategories.isEmpty) {
       return const Center(child: Text('No color categories found.'));
     }
 
-    return ReorderableListView.builder(
-      itemCount: _colorCategories.length,
-      itemBuilder: (context, index) {
-        final category = _colorCategories[index];
-        // --- ADDED: Calculate count --- START ---
-        final count = _getExperienceCountForColorCategory(category);
-        // --- ADDED: Calculate count --- END ---
-        return ListTile(
-          key: ValueKey(category.id),
-          leading: Container(
-            width: 24,
-            height: 24,
-            decoration: BoxDecoration(
-                color: category.color,
-                shape: BoxShape.circle,
-                border: Border.all(color: Colors.grey.shade400, width: 1)),
-          ),
-          title: Text(category.name),
-          // --- MODIFIED: Add subtitle --- START ---
-          subtitle: Text('$count ${count == 1 ? "experience" : "experiences"}'),
-          // --- MODIFIED: Add subtitle --- END ---
-          trailing: PopupMenuButton<String>(
-            icon: const Icon(Icons.more_vert),
-            tooltip: 'Color Category Options',
-            onSelected: (String result) {
-              switch (result) {
-                case 'edit':
-                  _showEditSingleColorCategoryModal(category);
-                  break;
-                case 'delete':
-                  _showDeleteColorCategoryConfirmation(category);
-                  break;
-              }
+    if (kIsWeb) {
+      // Web: Use GridView.builder
+      return GridView.builder(
+        padding: const EdgeInsets.all(12.0),
+        itemCount: _colorCategories.length,
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 3,
+          mainAxisSpacing: 10.0,
+          crossAxisSpacing: 10.0,
+          childAspectRatio: 3/3, // Square items for color categories
+        ),
+        itemBuilder: (context, index) {
+          final category = _colorCategories[index];
+          return _buildColorCategoryGridItem(category);
+        },
+      );
+    } else {
+      // Mobile: Use existing ReorderableListView.builder
+      return ReorderableListView.builder(
+        itemCount: _colorCategories.length,
+        itemBuilder: (context, index) {
+          final category = _colorCategories[index];
+          final count = _getExperienceCountForColorCategory(category);
+          return ListTile(
+            key: ValueKey(category.id),
+            leading: Container(
+              width: 24,
+              height: 24,
+              decoration: BoxDecoration(
+                  color: category.color,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.grey.shade400, width: 1)),
+            ),
+            title: Text(category.name),
+            subtitle: Text('$count ${count == 1 ? "experience" : "experiences"}'),
+            trailing: PopupMenuButton<String>(
+              icon: const Icon(Icons.more_vert),
+              tooltip: 'Color Category Options',
+              onSelected: (String result) {
+                switch (result) {
+                  case 'edit':
+                    _showEditSingleColorCategoryModal(category);
+                    break;
+                  case 'delete':
+                    _showDeleteColorCategoryConfirmation(category);
+                    break;
+                }
+              },
+              itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
+                const PopupMenuItem<String>(
+                  value: 'edit',
+                  child: ListTile(
+                    leading: Icon(Icons.edit_outlined),
+                    title: Text('Edit'),
+                  ),
+                ),
+                const PopupMenuItem<String>(
+                  value: 'delete',
+                  child: ListTile(
+                    leading: Icon(Icons.delete_outline, color: Colors.red),
+                    title: Text('Delete', style: TextStyle(color: Colors.red)),
+                  ),
+                ),
+              ],
+            ),
+            onTap: () {
+              setState(() {
+                _selectedColorCategory = category;
+                _showingColorCategories = true; 
+                _selectedCategory = null;
+              });
+              print(
+                  'Tapped on color category: ${category.name}, showing experiences.');
             },
-            itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
-              const PopupMenuItem<String>(
-                value: 'edit',
-                child: ListTile(
-                  leading: Icon(Icons.edit_outlined),
-                  title: Text('Edit'),
-                ),
-              ),
-              const PopupMenuItem<String>(
-                value: 'delete',
-                child: ListTile(
-                  leading: Icon(Icons.delete_outline, color: Colors.red),
-                  title: Text('Delete', style: TextStyle(color: Colors.red)),
-                ),
-              ),
-            ],
-          ),
-          onTap: () {
-            // --- MODIFIED: Set selected color category --- START ---
-            setState(() {
-              _selectedColorCategory = category;
-            });
-            print(
-                'Tapped on color category: ${category.name}, showing experiences.');
-            // --- MODIFIED: Set selected color category --- END ---
-          },
-        );
-      },
-      onReorder: (int oldIndex, int newIndex) {
-        setState(() {
-          if (newIndex > oldIndex) {
-            newIndex -= 1;
-          }
-          final ColorCategory item = _colorCategories.removeAt(oldIndex);
-          _colorCategories.insert(newIndex, item);
-          _updateLocalColorOrderIndices();
-          print("Color categories reordered locally. Triggering save.");
-          _saveColorCategoryOrder();
-        });
-      },
-    );
+          );
+        },
+        onReorder: (int oldIndex, int newIndex) {
+          setState(() {
+            if (newIndex > oldIndex) {
+              newIndex -= 1;
+            }
+            final ColorCategory item = _colorCategories.removeAt(oldIndex);
+            _colorCategories.insert(newIndex, item);
+            _updateLocalColorOrderIndices();
+            print("Color categories reordered locally. Triggering save.");
+            _saveColorCategoryOrder();
+          });
+        },
+      );
+    }
   }
   // --- ADDED: Builder for Color Category List --- END ---
 
@@ -2387,4 +2524,158 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     return suggestions;
   }
   // --- END ADDED ---
+
+  // ADDED: Widget builder for a Content Grid Item (for web)
+  Widget _buildContentGridItem(GroupedContentItem group, int index) {
+    final mediaItem = group.mediaItem;
+    final mediaPath = mediaItem.path;
+    final isInstagramUrl = mediaPath.toLowerCase().contains('instagram.com');
+    final bool isNetworkUrl = mediaPath.startsWith('http') || mediaPath.startsWith('https');
+
+    Widget mediaDisplayWidget;
+    if (isInstagramUrl) {
+      mediaDisplayWidget = instagram_widget.InstagramWebView(
+        url: mediaPath,
+        height: 640.0, // Height for InstagramWebView
+        launchUrlCallback: _launchUrl,
+        onWebViewCreated: (_) {},
+        onPageFinished: (_) {},
+      );
+      if (kIsWeb) { 
+        mediaDisplayWidget = Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 360),
+            child: mediaDisplayWidget,
+          ),
+        );
+      }
+    } else if (isNetworkUrl) {
+      mediaDisplayWidget = Image.network(
+        mediaPath,
+        fit: BoxFit.cover,
+        loadingBuilder: (context, child, loadingProgress) {
+          if (loadingProgress == null) return child;
+          return const Center(child: CircularProgressIndicator());
+        },
+        errorBuilder: (context, error, stackTrace) {
+          print("Error loading image for grid $mediaPath: $error");
+          return Container(
+            color: Colors.grey[200],
+            child: Center(child: Icon(Icons.broken_image_outlined, color: Colors.grey[600], size: 40)),
+          );
+        },
+      );
+    } else {
+      mediaDisplayWidget = Container(
+        color: Colors.grey[300],
+        child: Center(child: Icon(Icons.image_not_supported_outlined, color: Colors.grey[700], size: 40)),
+      );
+    }
+
+    return Card(
+      key: ValueKey('content_grid_${mediaItem.id}_$index'),
+      clipBehavior: Clip.antiAlias,
+      elevation: 2.0,
+      child: InkWell(
+        onTap: () {
+          _showMediaDetailsDialog(group);
+        },
+        child: mediaDisplayWidget,
+      ),
+    );
+  }
+
+  // ADDED: Dialog to show media details (associated experiences)
+  void _showMediaDetailsDialog(GroupedContentItem group) {
+    showDialog(
+      context: context, // This 'context' is from _CollectionsScreenState
+      builder: (BuildContext dialogContext) { // Use a different name for dialog's own context
+        return AlertDialog(
+          title: Text(group.mediaItem.path.contains("instagram.com")
+              ? "Instagram Post Details"
+              : "Shared Media Details"),
+          content: SizedBox(
+            width: double.maxFinite, // Ensure dialog content takes reasonable width
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(
+                  "Linked Experiences (${group.associatedExperiences.length}):",
+                  style: Theme.of(dialogContext).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 12),
+                if (group.associatedExperiences.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 8.0),
+                    child: Text("No experiences linked to this media."),
+                  ),
+                if (group.associatedExperiences.isNotEmpty)
+                  Expanded( // Important for scrollability if list is long
+                    child: ListView.builder(
+                      shrinkWrap: true, // Essential with Expanded in Column
+                      itemCount: group.associatedExperiences.length,
+                      itemBuilder: (context, index) { // Can reuse 'context' here, it's from ListView.builder
+                        final exp = group.associatedExperiences[index];
+                        final category = _categories.firstWhereOrNull((cat) => cat.id == exp.categoryId);
+                        final categoryIcon = category?.icon ?? '❓';
+                        final colorCategory = _colorCategories.firstWhereOrNull((cc) => cc.id == exp.colorCategoryId);
+                        final color = colorCategory != null ? _parseColor(colorCategory.colorHex) : Theme.of(dialogContext).disabledColor;
+
+                        return ListTile(
+                          leading: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(categoryIcon, style: const TextStyle(fontSize: 20)),
+                              if (colorCategory != null) ...[
+                                const SizedBox(width: 4),
+                                Icon(Icons.circle, color: color, size: 12),
+                              ]
+                            ],
+                          ),
+                          title: Text(exp.name, style: Theme.of(dialogContext).textTheme.bodyLarge),
+                          trailing: const Icon(Icons.chevron_right),
+                          onTap: () {
+                            Navigator.of(dialogContext).pop(); // Close dialog first
+                            final resolvedCategory = category ?? UserCategory(
+                              id: exp.categoryId ?? 'uncategorized',
+                              name: category?.name ?? 'Uncategorized',
+                              icon: categoryIcon,
+                              ownerUserId: category?.ownerUserId ?? _authService.currentUser?.uid ?? 'system_default',
+                              orderIndex: category?.orderIndex ?? 9999,
+                            );
+                            Navigator.push<bool>(
+                              this.context, // Use _CollectionsScreenState's context for navigation
+                              MaterialPageRoute(
+                                builder: (ctx) => ExperiencePageScreen( // Use 'ctx' for clarity
+                                  experience: exp,
+                                  category: resolvedCategory,
+                                  userColorCategories: _colorCategories,
+                                ),
+                              ),
+                            ).then((result) {
+                              if (result == true && mounted) {
+                                _loadData();
+                              }
+                            });
+                          },
+                        );
+                      },
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          actions: <Widget>[
+            TextButton(
+              child: const Text('Close'),
+              onPressed: () {
+                Navigator.of(dialogContext).pop();
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
 }

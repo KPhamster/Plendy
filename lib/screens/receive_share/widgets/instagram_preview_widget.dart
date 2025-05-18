@@ -6,6 +6,10 @@ import 'package:flutter/foundation.dart' show kIsWeb; // Import kIsWeb
 import 'package:url_launcher/url_launcher.dart'; // For launching URLs
 import 'package:font_awesome_flutter/font_awesome_flutter.dart'; // For Instagram Icon
 
+// Conditional imports for web-specific embedding
+import 'dart:ui_web' as ui_web;
+import 'dart:html' as html;
+
 // Renamed class to reflect its focus
 class InstagramWebView extends StatefulWidget {
   final String url;
@@ -18,7 +22,7 @@ class InstagramWebView extends StatefulWidget {
   const InstagramWebView({
     super.key,
     required this.url,
-    required this.height,
+    required this.height, // This will be effectively ignored for web aspect ratio
     required this.onWebViewCreated,
     required this.onPageFinished,
     required this.launchUrlCallback,
@@ -29,6 +33,7 @@ class InstagramWebView extends StatefulWidget {
 }
 
 class _InstagramWebViewState extends State<InstagramWebView> {
+  // Mobile-only controller
   late final WebViewController controller;
   bool isLoading = true; // Still manage internal loading indicator
   
@@ -39,11 +44,29 @@ class _InstagramWebViewState extends State<InstagramWebView> {
   // Add a dispose flag as an extra safety check
   bool _isDisposed = false;
 
+  // Web-only view type
+  String? _webEmbedViewType;
+
   @override
   void initState() {
     super.initState();
-    if (!kIsWeb) {
-      _initWebViewController();
+    if (kIsWeb) {
+      // Generate a unique view type for HtmlElementView
+      // Using DateTime ensures uniqueness even if hashCode collides (unlikely for URLs here)
+      _webEmbedViewType = 'instagram-embed-view-${widget.url.hashCode}-${DateTime.now().microsecondsSinceEpoch}';
+
+      // Register the view factory for HtmlElementView if on web.
+      // This factory creates an iframe and loads the Instagram embed HTML into it.
+      ui_web.platformViewRegistry.registerViewFactory(
+        _webEmbedViewType!,
+        (int viewId) => html.IFrameElement()
+          ..srcdoc = _generateInstagramEmbedHtml(widget.url) // HTML includes embed.js script call
+          ..style.width = '100%'
+          ..style.height = '100%'
+          ..style.border = 'none',
+      );
+    } else {
+      _initWebViewController(); // Mobile: Initialize WebView controller
     }
   }
   
@@ -132,7 +155,8 @@ class _InstagramWebViewState extends State<InstagramWebView> {
   }
 
   void _initWebViewController() {
-    if (kIsWeb) return; // Do not initialize for web
+    // This should only be called if !kIsWeb, but double-check.
+    if (kIsWeb) return;
 
     controller = WebViewController();
     
@@ -259,26 +283,44 @@ class _InstagramWebViewState extends State<InstagramWebView> {
             margin: 0;
             padding: 0;
             font-family: Arial, sans-serif;
-            overflow: hidden;
+            overflow: hidden; /* Keep this to prevent scrollbars on body */
             background-color: white;
           }
-          .container {
-            position: relative;
-            height: 100%;
-            display: flex;
+          .container { /* This div wraps the embed-container */
+            display: flex; /* Use flex to center content if needed */
             justify-content: center;
             align-items: center;
+            width: 100%;
+            height: 100%; /* Ensure it takes full space from iframe */
           }
-          .embed-container {
+          .embed-container { /* This is the direct parent of the blockquote */
+            width: 100%; 
+            padding-top: 177.77%; /* 16/9 aspect ratio (100% / (9/16)) */
+            position: relative; 
+            max-width: 540px; /* Instagram's standard max-width for embeds */
+            margin: 0 auto; /* Center if max-width is hit */
+            overflow: hidden; /* Hide anything that might spill out of aspect ratio */
+          }
+          .instagram-media { /* The blockquote itself */
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
             height: 100%;
-            max-width: 540px;
-            margin: 0 auto;
+            /* Remove fixed widths from here, let parent .embed-container control it */
+            /* style attribute on blockquote below will also be simplified */
+            margin: 0 !important; /* Override default margins */
+            padding: 0 !important; /* Override default padding */
+            border: 0 !important; /* Override default border */
+            border-radius:0 !important; /* Override default radius */
+            box-shadow: none !important; /* Override default shadow */
           }
-          iframe {
+          iframe { /* Just in case Instagram's script adds its own iframe inside our iframe */
             border: none !important;
             margin: 0 !important;
             padding: 0 !important;
             height: 100% !important;
+            width: 100% !important;
           }
         </style>
       </head>
@@ -286,10 +328,10 @@ class _InstagramWebViewState extends State<InstagramWebView> {
         <div class="container">
           <div class="embed-container">
             <blockquote class="instagram-media" data-instgrm-captioned data-instgrm-permalink="$cleanUrl"
-              data-instgrm-version="14" style="background:#FFF; border:0; border-radius:3px;
-              box-shadow:0 0 1px 0 rgba(0,0,0,0.5),0 1px 10px 0 rgba(0,0,0,0.15);
-              margin: 1px; max-width:540px; min-width:326px; padding:0; width:99.375%; width:-webkit-calc(100% - 2px); width:calc(100% - 2px);">
-              <div style="padding:16px;">
+              data-instgrm-version="14" style="background:#FFF;">
+              <!-- Placeholder content inside blockquote is mostly for when JS is disabled -->
+              <!-- The embed.js script will replace this or use it -->
+              <div style="padding:16px;"> 
                 <a href="$cleanUrl" style="background:#FFFFFF; line-height:0; padding:0 0; text-align:center; text-decoration:none; width:100%;" target="_blank">
                   <div style="display:flex; flex-direction:row; align-items:center;">
                     <div style="background-color:#F4F4F4; border-radius:50%; flex-grow:0; height:40px; margin-right:14px; width:40px;"></div>
@@ -371,43 +413,24 @@ class _InstagramWebViewState extends State<InstagramWebView> {
 
   @override
   Widget build(BuildContext context) {
-    // Use the height passed by the parent
-    final double containerHeight = widget.height;
-
     if (kIsWeb) {
-      return GestureDetector(
-        onTap: _launchInstagramUrl,
-        child: Container(
-          height: containerHeight,
+      if (_webEmbedViewType == null) {
+        // This case should ideally not be reached if initState completes successfully.
+        return SizedBox(
+          height: widget.height, // Fallback height from widget
           width: double.infinity,
-          decoration: BoxDecoration(
-            border: Border.all(color: Colors.grey[300]!),
-            borderRadius: BorderRadius.circular(8),
-            color: Colors.grey[100],
-          ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(FontAwesomeIcons.instagram, size: 40, color: Colors.grey[700]),
-              SizedBox(height: 8),
-              Text(
-                'View on Instagram',
-                style: TextStyle(color: Colors.blue, decoration: TextDecoration.underline),
-              ),
-              SizedBox(height: 4),
-              Text(
-                widget.url,
-                style: TextStyle(color: Colors.grey[600], fontSize: 12),
-                overflow: TextOverflow.ellipsis,
-                maxLines: 1,
-              ),
-            ],
-          ),
-        ),
+          child: Center(child: Text("Error initializing web embed view type.")),
+        );
+      }
+      // Use AspectRatio for web to maintain Instagram Reel's typical 9:16 aspect ratio.
+      return AspectRatio(
+        aspectRatio: 9 / 16,
+        child: HtmlElementView(viewType: _webEmbedViewType!),
       );
     }
 
-    // Mobile specific WebView implementation
+    // Mobile specific WebViewWidget implementation
+    final double containerHeight = widget.height; // Use widget.height for mobile
     return Stack(
       alignment: Alignment.center,
       children: [
@@ -418,9 +441,9 @@ class _InstagramWebViewState extends State<InstagramWebView> {
             border: Border.all(color: Colors.grey[300]!),
             borderRadius: BorderRadius.circular(8),
           ),
-          child: WebViewWidget(controller: controller),
+          child: WebViewWidget(controller: controller), // controller is initialized only for mobile
         ),
-        if (isLoading)
+        if (isLoading) // isLoading is managed by mobile path
           Container(
             width: double.infinity,
             height: containerHeight,
