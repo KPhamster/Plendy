@@ -455,21 +455,26 @@ class _CollectionsScreenState extends State<CollectionsScreen>
 
     if (isDesktopWeb) {
       // Web: Use GridView.builder
-      return GridView.builder(
-        padding: const EdgeInsets.all(12.0),
-        itemCount: _categories.length,
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 3,
-          mainAxisSpacing: 10.0,
-          crossAxisSpacing: 10.0,
-          childAspectRatio: 3/3.5, // Width : Height ratio for each item
+      return Center( // ADDED Center
+        child: ConstrainedBox( // ADDED ConstrainedBox
+          constraints: const BoxConstraints(maxWidth: 1200.0), // ADDED maxWidth
+          child: GridView.builder(
+            padding: const EdgeInsets.all(12.0),
+            itemCount: _categories.length,
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 5,
+              mainAxisSpacing: 10.0,
+              crossAxisSpacing: 10.0,
+              childAspectRatio: 3/3.5, // Width : Height ratio for each item
+            ),
+            itemBuilder: (context, index) {
+              // Ensure _categories is accessed safely if it can be modified elsewhere
+              // For simplicity, assuming it's stable during build or handled by setState
+              final category = _categories[index];
+              return _buildCategoryGridItem(category);
+            },
+          ),
         ),
-        itemBuilder: (context, index) {
-          // Ensure _categories is accessed safely if it can be modified elsewhere
-          // For simplicity, assuming it's stable during build or handled by setState
-          final category = _categories[index];
-          return _buildCategoryGridItem(category);
-        },
       );
     } else {
       // Mobile: Use existing ReorderableListView.builder
@@ -1480,18 +1485,23 @@ class _CollectionsScreenState extends State<CollectionsScreen>
 
     if (isDesktopWeb) {
       // Web: Use GridView.builder
-      return GridView.builder(
-        padding: const EdgeInsets.all(12.0),
-        itemCount: _filteredExperiences.length,
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 3,
-          mainAxisSpacing: 12.0,
-          crossAxisSpacing: 12.0,
-          childAspectRatio: 0.75, //  (width / height) - results in items being taller than wide
+      return Center( // ADDED Center
+        child: ConstrainedBox( // ADDED ConstrainedBox
+          constraints: const BoxConstraints(maxWidth: 1200.0), // ADDED maxWidth
+          child: GridView.builder(
+            padding: const EdgeInsets.all(12.0),
+            itemCount: _filteredExperiences.length,
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 3,
+              mainAxisSpacing: 12.0,
+              crossAxisSpacing: 12.0,
+              childAspectRatio: 0.75, //  (width / height) - results in items being taller than wide
+            ),
+            itemBuilder: (context, index) {
+              return _buildExperienceGridItem(_filteredExperiences[index]);
+            },
+          ),
         ),
-        itemBuilder: (context, index) {
-          return _buildExperienceGridItem(_filteredExperiences[index]);
-        },
       );
     } else {
       // Mobile: Use existing ListView.builder
@@ -1582,18 +1592,23 @@ class _CollectionsScreenState extends State<CollectionsScreen>
 
     if (isDesktopWeb) {
       // Web: Use GridView.builder
-      return GridView.builder(
-        padding: const EdgeInsets.all(10.0),
-        itemCount: _filteredGroupedContentItems.length,
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 3,
-          mainAxisSpacing: 10.0,
-          crossAxisSpacing: 10.0,
-          childAspectRatio: 0.6, 
+      return Center( // ADDED Center
+        child: ConstrainedBox( // ADDED ConstrainedBox
+          constraints: const BoxConstraints(maxWidth: 1200.0), // ADDED maxWidth
+          child: GridView.builder(
+            padding: const EdgeInsets.all(10.0),
+            itemCount: _filteredGroupedContentItems.length,
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 3,
+              mainAxisSpacing: 10.0,
+              crossAxisSpacing: 10.0,
+              childAspectRatio: 0.6, 
+            ),
+            itemBuilder: (context, index) {
+              return _buildContentGridItem(_filteredGroupedContentItems[index], index);
+            },
+          ),
         ),
-        itemBuilder: (context, index) {
-          return _buildContentGridItem(_filteredGroupedContentItems[index], index);
-        },
       );
     } else {
       // Mobile or Mobile Web: Use existing ListView.builder (original complex list item)

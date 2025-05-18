@@ -5,7 +5,9 @@ import 'experience_service.dart';
 
 class AuthService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
-  final GoogleSignIn _googleSignIn = GoogleSignIn();
+  final GoogleSignIn _googleSignIn = GoogleSignIn(
+    clientId: "449728842508-2o1dfbn37370v03t3qald1756iim4i4f.apps.googleusercontent.com", // Add your Web Client ID here
+  );
   final UserService _userService = UserService();
   final ExperienceService _experienceService = ExperienceService();
 
