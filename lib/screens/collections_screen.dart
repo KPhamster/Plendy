@@ -1386,12 +1386,176 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   }
 
   // ADDED: Widget builder for an Experience Grid Item (for web)
-  Widget _buildExperienceGridItem(Experience experience) {
+  Widget _buildExperienceGridItem(Experience experience, bool isDesktopWeb) { // ADDED isDesktopWeb parameter
     final category = _categories.firstWhereOrNull((cat) => cat.id == experience.categoryId);
     final categoryIcon = category?.icon ?? '❓';
     final colorCategory = _colorCategories.firstWhereOrNull((cc) => cc.id == experience.colorCategoryId);
     final color = colorCategory != null ? _parseColor(colorCategory.colorHex) : Theme.of(context).disabledColor;
     final String? locationArea = experience.location.getFormattedArea();
+    final String? photoUrl = experience.location.photoUrl;
+
+    Widget categoryIconWidget = Container(
+      height: 60, // MODIFIED: Reduced height
+      color: color.withOpacity(0.15),
+      padding: const EdgeInsets.symmetric(horizontal: 8.0), // Add some padding
+      child: Center(
+        child: Row( // MODIFIED: Use a Row for icon and text on the same line
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: <Widget>[
+            Text(
+              categoryIcon,
+              style: TextStyle(fontSize: 20, color: color), // MODIFIED: Smaller icon size
+            ),
+            const SizedBox(width: 8), // Space between icon and text
+            if (category != null) // Add category name if category exists
+              Expanded( // Use Expanded to handle long names
+                child: Text(
+                  category.name,
+                  style: TextStyle(fontSize: 14, color: color.withOpacity(0.9)), // MODIFIED: Style for name
+                  textAlign: TextAlign.left, // Align to left after icon
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+
+    // Content (name, location, color category)
+    Widget textContentColumn = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        Padding(
+          padding: const EdgeInsets.fromLTRB(8.0, 8.0, 8.0, 4.0),
+          child: Text(
+            experience.name,
+            style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.bold,
+                  // Conditional color will be applied if it's part of a stack with background
+                ),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        if (locationArea != null && locationArea.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8.0),
+            child: Text(
+              locationArea,
+              style: Theme.of(context).textTheme.bodySmall,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        const Spacer(), 
+        if (colorCategory != null)
+          Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: Row(
+              children: [
+                Icon(Icons.circle, color: colorCategory.color /* Use parsed color from model */, size: 10),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    colorCategory.name,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(color: colorCategory.color /* Use parsed color */),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+
+    Widget lowerSectionContent;
+    if (isDesktopWeb && photoUrl != null && photoUrl.isNotEmpty) {
+      // Apply white text color for contrast against photo background
+      Widget textContentWithWhiteColor = Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8.0, 8.0, 8.0, 4.0),
+            child: Text(
+              experience.name,
+              style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white, // White text
+                  ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          if (locationArea != null && locationArea.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8.0),
+              child: Text(
+                locationArea,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.white70), // White text
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          const Spacer(), 
+          if (colorCategory != null)
+            Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: Row(
+                children: [
+                  // Use a white circle or icon if colorCategory.color is too dark for the overlay
+                  Icon(Icons.circle, color: colorCategory.color, size: 10), // MODIFIED: Use actual category color
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(
+                      colorCategory.name,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.white), // White text for label
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      );
+      
+      lowerSectionContent = Stack(
+        fit: StackFit.expand,
+        children: [
+          Positioned.fill(
+            child: Image.network(
+              photoUrl,
+              fit: BoxFit.cover,
+              loadingBuilder: (context, child, loadingProgress) {
+                if (loadingProgress == null) return child;
+                return const Center(child: CircularProgressIndicator(strokeWidth: 2.0));
+              },
+              errorBuilder: (context, error, stackTrace) {
+                return Container(
+                  color: Colors.grey[300], // Placeholder if image fails
+                  child: Center(child: Icon(Icons.broken_image_outlined, color: Colors.grey[500])),
+                );
+              },
+            ),
+          ),
+          Positioned.fill(
+            child: Container(
+              color: Colors.black.withOpacity(0.5), // Dark overlay for text readability
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(0), // Padding is handled by textContentWithWhiteColor
+            child: textContentWithWhiteColor,
+          ),
+        ],
+      );
+    } else {
+      // If not desktop web or no photo, use the original textContentColumn directly
+      lowerSectionContent = textContentColumn;
+    }
 
     return Card(
       key: ValueKey('experience_grid_${experience.id}'),
@@ -1424,54 +1588,12 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
-            Container(
-              height: 100, 
-              color: color.withOpacity(0.15),
-              child: Center(
-                child: Text(
-                  categoryIcon,
-                  style: TextStyle(fontSize: 40, color: color),
-                ),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(8.0, 8.0, 8.0, 4.0),
-              child: Text(
-                experience.name,
-                style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            if (locationArea != null && locationArea.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                child: Text(
-                  locationArea,
-                  style: Theme.of(context).textTheme.bodySmall,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            const Spacer(), 
-            if (colorCategory != null)
-              Padding(
-                padding: const EdgeInsets.all(8.0),
-                child: Row(
-                  children: [
-                    Icon(Icons.circle, color: color, size: 10),
-                    const SizedBox(width: 4),
-                    Expanded(
-                      child: Text(
-                        colorCategory.name,
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(color: color),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+            categoryIconWidget, // Category icon always on top
+            Expanded(child: lowerSectionContent), // Lower section takes remaining space
+            // Padding(
+            //   padding: const EdgeInsets.fromLTRB(8.0, 8.0, 8.0, 4.0),
+            //   child: Text(
+            // ... existing code ...
           ],
         ),
       ),
@@ -1514,7 +1636,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
           childAspectRatio: 0.75, //  (width / height) - results in items being taller than wide
         ),
         itemBuilder: (context, index) {
-          return _buildExperienceGridItem(_filteredExperiences[index]);
+          return _buildExperienceGridItem(_filteredExperiences[index], isDesktopWeb); // MODIFIED: Pass isDesktopWeb
         },
       );
     } else {
