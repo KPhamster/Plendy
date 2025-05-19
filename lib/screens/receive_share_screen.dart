@@ -208,7 +208,7 @@ class ExperienceCardData {
   Location? selectedLocation;
   Location? location;
   bool isSelectingLocation = false;
-  bool locationEnabled = true;
+  ValueNotifier<bool> locationEnabled = ValueNotifier(true); // NEW: Use ValueNotifier
   List<Map<String, dynamic>> searchResults = [];
 
   // State variable for card
@@ -257,6 +257,8 @@ class ExperienceCardData {
     titleFocusNode.dispose();
     // No need to explicitly handle selectedCategoryId in dispose,
     // as it is just a simple String? type and not a controller/listener.
+
+    locationEnabled.dispose(); // NEW: Dispose the ValueNotifier
   }
 }
 
@@ -1692,7 +1694,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         allValid = false;
         break;
       }
-      if (card.locationEnabled && card.selectedLocation == null) {
+      if (card.locationEnabled.value && card.selectedLocation == null) {
         if (!mounted) return; // Check mounted
         _showSnackBar(context,
             'Please select a location for experience card: "${card.titleController.text}" ');
@@ -1819,7 +1821,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                 longitude: 0.0,
                 address: 'No location specified');
             final Location locationToSave =
-                (card.locationEnabled && cardLocation != null)
+                (card.locationEnabled.value && cardLocation != null)
                     ? cardLocation
                     : defaultLocation;
 

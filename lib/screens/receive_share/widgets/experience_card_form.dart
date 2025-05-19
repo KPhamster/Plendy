@@ -859,96 +859,92 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                       SizedBox(height: 12),
 
                       // Location selection with preview
-                      GestureDetector(
-                        // Call the parent's location selection logic
-                        onTap: (widget.cardData
-                                .locationEnabled) // Read directly from cardData
-                            ? () => widget.onLocationSelect(widget.cardData)
-                            : null,
-                        child: Container(
-                          decoration: BoxDecoration(
-                            border: Border.all(
-                                color: widget.cardData
-                                        .locationEnabled // Read directly from cardData
-                                    ? Colors.grey
-                                    : Colors.grey.shade300),
-                            borderRadius: BorderRadius.circular(4),
-                            color: Colors.transparent,
-                          ),
-                          padding:
-                              EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                          child: Row(
-                            children: [
-                              Icon(Icons.location_on,
-                                  color: widget.cardData
-                                          .locationEnabled // Read directly from cardData
-                                      ? Colors.grey[600]
-                                      : Colors.grey[400]),
-                              SizedBox(width: 12),
-                              Expanded(
-                                child: currentLocation != null
-                                    ? Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          // Place name in bold
-                                          Text(
-                                            currentLocation.getPlaceName(),
-                                            style: TextStyle(
-                                              fontWeight: FontWeight.bold,
-                                              color: widget.cardData
-                                                      .locationEnabled // Read directly from cardData
-                                                  ? Colors.black
-                                                  : Colors.grey[500],
-                                            ),
-                                          ),
-                                          // Address
-                                          if (currentLocation.address != null)
-                                            Text(
-                                              currentLocation.address!,
-                                              style: TextStyle(
-                                                fontSize: 12,
-                                                color: widget.cardData
-                                                        .locationEnabled // Read directly from cardData
-                                                    ? Colors.black87
-                                                    : Colors.grey[500],
+                      ValueListenableBuilder<bool>(
+                        valueListenable: widget.cardData.locationEnabled,
+                        builder: (context, isEnabled, child) {
+                          return GestureDetector(
+                            // Call the parent's location selection logic
+                            onTap: isEnabled // Use isEnabled from builder
+                                ? () => widget.onLocationSelect(widget.cardData)
+                                : null,
+                            child: Container(
+                              decoration: BoxDecoration(
+                                border: Border.all(
+                                    color: isEnabled // Use isEnabled from builder
+                                        ? Colors.grey
+                                        : Colors.grey.shade300),
+                                borderRadius: BorderRadius.circular(4),
+                                color: Colors.transparent,
+                              ),
+                              padding:
+                                  EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                              child: Row(
+                                children: [
+                                  Icon(Icons.location_on,
+                                      color: isEnabled // Use isEnabled from builder
+                                          ? Colors.grey[600]
+                                          : Colors.grey[400]),
+                                  SizedBox(width: 12),
+                                  Expanded(
+                                    child: currentLocation != null
+                                        ? Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              // Place name in bold
+                                              Text(
+                                                currentLocation.getPlaceName(),
+                                                style: TextStyle(
+                                                  fontWeight: FontWeight.bold,
+                                                  color: isEnabled // Use isEnabled from builder
+                                                      ? Colors.black
+                                                      : Colors.grey[500],
+                                                ),
                                               ),
-                                              maxLines: 1, // Limit address lines
-                                              overflow: TextOverflow.ellipsis,
-                                            ),
-                                        ],
-                                      )
-                                    : Text(
-                                        'Select location',
-                                        style: TextStyle(
-                                            color: widget.cardData
-                                                    .locationEnabled // Read directly from cardData
-                                                ? Colors.grey[600]
-                                                : Colors.grey[400]),
-                                      ),
+                                              // Address
+                                              if (currentLocation.address != null)
+                                                Text(
+                                                  currentLocation.address!,
+                                                  style: TextStyle(
+                                                    fontSize: 12,
+                                                    color: isEnabled // Use isEnabled from builder
+                                                        ? Colors.black87
+                                                        : Colors.grey[500],
+                                                  ),
+                                                  maxLines: 1, // Limit address lines
+                                                  overflow: TextOverflow.ellipsis,
+                                                ),
+                                            ],
+                                          )
+                                        : Text(
+                                            'Select location',
+                                            style: TextStyle(
+                                                color: isEnabled // Use isEnabled from builder
+                                                    ? Colors.grey[600]
+                                                    : Colors.grey[400]),
+                                          ),
+                                  ),
+                                  // Toggle switch inside the location field
+                                  Transform.scale(
+                                    scale: 0.8,
+                                    child: Switch(
+                                      value: isEnabled, // Use isEnabled from builder
+                                      onChanged: (value) {
+                                        widget.cardData.locationEnabled.value =
+                                            value; // Update model directly
+                                        // No widget.onUpdate() needed here for this toggle's visual state
+                                      },
+                                      activeColor: Colors.blue,
+                                      materialTapTargetSize:
+                                          MaterialTapTargetSize.shrinkWrap,
+                                    ),
+                                  ),
+                                ],
                               ),
-                              // Toggle switch inside the location field
-                              Transform.scale(
-                                scale: 0.8,
-                                child: Switch(
-                                  value: widget.cardData
-                                      .locationEnabled, // Read directly from cardData
-                                  onChanged: (value) {
-                                    widget.cardData.locationEnabled =
-                                        value; // Update model
-                                    widget.onUpdate(
-                                        refreshCategories:
-                                            false); // Notify parent, no refresh needed
-                                  },
-                                  activeColor: Colors.blue,
-                                  materialTapTargetSize:
-                                      MaterialTapTargetSize.shrinkWrap,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
+                            ),
+                          );
+                        },
                       ),
                       SizedBox(height: 16),
 
