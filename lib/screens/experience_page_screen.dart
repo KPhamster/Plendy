@@ -42,6 +42,7 @@ import '../models/color_category.dart';
 import 'package:collection/collection.dart';
 // --- END ADDED ---
 import 'map_screen.dart'; // ADDED: Import for MapScreen
+import 'package:flutter/foundation.dart'; // ADDED for kIsWeb
 
 // Convert to StatefulWidget
 class ExperiencePageScreen extends StatefulWidget {
@@ -73,6 +74,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   bool _isLoadingDetails = true;
   String? _errorLoadingDetails;
   Map<String, dynamic>? _placeDetailsData;
+  String? _headerPhotoUrl; // ADDED: State variable for header photo
 
   // Tab Controller State
   late TabController _tabController;
@@ -187,7 +189,6 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
 
   // Method to fetch place details
   Future<void> _fetchPlaceDetails() async {
-    // Ensure we have a placeId to fetch details
     final placeId = _currentExperience.location.placeId;
     if (placeId == null || placeId.isEmpty) {
       if (mounted) {
@@ -205,30 +206,96 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     });
 
     try {
-      // TODO: Replace with actual API call from your service
-      // print('Simulating API call for Place ID: $placeId');
-      // await Future.delayed(const Duration(seconds: 1)); // Simulate network delay
-      // final details = await _placesService.getPlaceDetails(placeId);
-
-      // --- REMOVED SIMULATED DATA ---
-
-      // Call the new service method
-      final fetchedDetails =
+      final fetchedDetailsMap =
           await _googleMapsService.fetchPlaceDetailsData(placeId);
 
       if (mounted) {
-        if (fetchedDetails != null) {
+        if (fetchedDetailsMap != null) {
+          String? newConstructedPhotoUrl;
+
+          // Try to get photo resource name from fetchedDetailsMap
+          if (fetchedDetailsMap['photos'] != null &&
+              fetchedDetailsMap['photos'] is List &&
+              (fetchedDetailsMap['photos'] as List).isNotEmpty) {
+            final photosList = fetchedDetailsMap['photos'] as List;
+            final firstPhotoData = photosList.first as Map<String, dynamic>?;
+            final String? photoResourceName = firstPhotoData?['name'] as String?;
+
+            if (photoResourceName != null && photoResourceName.isNotEmpty) {
+              final apiKey = GoogleMapsService.apiKey; // Get API key
+              if (apiKey.isNotEmpty) {
+                // Construct URL using Places API v1 format
+                // Assuming default max width/height, adjust as needed for header
+                newConstructedPhotoUrl = 
+                    'https://places.googleapis.com/v1/$photoResourceName/media?key=$apiKey&maxWidthPx=800&maxHeightPx=600';
+                print("ExperiencePageScreen: Constructed photo URL: $newConstructedPhotoUrl");
+              } else {
+                print("ExperiencePageScreen: API key is empty, cannot construct photo URL.");
+              }
+            } else {
+              print("ExperiencePageScreen: No photo resource name found in fetched details.");
+            }
+          } else {
+            print("ExperiencePageScreen: No 'photos' array or empty in fetched details.");
+          }
+
           setState(() {
-            // Assign actual fetched details (as Map)
-            _placeDetailsData = fetchedDetails;
+            _placeDetailsData = fetchedDetailsMap; // Store the raw details map
+
+            String? finalPhotoUrlToSet;
+            if (newConstructedPhotoUrl != null && newConstructedPhotoUrl.isNotEmpty) {
+              finalPhotoUrlToSet = newConstructedPhotoUrl;
+            }
+
+            if (kIsWeb) { // Apply only for web (desktop and mobile)
+              _headerPhotoUrl = finalPhotoUrlToSet;
+
+              final originalLocation = _currentExperience.location;
+              final updatedLocation = Location(
+                placeId: originalLocation.placeId,
+                latitude: originalLocation.latitude,
+                longitude: originalLocation.longitude,
+                address: originalLocation.address,
+                city: originalLocation.city,
+                state: originalLocation.state,
+                country: originalLocation.country,
+                zipCode: originalLocation.zipCode,
+                displayName: originalLocation.displayName,
+                photoUrl: finalPhotoUrlToSet, 
+                website: originalLocation.website,
+                rating: originalLocation.rating,
+                userRatingCount: originalLocation.userRatingCount,
+              );
+              final newExperienceData = _currentExperience.copyWith(location: updatedLocation);
+              bool photoUrlChanged = _currentExperience.location.photoUrl != newExperienceData.location.photoUrl;
+              _currentExperience = newExperienceData;
+              
+              if (finalPhotoUrlToSet != null) {
+                print("ExperiencePageScreen: Successfully updated _headerPhotoUrl (Web Specific) to: $finalPhotoUrlToSet");
+                if (photoUrlChanged) {
+                  // Save the updated experience to Firestore if the photoUrl actually changed
+                  _experienceService.updateExperience(_currentExperience).then((_) {
+                    print("ExperiencePageScreen: Saved updated experience with new photoUrl to Firestore.");
+                    _didDataChange = true; // Signal that data changed for pop result
+                  }).catchError((e) {
+                    print("ExperiencePageScreen: Error saving updated experience to Firestore: $e");
+                  });
+                }
+              } else {
+                print("ExperiencePageScreen: No new photo URL constructed. _headerPhotoUrl will be null (Web Specific).");
+              }
+            } else {
+              // For non-web (mobile), DO NOT update _currentExperience.location.photoUrl.
+              // It should retain its original value from Firestore to keep behavior identical.
+              if (finalPhotoUrlToSet != null) {
+                print("ExperiencePageScreen: Photo URL constructed ($finalPhotoUrlToSet) for non-web, but NOT updating experience's photoUrl to preserve original mobile behavior.");
+              } else {
+                print("ExperiencePageScreen: No new photo URL constructed, and not on web platform. Mobile behavior preserved.");
+              }
+            }
             _isLoadingDetails = false;
-            // ADDED: Log fetched data
-            print('✅ Fetched Place Details Data:');
-            print(jsonEncode(
-                _placeDetailsData)); // Use jsonEncode for readability
           });
         } else {
-          // Handle case where service returned null (error handled inside service)
           setState(() {
             _isLoadingDetails = false;
             _errorLoadingDetails =
@@ -237,8 +304,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
         }
       }
     } catch (e) {
-      // This catch block might be redundant if service handles errors, but kept for safety
-      print('Error calling fetchPlaceDetailsData: $e');
+      print('ExperiencePageScreen: Error in _fetchPlaceDetails for placeId $placeId: $e');
       if (mounted) {
         setState(() {
           _isLoadingDetails = false;
