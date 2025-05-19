@@ -15,6 +15,7 @@ import 'package:plendy/widgets/add_category_modal.dart';
 import 'package:plendy/widgets/edit_categories_modal.dart';
 import 'package:plendy/services/experience_service.dart';
 import 'package:collection/collection.dart'; // ADDED: Import for firstWhereOrNull
+import 'package:plendy/screens/location_picker_screen.dart'; // ADDED: Import for LocationPickerScreen
 
 class EditExperienceModal extends StatefulWidget {
   final Experience experience;
@@ -1362,43 +1363,5 @@ extension LocationNameHelperModal on Location {
     final coordRegex =
         RegExp(r'-?\d+\.\d+ ?, ?-?\d+\.\d+'); // Basic coordinate pattern
     return coordRegex.hasMatch(text);
-  }
-}
-
-// Required for Location Picker Screen import
-class LocationPickerScreen extends StatelessWidget {
-  final Location? initialLocation;
-  final Function(Location) onLocationSelected;
-  final String? businessNameHint;
-
-  const LocationPickerScreen({
-    super.key,
-    this.initialLocation,
-    required this.onLocationSelected,
-    this.businessNameHint,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    // Replace with your actual LocationPickerScreen implementation
-    return Scaffold(
-      appBar: AppBar(title: Text("Select Location (Placeholder)")),
-      body: Center(
-        child: ElevatedButton(
-          onPressed: () {
-            // Simulate selecting a location
-            Navigator.pop(
-                context,
-                Location(
-                    latitude: 40.7128,
-                    longitude: -74.0060,
-                    address: "New York, NY, USA",
-                    placeId: "ChIJOwg_06VPwokRYv534QaPC8g",
-                    displayName: "New York"));
-          },
-          child: Text("Select New York (Placeholder)"),
-        ),
-      ),
-    );
   }
 }

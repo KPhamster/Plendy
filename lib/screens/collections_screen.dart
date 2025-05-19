@@ -1055,83 +1055,97 @@ class _CollectionsScreenState extends State<CollectionsScreen>
           : Column(
               children: [
                 // ADDED: Search Bar Area
-                Padding(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 12.0, vertical: 4.0),
-                  child: TypeAheadField<Experience>(
-                    builder: (context, controller, focusNode) {
-                      return TextField(
-                        controller: controller,
-                        focusNode: focusNode,
-                        decoration: InputDecoration(
-                          labelText: 'Search your experiences',
-                          prefixIcon: const Icon(Icons.search),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(25.0),
-                          ),
-                          suffixIcon: IconButton(
-                            icon: const Icon(Icons.clear),
-                            tooltip: 'Clear Search',
-                            onPressed: () {
-                              controller.clear();
-                              _searchController.clear();
-                              FocusScope.of(context).unfocus();
-                              setState(() {});
-                            },
-                          ),
+                Builder( // ADDED Builder for conditional width
+                  builder: (context) {
+                    final bool isDesktopWeb = kIsWeb && MediaQuery.of(context).size.width > 600;
+                    
+                    // Original search bar widget (TypeAheadField wrapped in Padding)
+                    // This definition includes the original Padding and TypeAheadField configuration.
+                    Widget searchBarWidget = Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12.0, vertical: 4.0),
+                      child: TypeAheadField<Experience>(
+                        builder: (context, controller, focusNode) {
+                          return TextField(
+                            controller: controller, // This is TypeAhead's controller
+                            focusNode: focusNode,
+                            decoration: InputDecoration(
+                              labelText: 'Search your experiences',
+                              prefixIcon: const Icon(Icons.search),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(25.0),
+                              ),
+                              suffixIcon: IconButton(
+                                icon: const Icon(Icons.clear),
+                                tooltip: 'Clear Search',
+                                onPressed: () {
+                                  controller.clear(); // Clear TypeAhead's controller
+                                  _searchController.clear(); // Clear state's controller
+                                  FocusScope.of(context).unfocus();
+                                  // setState(() {}); // Removed as TypeAheadField/TextField should update with controller
+                                },
+                              ),
+                            ),
+                          );
+                        },
+                        suggestionsCallback: (pattern) async {
+                          return await _getExperienceSuggestions(pattern);
+                        },
+                        itemBuilder: (context, suggestion) {
+                          return ListTile(
+                            leading: const Icon(Icons.history),
+                            title: Text(suggestion.name),
+                          );
+                        },
+                        onSelected: (suggestion) async {
+                          print('Selected experience: ${suggestion.name}');
+                          final category = _categories.firstWhere(
+                              (cat) => cat.id == suggestion.categoryId, 
+                              orElse: () => UserCategory(
+                                  id: '', 
+                                  name: suggestion.categoryId != null 
+                                      ? 'Category Not Found' 
+                                      : 'Uncategorized', 
+                                  icon: '❓', 
+                                  ownerUserId: '' 
+                              )
+                          );
+
+                          final result = await Navigator.push<bool>(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => ExperiencePageScreen(
+                                experience: suggestion,
+                                category: category, 
+                                userColorCategories: _colorCategories,
+                              ),
+                            ),
+                          );
+                          _searchController.clear(); 
+                          FocusScope.of(context).unfocus();
+                          if (result == true && mounted) {
+                            _loadData();
+                          }
+                        },
+                        emptyBuilder: (context) => const Padding(
+                          padding: EdgeInsets.all(8.0),
+                          child: Text('No experiences found.',
+                              style: TextStyle(color: Colors.grey)),
+                        ),
+                      ),
+                    );
+
+                    if (isDesktopWeb) {
+                      return Center( // Center the search bar on desktop
+                        child: SizedBox(
+                          width: MediaQuery.of(context).size.width * 0.3, // 50% of screen width
+                          child: searchBarWidget,
                         ),
                       );
-                    },
-                    suggestionsCallback: (pattern) async {
-                      return await _getExperienceSuggestions(pattern);
-                    },
-                    itemBuilder: (context, suggestion) {
-                      return ListTile(
-                        leading: const Icon(Icons.history),
-                        title: Text(suggestion.name),
-                      );
-                    },
-                    onSelected: (suggestion) async {
-                      print('Selected experience: ${suggestion.name}');
-                      // ADDED: Navigate to the experience page
-
-                      // Find the matching category for the selected experience using categoryId
-                      final category = _categories.firstWhere(
-                          (cat) => cat.id == suggestion.categoryId, // Use categoryId
-                          orElse: () => UserCategory(
-                              id: '', // Fallback ID if no categoryId or not found
-                              name: suggestion.categoryId != null 
-                                  ? 'Category Not Found' // Placeholder if ID existed but no match
-                                  : 'Uncategorized', // Placeholder if categoryId was null
-                              icon: '❓', 
-                              ownerUserId: '' // Needs a valid owner or handle this case
-                          )
-                      );
-
-                      // Await result and refresh if needed
-                      final result = await Navigator.push<bool>(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => ExperiencePageScreen(
-                            experience: suggestion,
-                            category: category, // Pass the found category
-                            userColorCategories: _colorCategories,
-                          ),
-                        ),
-                      );
-                      _searchController.clear();
-                      FocusScope.of(context).unfocus();
-                      // Refresh if deletion occurred
-                      if (result == true && mounted) {
-                        _loadData();
-                      }
-                    },
-                    emptyBuilder: (context) => const Padding(
-                      padding: EdgeInsets.all(8.0),
-                      child: Text('No experiences found.',
-                          style: TextStyle(color: Colors.grey)),
-                    ),
-                  ),
+                    } else {
+                      return searchBarWidget; // Original layout for mobile/mobile-web
+                    }
+                  }
                 ),
                 // ADDED: TabBar placed here in the body's Column
                 TabBar(

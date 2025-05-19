@@ -563,6 +563,7 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
             // Information about selected location - only when keyboard is not visible
             if (_selectedLocation != null && !isKeyboardVisible)
               Container(
+                width: double.infinity,
                 padding: EdgeInsets.all(16),
                 color: Colors.white,
                 child: Stack(

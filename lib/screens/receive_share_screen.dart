@@ -2657,234 +2657,235 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               )
             : FutureBuilder<List<dynamic>>(
                 future: _combinedCategoriesFuture, // MODIFIED: Use stable combined future
-                builder: (context, snapshot) {
-                  if (snapshot.connectionState == ConnectionState.waiting && _combinedCategoriesFuture == null) {
-                    // This case handles if _combinedCategoriesFuture was somehow null initially,
-                    // though _initializeCombinedFuture in initState should prevent this.
-                    // Or if the future is legitimately null and we want to show loading.
-                    print("FutureBuilder waiting: _combinedCategoriesFuture is null or connection is waiting");
-                    return const Center(child: CircularProgressIndicator());
-                  }
-                  // More robust check for waiting state, especially if future can be re-assigned
-                  if (snapshot.connectionState == ConnectionState.waiting) {
-                     print("FutureBuilder waiting: snapshot is waiting on the future.");
+                builder: (context, AsyncSnapshot<List<dynamic>> snapshot) {
+                  // Primary Loading State: Show spinner if the future is null (early init) or still running.
+                  if (_combinedCategoriesFuture == null || snapshot.connectionState == ConnectionState.waiting) {
+                    // print("FutureBuilder: STATE_WAITING (Future is null or connection is waiting)");
                     return const Center(child: CircularProgressIndicator());
                   }
 
+                  // Error State: If the future completed with an error.
                   if (snapshot.hasError) {
-                    print("FutureBuilder Error (Combined): ${snapshot.error}");
+                    // print("FutureBuilder: STATE_ERROR (${snapshot.error})");
                     return Center(
                         child: Text(
                             "Error loading categories: ${snapshot.error}"));
                   }
-                  if (!snapshot.hasData || snapshot.data!.length < 2) {
-                    return const Center(
-                        child: Text("Error: Could not load category data."));
-                  }
 
-                  print(
-                      "Categories loaded: Text=${_userCategories.length}, Color=${_userColorCategories.length}");
+                  // Data State (Success or Failure to get sufficient data):
+                  // Future is done, no error, now check the data itself.
+                  if (snapshot.hasData && snapshot.data != null && snapshot.data!.length >= 2) {
+                    // Data is present and seems structurally correct.
+                    // The lists _userCategories and _userColorCategories should be populated by now.
+                    // print("FutureBuilder: STATE_HAS_DATA. Categories loaded: Text=${_userCategories.length}, Color=${_userColorCategories.length}");
 
-                  return Column(
-                    children: [
-                      Expanded(
-                        child: Stack( // WRAPPED IN STACK FOR FAB
-                          children: [
-                            SingleChildScrollView(
-                              controller: _scrollController, // ATTACHED SCROLL CONTROLLER
-                              padding: const EdgeInsets.only(bottom: 80),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  // Re-enable the shared files preview list
-                                  if (_currentSharedFiles.isEmpty)
-                                    const Padding(
-                                      padding: EdgeInsets.all(16.0),
-                                      child: Center(
-                                          child:
-                                              Text('No shared content received')),
-                                    )
-                                  else
-                                    Consumer<ReceiveShareProvider>(
-                                      key: _mediaPreviewListKey, // MOVED KEY HERE
-                                      builder: (context, provider, child) {
-                                        final experienceCards = provider.experienceCards;
-                                        final firstCard = experienceCards.isNotEmpty
-                                            ? experienceCards.first
-                                            : null;
+                    // Proceed with the main UI build
+                    return Column(
+                      children: [
+                        Expanded(
+                          child: Stack( // WRAPPED IN STACK FOR FAB
+                            children: [
+                              SingleChildScrollView(
+                                controller: _scrollController, // ATTACHED SCROLL CONTROLLER
+                                padding: const EdgeInsets.only(bottom: 80),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    // Re-enable the shared files preview list
+                                    if (_currentSharedFiles.isEmpty)
+                                      const Padding(
+                                        padding: EdgeInsets.all(16.0),
+                                        child: Center(
+                                            child:
+                                                Text('No shared content received')),
+                                      )
+                                    else
+                                      Consumer<ReceiveShareProvider>(
+                                        key: _mediaPreviewListKey, // MOVED KEY HERE
+                                        builder: (context, provider, child) {
+                                          final experienceCards = provider.experienceCards;
+                                          final firstCard = experienceCards.isNotEmpty
+                                              ? experienceCards.first
+                                              : null;
 
-                                        return ListView.builder(
-                                          padding: EdgeInsets.zero, 
-                                          shrinkWrap: true,
-                                          physics: const NeverScrollableScrollPhysics(),
-                                          itemCount: _currentSharedFiles.length,
-                                          itemBuilder: (context, index) {
-                                            final file = _currentSharedFiles[index];
-                                            
-                                            bool isInstagram = false;
-                                            if (file.type == SharedMediaType.text ||
-                                                file.type == SharedMediaType.url) {
-                                              String? url = _extractFirstUrl(file.path);
-                                              if (url != null &&
-                                                  url.contains('instagram.com')) {
-                                                isInstagram = true;
+                                          return ListView.builder(
+                                            padding: EdgeInsets.zero, 
+                                            shrinkWrap: true,
+                                            physics: const NeverScrollableScrollPhysics(),
+                                            itemCount: _currentSharedFiles.length,
+                                            itemBuilder: (context, index) {
+                                              final file = _currentSharedFiles[index];
+                                              
+                                              bool isInstagram = false;
+                                              if (file.type == SharedMediaType.text ||
+                                                  file.type == SharedMediaType.url) {
+                                                String? url = _extractFirstUrl(file.path);
+                                                if (url != null &&
+                                                    url.contains('instagram.com')) {
+                                                  isInstagram = true;
+                                                }
                                               }
-                                            }
-                                            final double horizontalPadding =
-                                                isInstagram ? 0.0 : 16.0;
-                                            final double verticalPadding =
-                                                8.0; 
-                                            
-                                            return Padding(
-                                              key: ValueKey(file.path),
-                                              padding: EdgeInsets.symmetric(
-                                                horizontal: horizontalPadding,
-                                                vertical: verticalPadding,
-                                              ),
-                                              child: Card(
-                                                elevation: 2.0,
-                                                margin: isInstagram
-                                                    ? EdgeInsets.zero
-                                                    : const EdgeInsets.only(
-                                                        bottom:
-                                                            0), 
-                                                shape: RoundedRectangleBorder(
-                                                  borderRadius: BorderRadius.circular(
-                                                      isInstagram ? 0 : 8),
+                                              final double horizontalPadding =
+                                                  isInstagram ? 0.0 : 16.0;
+                                              final double verticalPadding =
+                                                  8.0; 
+                                              
+                                              return Padding(
+                                                key: ValueKey(file.path),
+                                                padding: EdgeInsets.symmetric(
+                                                  horizontal: horizontalPadding,
+                                                  vertical: verticalPadding,
                                                 ),
-                                                clipBehavior: isInstagram
-                                                    ? Clip.antiAlias
-                                                    : Clip.none,
-                                                child: Column(
-                                                  crossAxisAlignment:
-                                                      CrossAxisAlignment.start,
-                                                  children: [
-                                                    _buildMediaPreview(
-                                                        file, firstCard, index),
-                                                  ],
+                                                child: Card(
+                                                  elevation: 2.0,
+                                                  margin: isInstagram
+                                                      ? EdgeInsets.zero
+                                                      : const EdgeInsets.only(
+                                                          bottom:
+                                                              0), 
+                                                  shape: RoundedRectangleBorder(
+                                                    borderRadius: BorderRadius.circular(
+                                                        isInstagram ? 0 : 8),
+                                                  ),
+                                                  clipBehavior: isInstagram
+                                                      ? Clip.antiAlias
+                                                      : Clip.none,
+                                                  child: Column(
+                                                    crossAxisAlignment:
+                                                        CrossAxisAlignment.start,
+                                                    children: [
+                                                      _buildMediaPreview(
+                                                          file, firstCard, index),
+                                                    ],
+                                                  ),
                                                 ),
-                                              ),
-                                            );
-                                          },
+                                              );
+                                            },
+                                          );
+                                        }
+                                      ),
+                                    Selector<ReceiveShareProvider, List<ExperienceCardData>>(
+                                      key: const ValueKey('experience_cards_selector'), // Keep this key or change if you prefer
+                                      selector: (_, provider) {
+                                        // print("ReceiveShareScreen: Selector retrieving cards. Provider HASH: ${provider.hashCode}"); // Can be removed
+                                        return provider.experienceCards;
+                                      },
+                                      shouldRebuild: (previous, next) {
+                                        if (previous.length != next.length) {
+                                          // print("ReceiveShareScreen: Selector WILL REBUILD (list lengths different).");
+                                          return true;
+                                        }
+                                        for (int i = 0; i < previous.length; i++) {
+                                          final pCard = previous[i];
+                                          final nCard = next[i];
+                                          // Compare relevant fields that determine if UI for a card should change
+                                          if (pCard.id != nCard.id ||
+                                              pCard.titleController.text != nCard.titleController.text ||
+                                              pCard.selectedCategoryId != nCard.selectedCategoryId ||
+                                              pCard.selectedColorCategoryId != nCard.selectedColorCategoryId ||
+                                              pCard.existingExperienceId != nCard.existingExperienceId || // If it's linked/unlinked
+                                              pCard.placeIdForPreview != nCard.placeIdForPreview || // If preview should change
+                                              pCard.selectedLocation?.placeId != nCard.selectedLocation?.placeId || // If location changed
+                                              pCard.searchController.text != nCard.searchController.text // If search text/displayed location changed
+                                              ) {
+                                            // print("ReceiveShareScreen: Selector WILL REBUILD (card data different at index $i).");
+                                            return true;
+                                          }
+                                        }
+                                        // print("ReceiveShareScreen: Selector WILL NOT REBUILD (lists appear identical by check).");
+                                        return false;
+                                      },
+                                      builder: (context, selectedExperienceCards, child) {
+                                        print("ReceiveShareScreen: Selector for _ExperienceCardsSection rebuilding. Cards count: ${selectedExperienceCards.length}");
+                                        return _ExperienceCardsSection(
+                                          userCategories: _userCategories,
+                                          userColorCategories: _userColorCategories,
+                                          userCategoriesNotifier: _userCategoriesNotifier,
+                                          userColorCategoriesNotifier: _userColorCategoriesNotifier,
+                                          removeExperienceCard: _removeExperienceCard,
+                                          showLocationPicker: _showLocationPicker,
+                                          selectSavedExperienceForCard: _selectSavedExperienceForCard,
+                                          handleCardFormUpdate: _handleExperienceCardFormUpdate,
+                                          addExperienceCard: _addExperienceCard,
+                                          isSpecialUrl: _isSpecialUrl,
+                                          extractFirstUrl: _extractFirstUrl,
+                                          currentSharedFiles: _currentSharedFiles,
+                                          experienceCards: selectedExperienceCards, // Pass selected cards from Selector
+                                          sectionKey: _experienceCardsSectionKey, // PASSING THE KEY
                                         );
                                       }
                                     ),
-                                  Selector<ReceiveShareProvider, List<ExperienceCardData>>(
-                                    key: const ValueKey('experience_cards_selector'), // Keep this key or change if you prefer
-                                    selector: (_, provider) {
-                                      // print("ReceiveShareScreen: Selector retrieving cards. Provider HASH: ${provider.hashCode}"); // Can be removed
-                                      return provider.experienceCards;
-                                    },
-                                    shouldRebuild: (previous, next) {
-                                      if (previous.length != next.length) {
-                                        // print("ReceiveShareScreen: Selector WILL REBUILD (list lengths different).");
-                                        return true;
-                                      }
-                                      for (int i = 0; i < previous.length; i++) {
-                                        final pCard = previous[i];
-                                        final nCard = next[i];
-                                        // Compare relevant fields that determine if UI for a card should change
-                                        if (pCard.id != nCard.id ||
-                                            pCard.titleController.text != nCard.titleController.text ||
-                                            pCard.selectedCategoryId != nCard.selectedCategoryId ||
-                                            pCard.selectedColorCategoryId != nCard.selectedColorCategoryId ||
-                                            pCard.existingExperienceId != nCard.existingExperienceId || // If it's linked/unlinked
-                                            pCard.placeIdForPreview != nCard.placeIdForPreview || // If preview should change
-                                            pCard.selectedLocation?.placeId != nCard.selectedLocation?.placeId || // If location changed
-                                            pCard.searchController.text != nCard.searchController.text // If search text/displayed location changed
-                                            ) {
-                                          // print("ReceiveShareScreen: Selector WILL REBUILD (card data different at index $i).");
-                                          return true;
-                                        }
-                                      }
-                                      // print("ReceiveShareScreen: Selector WILL NOT REBUILD (lists appear identical by check).");
-                                      return false;
-                                    },
-                                    builder: (context, selectedExperienceCards, child) {
-                                      print("ReceiveShareScreen: Selector for _ExperienceCardsSection rebuilding. Cards count: ${selectedExperienceCards.length}");
-                                      return _ExperienceCardsSection(
-                                        userCategories: _userCategories,
-                                        userColorCategories: _userColorCategories,
-                                        userCategoriesNotifier: _userCategoriesNotifier,
-                                        userColorCategoriesNotifier: _userColorCategoriesNotifier,
-                                        removeExperienceCard: _removeExperienceCard,
-                                        showLocationPicker: _showLocationPicker,
-                                        selectSavedExperienceForCard: _selectSavedExperienceForCard,
-                                        handleCardFormUpdate: _handleExperienceCardFormUpdate,
-                                        addExperienceCard: _addExperienceCard,
-                                        isSpecialUrl: _isSpecialUrl,
-                                        extractFirstUrl: _extractFirstUrl,
-                                        currentSharedFiles: _currentSharedFiles,
-                                        experienceCards: selectedExperienceCards, // Pass selected cards from Selector
-                                        sectionKey: _experienceCardsSectionKey, // PASSING THE KEY
-                                      );
-                                    }
-                                  ),
-                                ],
+                                  ],
+                                ),
                               ),
-                            ),
-                            // --- ADDED FAB ---
-                            Positioned(
-                              bottom: 16, // Adjust as needed
-                              right: 16,  // Adjust as needed
-                              child: FloatingActionButton(
-                                shape: const CircleBorder(), // ENSURE CIRCULAR
-                                onPressed: _handleFabPress,
-                                child: Icon(_showUpArrowForFab ? Icons.arrow_upward : Icons.arrow_downward),
+                              // --- ADDED FAB ---
+                              Positioned(
+                                bottom: 16, // Adjust as needed
+                                right: 16,  // Adjust as needed
+                                child: FloatingActionButton(
+                                  shape: const CircleBorder(), // ENSURE CIRCULAR
+                                  onPressed: _handleFabPress,
+                                  child: Icon(_showUpArrowForFab ? Icons.arrow_upward : Icons.arrow_downward),
+                                ),
                               ),
-                            ),
-                            // --- END ADDED FAB ---
-                          ],
+                              // --- END ADDED FAB ---
+                            ],
+                          ),
                         ),
-                      ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 16.0, vertical: 12.0),
-                        decoration: BoxDecoration(
-                          color: Theme.of(context).cardColor,
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.1),
-                              spreadRadius: 0,
-                              blurRadius: 4,
-                              offset: const Offset(0, -2),
-                            ),
-                          ],
-                        ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            OutlinedButton(
-                              onPressed: widget.onCancel,
-                              style: OutlinedButton.styleFrom(
-                                foregroundColor: Colors.grey[700],
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 16.0, vertical: 12.0),
+                          decoration: BoxDecoration(
+                            color: Theme.of(context).cardColor,
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.1),
+                                spreadRadius: 0,
+                                blurRadius: 4,
+                                offset: const Offset(0, -2),
                               ),
-                              child: const Text('Cancel'),
-                            ),
-                            ElevatedButton.icon(
-                              onPressed: _isSaving ? null : _saveExperience,
-                              icon: _isSaving
-                                  ? Container(
-                                      width: 20,
-                                      height: 20,
-                                      padding: const EdgeInsets.all(2.0),
-                                      child: const CircularProgressIndicator(
-                                          strokeWidth: 3, color: Colors.white),
-                                    )
-                                  : const Icon(Icons.save),
-                              label: Text(_isSaving
-                                  ? 'Saving...'
-                                  : 'Save Experience(s)'),
-                              style: ElevatedButton.styleFrom(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 24, vertical: 12),
+                            ],
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              OutlinedButton(
+                                onPressed: widget.onCancel,
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: Colors.grey[700],
+                                ),
+                                child: const Text('Cancel'),
                               ),
-                            ),
-                          ],
-                        ),
-                      )
-                    ],
-                  );
+                              ElevatedButton.icon(
+                                onPressed: _isSaving ? null : _saveExperience,
+                                icon: _isSaving
+                                    ? Container(
+                                        width: 20,
+                                        height: 20,
+                                        padding: const EdgeInsets.all(2.0),
+                                        child: const CircularProgressIndicator(
+                                            strokeWidth: 3, color: Colors.white),
+                                      )
+                                    : const Icon(Icons.save),
+                                label: Text(_isSaving
+                                    ? 'Saving...'
+                                    : 'Save Experience(s)'),
+                                style: ElevatedButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 24, vertical: 12),
+                                ),
+                              ),
+                            ],
+                          ),
+                        )
+                      ],
+                    );
+                  } else {
+                    // Future is done, no error, but data is missing or insufficient.
+                    // print("FutureBuilder: STATE_NO_SUFFICIENT_DATA (Done, no error, but data invalid or missing)");
+                    return const Center(
+                        child: Text("Error: Could not load category data."));
+                  }
                 },
               ),
       ),
