@@ -21,6 +21,8 @@ import '../models/shared_media_item.dart'; // ADDED Import
 import 'package:collection/collection.dart'; // ADDED: Import for groupBy
 import 'map_screen.dart'; // ADDED: Import for MapScreen
 import 'package:flutter/foundation.dart'; // ADDED: Import for kIsWeb
+import 'package:flutter/gestures.dart'; // ADDED Import for PointerScrollEvent
+import 'package:flutter/rendering.dart'; // ADDED Import for Scrollable
 
 // Helper function to parse hex color string (copied from map_screen)
 Color _parseColor(String hexColor) {
@@ -1239,7 +1241,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     // Get the full address
     final fullAddress = experience.location.address;
     // Get the first image URL or null
-    final imageUrl = experience.location.photoUrl;
+    final String? imageUrl = experience.location.photoUrl; // REVERTED: Directly use photoUrl
 
     return ListTile(
       key: ValueKey(experience.id), // Use experience ID as key
@@ -1648,14 +1650,13 @@ class _CollectionsScreenState extends State<CollectionsScreen>
           if (isInstagramUrl) {
             mediaWidget = instagram_widget.InstagramWebView(
               url: mediaPath,
+              // MODIFIED: Restored original height logic for _buildContentTabBody
               height: isExpanded ? 1200 : 840, 
               launchUrlCallback: _launchUrl,
               onWebViewCreated: (_) {},
               onPageFinished: (_) {},
             );
-            // REMOVED: if (kIsWeb) { Center(ConstrainedBox(...)) } wrapper.
-            // Now mobile web list view for Instagram will not have the 360px width constraint,
-            // matching native mobile behavior.
+            // Ensure no Center/ConstrainedBox here for mobile web list view
           } else if (isNetworkUrl) {
             mediaWidget = Image.network(
               mediaPath,
