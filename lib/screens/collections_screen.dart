@@ -2726,15 +2726,33 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       );
     }
 
-    return Card(
+    return Card( // Card is the root, making the whole area clickable via InkWell
       key: ValueKey('content_grid_${mediaItem.id}_$index'),
       clipBehavior: Clip.antiAlias,
       elevation: 2.0,
+      margin: EdgeInsets.zero, // Remove card's own margin to better fit GridView cell
       child: InkWell(
         onTap: () {
           _showMediaDetailsDialog(group);
         },
-        child: mediaDisplayWidget,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch, // Ensure children fill width
+          children: <Widget>[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8.0, 8.0, 8.0, 4.0), // Text padding
+              child: Text(
+                'Linked Experiences (${group.associatedExperiences.length})',
+                style: Theme.of(context).textTheme.bodySmall,
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            Expanded(
+              child: mediaDisplayWidget, // Media preview takes remaining space
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -2748,8 +2766,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
           title: Text(group.mediaItem.path.contains("instagram.com")
               ? "Instagram Post Details"
               : "Shared Media Details"),
-          content: SizedBox(
-            width: double.maxFinite, // Ensure dialog content takes reasonable width
+          content: SizedBox( // Wrap the Column with SizedBox to constrain its width
+            width: MediaQuery.of(dialogContext).size.width * 0.2, // Example: 80% of screen width
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -2765,57 +2783,55 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                     child: Text("No experiences linked to this media."),
                   ),
                 if (group.associatedExperiences.isNotEmpty)
-                  Expanded( // Important for scrollability if list is long
-                    child: ListView.builder(
-                      shrinkWrap: true, // Essential with Expanded in Column
-                      itemCount: group.associatedExperiences.length,
-                      itemBuilder: (context, index) { // Can reuse 'context' here, it's from ListView.builder
-                        final exp = group.associatedExperiences[index];
-                        final category = _categories.firstWhereOrNull((cat) => cat.id == exp.categoryId);
-                        final categoryIcon = category?.icon ?? '❓';
-                        final colorCategory = _colorCategories.firstWhereOrNull((cc) => cc.id == exp.colorCategoryId);
-                        final color = colorCategory != null ? _parseColor(colorCategory.colorHex) : Theme.of(dialogContext).disabledColor;
+                  ListView.builder(
+                    shrinkWrap: true, 
+                    itemCount: group.associatedExperiences.length,
+                    itemBuilder: (context, index) { 
+                      final exp = group.associatedExperiences[index];
+                      final category = _categories.firstWhereOrNull((cat) => cat.id == exp.categoryId);
+                      final categoryIcon = category?.icon ?? '❓';
+                      final colorCategory = _colorCategories.firstWhereOrNull((cc) => cc.id == exp.colorCategoryId);
+                      final color = colorCategory != null ? _parseColor(colorCategory.colorHex) : Theme.of(dialogContext).disabledColor;
 
-                        return ListTile(
-                          leading: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(categoryIcon, style: const TextStyle(fontSize: 20)),
-                              if (colorCategory != null) ...[
-                                const SizedBox(width: 4),
-                                Icon(Icons.circle, color: color, size: 12),
-                              ]
-                            ],
-                          ),
-                          title: Text(exp.name, style: Theme.of(dialogContext).textTheme.bodyLarge),
-                          trailing: const Icon(Icons.chevron_right),
-                          onTap: () {
-                            Navigator.of(dialogContext).pop(); // Close dialog first
-                            final resolvedCategory = category ?? UserCategory(
-                              id: exp.categoryId ?? 'uncategorized',
-                              name: category?.name ?? 'Uncategorized',
-                              icon: categoryIcon,
-                              ownerUserId: category?.ownerUserId ?? _authService.currentUser?.uid ?? 'system_default',
-                              orderIndex: category?.orderIndex ?? 9999,
-                            );
-                            Navigator.push<bool>(
-                              this.context, // Use _CollectionsScreenState's context for navigation
-                              MaterialPageRoute(
-                                builder: (ctx) => ExperiencePageScreen( // Use 'ctx' for clarity
-                                  experience: exp,
-                                  category: resolvedCategory,
-                                  userColorCategories: _colorCategories,
-                                ),
+                      return ListTile(
+                        leading: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(categoryIcon, style: const TextStyle(fontSize: 20)),
+                            if (colorCategory != null) ...[
+                              const SizedBox(width: 4),
+                              Icon(Icons.circle, color: color, size: 12),
+                            ]
+                          ],
+                        ),
+                        title: Text(exp.name, style: Theme.of(dialogContext).textTheme.bodyLarge),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () {
+                          Navigator.of(dialogContext).pop(); // Close dialog first
+                          final resolvedCategory = category ?? UserCategory(
+                            id: exp.categoryId ?? 'uncategorized',
+                            name: category?.name ?? 'Uncategorized',
+                            icon: categoryIcon,
+                            ownerUserId: category?.ownerUserId ?? _authService.currentUser?.uid ?? 'system_default',
+                            orderIndex: category?.orderIndex ?? 9999,
+                          );
+                          Navigator.push<bool>(
+                            this.context, // Use _CollectionsScreenState's context for navigation
+                            MaterialPageRoute(
+                              builder: (ctx) => ExperiencePageScreen( // Use 'ctx' for clarity
+                                experience: exp,
+                                category: resolvedCategory,
+                                userColorCategories: _colorCategories,
                               ),
-                            ).then((result) {
-                              if (result == true && mounted) {
-                                _loadData();
-                              }
-                            });
-                          },
-                        );
-                      },
-                    ),
+                            ),
+                          ).then((result) {
+                            if (result == true && mounted) {
+                              _loadData();
+                            }
+                          });
+                        },
+                      );
+                    },
                   ),
               ],
             ),
