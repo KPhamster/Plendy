@@ -308,7 +308,7 @@ class ReceiveShareProvider extends ChangeNotifier {
       // Clear search text as location is now set
       targetCard.searchController.clear();
       // Ensure location is enabled
-      targetCard.locationEnabled = true;
+      targetCard.locationEnabled.value = true;
       // Optionally update placeIdForPreview if the location has one
       targetCard.placeIdForPreview = selectedExperience.location.placeId;
 

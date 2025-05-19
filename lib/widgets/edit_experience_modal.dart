@@ -74,9 +74,8 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
     _cardData.selectedCategoryId = widget.experience.categoryId;
     _cardData.selectedColorCategoryId = widget.experience.colorCategoryId;
     _cardData.selectedLocation = widget.experience.location;
-    _cardData.locationEnabled = widget.experience.location.latitude != 0.0 ||
-        widget.experience.location.longitude !=
-            0.0; // Check if location is default
+    _cardData.locationEnabled.value = widget.experience.location.latitude != 0.0 ||
+        widget.experience.location.longitude != 0.0;
 
     // If location exists, pre-fill searchController for display consistency (optional)
     if (_cardData.selectedLocation?.address != null) {
@@ -225,7 +224,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
             _cardData.selectedLocation = selectedLocation;
             _cardData.searchController.text =
                 selectedLocation.address ?? 'Selected Location';
-            _cardData.locationEnabled = true; // Assume enabled if picked
+            _cardData.locationEnabled.value = true; // Assume enabled if picked
           });
           return;
         }
@@ -245,7 +244,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                   .text; // Keep existing website if new one is null? Or override?
           _cardData.searchController.text =
               detailedLocation.address ?? ''; // For display in location field
-          _cardData.locationEnabled = true;
+          _cardData.locationEnabled.value = true;
         });
       } catch (e) {
         print("Error getting place details after picking location: $e");
@@ -254,7 +253,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
           _cardData.selectedLocation = selectedLocation;
           _cardData.searchController.text =
               selectedLocation.address ?? 'Selected Location';
-          _cardData.locationEnabled = true;
+          _cardData.locationEnabled.value = true;
         });
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -852,7 +851,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
   void _saveAndClose() {
     if (_formKey.currentState!.validate()) {
       // Construct the updated Experience object
-      final Location locationToSave = (_cardData.locationEnabled &&
+      final Location locationToSave = (_cardData.locationEnabled.value &&
               _cardData.selectedLocation != null)
           ? _cardData.selectedLocation!
           : Location(
@@ -920,11 +919,11 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
 
               // Location selection (using adapted widget/logic)
               GestureDetector(
-                onTap: (_cardData.locationEnabled) ? _showLocationPicker : null,
+                onTap: (_cardData.locationEnabled.value) ? _showLocationPicker : null,
                 child: Container(
                   decoration: BoxDecoration(
                     border: Border.all(
-                        color: _cardData.locationEnabled
+                        color: _cardData.locationEnabled.value
                             ? Colors.grey
                             : Colors.grey.shade300),
                     borderRadius: BorderRadius.circular(4),
@@ -933,7 +932,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                   child: Row(
                     children: [
                       Icon(Icons.location_on,
-                          color: _cardData.locationEnabled
+                          color: _cardData.locationEnabled.value
                               ? Colors.grey[600]
                               : Colors.grey[400]),
                       SizedBox(width: 12),
@@ -948,7 +947,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                                         .getPlaceName(), // Use helper
                                     style: TextStyle(
                                         fontWeight: FontWeight.bold,
-                                        color: _cardData.locationEnabled
+                                        color: _cardData.locationEnabled.value
                                             ? Colors.black
                                             : Colors.grey[500]),
                                   ),
@@ -958,7 +957,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                                       _cardData.selectedLocation!.address!,
                                       style: TextStyle(
                                           fontSize: 12,
-                                          color: _cardData.locationEnabled
+                                          color: _cardData.locationEnabled.value
                                               ? Colors.black87
                                               : Colors.grey[500]),
                                       maxLines: 1,
@@ -969,7 +968,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                             : Text(
                                 'Select location',
                                 style: TextStyle(
-                                    color: _cardData.locationEnabled
+                                    color: _cardData.locationEnabled.value
                                         ? Colors.grey[600]
                                         : Colors.grey[400]),
                               ),
@@ -978,10 +977,10 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                         // Toggle switch
                         scale: 0.8,
                         child: Switch(
-                          value: _cardData.locationEnabled,
+                          value: _cardData.locationEnabled.value,
                           onChanged: (value) {
                             setState(() {
-                              _cardData.locationEnabled = value;
+                              _cardData.locationEnabled.value = value;
                             });
                           },
                           activeColor: Colors.blue,
