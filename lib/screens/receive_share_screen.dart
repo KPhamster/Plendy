@@ -366,8 +366,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
   @override
   void initState() {
-    print("ReceiveShareScreen initState: START"); // ADDED
+    print("ReceiveShareScreen initState: START - Instance ${this.hashCode}");
     super.initState();
+    // _sharingService.isShareFlowActive = true; // REMOVED: This is now set by SharingService.showReceiveShareScreen
 
     // --- ADDED FOR SCROLLING FAB ---
     _scrollController = ScrollController();
@@ -662,24 +663,22 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
   @override
   void dispose() {
-    // print("SHARE DEBUG: dispose called - cleaning up resources"); // CLEANED
-    
-    // Invalidate any in-progress operations by setting an invalid operation ID
-    _currentReloadOperationId = -1;
-    
-    WidgetsBinding.instance.removeObserver(this);
-
-    // Remove listener for sharedFiles updates
-    _sharingService.sharedFiles.removeListener(_handleSharedFilesUpdate);
-
-    if (!Platform.isIOS) {
-      ReceiveSharingIntent.instance.reset();
-      // print("SHARE DEBUG: Intent reset in dispose");
+    print("ReceiveShareScreen dispose: START - Instance ${this.hashCode}");
+    // If _saveExperience initiated navigation, prepareToNavigateAwayFromShare already handled things.
+    // This call to markShareFlowAsInactive is mainly for cases where dispose is called due to
+    // other reasons (like system back if not fully handled, or unexpected unmount).
+    // However, if _navigatingAwayFromShare is true, we might not want to call markShareFlowAsInactive again here
+    // as it calls resetSharedItems again. Let's rely on onCancel and onWillPop for explicit user exits.
+    // The SharingService's shareNavigationComplete (called by MainScreen) will reset _navigatingAwayFromShare.
+    // If _sharingService.isNavigatingAwayFromShare is false, then it means we are disposing due to a non-save exit.
+    if (!_sharingService.isNavigatingAwayFromShare) { // MODIFIED to use getter
+        _sharingService.markShareFlowAsInactive();
     }
-
-    // Reset sharing service state on dispose
-    _sharingService.resetSharedItems();
-
+    _currentReloadOperationId = -1;
+    WidgetsBinding.instance.removeObserver(this);
+    _sharingService.sharedFiles.removeListener(_handleSharedFilesUpdate);
+    // Removed direct call to ReceiveSharingIntent.instance.reset() from here,
+    // it's now part of _sharingService.resetSharedItems()
     _userCategoriesNotifier.dispose();
     _userColorCategoriesNotifier.dispose();
     super.dispose();
@@ -688,8 +687,16 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   Widget _wrapWithWillPopScope(Widget child) {
     return WillPopScope(
       onWillPop: () async {
-        _sharingService.resetSharedItems();
-        return true;
+        print("ReceiveShareScreen: WillPopScope triggered (system back).");
+        _sharingService.markShareFlowAsInactive(); 
+        if (mounted) { 
+          Navigator.pushAndRemoveUntil(
+            context,
+            MaterialPageRoute(builder: (context) => const MainScreen()),
+            (Route<dynamic> route) => false, 
+          );
+        }
+        return false; 
       },
       child: child,
     );
@@ -1676,7 +1683,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     final String? currentUserId = _authService.currentUser?.uid;
     if (currentUserId == null) {
-      if (!mounted) return; // Check mounted
+      if (!mounted) return;
       _showSnackBar(
           context, 'Error: Could not identify user. Please log in again.');
       return;
@@ -1689,13 +1696,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         break;
       }
       if (card.selectedCategoryId == null || card.selectedCategoryId!.isEmpty) {
-        if (!mounted) return; // Check mounted
+        if (!mounted) return;
         _showSnackBar(context, 'Please select a category for each card.');
         allValid = false;
         break;
       }
       if (card.locationEnabled.value && card.selectedLocation == null) {
-        if (!mounted) return; // Check mounted
+        if (!mounted) return;
         _showSnackBar(context,
             'Please select a location for experience card: "${card.titleController.text}" ');
         allValid = false;
@@ -1704,12 +1711,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     }
 
     if (!allValid) {
-      if (!mounted) return; // Check mounted
+      if (!mounted) return;
       _showSnackBar(context, 'Please fill in required fields correctly');
       return;
     }
 
-    if (!mounted) return; // Check mounted before setState
     setState(() {
       _isSaving = true;
     });
@@ -1717,9 +1723,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     int successCount = 0;
     int updateCount = 0;
     List<String> errors = [];
+    bool shouldAttemptNavigation = false; // Renamed from navigateAway for clarity
 
     try {
-      if (!mounted) return; // Check mounted at start of try
+      if (!mounted) return;
 
       final now = DateTime.now();
       final uniqueSharedPaths =
@@ -1737,7 +1744,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                 "SAVE_DEBUG: Checking for existing SharedMediaItem for path: $path AND owner: $currentUserId");
             SharedMediaItem? foundItem =
                 await _experienceService.findSharedMediaItemByPath(path);
-            if (!mounted) return; // Check mounted after await
+            if (!mounted) return;
 
             if (foundItem != null && foundItem.ownerUserId == currentUserId) {
               existingItem = foundItem;
@@ -1760,15 +1767,15 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             print(
                 "SAVE_DEBUG: Creating new SharedMediaItem for path: $path, owner: $currentUserId");
             SharedMediaItem newItem = SharedMediaItem(
-              id: '', 
+              id: '',
               path: path,
               createdAt: now,
               ownerUserId: currentUserId,
-              experienceIds: [], 
+              experienceIds: [],
             );
             String newItemId =
                 await _experienceService.createSharedMediaItem(newItem);
-            if (!mounted) return; // Check mounted after await
+            if (!mounted) return;
             mediaPathToItemIdMap[path] = newItemId;
             print("SAVE_DEBUG: Created new item ID: $newItemId");
           }
@@ -1776,20 +1783,24 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           print(
               "SAVE_DEBUG: Error finding/creating SharedMediaItem for path '$path': $e");
           errors.add(
-              "Error processing media: ${path.split('/').last}"); 
+              "Error processing media: ${path.split('/').last}");
         }
       }
       print(
           "SAVE_DEBUG: Media pre-processing complete. Map: $mediaPathToItemIdMap");
 
-      if (mediaPathToItemIdMap.length != uniqueSharedPaths.length) {
+      if (mediaPathToItemIdMap.length != uniqueSharedPaths.length && errors.isEmpty) {
+         // If there was an issue creating media items but no errors were added to the list yet (e.g. silent failure)
         print(
-            "SAVE_DEBUG: Errors occurred during media processing. Aborting card processing.");
-      } else {
+            "SAVE_DEBUG: Discrepancy in media item processing but no explicit errors. Adding a generic media error.");
+        errors.add("Error processing some media files.");
+      }
+
+      if (errors.isEmpty) { // Only proceed with card processing if media pre-processing was okay
         for (final card in experienceCards) {
           String? targetExperienceId;
           bool isNewExperience = false;
-          Experience? currentExperienceData; 
+          Experience? currentExperienceData;
 
           try {
             print(
@@ -1801,15 +1812,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             final String cardYelpUrl = card.yelpUrlController.text.trim();
             final String cardWebsite = card.websiteController.text.trim();
             final String notes = card.notesController.text.trim();
-            final String categoryIdToSave = card.selectedCategoryId!; // Use a clearer variable name for the ID
-            // ADDED BACK: Declaration of canProcessPublicExperience
-            bool canProcessPublicExperience = placeId.isNotEmpty && cardLocation != null; 
-
+            final String categoryIdToSave = card.selectedCategoryId!;
+            bool canProcessPublicExperience = placeId.isNotEmpty && cardLocation != null;
             final String? colorCategoryIdToSave = card.selectedColorCategoryId;
-
             UserCategory? selectedCategoryObject;
             try {
-              // MODIFIED: Find by ID
               selectedCategoryObject = _userCategories
                   .firstWhere((cat) => cat.id == categoryIdToSave);
             } catch (e) {
@@ -1834,11 +1841,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                 description:
                     notes.isNotEmpty ? notes : 'Created from shared content',
                 location: locationToSave,
-                categoryId: categoryIdToSave, // Ensure this uses the ID
+                categoryId: categoryIdToSave,
                 yelpUrl: cardYelpUrl.isNotEmpty ? cardYelpUrl : null,
                 website: cardWebsite.isNotEmpty ? cardWebsite : null,
                 additionalNotes: notes.isNotEmpty ? notes : null,
-                sharedMediaItemIds: [], 
+                sharedMediaItemIds: [],
                 createdAt: now,
                 updatedAt: now,
                 editorUserIds: [currentUserId],
@@ -1846,12 +1853,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               );
               targetExperienceId =
                   await _experienceService.createExperience(newExperience);
-              if (!mounted) return; // Check mounted after await
-              currentExperienceData = newExperience
-                  .copyWith(); 
+              if (!mounted) return;
+              currentExperienceData = newExperience.copyWith();
               currentExperienceData = await _experienceService.getExperience(
-                  targetExperienceId); 
-              if (!mounted) return; // Check mounted after await
+                  targetExperienceId);
+              if (!mounted) return;
               print(
                   "SAVE_DEBUG: Created NEW Experience ID: $targetExperienceId");
               successCount++;
@@ -1862,37 +1868,29 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                   "SAVE_DEBUG: Using EXISTING experience ID: $targetExperienceId");
               currentExperienceData =
                   await _experienceService.getExperience(targetExperienceId);
-              if (!mounted) return; // Check mounted after await
+              if (!mounted) return;
               if (currentExperienceData == null) {
                 print(
                     "SAVE_DEBUG: ERROR - Could not find existing experience $targetExperienceId");
                 errors.add('Could not update "$cardTitle" (not found).');
-                continue; 
+                continue;
               }
-
-              // Now update the fetched existing experience data with form values
               Experience updatedExpData = currentExperienceData.copyWith(
-                  name: cardTitle, // Always update name from card
-                  // Only update description if card notes are not empty
+                  name: cardTitle,
                   description: notes.isNotEmpty ? notes : currentExperienceData.description,
-                  location: locationToSave, // Always update location from card (even if it's default)
-                  categoryId: categoryIdToSave, // Ensure this uses the ID
-                  yelpUrl: cardYelpUrl.isNotEmpty ? cardYelpUrl : null, // Update Yelp URL
-                  website: cardWebsite.isNotEmpty ? cardWebsite : null, // Update website
-                  // Update notes: if card notes are empty, it will set to null (clearing existing if any)
-                  // If card notes have value, it updates. If you want to keep existing notes if card notes are empty, adjust logic.
-                  additionalNotes: notes.isNotEmpty ? notes : null, 
-                  updatedAt: now, // Always update the timestamp
-                  // Ensure current user is an editor
+                  location: locationToSave,
+                  categoryId: categoryIdToSave,
+                  yelpUrl: cardYelpUrl.isNotEmpty ? cardYelpUrl : null,
+                  website: cardWebsite.isNotEmpty ? cardWebsite : null,
+                  additionalNotes: notes.isNotEmpty ? notes : null,
+                  updatedAt: now,
                   editorUserIds: currentExperienceData.editorUserIds.contains(currentUserId)
                       ? currentExperienceData.editorUserIds
                       : [...currentExperienceData.editorUserIds, currentUserId],
-                  colorCategoryId: colorCategoryIdToSave // Update color category ID
-                  );
-
+                  colorCategoryId: colorCategoryIdToSave);
               await _experienceService.updateExperience(updatedExpData);
-              currentExperienceData = updatedExpData; // Reflect the update locally for media linking
-              if (!mounted) return; // Check mounted after await
+              currentExperienceData = updatedExpData;
+              if (!mounted) return;
               print(
                   "SAVE_DEBUG: Updated EXISTING Experience ID: $targetExperienceId");
               updateCount++;
@@ -1911,7 +1909,6 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                   currentExperienceData.sharedMediaItemIds;
               List<String> finalMediaIds =
                   {...existingMediaIds, ...relevantMediaItemIds}.toList();
-
               if (isNewExperience ||
                   !DeepCollectionEquality()
                       .equals(existingMediaIds, finalMediaIds)) {
@@ -1939,44 +1936,41 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                       ? notes
                       : currentExperienceData.additionalNotes,
                   colorCategoryId: !isNewExperience
-                      ? colorCategoryIdToSave 
-                      : currentExperienceData
-                          .colorCategoryId, 
+                      ? colorCategoryIdToSave
+                      : currentExperienceData.colorCategoryId,
                   sharedMediaItemIds: finalMediaIds,
                   updatedAt: now,
                 );
                 await _experienceService.updateExperience(experienceToUpdate);
-                if (!mounted) return; // Check mounted after await
+                if (!mounted) return;
               } else {
                 print(
                     "SAVE_DEBUG: No changes to media links for existing Experience $targetExperienceId. Skipping update.");
-                if (!isNewExperience) updateCount--;
+                if (!isNewExperience && relevantMediaItemIds.isNotEmpty) updateCount--; // Correct if only media was new and no other field changed
               }
             } else {
               print(
                   "SAVE_DEBUG: ERROR - currentExperienceData is null when trying to update media links.");
               continue;
             }
-
             print(
                 "SAVE_DEBUG: Linking ${relevantMediaItemIds.length} media items to Experience $targetExperienceId...");
             for (final mediaItemId in relevantMediaItemIds) {
               try {
                 await _experienceService.addExperienceLinkToMediaItem(
                     mediaItemId, targetExperienceId);
-                 if (!mounted) return; // Check mounted after await
+                if (!mounted) return;
               } catch (e) {
                 print(
                     "SAVE_DEBUG: Error linking media $mediaItemId to experience $targetExperienceId: $e");
               }
             }
-
             if (canProcessPublicExperience) {
               print(
                   "SAVE_DEBUG: Processing Public Experience logic for PlaceID: $placeId");
               PublicExperience? existingPublicExp = await _experienceService
                   .findPublicExperienceByPlaceId(placeId);
-              if (!mounted) return; // Check mounted after await
+              if (!mounted) return;
               if (existingPublicExp == null) {
                 String publicName = locationToSave.getPlaceName();
                 PublicExperience newPublicExperience = PublicExperience(
@@ -1986,32 +1980,29 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                     placeID: placeId,
                     yelpUrl: cardYelpUrl.isNotEmpty ? cardYelpUrl : null,
                     website: cardWebsite.isNotEmpty ? cardWebsite : null,
-                    allMediaPaths:
-                        uniqueSharedPaths 
-                    );
+                    allMediaPaths: uniqueSharedPaths);
                 print("SAVE_DEBUG: Creating Public Experience: $publicName");
                 await _experienceService
                     .createPublicExperience(newPublicExperience);
-                if (!mounted) return; // Check mounted after await
+                if (!mounted) return;
               } else {
                 print(
                     "SAVE_DEBUG: Found existing Public Experience ID: ${existingPublicExp.id}. Adding media paths.");
                 await _experienceService.updatePublicExperienceMediaAndMaybeYelp(
                     existingPublicExp.id,
-                    uniqueSharedPaths, 
+                    uniqueSharedPaths,
                     newYelpUrl: cardYelpUrl.isNotEmpty ? cardYelpUrl : null);
-                if (!mounted) return; // Check mounted after await
+                if (!mounted) return;
               }
             } else {
               print(
                   "SAVE_DEBUG: Skipping Public Experience logic due to missing PlaceID or Location.");
             }
-
             if (selectedCategoryObject != null) {
               try {
                 await _experienceService
                     .updateCategoryLastUsedTimestamp(selectedCategoryObject.id);
-                 if (!mounted) return; // Check mounted after await
+                if (!mounted) return;
                 print(
                     "SAVE_DEBUG [Card ${card.id}]: Updated timestamp for category: ${selectedCategoryObject.name}");
               } catch (e) {
@@ -2020,15 +2011,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               }
             } else {
               print(
-                  // MODIFIED: Use categoryIdToSave for the warning message
                   "Warning: Could not find category object for ID '$categoryIdToSave' to update timestamp.");
             }
-
             if (colorCategoryIdToSave != null) {
               try {
                 await _experienceService.updateColorCategoryLastUsedTimestamp(
                     colorCategoryIdToSave);
-                if (!mounted) return; // Check mounted after await
+                if (!mounted) return;
                 print(
                     "SAVE_DEBUG [Card ${card.id}]: Updated timestamp for color category ID: $colorCategoryIdToSave");
               } catch (e) {
@@ -2040,14 +2029,14 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             print(
                 "SAVE_DEBUG: Error processing card '${card.titleController.text}': $e");
             errors.add('Error saving "${card.titleController.text}".');
-            if (isNewExperience) {
+            if (isNewExperience && successCount > 0) {
               successCount--;
-            } else {
+            } else if (!isNewExperience && updateCount > 0) {
               updateCount--;
             }
           }
-        } 
-      } 
+        }
+      } // End of if (errors.isEmpty) for card processing
 
       String message;
       if (errors.isEmpty) {
@@ -2058,61 +2047,65 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         if (updateCount > 0) message += '$updateCount experience(s) updated. ';
         message = message.trim();
         if (message.isEmpty) message = 'No changes saved.';
+        shouldAttemptNavigation = true;
       } else {
         message = 'Completed with errors: ';
         if (successCount > 0) message += '$successCount created. ';
         if (updateCount > 0) message += '$updateCount updated. ';
         message += '${errors.length} failed.';
         print('Save errors: ${errors.join('\n')}');
+        if (successCount > 0 || updateCount > 0) {
+            shouldAttemptNavigation = true; // Still navigate if some parts succeeded
+        }
       }
-      if (!mounted) return; // Check mounted before _showSnackBar
+
+      if (!mounted) return;
       _showSnackBar(context, message);
 
-      // Save the last used category and color category
       if (experienceCards.isNotEmpty && (successCount > 0 || updateCount > 0)) {
-        // Find the last card that was part of a successful save operation.
-        // This could be the actual last card if all were successful, or requires more sophisticated tracking if partial saves are possible.
-        // For simplicity, we\'ll take the category/color from the last card in the list processed, assuming it reflects user\'s latest choices if a save occurred.
         final lastProcessedCard = experienceCards.last;
         final prefs = await SharedPreferences.getInstance();
-        if (!mounted) return; // Check mounted after await
+        if (!mounted) return;
 
         if (lastProcessedCard.selectedCategoryId != null) {
           await prefs.setString(_lastUsedCategoryNameKey, lastProcessedCard.selectedCategoryId!);
-           if (!mounted) return; // Check mounted after await
+          if (!mounted) return;
           print("ReceiveShareScreen: Saved last used category: ${lastProcessedCard.selectedCategoryId}");
         } else {
-          // If it was explicitly set to null, we might want to remove the preference
           await prefs.remove(_lastUsedCategoryNameKey);
-           if (!mounted) return; // Check mounted after await
-           print("ReceiveShareScreen: Last used category was null, removed preference.");
+          if (!mounted) return;
+          print("ReceiveShareScreen: Last used category was null, removed preference.");
         }
 
         if (lastProcessedCard.selectedColorCategoryId != null) {
           await prefs.setString(_lastUsedColorCategoryIdKey, lastProcessedCard.selectedColorCategoryId!);
-           if (!mounted) return; // Check mounted after await
+          if (!mounted) return;
           print("ReceiveShareScreen: Saved last used color category ID: ${lastProcessedCard.selectedColorCategoryId}");
         } else {
-          // If it was explicitly set to null, remove the preference
           await prefs.remove(_lastUsedColorCategoryIdKey);
-           if (!mounted) return; // Check mounted after await
+          if (!mounted) return;
           print("ReceiveShareScreen: Last used color category ID was null, removed preference.");
         }
       }
 
-      if (!mounted) return; // Check mounted before resetting and Navigator
-      _sharingService.resetSharedItems(); // Reset SharingService state before navigating
-      Navigator.pushAndRemoveUntil(
-        context,
-        MaterialPageRoute(builder: (context) => const MainScreen()),
-        (Route<dynamic> route) => false,
-      );
+      if (shouldAttemptNavigation) {
+        if (!mounted) return;
+
+        _sharingService.prepareToNavigateAwayFromShare(); // Use new method
+
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(builder: (context) => const MainScreen()),
+          (Route<dynamic> route) => false,
+        );
+        // The old Future.delayed for resetSharedItems is removed as markShareFlowAsInactive handles reset.
+      }
     } catch (e) {
+      if (!mounted) return;
       print('Error saving experiences: $e');
-      if (!mounted) return; // Check mounted before _showSnackBar
       _showSnackBar(context, 'Error saving experiences: $e');
     } finally {
-      if (mounted) { // Check mounted before setState in finally
+      if (mounted) {
         setState(() {
           _isSaving = false;
         });

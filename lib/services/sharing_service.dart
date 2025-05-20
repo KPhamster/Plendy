@@ -28,6 +28,11 @@ class SharingService {
   bool _isInitialized = false;
   bool _isReceiveShareScreenOpen = false; // Flag to track if screen is open
   bool _isNavigatingToReceiveScreen = false; // Flag to prevent navigation conflicts
+  bool isShareFlowActive = false; // ADDED: More robust lock for the share flow
+  bool _navigatingAwayFromShare = false; // ADDED: Flag for post-save navigation window
+
+  // ADDED: Public getter for _navigatingAwayFromShare
+  bool get isNavigatingAwayFromShare => _navigatingAwayFromShare;
 
   ValueListenable<List<SharedMediaFile>?> get sharedFiles =>
       _sharedFilesController;
@@ -70,24 +75,28 @@ class SharingService {
       if (value.isNotEmpty) {
         _sharedFilesController.value = List.from(value);
 
-        // If we have a context, navigate directly to the receive screen
+        if (_navigatingAwayFromShare) { // ADDED CHECK
+          print("SHARE SERVICE: Currently navigating away from share, ignoring new stream event.");
+          return;
+        }
+        if (isShareFlowActive) {
+          print("SHARE SERVICE: Share flow is currently active. New intent data stored. Existing screen should handle or ignore.");
+          return;
+        }
         if (_lastKnownContext != null && !_isReceiveShareScreenOpen && !_isNavigatingToReceiveScreen) {
           print(
-              "SHARE SERVICE: Attempting to navigate to ReceiveShareScreen with ${value.length} files");
-          _isNavigatingToReceiveScreen = true; // Set flag to prevent multiple navigations
+              "SHARE SERVICE: Attempting to navigate to ReceiveShareScreen with ${value.length} files (isShareFlowActive: $isShareFlowActive)");
           showReceiveShareScreen(_lastKnownContext!, value).then((_) {
-            _isNavigatingToReceiveScreen = false;
           }).catchError((e) {
-            _isNavigatingToReceiveScreen = false;
+            isShareFlowActive = false;
             print("SHARE SERVICE: Navigation error: $e");
           });
         } else if (_isReceiveShareScreenOpen) {
-          //print("SHARE SERVICE: ReceiveShareScreen is already open. Updating sharedFiles controller.");
-          // The controller update will be detected by the screen
+          // print("SHARE SERVICE: ReceiveShareScreen is already open (_isReceiveShareScreenOpen=true). Updating sharedFiles controller."); // COMMENTED OUT
         } else if (_isNavigatingToReceiveScreen) {
-          print("SHARE SERVICE: Already navigating to ReceiveShareScreen. Ignoring new stream event.");
+          print("SHARE SERVICE: Already navigating to ReceiveShareScreen (_isNavigatingToReceiveScreen=true). Ignoring new stream event.");
         } else {
-          print("SHARE SERVICE: No context available for navigation.");
+          print("SHARE SERVICE: No context available for navigation, or other flags preventing it.");
         }
       }
     }, onError: (err) {
@@ -164,56 +173,42 @@ class SharingService {
   // Show the receive share screen as a modal bottom sheet or full screen
   Future<void> showReceiveShareScreen(
       BuildContext context, List<SharedMediaFile> files) async {
-    if (_isReceiveShareScreenOpen) {
-      //print("SHARE SERVICE: ReceiveShareScreen is already open. Updating sharedFiles controller.");
-      
-      // Just update the shared files controller
-      _sharedFilesController.value = List.from(files);
-      
-      try {
-        // Show a snackbar to indicate new content was received
-        // ScaffoldMessenger.of(context).showSnackBar(
-        //   const SnackBar(
-        //     content: Text('New shared content received'),
-        //     duration: Duration(seconds: 2),
-        //   ),
-        // );
-      } catch (e) {
-        print("SHARE SERVICE: Error showing snackbar: $e");
-      }
-      
-      return; // Early return after updating
+    if (isShareFlowActive && _isReceiveShareScreenOpen) { // Check if already active and screen is open
+      // print("SHARE SERVICE: showReceiveShareScreen called, but flow is active and screen is open. Updating files."); // COMMENTED OUT - Too noisy
+      _sharedFilesController.value = List.from(files); // Update files for existing screen
+      return;
+    }
+    if (_isNavigatingToReceiveScreen) { // Prevent re-entry if already navigating
+        print("SHARE SERVICE: showReceiveShareScreen called, but already navigating. Ignoring.");
+        return;
     }
     
-    print("SHARE SERVICE: showReceiveShareScreen called with ${files.length} files.");
-    // Dismiss any existing snackbar/dialog before showing new screen
+    print("SHARE SERVICE: showReceiveShareScreen called with ${files.length} files. isShareFlowActive: $isShareFlowActive");
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
 
     if (context.mounted) {
+      isShareFlowActive = true; // Set lock BEFORE navigating
       _isReceiveShareScreenOpen = true; // Set flag before push
+      _isNavigatingToReceiveScreen = true;
       
       try {
-        // IMPORTANT: Create the provider outside the build method
         final receiveShareProvider = ReceiveShareProvider();
         
-        // Always push as a full screen route
         await Navigator.push(
           context,
           MaterialPageRoute(
             settings: const RouteSettings(name: '/receiveShareScreen'),
             builder: (buildContext) => ChangeNotifierProvider<ReceiveShareProvider>.value(
-              value: receiveShareProvider, // Use .value constructor with pre-created provider
+              value: receiveShareProvider,
               child: ReceiveShareScreen(
                 sharedFiles: files,
                 onCancel: () {
-                  print("SHARE SERVICE: onCancel called. Navigating to MainScreen.");
-                  // Reset shared items when cancelling
-                  resetSharedItems();
-                  // Navigate to MainScreen and remove all previous routes
+                  print("SHARE SERVICE: onCancel called from ReceiveShareScreen. Navigating to MainScreen.");
+                  markShareFlowAsInactive();
                   Navigator.pushAndRemoveUntil(
-                    buildContext, // Use buildContext from the closure
+                    buildContext, 
                     MaterialPageRoute(builder: (ctx) => const MainScreen()),
-                    (Route<dynamic> route) => false, // Remove all routes
+                    (Route<dynamic> route) => false,
                   );
                 },
               ),
@@ -223,13 +218,47 @@ class SharingService {
         print("SHARE SERVICE: Navigator.push for ReceiveShareScreen finished.");
       } catch (e) {
         print("SHARE SERVICE: Error showing ReceiveShareScreen: $e");
+        isShareFlowActive = false; // Release lock on error
       } finally {
-        _isReceiveShareScreenOpen = false; // Reset flag after push completes
-        print("SHARE SERVICE: Reset _isReceiveShareScreenOpen flag to false");
+        // _isReceiveShareScreenOpen = false; // This should be set by ReceiveShareScreen's dispose or onWillPop
+        _isNavigatingToReceiveScreen = false;
+        // markShareFlowAsInactive(); // This should be called by ReceiveShareScreen when it's done.
+        print("SHARE SERVICE: showReceiveShareScreen finally block. isShareFlowActive: $isShareFlowActive");
       }
     } else {
-      print("SHARE SERVICE: Context is no longer mounted!");
+      print("SHARE SERVICE: Context is no longer mounted in showReceiveShareScreen!");
+      isShareFlowActive = false; // Release lock if context is bad
     }
+  }
+
+  // MODIFIED: Method to signal share flow completion and reset relevant flags
+  void markShareFlowAsInactive() {
+    print("SHARE SERVICE: Marking share flow as inactive (e.g. cancel/back).");
+    isShareFlowActive = false;
+    _isReceiveShareScreenOpen = false;
+    _isNavigatingToReceiveScreen = false;
+    // _navigatingAwayFromShare should be false here, or reset by shareNavigationComplete
+    resetSharedItems();
+  }
+
+  // ADDED: Method to signal navigation away from share is starting
+  void prepareToNavigateAwayFromShare() {
+    print("SHARE SERVICE: Preparing to navigate away from share flow.");
+    _navigatingAwayFromShare = true;
+    isShareFlowActive = false; // Flow is ending
+    _isReceiveShareScreenOpen = false;
+    _isNavigatingToReceiveScreen = false;
+    resetSharedItems(); // Reset items as we are leaving the screen
+  }
+
+  // ADDED: Method to signal navigation away from share is complete
+  void shareNavigationComplete() {
+    print("SHARE SERVICE: Navigation away from share flow complete.");
+    _navigatingAwayFromShare = false;
+    // isShareFlowActive should be false already if prepareToNavigateAwayFromShare was called.
+    // Try an additional reset here, now that MainScreen is active.
+    print("SHARE SERVICE: Attempting final intent reset from shareNavigationComplete.");
+    ReceiveSharingIntent.instance.reset(); 
   }
 
   /// Shares an item (Experience or UserCategory) with another user.

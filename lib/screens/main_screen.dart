@@ -11,7 +11,7 @@ class MainScreen extends StatefulWidget {
   _MainScreenState createState() => _MainScreenState();
 }
 
-class _MainScreenState extends State<MainScreen> {
+class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   int _selectedIndex = 0;
   final SharingService _sharingService = SharingService();
 
@@ -25,6 +25,23 @@ class _MainScreenState extends State<MainScreen> {
       CollectionsScreen(),
       ProfileScreen(),
     ];
+    WidgetsBinding.instance.addObserver(this);
+    if (_sharingService.isNavigatingAwayFromShare) {
+      _sharingService.shareNavigationComplete();
+      print("MAIN SCREEN: initState called shareNavigationComplete");
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.resumed) {
+      print("MAIN SCREEN: App Resumed");
+      if (_sharingService.isNavigatingAwayFromShare) {
+        _sharingService.shareNavigationComplete();
+        print("MAIN SCREEN: didChangeAppLifecycleState called shareNavigationComplete");
+      }
+    }
   }
 
   @override
@@ -45,8 +62,8 @@ class _MainScreenState extends State<MainScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     // Clean up the sharing service listener
-    _sharingService.dispose();
     super.dispose();
   }
 
@@ -58,15 +75,16 @@ class _MainScreenState extends State<MainScreen> {
 
   // Handle shared files
   void _handleSharedFiles(List<SharedMediaFile> sharedFiles) {
-    // Note: This gets called via the ValueNotifier listener
-    // Don't access ReceiveShareProvider directly from here
-    
-    // Instead of directly using Provider.of, let the SharingService handle the ReceiveShareProvider
-    // This ensures the provider is created at the right time
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
-        // Navigate to the dedicated receive share screen
-        _sharingService.showReceiveShareScreen(context, sharedFiles);
+        // CRUCIAL CHECK: Only proceed if a share flow isn't already active.
+        if (!_sharingService.isShareFlowActive) { // Check the lock here
+          _sharingService.showReceiveShareScreen(context, sharedFiles);
+        } else {
+          print("MAIN SCREEN: _handleSharedFiles: Share flow already active, not showing new screen.");
+          // Optionally, update the existing screen if it can handle new data mid-flow,
+          // or simply rely on the user to complete the current share first.
+        }
       }
     });
   }
