@@ -2522,6 +2522,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       print("FAB_DEBUG: Scroll controller no clients or not mounted. Bailing."); // DEBUG
       return;
     }
+    FocusManager.instance.primaryFocus?.unfocus(); // ADDED: Unfocus text fields
 
     if (_showUpArrowForFab) { // Scroll Up
       print("FAB_DEBUG: Trying to scroll UP."); // DEBUG
