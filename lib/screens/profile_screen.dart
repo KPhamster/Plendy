@@ -91,23 +91,33 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     ),
                   ),
                   const SizedBox(height: 16),
+                  if (user?.displayName?.isNotEmpty ?? false)
+                    Center(
+                      child: Text(
+                        user!.displayName!,
+                        style: const TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  if (user?.displayName?.isNotEmpty ?? false)
+                    const SizedBox(height: 4), // Small space if display name is shown
                   Center(
                     child: Text(
                       '@${_username ?? '...'}',
-                      style: const TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
+                      style: TextStyle(
+                        fontSize: (user?.displayName?.isNotEmpty ?? false) ? 16 : 20, // Smaller if display name is above
+                        fontWeight: (user?.displayName?.isNotEmpty ?? false) ? FontWeight.normal : FontWeight.bold,
+                        color: (user?.displayName?.isNotEmpty ?? false) ? Colors.grey[600] : Colors.black, // Different color if subtitle
                       ),
+                      textAlign: TextAlign.center,
                     ),
                   ),
                   const SizedBox(height: 8),
                   Text(
                     'Email: ${user?.email ?? 'No email'}',
-                    style: const TextStyle(fontSize: 18),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Name: ${user?.displayName ?? 'No name set'}',
                     style: const TextStyle(fontSize: 18),
                   ),
                   const SizedBox(height: 16),

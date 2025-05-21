@@ -6,6 +6,7 @@ import '../widgets/user_list_tab.dart';
 import '../widgets/user_search_delegate.dart'; // Import the search delegate
 import '../models/user_profile.dart';      // Import UserProfile for search result type
 import '../widgets/user_list_tab.dart'; // Reusing for action button logic for now
+import 'follow_requests_screen.dart'; // Import FollowRequestsScreen
 
 class MyPeopleScreen extends StatefulWidget {
   const MyPeopleScreen({super.key});
@@ -27,6 +28,9 @@ class _MyPeopleScreenState extends State<MyPeopleScreen>
   Map<String, bool> _searchResultIsFollowingStatus = {};
   Map<String, bool> _searchResultButtonLoading = {};
 
+  UserProfile? _currentUserProfile;
+  int _pendingRequestCount = 0;
+
   int _friendsCount = 0;
   int _followersCount = 0;
   int _followingCount = 0;
@@ -41,6 +45,10 @@ class _MyPeopleScreenState extends State<MyPeopleScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
+    _tabController.addListener(() {
+      // Optional: if you want to do something when tab changes, but not strictly needed for the button.
+      // setState(() {}); 
+    });
     _searchController.addListener(() {
       if (_searchQuery != _searchController.text.trim()) {
         setState(() {
@@ -67,10 +75,39 @@ class _MyPeopleScreenState extends State<MyPeopleScreen>
     if (_authService != authService) {
       _authService = authService;
       if (_authService?.currentUser != null) {
-        _loadSocialCounts();
+        _loadInitialData(); // Changed to load all initial data
       }
-    } else if (_authService?.currentUser != null && _friendIds.isEmpty && _followerIds.isEmpty && _followingIds.isEmpty && !_isLoadingCounts) {
-        _loadSocialCounts();
+    } else if (_authService?.currentUser != null && _currentUserProfile == null && !_isLoadingCounts) {
+        // If auth service is same, but profile not loaded yet (e.g. after hot reload)
+        _loadInitialData(); 
+    }
+  }
+
+  Future<void> _loadInitialData() async {
+    await _loadCurrentUserProfile();
+    await _loadSocialCounts();
+    if (_currentUserProfile?.isPrivate ?? false) {
+      await _loadPendingRequestCount();
+    }
+  }
+
+  Future<void> _loadCurrentUserProfile() async {
+    if (_authService?.currentUser == null) return;
+    final profile = await _userService.getUserProfile(_authService!.currentUser!.uid);
+    if (mounted) {
+      setState(() {
+        _currentUserProfile = profile;
+      });
+    }
+  }
+
+  Future<void> _loadPendingRequestCount() async {
+    if (_authService?.currentUser == null) return;
+    final requests = await _userService.getFollowRequests(_authService!.currentUser!.uid);
+    if (mounted) {
+      setState(() {
+        _pendingRequestCount = requests.length;
+      });
     }
   }
 
@@ -126,6 +163,10 @@ class _MyPeopleScreenState extends State<MyPeopleScreen>
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Could not load social counts.')),
         );
+        // Also refresh request count if profile is private on error or success of social counts
+        if (_currentUserProfile?.isPrivate ?? false) {
+           _loadPendingRequestCount();
+        }
       }
     }
   }
@@ -171,17 +212,39 @@ class _MyPeopleScreenState extends State<MyPeopleScreen>
     });
 
     try {
+      final targetUserProfile = await _userService.getUserProfile(targetUserId);
+      if (targetUserProfile == null) throw Exception("Target user not found");
+
       if (currentlyFollowing) {
         await _userService.unfollowUser(currentUserId, targetUserId);
       } else {
+        // Use the modified followUser that handles private profiles
         await _userService.followUser(currentUserId, targetUserId);
       }
+      
+      // After action, refresh follow status for this specific user in search results
+      // and also reload social counts for the main tabs.
       if (mounted) {
+        bool newFollowStatus = await _userService.isFollowing(currentUserId, targetUserId);
+        bool newPendingStatus = false;
+        if (targetUserProfile.isPrivate && !newFollowStatus) {
+           newPendingStatus = await _userService.hasPendingRequest(currentUserId, targetUserId);
+        }
         setState(() {
-          _searchResultIsFollowingStatus[targetUserId] = !currentlyFollowing;
+          if (targetUserProfile.isPrivate && !newFollowStatus && newPendingStatus) {
+            // If it's private and request was just sent, update status to a conceptual "requested"
+            // For simplicity, we might just disable button or change text. 
+            // Here, we update the _searchResultIsFollowingStatus to reflect actual follow state (false after sending request)
+             _searchResultIsFollowingStatus[targetUserId] = false; 
+          } else {
+            _searchResultIsFollowingStatus[targetUserId] = newFollowStatus;
+          }
           _searchResultButtonLoading[targetUserId] = false;
         });
-        _loadSocialCounts(); // Refresh tab counts and lists as a follow action occurred
+        _loadSocialCounts(); 
+        if (_currentUserProfile?.isPrivate ?? false) {
+           _loadPendingRequestCount(); // Refresh request count as well
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -306,6 +369,23 @@ class _MyPeopleScreenState extends State<MyPeopleScreen>
                         ),
             )
           else ...[
+            if (_currentUserProfile?.isPrivate ?? false)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                child: ElevatedButton.icon(
+                  icon: const Icon(Icons.notification_important_outlined),
+                  label: Text('View Follow Requests ($_pendingRequestCount)'),
+                  onPressed: () async {
+                    final result = await Navigator.push<bool>(
+                      context,
+                      MaterialPageRoute(builder: (context) => const FollowRequestsScreen()),
+                    );
+                    _loadSocialCounts();
+                    _loadPendingRequestCount();
+                  },
+                  style: ElevatedButton.styleFrom(minimumSize: const Size(double.infinity, 36)),
+                ),
+              ),
             TabBar(
               controller: _tabController,
               tabs: _isLoadingCounts

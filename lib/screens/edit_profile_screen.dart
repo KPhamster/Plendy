@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'dart:io';
+import 'package:cloud_firestore/cloud_firestore.dart'; // Added for FieldValue
 import '../services/auth_service.dart';
 import '../services/user_service.dart';
+import '../models/user_profile.dart'; // Import UserProfile model
 
 class EditProfileScreen extends StatefulWidget {
   const EditProfileScreen({super.key});
@@ -21,6 +23,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   bool _isLoading = false;
   String? _usernameError;
   String? _initialUsername;
+  bool _isPrivateProfile = false; // State for privacy setting, default to public
 
   @override
   void initState() {
@@ -32,11 +35,12 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     final user = _authService.currentUser;
     if (user != null) {
       _nameController.text = user.displayName ?? '';
-      final username = await _userService.getUserUsername(user.uid);
+      final userProfileDoc = await _userService.getUserProfile(user.uid); // Fetch full profile
       if (mounted) {
         setState(() {
-          _usernameController.text = username ?? '';
-          _initialUsername = username?.toLowerCase();
+          _usernameController.text = userProfileDoc?.username ?? '';
+          _initialUsername = userProfileDoc?.username?.toLowerCase();
+          _isPrivateProfile = userProfileDoc?.isPrivate ?? false; // Load privacy setting
         });
       }
     }
@@ -95,48 +99,69 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       final user = _authService.currentUser;
       if (user == null) throw Exception('User not authenticated');
 
-      // Handle username update
-      if (_usernameController.text.isNotEmpty) {
-        final success = await _userService.setUsername(
-          user.uid, 
-          _usernameController.text
-        );
+      String newUsername = _usernameController.text.trim();
+      bool usernameChanged = newUsername != (_initialUsername ?? '');
+
+      // Handle username update only if it has changed
+      if (newUsername.isNotEmpty && usernameChanged) {
+        final success = await _userService.setUsername(user.uid, newUsername);
         if (!success) throw Exception('Failed to update username');
+      } else if (newUsername.isEmpty && (_initialUsername != null && _initialUsername!.isNotEmpty)){
+        // If username field is cleared and there was an initial username, attempt to remove it.
+        // This assumes setUsername can handle empty string to effectively remove/disassociate username.
+        // Or a dedicated removeUsername(userId) in userService would be cleaner.
+        // For now, if setUsername is robust for empty string, this is okay.
+        // Otherwise, the firestoreUpdateData below will handle deleting it from the user's doc.
+        final success = await _userService.setUsername(user.uid, ""); // Attempt to clear via setUsername
+         if (!success && _initialUsername != null && _initialUsername!.isNotEmpty) {
+           // If setUsername failed to clear (e.g. it doesn't support empty string for removal)
+           // we rely on firestoreUpdateData to remove the fields.
+           print("Note: setUsername might not support empty string for removal. Firestore fields will be deleted directly.");
+         }
       }
 
-      String? photoURL = user.photoURL;
+      String? photoURL = user.photoURL; 
 
       if (_imageFile != null) {
-        // Create the storage reference with the correct path
         final ref = FirebaseStorage.instance
             .ref()
             .child('user_photos')
             .child(user.uid)
             .child('profile.jpg');
-        
-        // Upload the file
         await ref.putFile(_imageFile!);
         photoURL = await ref.getDownloadURL();
-        
-        print('Debug: Uploading for user ${user.uid}');
       }
 
-      // Update user profile in Firebase Auth
       await user.updateDisplayName(_nameController.text);
-      if (photoURL != null) {
+      if (photoURL != null && photoURL != user.photoURL) {
         await user.updatePhotoURL(photoURL);
       }
 
-      // Now update displayName and potentially photoURL in Firestore users collection
       Map<String, dynamic> firestoreUpdateData = {
         'displayName': _nameController.text,
-        if (user.photoURL != null) 'photoURL': user.photoURL, 
+        'isPrivate': _isPrivateProfile,
       };
+
+      if (photoURL != null) {
+        firestoreUpdateData['photoURL'] = photoURL;
+      }
+      // This logic for updating username fields in the user doc needs to be robust
+      // based on whether setUsername was called and successful for non-empty new usernames,
+      // or if the username was cleared.
+      if (newUsername.isNotEmpty) {
+          firestoreUpdateData['username'] = newUsername;
+          firestoreUpdateData['lowercaseUsername'] = newUsername.toLowerCase();
+      } else if (_initialUsername != null && _initialUsername!.isNotEmpty) {
+          // Username was cleared
+          firestoreUpdateData['username'] = FieldValue.delete();
+          firestoreUpdateData['lowercaseUsername'] = FieldValue.delete();
+      }
+      // If newUsername is empty and initialUsername was also empty/null, no username fields are added/deleted.
 
       await _userService.updateUserCoreData(user.uid, firestoreUpdateData);
 
       if (mounted) {
-        Navigator.pop(context, true);
+        Navigator.pop(context, true); 
       }
     } catch (e) {
       print('Debug: Error occurred: $e');
@@ -199,6 +224,34 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                       labelText: 'Display Name',
                       hintText: 'Enter your name',
                     ),
+                  ),
+                  const SizedBox(height: 24), // Added const & more space
+                  const Text('Profile Visibility', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  RadioListTile<bool>(
+                    title: const Text('Public'),
+                    subtitle: const Text('Anyone can follow you.'),
+                    value: false, // Corresponds to _isPrivateProfile = false
+                    groupValue: _isPrivateProfile,
+                    onChanged: (bool? value) {
+                      if (value != null) {
+                        setState(() {
+                          _isPrivateProfile = value;
+                        });
+                      }
+                    },
+                  ),
+                  RadioListTile<bool>(
+                    title: const Text('Private'),
+                    subtitle: const Text('You approve who follows you.'),
+                    value: true, // Corresponds to _isPrivateProfile = true
+                    groupValue: _isPrivateProfile,
+                    onChanged: (bool? value) {
+                      if (value != null) {
+                        setState(() {
+                          _isPrivateProfile = value;
+                        });
+                      }
+                    },
                   ),
                 ],
               ),
