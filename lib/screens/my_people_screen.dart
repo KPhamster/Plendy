@@ -3,6 +3,9 @@ import 'package:provider/provider.dart';
 import '../services/auth_service.dart';
 import '../services/user_service.dart'; // Assuming UserService will provide these counts
 import '../widgets/user_list_tab.dart';
+import '../widgets/user_search_delegate.dart'; // Import the search delegate
+import '../models/user_profile.dart';      // Import UserProfile for search result type
+import '../widgets/user_list_tab.dart'; // Reusing for action button logic for now
 
 class MyPeopleScreen extends StatefulWidget {
   const MyPeopleScreen({super.key});
@@ -16,6 +19,13 @@ class _MyPeopleScreenState extends State<MyPeopleScreen>
   late TabController _tabController;
   final UserService _userService = UserService();
   AuthService? _authService;
+
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
+  List<UserProfile> _searchResults = [];
+  bool _isSearchLoading = false;
+  Map<String, bool> _searchResultIsFollowingStatus = {};
+  Map<String, bool> _searchResultButtonLoading = {};
 
   int _friendsCount = 0;
   int _followersCount = 0;
@@ -31,6 +41,23 @@ class _MyPeopleScreenState extends State<MyPeopleScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
+    _searchController.addListener(() {
+      if (_searchQuery != _searchController.text.trim()) {
+        setState(() {
+          _searchQuery = _searchController.text.trim();
+        });
+        if (_searchQuery.isNotEmpty) {
+          _performSearch();
+        } else {
+          setState(() {
+            _searchResults = [];
+            _searchResultIsFollowingStatus = {};
+            _searchResultButtonLoading = {};
+            _isSearchLoading = false;
+          });
+        }
+      }
+    });
   }
 
   @override
@@ -103,14 +130,83 @@ class _MyPeopleScreenState extends State<MyPeopleScreen>
     }
   }
 
+  Future<void> _performSearch() async {
+    if (_searchQuery.isEmpty || _authService?.currentUser == null) {
+      setState(() {
+        _searchResults = [];
+        _searchResultIsFollowingStatus = {};
+        _searchResultButtonLoading = {};
+        _isSearchLoading = false;
+      });
+      return;
+    }
+    setState(() {
+      _isSearchLoading = true;
+      _searchResultButtonLoading = {}; // Clear specific button loading states
+    });
+    final results = await _userService.searchUsers(_searchQuery);
+    Map<String, bool> followingStatus = {};
+    if (_authService?.currentUser?.uid != null) {
+      for (var profile in results) {
+        if (profile.id != _authService!.currentUser!.uid) {
+          followingStatus[profile.id] = await _userService.isFollowing(_authService!.currentUser!.uid, profile.id);
+        }
+      }
+    }
+    if (mounted && _searchQuery == _searchController.text.trim()) { // Check if query is still the same
+      setState(() {
+        _searchResults = results;
+        _searchResultIsFollowingStatus = followingStatus;
+        _isSearchLoading = false;
+      });
+    }
+  }
+
+  Future<void> _toggleFollowSearchResult(String targetUserId, bool currentlyFollowing) async {
+    final currentUserId = _authService?.currentUser?.uid;
+    if (currentUserId == null) return;
+
+    setState(() {
+      _searchResultButtonLoading[targetUserId] = true;
+    });
+
+    try {
+      if (currentlyFollowing) {
+        await _userService.unfollowUser(currentUserId, targetUserId);
+      } else {
+        await _userService.followUser(currentUserId, targetUserId);
+      }
+      if (mounted) {
+        setState(() {
+          _searchResultIsFollowingStatus[targetUserId] = !currentlyFollowing;
+          _searchResultButtonLoading[targetUserId] = false;
+        });
+        _loadSocialCounts(); // Refresh tab counts and lists as a follow action occurred
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Action failed: ${e.toString()}')),
+        );
+        setState(() {
+          _searchResultButtonLoading[targetUserId] = false;
+        });
+      }
+    }
+  }
+
   @override
   void dispose() {
     _tabController.dispose();
+    _searchController.dispose(); // Dispose the search controller
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    // Get currentUserId for convenience, though it's also in _authService
+    final String? currentUserId = _authService?.currentUser?.uid;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('My People'),
@@ -120,45 +216,139 @@ class _MyPeopleScreenState extends State<MyPeopleScreen>
             Navigator.of(context).pop();
           },
         ),
-        bottom: TabBar(
-          controller: _tabController,
-          tabs: _isLoadingCounts
-              ? [
-                  const Tab(child: CircularProgressIndicator()),
-                  const Tab(child: CircularProgressIndicator()),
-                  const Tab(child: CircularProgressIndicator()),
-                ]
-              : [
-                  Tab(text: '$_friendsCount Friends'),
-                  Tab(text: '$_followersCount Followers'),
-                  Tab(text: '$_followingCount Following'),
-                ],
-        ),
+        actions: [
+          // Optional: Keep the icon to open the full SearchDelegate page, or remove it
+          IconButton(
+            icon: const Icon(Icons.person_search_outlined), // Changed icon slightly
+            tooltip: 'Advanced Search Page',
+            onPressed: () {
+              showSearch<UserProfile?>(
+                context: context,
+                delegate: UserSearchDelegate(userService: _userService),
+              ).then((_) => _loadSocialCounts()); // Refresh on close
+            },
+          ),
+        ],
+        // TabBar is now moved into the body
       ),
-      body: TabBarView(
-        controller: _tabController,
+      body: Column(
         children: [
-          UserListTab(
-            userIds: _friendIds,
-            userService: _userService,
-            emptyListMessage: "No friends yet. Find and follow users to make friends!",
-            listType: "friends",
-            onActionCompleted: _loadSocialCounts,
+          Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: TextField(
+              controller: _searchController,
+              decoration: InputDecoration(
+                hintText: 'Search users...',
+                prefixIcon: const Icon(Icons.search),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(25.0),
+                  borderSide: BorderSide.none,
+                ),
+                filled: true,
+                contentPadding: const EdgeInsets.symmetric(vertical: 0, horizontal: 16),
+                suffixIcon: _searchQuery.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.clear),
+                        onPressed: () {
+                          _searchController.clear();
+                        },
+                      )
+                    : null,
+              ),
+            ),
           ),
-          UserListTab(
-            userIds: _followerIds,
-            userService: _userService,
-            emptyListMessage: "You don't have any followers yet.",
-            listType: "followers",
-            onActionCompleted: _loadSocialCounts,
-          ),
-          UserListTab(
-            userIds: _followingIds,
-            userService: _userService,
-            emptyListMessage: "You are not following anyone yet.",
-            listType: "following",
-            onActionCompleted: _loadSocialCounts,
-          ),
+          // Conditionally show search results or TabBar and TabBarView
+          if (_searchQuery.isNotEmpty)
+            Expanded(
+              child: _isSearchLoading
+                  ? const Center(child: CircularProgressIndicator())
+                  : _searchResults.isEmpty
+                      ? const Center(child: Text('No users found for your search.'))
+                      : ListView.builder(
+                          itemCount: _searchResults.length,
+                          itemBuilder: (context, index) {
+                            final userProfile = _searchResults[index];
+                            bool isSelf = userProfile.id == currentUserId;
+                            bool isFollowing = _searchResultIsFollowingStatus[userProfile.id] ?? false;
+                            bool isButtonLoading = _searchResultButtonLoading[userProfile.id] ?? false;
+
+                            // Prepare display name and username strings
+                            String displayName = userProfile.displayName?.isNotEmpty ?? false
+                                ? userProfile.displayName!
+                                : (userProfile.username ?? 'Unknown User'); // Fallback for title if display name is empty
+                            String username = userProfile.username?.isNotEmpty ?? false
+                                ? '@${userProfile.username!}'
+                                : '@unknown'; // Fallback for subtitle if username is empty
+                            bool showUsernameAsSubtitle = userProfile.displayName?.isNotEmpty ?? false; 
+
+                            return ListTile(
+                              leading: CircleAvatar(
+                                backgroundImage: userProfile.photoURL != null
+                                    ? NetworkImage(userProfile.photoURL!)
+                                    : null,
+                                child: userProfile.photoURL == null
+                                    ? const Icon(Icons.person)
+                                    : null,
+                              ),
+                              title: Text(displayName),
+                              subtitle: showUsernameAsSubtitle ? Text(username) : null,
+                              trailing: isSelf
+                                  ? const Text('(You)', style: TextStyle(color: Colors.grey))
+                                  : isButtonLoading 
+                                    ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2))
+                                    : ElevatedButton(
+                                        onPressed: () => _toggleFollowSearchResult(userProfile.id, isFollowing),
+                                        child: Text(isFollowing ? 'Unfollow' : 'Follow'),
+                                      ),
+                              // TODO: onTap to navigate to user profile
+                            );
+                          },
+                        ),
+            )
+          else ...[
+            TabBar(
+              controller: _tabController,
+              tabs: _isLoadingCounts
+                  ? [
+                      const Tab(child: CircularProgressIndicator()),
+                      const Tab(child: CircularProgressIndicator()),
+                      const Tab(child: CircularProgressIndicator()),
+                    ]
+                  : [
+                      Tab(text: '$_friendsCount Friends'),
+                      Tab(text: '$_followersCount Followers'),
+                      Tab(text: '$_followingCount Following'),
+                    ],
+            ),
+            Expanded(
+              child: TabBarView(
+                controller: _tabController,
+                children: [
+                  UserListTab(
+                    userIds: _friendIds,
+                    userService: _userService,
+                    emptyListMessage: "No friends yet. Find and follow users to make friends!",
+                    listType: "friends",
+                    onActionCompleted: _loadSocialCounts,
+                  ),
+                  UserListTab(
+                    userIds: _followerIds,
+                    userService: _userService,
+                    emptyListMessage: "You don't have any followers yet.",
+                    listType: "followers",
+                    onActionCompleted: _loadSocialCounts,
+                  ),
+                  UserListTab(
+                    userIds: _followingIds,
+                    userService: _userService,
+                    emptyListMessage: "You are not following anyone yet.",
+                    listType: "following",
+                    onActionCompleted: _loadSocialCounts,
+                  ),
+                ],
+              ),
+            ),
+          ],
         ],
       ),
     );

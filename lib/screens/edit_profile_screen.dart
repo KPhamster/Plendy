@@ -20,6 +20,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   File? _imageFile;
   bool _isLoading = false;
   String? _usernameError;
+  String? _initialUsername;
 
   @override
   void initState() {
@@ -32,17 +33,28 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     if (user != null) {
       _nameController.text = user.displayName ?? '';
       final username = await _userService.getUserUsername(user.uid);
-      _usernameController.text = username ?? '';
+      if (mounted) {
+        setState(() {
+          _usernameController.text = username ?? '';
+          _initialUsername = username?.toLowerCase();
+        });
+      }
     }
   }
 
   Future<void> _validateUsername(String username) async {
+    final String lowercaseUsername = username.toLowerCase();
+
     if (username.isEmpty) {
-      setState(() => _usernameError = 'Username is required');
+      if (_initialUsername == null && username.isEmpty) {
+        setState(() => _usernameError = null);
+      } else {
+        setState(() => _usernameError = 'Username is required');
+      }
       return;
     }
     
-    if (username == _usernameController.text) {
+    if (_initialUsername != null && lowercaseUsername == _initialUsername) {
       setState(() => _usernameError = null);
       return;
     }
@@ -70,7 +82,12 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   }
 
   Future<void> _updateProfile() async {
-    if (_usernameError != null) return;
+    if (_usernameError != null && _usernameController.text.isNotEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please fix the errors before saving.')),
+      );
+      return;
+    }
 
     setState(() => _isLoading = true);
 
@@ -104,13 +121,23 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         print('Debug: Uploading for user ${user.uid}');
       }
 
-      // Update user profile
+      // Update user profile in Firebase Auth
       await user.updateDisplayName(_nameController.text);
       if (photoURL != null) {
         await user.updatePhotoURL(photoURL);
       }
 
-      Navigator.pop(context);
+      // Now update displayName and potentially photoURL in Firestore users collection
+      Map<String, dynamic> firestoreUpdateData = {
+        'displayName': _nameController.text,
+        if (user.photoURL != null) 'photoURL': user.photoURL, 
+      };
+
+      await _userService.updateUserCoreData(user.uid, firestoreUpdateData);
+
+      if (mounted) {
+        Navigator.pop(context, true);
+      }
     } catch (e) {
       print('Debug: Error occurred: $e');
       ScaffoldMessenger.of(context).showSnackBar(
@@ -125,11 +152,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Edit Profile'),
+        title: const Text('Edit Profile'),
         actions: [
           if (!_isLoading)
             IconButton(
-              icon: Icon(Icons.save),
+              icon: const Icon(Icons.save),
               onPressed: _updateProfile,
             ),
         ],
@@ -146,16 +173,16 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                       radius: 50,
                       backgroundImage: _imageFile != null
                           ? FileImage(_imageFile!)
-                          : (_authService.currentUser?.photoURL != null
+                          : (_authService.currentUser?.photoURL != null && _authService.currentUser!.photoURL!.isNotEmpty
                               ? NetworkImage(_authService.currentUser!.photoURL!)
                               : null) as ImageProvider?,
                       child: (_imageFile == null &&
-                              _authService.currentUser?.photoURL == null)
-                          ? Icon(Icons.camera_alt, size: 50)
-                          : null,
+                              (_authService.currentUser?.photoURL == null || _authService.currentUser!.photoURL!.isEmpty)
+                          ? const Icon(Icons.camera_alt, size: 50)
+                          : null),
                     ),
                   ),
-                  SizedBox(height: 16),
+                  const SizedBox(height: 16),
                   TextFormField(
                     controller: _usernameController,
                     decoration: InputDecoration(
@@ -165,7 +192,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                     ),
                     onChanged: _validateUsername,
                   ),
-                  SizedBox(height: 16),
+                  const SizedBox(height: 16),
                   TextFormField(
                     controller: _nameController,
                     decoration: InputDecoration(
