@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../models/user_profile.dart';
+import 'dart:async'; // For StreamController if mapping manually, or for rxdart if used
 
 class UserService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -308,6 +309,37 @@ class UserService {
     }
   }
 
+  // Stream of follow requests (UserProfile list)
+  Stream<List<UserProfile>> getFollowRequestsStream(String targetUserId) {
+    return _firestore
+        .collection('users')
+        .doc(targetUserId)
+        .collection('followRequests')
+        .orderBy('requestedAt', descending: true)
+        .snapshots()
+        .asyncMap((snapshot) async {
+      List<UserProfile> requestProfiles = [];
+      for (var doc in snapshot.docs) {
+        final requesterId = doc.id;
+        final userProfile = await getUserProfile(requesterId);
+        if (userProfile != null) {
+          requestProfiles.add(userProfile);
+        }
+      }
+      return requestProfiles;
+    });
+  }
+
+  // Stream of follow request count
+  Stream<int> getFollowRequestsCountStream(String targetUserId) {
+    return _firestore
+        .collection('users')
+        .doc(targetUserId)
+        .collection('followRequests')
+        .snapshots()
+        .map((snapshot) => snapshot.docs.length);
+  }
+
   // Accept a follow request
   Future<void> acceptFollowRequest(String targetUserId, String requesterId) async {
     try {
@@ -354,6 +386,52 @@ class UserService {
           .delete();
     } catch (e) {
       print('Error denying follow request from $requesterId to $targetUserId: $e');
+      rethrow;
+    }
+  }
+
+  // Accept all pending follow requests for a user (e.g., when switching to public)
+  Future<void> acceptAllPendingRequests(String userId) async {
+    try {
+      final requestsSnapshot = await _firestore
+          .collection('users')
+          .doc(userId)
+          .collection('followRequests')
+          .get();
+
+      if (requestsSnapshot.docs.isEmpty) {
+        return; // No pending requests
+      }
+
+      WriteBatch batch = _firestore.batch();
+
+      for (var requestDoc in requestsSnapshot.docs) {
+        final requesterId = requestDoc.id;
+
+        // Add to target's (userId) followers list
+        DocumentReference targetFollowersRef = _firestore
+            .collection('users')
+            .doc(userId)
+            .collection('followers')
+            .doc(requesterId);
+        batch.set(targetFollowersRef, {});
+
+        // Add target (userId) to requester's following list
+        DocumentReference requesterFollowingRef = _firestore
+            .collection('users')
+            .doc(requesterId)
+            .collection('following')
+            .doc(userId);
+        batch.set(requesterFollowingRef, {});
+
+        // Delete the follow request
+        batch.delete(requestDoc.reference);
+      }
+
+      await batch.commit();
+      print('Accepted all pending requests for user $userId');
+    } catch (e) {
+      print('Error accepting all pending requests for $userId: $e');
       rethrow;
     }
   }

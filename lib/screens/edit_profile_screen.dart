@@ -24,6 +24,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   String? _usernameError;
   String? _initialUsername;
   bool _isPrivateProfile = false; // State for privacy setting, default to public
+  bool? _initialIsPrivateProfile; // Store initial privacy setting
 
   @override
   void initState() {
@@ -41,6 +42,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           _usernameController.text = userProfileDoc?.username ?? '';
           _initialUsername = userProfileDoc?.username?.toLowerCase();
           _isPrivateProfile = userProfileDoc?.isPrivate ?? false; // Load privacy setting
+          _initialIsPrivateProfile = _isPrivateProfile; // Store initial value
         });
       }
     }
@@ -100,23 +102,16 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       if (user == null) throw Exception('User not authenticated');
 
       String newUsername = _usernameController.text.trim();
-      bool usernameChanged = newUsername != (_initialUsername ?? '');
+      // Compare with initialUsername before it's potentially updated by setUsername
+      bool usernameHasChangedLogically = newUsername.toLowerCase() != (_initialUsername ?? '');
 
-      // Handle username update only if it has changed
-      if (newUsername.isNotEmpty && usernameChanged) {
+      if (newUsername.isNotEmpty && usernameHasChangedLogically) {
         final success = await _userService.setUsername(user.uid, newUsername);
         if (!success) throw Exception('Failed to update username');
       } else if (newUsername.isEmpty && (_initialUsername != null && _initialUsername!.isNotEmpty)){
-        // If username field is cleared and there was an initial username, attempt to remove it.
-        // This assumes setUsername can handle empty string to effectively remove/disassociate username.
-        // Or a dedicated removeUsername(userId) in userService would be cleaner.
-        // For now, if setUsername is robust for empty string, this is okay.
-        // Otherwise, the firestoreUpdateData below will handle deleting it from the user's doc.
-        final success = await _userService.setUsername(user.uid, ""); // Attempt to clear via setUsername
+        final success = await _userService.setUsername(user.uid, ""); 
          if (!success && _initialUsername != null && _initialUsername!.isNotEmpty) {
-           // If setUsername failed to clear (e.g. it doesn't support empty string for removal)
-           // we rely on firestoreUpdateData to remove the fields.
-           print("Note: setUsername might not support empty string for removal. Firestore fields will be deleted directly.");
+           print("Note: setUsername might not support empty string for removal. Firestore fields will be deleted directly in updateUserCoreData.");
          }
       }
 
@@ -145,20 +140,22 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       if (photoURL != null) {
         firestoreUpdateData['photoURL'] = photoURL;
       }
-      // This logic for updating username fields in the user doc needs to be robust
-      // based on whether setUsername was called and successful for non-empty new usernames,
-      // or if the username was cleared.
+      
       if (newUsername.isNotEmpty) {
           firestoreUpdateData['username'] = newUsername;
           firestoreUpdateData['lowercaseUsername'] = newUsername.toLowerCase();
       } else if (_initialUsername != null && _initialUsername!.isNotEmpty) {
-          // Username was cleared
           firestoreUpdateData['username'] = FieldValue.delete();
           firestoreUpdateData['lowercaseUsername'] = FieldValue.delete();
       }
-      // If newUsername is empty and initialUsername was also empty/null, no username fields are added/deleted.
 
       await _userService.updateUserCoreData(user.uid, firestoreUpdateData);
+
+      // Check if profile was private and is now public
+      if ((_initialIsPrivateProfile == true) && (_isPrivateProfile == false)) {
+        print("Profile changed from Private to Public. Accepting all pending requests...");
+        await _userService.acceptAllPendingRequests(user.uid);
+      }
 
       if (mounted) {
         Navigator.pop(context, true); 

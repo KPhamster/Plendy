@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'dart:async'; // For StreamSubscription
 import '../models/user_profile.dart';
 import '../services/auth_service.dart';
 import '../services/user_service.dart';
@@ -15,11 +16,17 @@ class _FollowRequestsScreenState extends State<FollowRequestsScreen> {
   final UserService _userService = UserService();
   AuthService? _authService;
   List<UserProfile> _followRequests = [];
-  bool _isLoading = true;
+  bool _isLoadingInitial = true; // For initial load indicator
   String? _currentUserId;
+  StreamSubscription? _requestsSubscription;
 
   // Keep track of loading state for individual buttons
   Map<String, bool> _isProcessingRequest = {}; 
+
+  @override
+  void initState() {
+    super.initState();
+  }
 
   @override
   void didChangeDependencies() {
@@ -28,63 +35,62 @@ class _FollowRequestsScreenState extends State<FollowRequestsScreen> {
     if (_authService != authService) {
       _authService = authService;
       _currentUserId = _authService?.currentUser?.uid;
-      if (_currentUserId != null) {
-        _loadFollowRequests();
-      }
+      _subscribeToFollowRequests();
     }
   }
 
-  Future<void> _loadFollowRequests() async {
+  void _subscribeToFollowRequests() {
+    _requestsSubscription?.cancel(); // Cancel previous subscription if any
     if (_currentUserId == null) {
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted) setState(() => {_followRequests = [], _isLoadingInitial = false});
       return;
     }
-    if (mounted) setState(() => _isLoading = true);
-    try {
-      final requests = await _userService.getFollowRequests(_currentUserId!);
-      if (mounted) {
-        setState(() {
-          _followRequests = requests;
-          _isLoading = false;
-        });
-      }
-    } catch (e) {
-      if (mounted) setState(() => _isLoading = false);
-      print("Error loading follow requests: $e");
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not load follow requests: ${e.toString()}')),
-      );
-    }
+    if (mounted) setState(() => _isLoadingInitial = true);
+
+    _requestsSubscription = _userService.getFollowRequestsStream(_currentUserId!).listen(
+      (requests) {
+        if (mounted) {
+          setState(() {
+            _followRequests = requests;
+            _isLoadingInitial = false; 
+          });
+        }
+      },
+      onError: (error) {
+        if (mounted) setState(() => _isLoadingInitial = false);
+        print("Error listening to follow requests: $error");
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not load follow requests: ${error.toString()}')),
+        );
+      },
+    );
   }
 
   Future<void> _handleRequest(String requesterId, bool accept) async {
     if (_currentUserId == null) return;
-
-    setState(() {
-      _isProcessingRequest[requesterId] = true;
-    });
-
+    setState(() => _isProcessingRequest[requesterId] = true);
     try {
       if (accept) {
         await _userService.acceptFollowRequest(_currentUserId!, requesterId);
       } else {
         await _userService.denyFollowRequest(_currentUserId!, requesterId);
       }
-      // Refresh the list after action
-      _loadFollowRequests(); 
+      // No need to call _loadFollowRequests manually, stream will update.
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Action failed: ${e.toString()}')),
       );
     } finally {
-      // Check if mounted before calling setState is good practice, 
-      // though in this specific flow, it might be okay.
       if(mounted){
-          setState(() {
-            _isProcessingRequest[requesterId] = false;
-          });
+          setState(() => _isProcessingRequest[requesterId] = false);
       }
     }
+  }
+
+  @override
+  void dispose() {
+    _requestsSubscription?.cancel();
+    super.dispose();
   }
 
   @override
@@ -93,7 +99,7 @@ class _FollowRequestsScreenState extends State<FollowRequestsScreen> {
       appBar: AppBar(
         title: const Text('Follow Requests'),
       ),
-      body: _isLoading
+      body: _isLoadingInitial
           ? const Center(child: CircularProgressIndicator())
           : _followRequests.isEmpty
               ? const Center(
