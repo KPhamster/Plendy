@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'dart:async'; // For StreamSubscription
 import '../services/auth_service.dart';
 import '../services/user_service.dart'; // Assuming UserService will provide these counts
 import '../widgets/user_list_tab.dart';
@@ -30,6 +31,7 @@ class _MyPeopleScreenState extends State<MyPeopleScreen>
 
   UserProfile? _currentUserProfile;
   int _pendingRequestCount = 0;
+  StreamSubscription? _requestCountSubscription;
 
   int _friendsCount = 0;
   int _followersCount = 0;
@@ -75,20 +77,23 @@ class _MyPeopleScreenState extends State<MyPeopleScreen>
     if (_authService != authService) {
       _authService = authService;
       if (_authService?.currentUser != null) {
-        _loadInitialData(); // Changed to load all initial data
+        _loadInitialDataAndSubscribe(); 
       }
     } else if (_authService?.currentUser != null && _currentUserProfile == null && !_isLoadingCounts) {
-        // If auth service is same, but profile not loaded yet (e.g. after hot reload)
-        _loadInitialData(); 
+        _loadInitialDataAndSubscribe(); 
     }
   }
 
-  Future<void> _loadInitialData() async {
+  Future<void> _loadInitialDataAndSubscribe() async {
+    setState(() { _isLoadingCounts = true; }); // Show loading for initial data fetch
     await _loadCurrentUserProfile();
-    await _loadSocialCounts();
-    if (_currentUserProfile?.isPrivate ?? false) {
-      await _loadPendingRequestCount();
+    await _loadSocialCounts(); // This will also call _subscribeToRequestCount if profile is private
+    // No need to call _subscribeToRequestCount explicitly here if _loadSocialCounts handles it.
+    // However, if _loadSocialCounts might not run (e.g. no current user), ensure subscription starts if profile is loaded.
+    if (_currentUserProfile != null && _currentUserProfile!.isPrivate && _requestCountSubscription == null) {
+       _subscribeToRequestCount();
     }
+    setState(() { _isLoadingCounts = false; }); // Hide main loading after initial fetches
   }
 
   Future<void> _loadCurrentUserProfile() async {
@@ -98,76 +103,80 @@ class _MyPeopleScreenState extends State<MyPeopleScreen>
       setState(() {
         _currentUserProfile = profile;
       });
+      // If profile is loaded and is private, subscribe to request count
+      // This is a good place if _loadInitialDataAndSubscribe doesn't already cover it.
+      if (_currentUserProfile?.isPrivate ?? false) {
+        _subscribeToRequestCount();
+      }
     }
   }
 
-  Future<void> _loadPendingRequestCount() async {
-    if (_authService?.currentUser == null) return;
-    final requests = await _userService.getFollowRequests(_authService!.currentUser!.uid);
-    if (mounted) {
-      setState(() {
-        _pendingRequestCount = requests.length;
-      });
+  void _subscribeToRequestCount() {
+    _requestCountSubscription?.cancel();
+    if (_authService?.currentUser == null || !(_currentUserProfile?.isPrivate ?? false) ) {
+        if(mounted) setState(() => _pendingRequestCount = 0); // Reset if not private or no user
+        return;
     }
+    _requestCountSubscription = 
+        _userService.getFollowRequestsCountStream(_authService!.currentUser!.uid).listen((count) {
+      if (mounted) {
+        setState(() {
+          _pendingRequestCount = count;
+        });
+      }
+    }, onError: (error) {
+      print("Error listening to follow request count: $error");
+      if (mounted) setState(() => _pendingRequestCount = 0); // Reset on error
+    });
   }
 
   Future<void> _loadSocialCounts() async {
     if (_authService?.currentUser == null) {
-      if (mounted) {
-        setState(() {
-          _isLoadingCounts = false;
-        });
-      }
+      if (mounted) setState(() => _isLoadingCounts = false);
       return;
     }
     final userId = _authService!.currentUser!.uid;
-    if (mounted) {
-      setState(() {
-        _isLoadingCounts = true; // Set loading to true at the beginning
-      });
-    }
+    // Do not set _isLoadingCounts to true here if _loadInitialDataAndSubscribe already did.
+    // Or, ensure this method is robust to be called independently.
+    if (mounted && !_isLoadingCounts) setState(() { _isLoadingCounts = true; });
 
     try {
-      // Fetch all ID lists in parallel for efficiency
       final results = await Future.wait([
         _userService.getFriendIds(userId),
         _userService.getFollowerIds(userId),
         _userService.getFollowingIds(userId),
       ]);
-
       final friends = results[0];
       final followers = results[1];
       final following = results[2];
-
       if (mounted) {
         setState(() {
           _friendIds = friends;
           _followerIds = followers;
           _followingIds = following;
-
           _friendsCount = friends.length;
           _followersCount = followers.length;
           _followingCount = following.length;
-          _isLoadingCounts = false;
+          _isLoadingCounts = false; 
         });
       }
     } catch (e) {
-      if (mounted) {
-        setState(() {
-          _isLoadingCounts = false;
-        });
-      }
+      if (mounted) setState(() => _isLoadingCounts = false);
       print("Error loading social counts: $e");
-      // Optionally, show a SnackBar or some error message to the user
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Could not load social counts.')),
         );
-        // Also refresh request count if profile is private on error or success of social counts
-        if (_currentUserProfile?.isPrivate ?? false) {
-           _loadPendingRequestCount();
-        }
       }
+    } finally {
+        // Ensure request count subscription is active if profile is private
+        // This might be called after _loadCurrentUserProfile so profile should be available
+        if (mounted && (_currentUserProfile?.isPrivate ?? false) && _requestCountSubscription == null){
+             _subscribeToRequestCount();
+        } else if (mounted && !(_currentUserProfile?.isPrivate ?? false) && _requestCountSubscription != null) {
+            _requestCountSubscription?.cancel(); // Cancel if profile becomes public
+            setState(() => _pendingRequestCount = 0);
+        }
     }
   }
 
@@ -243,7 +252,7 @@ class _MyPeopleScreenState extends State<MyPeopleScreen>
         });
         _loadSocialCounts(); 
         if (_currentUserProfile?.isPrivate ?? false) {
-           _loadPendingRequestCount(); // Refresh request count as well
+           _subscribeToRequestCount(); // Refresh request count as well
         }
       }
     } catch (e) {
@@ -262,6 +271,7 @@ class _MyPeopleScreenState extends State<MyPeopleScreen>
   void dispose() {
     _tabController.dispose();
     _searchController.dispose(); // Dispose the search controller
+    _requestCountSubscription?.cancel(); // Cancel subscription on dispose
     super.dispose();
   }
 
@@ -369,19 +379,22 @@ class _MyPeopleScreenState extends State<MyPeopleScreen>
                         ),
             )
           else ...[
-            if (_currentUserProfile?.isPrivate ?? false)
+            if ((_currentUserProfile?.isPrivate ?? false) && _pendingRequestCount > 0)
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
                 child: ElevatedButton.icon(
-                  icon: const Icon(Icons.notification_important_outlined),
+                  icon: const Icon(Icons.notification_important_outlined), 
                   label: Text('View Follow Requests ($_pendingRequestCount)'),
                   onPressed: () async {
-                    final result = await Navigator.push<bool>(
+                    // No longer need to capture result if FollowRequestScreen manages its own refresh well.
+                    await Navigator.push(
                       context,
                       MaterialPageRoute(builder: (context) => const FollowRequestsScreen()),
                     );
-                    _loadSocialCounts();
-                    _loadPendingRequestCount();
+                    // Stream listeners should handle updates, but an explicit call might be desired
+                    // if FollowRequestsScreen doesn't notify parent of changes that affect this screen's data beyond the count.
+                    // For count, stream handles it. For social counts, if accept/deny changes them:
+                    _loadSocialCounts(); 
                   },
                   style: ElevatedButton.styleFrom(minimumSize: const Size(double.infinity, 36)),
                 ),
