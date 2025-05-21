@@ -1,11 +1,13 @@
 class UserProfile {
   final String id;
   final String? username;
+  final String? displayName;
   final String? photoURL;
 
   UserProfile({
     required this.id,
     this.username,
+    this.displayName,
     this.photoURL,
   });
 
@@ -13,6 +15,7 @@ class UserProfile {
     return UserProfile(
       id: id,
       username: data['username'] as String?,
+      displayName: data['displayName'] as String?,
       photoURL: data['photoURL'] as String?,
     );
   }

@@ -19,32 +19,55 @@ class UserService {
   Future<bool> setUsername(String userId, String username) async {
     final lowercaseUsername = username.toLowerCase();
     final email = _auth.currentUser?.email;
+    final currentUsernameDoc = await _firestore.collection('users').doc(userId).get();
+    final String? initialLowercaseUsername = currentUsernameDoc.data()?['lowercaseUsername'] as String?;
 
     try {
-      // Try to create the username document
-      await _firestore.runTransaction((transaction) async {
-        final usernameDoc = await transaction
-            .get(_firestore.collection('usernames').doc(lowercaseUsername));
+      // If the username hasn't actually changed (case-insensitively), only update the main user doc if needed.
+      if (initialLowercaseUsername == lowercaseUsername) {
+        // Update user's profile (e.g. if casing of username changed but not lowercase, or other fields)
+        // This part might be redundant if updateUserCoreData is always called after, but ensures consistency.
+        await _firestore.collection('users').doc(userId).set(
+            {
+              'username': username, // Potentially update casing
+              'lowercaseUsername': lowercaseUsername,
+              'email': email, 
+              'updatedAt': FieldValue.serverTimestamp(),
+            },
+            SetOptions(merge: true));
+        return true; // Username is the same (case-insensitively), no need for username transaction.
+      }
 
-        if (usernameDoc.exists) {
-          throw Exception('Username already taken');
+      // If username has changed, proceed with transaction to claim new or update old.
+      await _firestore.runTransaction((transaction) async {
+        // 1. Check if the new username is taken by someone else
+        final newUsernameDocRef = _firestore.collection('usernames').doc(lowercaseUsername);
+        final newUsernameDoc = await transaction.get(newUsernameDocRef);
+
+        if (newUsernameDoc.exists && newUsernameDoc.data()?['userId'] != userId) {
+          throw Exception('Username already taken by another user');
         }
 
-        // Create username reservation
-        transaction
-            .set(_firestore.collection('usernames').doc(lowercaseUsername), {
+        // 2. If the user had an old username, release it from the 'usernames' collection
+        if (initialLowercaseUsername != null && initialLowercaseUsername.isNotEmpty) {
+          final oldUsernameDocRef = _firestore.collection('usernames').doc(initialLowercaseUsername);
+          transaction.delete(oldUsernameDocRef);
+        }
+
+        // 3. Create new username reservation
+        transaction.set(newUsernameDocRef, {
           'userId': userId,
-          'username': username,
+          'username': username, // Store preferred casing
           'createdAt': FieldValue.serverTimestamp(),
         });
 
-        // Update user's profile
+        // 4. Update user's profile in 'users' collection
         transaction.set(
             _firestore.collection('users').doc(userId),
             {
               'username': username,
               'lowercaseUsername': lowercaseUsername,
-              'email': email, // Store the user's email
+              'email': email, 
               'updatedAt': FieldValue.serverTimestamp(),
             },
             SetOptions(merge: true));
@@ -212,6 +235,75 @@ class UserService {
     } catch (e) {
       print('Error checking if following user $targetUserId: $e');
       return false; // Default to false on error
+    }
+  }
+
+  // Search for users by username or display name
+  Future<List<UserProfile>> searchUsers(String query) async {
+    if (query.isEmpty) {
+      return [];
+    }
+    final String lowercaseQuery = query.toLowerCase();
+    List<UserProfile> users = [];
+    Set<String> userIds = {}; // To avoid duplicates
+
+    try {
+      // Search by lowercaseUsername (starts with)
+      final usernameSnapshot = await _firestore
+          .collection('users')
+          .where('lowercaseUsername', isGreaterThanOrEqualTo: lowercaseQuery)
+          .where('lowercaseUsername', isLessThanOrEqualTo: '${lowercaseQuery}\uf8ff')
+          .limit(10) // Limit results for performance
+          .get();
+
+      for (var doc in usernameSnapshot.docs) {
+        if (doc.data() != null && !userIds.contains(doc.id)) {
+          users.add(UserProfile.fromMap(doc.id, doc.data()!));
+          userIds.add(doc.id);
+        }
+      }
+
+      // Search by displayName (starts with)
+      // Note: Firestore string comparisons are case-sensitive.
+      // For true case-insensitive "starts with" on displayName, store a lowercaseDisplayName field.
+      // This query is case-sensitive for the first letter, but less sensitive for subsequent letters.
+      final displayNameSnapshot = await _firestore
+          .collection('users')
+          .where('displayName', isGreaterThanOrEqualTo: query)
+          .where('displayName', isLessThanOrEqualTo: '${query}\uf8ff')
+          .limit(10) // Limit results
+          .get();
+
+      for (var doc in displayNameSnapshot.docs) {
+        if (doc.data() != null && !userIds.contains(doc.id)) {
+          users.add(UserProfile.fromMap(doc.id, doc.data()!));
+          userIds.add(doc.id);
+        }
+      }
+      
+      // TODO: Consider searching by full username if no displayName is set or vice-versa.
+      // TODO: Ensure `displayName` field exists in user documents for this query to be effective.
+      //       Users update their displayName via Auth, ensure it's synced to Firestore user doc.
+
+      return users;
+    } catch (e) {
+      print('Error searching users: $e');
+      return [];
+    }
+  }
+
+  // Update core user data in Firestore (like displayName, photoURL)
+  Future<void> updateUserCoreData(String userId, Map<String, dynamic> dataToUpdate) async {
+    try {
+      Map<String, dynamic> data = Map.from(dataToUpdate); // Create a mutable copy
+      data['updatedAt'] = FieldValue.serverTimestamp();
+      await _firestore.collection('users').doc(userId).set(
+        data,
+        SetOptions(merge: true),
+      );
+    } catch (e) {
+      print('Error updating user core data for $userId: $e');
+      rethrow;
     }
   }
 }

@@ -17,6 +17,36 @@ service cloud.firestore {
       match /color_categories/{colorCategoryId} {
         allow read, write: if request.auth != null && request.auth.uid == userId;
       }
+
+      // Rules for followers subcollection
+      match /followers/{followerId} {
+        // Allow reading if: 
+        // 1. The requester is the user whose followers list it is (userId).
+        // 2. The requester is the follower being checked (followerId) - useful for isFollowing/getFriendIds checks.
+        allow read: if request.auth != null && 
+                       (request.auth.uid == userId || request.auth.uid == followerId);
+        
+        // Allow creating/deleting a follower document if:
+        // The requester is the one trying to follow (followerId = request.auth.uid)
+        // This means user X can add/remove X from user Y's followers list.
+        allow create, delete: if request.auth != null && request.auth.uid == followerId;
+        allow update: if false; // Generally, these docs are just for existence, no updates needed.
+      }
+
+      // Rules for following subcollection
+      match /following/{followingId} {
+        // Allow reading if:
+        // 1. The requester is the user whose following list it is (userId).
+        // 2. The requester is the user being checked if they are followed (followingId) - for completeness, though less common.
+        allow read: if request.auth != null &&
+                       (request.auth.uid == userId || request.auth.uid == followingId);
+
+        // Allow creating/deleting a following document if:
+        // The requester is the one who is doing the following (userId = request.auth.uid)
+        // This means user X can add/remove user Y from X's following list.
+        allow create, delete: if request.auth != null && request.auth.uid == userId;
+        allow update: if false; // Generally, these docs are just for existence, no updates needed.
+      }
     }
 
     match /experiences/{experienceId} {
