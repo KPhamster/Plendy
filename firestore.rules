@@ -64,6 +64,12 @@ service cloud.firestore {
         
         allow update: if false; // Requests are typically created and deleted, not updated
       }
+
+      // Rules for FCM tokens subcollection
+      match /fcmTokens/{tokenId} {
+        // Allow user to read/write/delete their own FCM tokens
+        allow read, write, delete: if request.auth != null && request.auth.uid == userId;
+      }
     }
 
     match /experiences/{experienceId} {

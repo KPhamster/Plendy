@@ -3,6 +3,8 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:firebase_messaging/firebase_messaging.dart'; // FCM Import
+import 'package:flutter_local_notifications/flutter_local_notifications.dart'; // Local Notifications Import
 import 'screens/auth_screen.dart';
 import 'screens/main_screen.dart';
 import 'screens/receive_share_screen.dart';
@@ -17,6 +19,58 @@ import 'package:flutter/foundation.dart' show kIsWeb; // Import kIsWeb
 
 // Define a GlobalKey for the Navigator
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
+// Initialize FlutterLocalNotificationsPlugin (if you want to show foreground notifications)
+final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+    FlutterLocalNotificationsPlugin();
+
+// FCM: Background message handler (must be a top-level function)
+@pragma('vm:entry-point')
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform, // Ensure Firebase is initialized here too
+  );
+  print("Handling a background message: ${message.messageId}");
+  print("Background Message data: ${message.data}");
+   if (message.notification != null) {
+      print('Background message also contained a notification: ${message.notification}');
+      // You could potentially show a local notification here if needed for background messages,
+      // but often the system tray notification from FCM is sufficient and desired.
+   }
+}
+
+Future<void> _configureLocalNotifications() async {
+  // Ensure you have an app icon, e.g., android/app/src/main/res/mipmap-hdpi/ic_launcher.png
+  const AndroidInitializationSettings initializationSettingsAndroid =
+      AndroidInitializationSettings('@mipmap/ic_launcher'); 
+  
+  // Add iOS and macOS settings if needed - requires more setup
+  // final DarwinInitializationSettings initializationSettingsIOS = DarwinInitializationSettings(
+  //   onDidReceiveLocalNotification: (id, title, body, payload) async {
+  //     // your execution code here
+  //   },
+  // );
+  // final DarwinInitializationSettings initializationSettingsMacOS = DarwinInitializationSettings(...);
+
+  const InitializationSettings initializationSettings = InitializationSettings(
+    android: initializationSettingsAndroid,
+    // iOS: initializationSettingsIOS,
+    // macOS: initializationSettingsMacOS,
+  );
+  await flutterLocalNotificationsPlugin.initialize(
+    initializationSettings,
+    onDidReceiveNotificationResponse: (NotificationResponse notificationResponse) {
+      // Handle notification tap when app is in foreground/background but not terminated
+      print('Local notification tapped with payload: ${notificationResponse.payload}');
+      if (notificationResponse.payload != null && notificationResponse.payload!.isNotEmpty) {
+        // Example: Navigate if payload contains a route
+        // This logic needs to be robust and fit your navigation strategy.
+        // For instance, if payload is a route string like '/follow_requests'
+        // navigatorKey.currentState?.pushNamed(notificationResponse.payload!);
+      }
+    }
+  );
+}
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -45,9 +99,57 @@ void main() async {
   // Conditionally initialize SharingService if not on web
   if (!kIsWeb) {
     SharingService().init();
+
+    // --- FCM Setup ---
+    await _configureLocalNotifications(); // Setup for local notifications (foreground)
+
+    FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+      print('FCM: Got a message whilst in the foreground!');
+      print('FCM: Message data: ${message.data}');
+
+      if (message.notification != null) {
+        print('FCM: Message also contained a notification: ${message.notification}');
+        flutterLocalNotificationsPlugin.show(
+          message.hashCode, 
+          message.notification!.title,
+          message.notification!.body,
+          const NotificationDetails( // Use const for NotificationDetails
+            android: AndroidNotificationDetails(
+              'plendy_follow_channel', // Unique channel ID
+              'Follow Notifications', // Channel name
+              channelDescription: 'Notifications for new followers and follow requests.',
+              importance: Importance.max,
+              priority: Priority.high,
+              icon: '@mipmap/ic_launcher', 
+            ),
+            // iOS: DarwinNotificationDetails(), // Add if needed
+          ),
+          payload: message.data['screen'] as String?, // Example: screen to navigate to
+        );
+      }
+    });
+
+    FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
+      print('FCM: Message clicked and opened app!');
+      print('FCM: Message data: ${message.data}');
+      final screen = message.data['screen'] as String?;
+      if (screen != null) {
+        // Example: navigatorKey.currentState?.pushNamed(screen);
+        // Ensure your navigatorKey and routing are set up for this.
+        print("FCM: Would navigate to screen: $screen");
+        if (screen == '/follow_requests' && navigatorKey.currentState != null) {
+            // Example specific navigation:
+            // navigatorKey.currentState!.push(MaterialPageRoute(builder: (context) => FollowRequestsScreen()));
+            // This needs actual navigation logic based on your app's routes.
+        }
+      }
+    });
+    FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+    // --- End FCM Setup ---
   }
+
   runApp(
-    Provider<AuthService>(
+    ChangeNotifierProvider<AuthService>(
       create: (_) => AuthService(),
       child: const MyApp(),
     ),

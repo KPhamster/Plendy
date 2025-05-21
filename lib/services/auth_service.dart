@@ -2,20 +2,50 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'user_service.dart';
 import 'experience_service.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/foundation.dart';
+import 'dart:async'; // For Timer
 
-class AuthService {
+class AuthService extends ChangeNotifier {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final GoogleSignIn _googleSignIn = GoogleSignIn(
     clientId: "449728842508-2o1dfbn37370v03t3qald1756iim4i4f.apps.googleusercontent.com", // Add your Web Client ID here
   );
   final UserService _userService = UserService();
   final ExperienceService _experienceService = ExperienceService();
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final FirebaseMessaging _firebaseMessaging = FirebaseMessaging.instance;
+
+  User? _currentUser;
+  Stream<User?>? _authStateChanges;
+
+  AuthService() {
+    _currentUser = _auth.currentUser;
+    _authStateChanges = _auth.authStateChanges();
+    _authStateChanges!.listen((User? user) {
+      _currentUser = user;
+      if (user != null) {
+        // Delay FCM setup slightly to allow UI to settle
+        Timer(const Duration(seconds: 2), () => _setupFcmForUser(user.uid));
+      } else {
+        // Optional: If user logs out, you might want to delete their old token or handle it.
+        // For simplicity, we are not deleting tokens on logout here, but it's a consideration.
+      }
+      notifyListeners();
+    });
+    // Initial setup if user is already logged in when AuthService is instantiated
+    if (_currentUser != null) {
+      // Delay FCM setup slightly for initial logged-in state too
+      Timer(const Duration(seconds: 2), () => _setupFcmForUser(_currentUser!.uid));
+    }
+  }
 
   // Get current user
-  User? get currentUser => _auth.currentUser;
+  User? get currentUser => _currentUser;
 
   // Auth state changes stream
-  Stream<User?> get authStateChanges => _auth.authStateChanges();
+  Stream<User?>? get authStateChanges => _authStateChanges;
 
   // Email/Password Sign Up
   Future<UserCredential> signUpWithEmail(String email, String password) async {
@@ -152,16 +182,85 @@ class AuthService {
 
   // Sign Out
   Future<void> signOut() async {
+    // Optional: Before signing out, you might want to delete the current device's FCM token 
+    // from the user's list if you have a way to identify it specifically.
+    // String? token = await _firebaseMessaging.getToken();
+    // if (currentUser != null && token != null) {
+    //   await _deleteTokenFromFirestore(currentUser!.uid, token);
+    // }
+    await _auth.signOut();
+    _currentUser = null;
+    notifyListeners();
+  }
+
+  Future<void> _setupFcmForUser(String userId) async {
+    if (kIsWeb) return; // FCM setup for web is different, skipping for now
+
     try {
-      print("Signing out from Firebase and Google...");
-      await Future.wait([
-        _auth.signOut(),
-        _googleSignIn.signOut(), // Ensure Google Sign In is also cleared
-      ]);
-      print("Sign out successful.");
+      // Request permission (iOS and web)
+      NotificationSettings settings = await _firebaseMessaging.requestPermission(
+        alert: true,
+        announcement: false,
+        badge: true,
+        carPlay: false,
+        criticalAlert: false,
+        provisional: false,
+        sound: true,
+      );
+
+      if (settings.authorizationStatus == AuthorizationStatus.authorized) {
+        print('User granted FCM permission');
+        String? token = await _firebaseMessaging.getToken();
+        if (token != null) {
+          await _saveTokenToFirestore(userId, token);
+        }
+
+        // Listen for token refresh
+        _firebaseMessaging.onTokenRefresh.listen((newToken) {
+          _saveTokenToFirestore(userId, newToken);
+        });
+      } else if (settings.authorizationStatus == AuthorizationStatus.provisional) {
+        print('User granted provisional FCM permission');
+         // Handle provisional state if needed
+      } else {
+        print('User declined or has not accepted FCM permission');
+      }
     } catch (e) {
-      print("Error during sign out: $e");
-      rethrow;
+      print("Error setting up FCM for user $userId: $e");
     }
   }
+
+  Future<void> _saveTokenToFirestore(String userId, String token) async {
+    if (userId.isEmpty || token.isEmpty) return;
+    try {
+      await _firestore
+          .collection('users')
+          .doc(userId)
+          .collection('fcmTokens')
+          .doc(token) // Use token as document ID for easy add/delete
+          .set({
+            'createdAt': FieldValue.serverTimestamp(),
+            'platform': defaultTargetPlatform.toString(), // Optional: store platform
+          });
+      print("FCM token saved for user $userId: $token");
+    } catch (e) {
+      print("Error saving FCM token for user $userId: $e");
+    }
+  }
+
+  // Optional: Method to delete a specific token (e.g., on sign out for this device)
+  // Future<void> _deleteTokenFromFirestore(String userId, String token) async {
+  //   if (userId.isEmpty || token.isEmpty) return;
+  //   try {
+  //     await _firestore
+  //         .collection('users')
+  //         .doc(userId)
+  //         .collection('fcmTokens')
+  //         .doc(token)
+  //         .delete();
+  //     print("FCM token deleted for user $userId: $token");
+  //   } catch (e) {
+  //     print("Error deleting FCM token for user $userId: $e");
+  //   }
+  // }
 }
