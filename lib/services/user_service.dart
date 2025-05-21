@@ -171,28 +171,39 @@ class UserService {
     }
   }
 
-  // Follow a user
+  // Follow a user (handles public/private profiles)
   Future<void> followUser(String currentUserId, String targetUserId) async {
     if (currentUserId == targetUserId) return; // Cannot follow self
-    try {
-      // Add target to current user's following list
-      await _firestore
-          .collection('users')
-          .doc(currentUserId)
-          .collection('following')
-          .doc(targetUserId)
-          .set({}); // Using an empty map, can add timestamp if needed
 
-      // Add current user to target's followers list
-      await _firestore
-          .collection('users')
-          .doc(targetUserId)
-          .collection('followers')
-          .doc(currentUserId)
-          .set({});
+    try {
+      final targetUserProfile = await getUserProfile(targetUserId);
+      if (targetUserProfile == null) {
+        throw Exception('Target user profile not found.');
+      }
+
+      if (targetUserProfile.isPrivate) {
+        print('DEBUG: Target is private, attempting sendFollowRequest...');
+        await sendFollowRequest(currentUserId, targetUserId);
+        print('DEBUG: sendFollowRequest completed (error might have been caught and logged within it).');
+      } else {
+        // Directly follow public profiles
+        await _firestore
+            .collection('users')
+            .doc(currentUserId)
+            .collection('following')
+            .doc(targetUserId)
+            .set({}); 
+
+        await _firestore
+            .collection('users')
+            .doc(targetUserId)
+            .collection('followers')
+            .doc(currentUserId)
+            .set({});
+      }
     } catch (e) {
-      print('Error following user $targetUserId: $e');
-      rethrow; // Rethrow to allow UI to handle it
+      print('Error in followUser for $targetUserId: $e');
+      rethrow; 
     }
   }
 
@@ -235,6 +246,115 @@ class UserService {
     } catch (e) {
       print('Error checking if following user $targetUserId: $e');
       return false; // Default to false on error
+    }
+  }
+
+  // Send a follow request to a private profile
+  Future<void> sendFollowRequest(String currentUserId, String targetUserId) async {
+    if (currentUserId == targetUserId) return;
+    try {
+      await _firestore
+          .collection('users')
+          .doc(targetUserId) // The user receiving the request
+          .collection('followRequests')
+          .doc(currentUserId) // The user sending the request
+          .set({'requestedAt': FieldValue.serverTimestamp()});
+      print('DEBUG: sendFollowRequest successfully wrote to Firestore for $targetUserId from $currentUserId');
+    } catch (e) {
+      print('Error sending follow request to $targetUserId from $currentUserId: $e');
+      rethrow;
+    }
+  }
+
+  // Check if a follow request is pending from currentUserId to targetUserId
+  Future<bool> hasPendingRequest(String currentUserId, String targetUserId) async {
+    if (currentUserId == targetUserId) return false;
+    try {
+      final doc = await _firestore
+          .collection('users')
+          .doc(targetUserId)
+          .collection('followRequests')
+          .doc(currentUserId)
+          .get();
+      return doc.exists;
+    } catch (e) {
+      print('Error checking pending follow request for $targetUserId: $e');
+      return false;
+    }
+  }
+
+  // Get list of user profiles who have requested to follow the targetUserId
+  Future<List<UserProfile>> getFollowRequests(String targetUserId) async {
+    List<UserProfile> requestProfiles = [];
+    try {
+      final snapshot = await _firestore
+          .collection('users')
+          .doc(targetUserId)
+          .collection('followRequests')
+          .orderBy('requestedAt', descending: true) // Optional: order by newest first
+          .get();
+      
+      for (var doc in snapshot.docs) {
+        final requesterId = doc.id;
+        final userProfile = await getUserProfile(requesterId);
+        if (userProfile != null) {
+          requestProfiles.add(userProfile);
+        }
+      }
+      return requestProfiles;
+    } catch (e) {
+      print('Error getting follow requests for $targetUserId: $e');
+      return [];
+    }
+  }
+
+  // Accept a follow request
+  Future<void> acceptFollowRequest(String targetUserId, String requesterId) async {
+    try {
+      // 1. Add to followers/following lists (atomic batch write recommended here)
+      WriteBatch batch = _firestore.batch();
+
+      DocumentReference targetFollowersRef = _firestore
+          .collection('users')
+          .doc(targetUserId)
+          .collection('followers')
+          .doc(requesterId);
+      batch.set(targetFollowersRef, {});
+
+      DocumentReference requesterFollowingRef = _firestore
+          .collection('users')
+          .doc(requesterId)
+          .collection('following')
+          .doc(targetUserId);
+      batch.set(requesterFollowingRef, {});
+
+      // 2. Delete the follow request
+      DocumentReference requestRef = _firestore
+          .collection('users')
+          .doc(targetUserId)
+          .collection('followRequests')
+          .doc(requesterId);
+      batch.delete(requestRef);
+
+      await batch.commit();
+    } catch (e) {
+      print('Error accepting follow request from $requesterId to $targetUserId: $e');
+      rethrow;
+    }
+  }
+
+  // Deny a follow request
+  Future<void> denyFollowRequest(String targetUserId, String requesterId) async {
+    try {
+      await _firestore
+          .collection('users')
+          .doc(targetUserId)
+          .collection('followRequests')
+          .doc(requesterId)
+          .delete();
+    } catch (e) {
+      print('Error denying follow request from $requesterId to $targetUserId: $e');
+      rethrow;
     }
   }
 

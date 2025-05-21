@@ -47,6 +47,23 @@ service cloud.firestore {
         allow create, delete: if request.auth != null && request.auth.uid == userId;
         allow update: if false; // Generally, these docs are just for existence, no updates needed.
       }
+
+      // Rules for followRequests subcollection
+      match /followRequests/{requesterId} {
+        // Allow a user to create a follow request for another user (requesterId is the one sending)
+        allow create: if request.auth != null && request.auth.uid == requesterId;
+        
+        // Allow reading if: 
+        // 1. The requester is the target user (userId of parent doc) viewing their list of requests.
+        // 2. The requester is the one who sent this specific request (requesterId).
+        allow read: if request.auth != null && 
+                       (request.auth.uid == userId || request.auth.uid == requesterId);
+        
+        // Allow the target user (userId of the parent document) to delete requests (accept/deny)
+        allow delete: if request.auth != null && request.auth.uid == userId;
+        
+        allow update: if false; // Requests are typically created and deleted, not updated
+      }
     }
 
     match /experiences/{experienceId} {
