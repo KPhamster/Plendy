@@ -103,18 +103,23 @@ class _UserListTabState extends State<UserListTab> {
   }
 
   Future<void> _toggleFollow(String targetUserId, bool currentlyFollowing) async {
-    if (_currentUserId == null) return;
-
-    if (mounted) {
-      setState(() {
-        _isButtonLoading[targetUserId] = true;
-      });
+    if (_currentUserId == null) {
+      print('DEBUG: _toggleFollow called but _currentUserId is null');
+      return;
     }
+
+    print('DEBUG: _toggleFollow called - currentUserId: $_currentUserId, targetUserId: $targetUserId, currentlyFollowing: $currentlyFollowing');
+
+    setState(() {
+      _isButtonLoading[targetUserId] = true;
+    });
 
     try {
       if (currentlyFollowing) {
+        print('DEBUG: Calling unfollowUser...');
         await widget.userService.unfollowUser(_currentUserId!, targetUserId);
       } else {
+        print('DEBUG: Calling followUser...');
         await widget.userService.followUser(_currentUserId!, targetUserId);
       }
       if (mounted) {
@@ -123,7 +128,9 @@ class _UserListTabState extends State<UserListTab> {
         });
       }
       widget.onActionCompleted?.call();
+      print('DEBUG: _toggleFollow completed successfully');
     } catch (e) {
+      print('DEBUG: _toggleFollow failed with error: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Action failed: ${e.toString()}')),
