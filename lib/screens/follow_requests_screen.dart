@@ -4,6 +4,8 @@ import 'dart:async'; // For StreamSubscription
 import '../models/user_profile.dart';
 import '../services/auth_service.dart';
 import '../services/user_service.dart';
+import '../services/notification_state_service.dart'; // Import NotificationStateService
+import '../widgets/notification_dot.dart'; // Import NotificationDot
 
 class FollowRequestsScreen extends StatefulWidget {
   const FollowRequestsScreen({super.key});
@@ -15,6 +17,7 @@ class FollowRequestsScreen extends StatefulWidget {
 class _FollowRequestsScreenState extends State<FollowRequestsScreen> {
   final UserService _userService = UserService();
   AuthService? _authService;
+  NotificationStateService? _notificationService; // Store reference to notification service
   List<UserProfile> _followRequests = [];
   bool _isLoadingInitial = true; // For initial load indicator
   String? _currentUserId;
@@ -26,16 +29,27 @@ class _FollowRequestsScreenState extends State<FollowRequestsScreen> {
   @override
   void initState() {
     super.initState();
+    // Mark follow requests as seen when screen opens - will be called in didChangeDependencies
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _notificationService?.markFollowRequestsAsSeen();
+    });
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     final authService = Provider.of<AuthService>(context, listen: false);
+    final notificationService = Provider.of<NotificationStateService>(context, listen: false);
+    
     if (_authService != authService) {
       _authService = authService;
       _currentUserId = _authService?.currentUser?.uid;
       _subscribeToFollowRequests();
+    }
+    
+    // Store reference to notification service
+    if (_notificationService != notificationService) {
+      _notificationService = notificationService;
     }
   }
 
@@ -90,6 +104,8 @@ class _FollowRequestsScreenState extends State<FollowRequestsScreen> {
   @override
   void dispose() {
     _requestsSubscription?.cancel();
+    // Mark follow requests as seen when screen closes - use stored reference
+    _notificationService?.markFollowRequestsAsSeen();
     super.dispose();
   }
 
@@ -111,33 +127,42 @@ class _FollowRequestsScreenState extends State<FollowRequestsScreen> {
                     final userProfile = _followRequests[index];
                     bool isProcessing = _isProcessingRequest[userProfile.id] ?? false;
 
-                    return ListTile(
-                      leading: CircleAvatar(
-                        backgroundImage: userProfile.photoURL != null
-                            ? NetworkImage(userProfile.photoURL!)
-                            : null,
-                        child: userProfile.photoURL == null
-                            ? const Icon(Icons.person)
-                            : null,
-                      ),
-                      title: Text(userProfile.displayName ?? userProfile.username ?? 'Unknown User'),
-                      subtitle: Text('@${userProfile.username ?? 'unknown'}'),
-                      trailing: isProcessing 
-                        ? const SizedBox(width: 24, height: 24, child:CircularProgressIndicator(strokeWidth: 2.0))
-                        : Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            TextButton(
-                              onPressed: () => _handleRequest(userProfile.id, true),
-                              child: const Text('Approve', style: TextStyle(color: Colors.blue)),
+                    return Consumer<NotificationStateService>(
+                      builder: (context, notificationService, child) {
+                        bool isUnseen = notificationService.unseenFollowRequestIds.contains(userProfile.id);
+                        
+                        return ListTile(
+                          leading: ProfilePictureNotificationDot(
+                            profilePicture: CircleAvatar(
+                              backgroundImage: userProfile.photoURL != null
+                                  ? NetworkImage(userProfile.photoURL!)
+                                  : null,
+                              child: userProfile.photoURL == null
+                                  ? const Icon(Icons.person)
+                                  : null,
                             ),
-                            const SizedBox(width: 8),
-                            TextButton(
-                              onPressed: () => _handleRequest(userProfile.id, false),
-                              child: const Text('Deny', style: TextStyle(color: Colors.red)),
+                            showDot: isUnseen,
+                          ),
+                          title: Text(userProfile.displayName ?? userProfile.username ?? 'Unknown User'),
+                          subtitle: Text('@${userProfile.username ?? 'unknown'}'),
+                          trailing: isProcessing 
+                            ? const SizedBox(width: 24, height: 24, child:CircularProgressIndicator(strokeWidth: 2.0))
+                            : Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                TextButton(
+                                  onPressed: () => _handleRequest(userProfile.id, true),
+                                  child: const Text('Approve', style: TextStyle(color: Colors.blue)),
+                                ),
+                                const SizedBox(width: 8),
+                                TextButton(
+                                  onPressed: () => _handleRequest(userProfile.id, false),
+                                  child: const Text('Deny', style: TextStyle(color: Colors.red)),
+                                ),
+                              ],
                             ),
-                          ],
-                        ),
+                        );
+                      },
                     );
                   },
                 ),

@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 import '../services/sharing_service.dart';
+import '../services/notification_state_service.dart';
+import '../widgets/notification_dot.dart';
 import 'collections_screen.dart';
 import 'profile_screen.dart';
+import 'package:provider/provider.dart';
 
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
@@ -96,21 +99,28 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         index: _selectedIndex,
         children: _screens,
       ),
-      bottomNavigationBar: BottomNavigationBar(
-        items: const <BottomNavigationBarItem>[
-          BottomNavigationBarItem(
-            icon: Icon(Icons.collections_bookmark_outlined),
-            label: 'Collection',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.person),
-            label: 'Profile',
-          ),
-        ],
-        currentIndex: _selectedIndex,
-        selectedItemColor: Colors.blue,
-        onTap: _onItemTapped,
-        type: BottomNavigationBarType.fixed,
+      bottomNavigationBar: Consumer<NotificationStateService>(
+        builder: (context, notificationService, child) {
+          return BottomNavigationBar(
+            items: <BottomNavigationBarItem>[
+              const BottomNavigationBarItem(
+                icon: Icon(Icons.collections_bookmark_outlined),
+                label: 'Collection',
+              ),
+              BottomNavigationBarItem(
+                icon: IconNotificationDot(
+                  icon: const Icon(Icons.person),
+                  showDot: notificationService.hasAnyUnseen,
+                ),
+                label: 'Profile',
+              ),
+            ],
+            currentIndex: _selectedIndex,
+            selectedItemColor: Colors.blue,
+            onTap: _onItemTapped,
+            type: BottomNavigationBarType.fixed,
+          );
+        },
       ),
     );
   }

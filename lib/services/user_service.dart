@@ -21,7 +21,13 @@ class UserService {
     final lowercaseUsername = username.toLowerCase();
     final email = _auth.currentUser?.email;
     final currentUsernameDoc = await _firestore.collection('users').doc(userId).get();
-    final String? initialLowercaseUsername = currentUsernameDoc.data()?['lowercaseUsername'] as String?;
+    
+    // Safely get the current lowercase username
+    String? initialLowercaseUsername;
+    if (currentUsernameDoc.exists && currentUsernameDoc.data() != null) {
+      final data = Map<String, dynamic>.from(currentUsernameDoc.data()!);
+      initialLowercaseUsername = data['lowercaseUsername'] as String?;
+    }
 
     try {
       // If the username hasn't actually changed (case-insensitively), only update the main user doc if needed.
@@ -45,8 +51,14 @@ class UserService {
         final newUsernameDocRef = _firestore.collection('usernames').doc(lowercaseUsername);
         final newUsernameDoc = await transaction.get(newUsernameDocRef);
 
-        if (newUsernameDoc.exists && newUsernameDoc.data()?['userId'] != userId) {
-          throw Exception('Username already taken by another user');
+        if (newUsernameDoc.exists) {
+          // Safely check the userId
+          final rawData = newUsernameDoc.data();
+          final data = rawData != null ? Map<String, dynamic>.from(rawData) : null;
+          final existingUserId = data?['userId'];
+          if (existingUserId != userId) {
+            throw Exception('Username already taken by another user');
+          }
         }
 
         // 2. If the user had an old username, release it from the 'usernames' collection
@@ -84,7 +96,12 @@ class UserService {
   // Get user's current username
   Future<String?> getUserUsername(String userId) async {
     final doc = await _firestore.collection('users').doc(userId).get();
-    return doc.data()?['username'] as String?;
+    if (doc.exists && doc.data() != null) {
+      // Safely cast the data to Map<String, dynamic> to avoid type casting errors
+      final data = Map<String, dynamic>.from(doc.data()!);
+      return data['username'] as String?;
+    }
+    return null;
   }
 
   // Save user email when they register
@@ -163,7 +180,9 @@ class UserService {
     try {
       final doc = await _firestore.collection('users').doc(userId).get();
       if (doc.exists && doc.data() != null) {
-        return UserProfile.fromMap(doc.id, doc.data()!);
+        // Safely cast the data to Map<String, dynamic> to avoid type casting errors
+        final data = Map<String, dynamic>.from(doc.data()!);
+        return UserProfile.fromMap(doc.id, data);
       }
       return null;
     } catch (e) {
@@ -207,7 +226,7 @@ class UserService {
             .doc(currentUserId)
             .collection('following')
             .doc(targetUserId)
-            .set({}); 
+            .set(<String, dynamic>{}); 
         print('DEBUG: Following list updated successfully.');
 
         print('DEBUG: Adding $currentUserId to $targetUserId followers list...');
@@ -216,7 +235,7 @@ class UserService {
             .doc(targetUserId)
             .collection('followers')
             .doc(currentUserId)
-            .set({});
+            .set(<String, dynamic>{});
         print('DEBUG: Followers list updated successfully.');
       }
       
@@ -375,14 +394,14 @@ class UserService {
           .doc(targetUserId)
           .collection('followers')
           .doc(requesterId);
-      batch.set(targetFollowersRef, {});
+      batch.set(targetFollowersRef, <String, dynamic>{});
 
       DocumentReference requesterFollowingRef = _firestore
           .collection('users')
           .doc(requesterId)
           .collection('following')
           .doc(targetUserId);
-      batch.set(requesterFollowingRef, {});
+      batch.set(requesterFollowingRef, <String, dynamic>{});
 
       // 2. Delete the follow request
       DocumentReference requestRef = _firestore
@@ -393,6 +412,7 @@ class UserService {
       batch.delete(requestRef);
 
       await batch.commit();
+      
     } catch (e) {
       print('Error accepting follow request from $requesterId to $targetUserId: $e');
       rethrow;
@@ -438,7 +458,7 @@ class UserService {
             .doc(userId)
             .collection('followers')
             .doc(requesterId);
-        batch.set(targetFollowersRef, {});
+        batch.set(targetFollowersRef, <String, dynamic>{});
 
         // Add target (userId) to requester's following list
         DocumentReference requesterFollowingRef = _firestore
@@ -446,7 +466,7 @@ class UserService {
             .doc(requesterId)
             .collection('following')
             .doc(userId);
-        batch.set(requesterFollowingRef, {});
+        batch.set(requesterFollowingRef, <String, dynamic>{});
 
         // Delete the follow request
         batch.delete(requestDoc.reference);
@@ -480,7 +500,9 @@ class UserService {
 
       for (var doc in usernameSnapshot.docs) {
         if (doc.data() != null && !userIds.contains(doc.id)) {
-          users.add(UserProfile.fromMap(doc.id, doc.data()!));
+          // Safely cast the data to Map<String, dynamic> to avoid type casting errors
+          final data = Map<String, dynamic>.from(doc.data()!);
+          users.add(UserProfile.fromMap(doc.id, data));
           userIds.add(doc.id);
         }
       }
@@ -498,7 +520,9 @@ class UserService {
 
       for (var doc in displayNameSnapshot.docs) {
         if (doc.data() != null && !userIds.contains(doc.id)) {
-          users.add(UserProfile.fromMap(doc.id, doc.data()!));
+          // Safely cast the data to Map<String, dynamic> to avoid type casting errors
+          final data = Map<String, dynamic>.from(doc.data()!);
+          users.add(UserProfile.fromMap(doc.id, data));
           userIds.add(doc.id);
         }
       }

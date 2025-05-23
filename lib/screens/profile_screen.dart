@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
 import '../services/user_service.dart';
+import '../services/notification_state_service.dart';
+import '../widgets/notification_dot.dart';
 import 'edit_profile_screen.dart';
 import 'package:provider/provider.dart';
 import 'my_people_screen.dart';
@@ -121,13 +123,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     style: const TextStyle(fontSize: 18),
                   ),
                   const SizedBox(height: 16),
-                  ListTile(
-                    leading: const Icon(Icons.person_add),
-                    title: const Text('My People'),
-                    onTap: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (context) => const MyPeopleScreen()),
+                  Consumer<NotificationStateService>(
+                    builder: (context, notificationService, child) {
+                      return ListTile(
+                        leading: IconNotificationDot(
+                          icon: const Icon(Icons.person_add),
+                          showDot: notificationService.hasAnyUnseen,
+                        ),
+                        title: const Text('My People'),
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (context) => const MyPeopleScreen()),
+                          );
+                        },
                       );
                     },
                   ),
