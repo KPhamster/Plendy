@@ -8,6 +8,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart'; /
 import 'screens/auth_screen.dart';
 import 'screens/main_screen.dart';
 import 'screens/receive_share_screen.dart';
+import 'screens/follow_requests_screen.dart'; // Import FollowRequestsScreen
 import 'services/auth_service.dart';
 import 'services/sharing_service.dart';
 import 'package:provider/provider.dart';
@@ -63,10 +64,17 @@ Future<void> _configureLocalNotifications() async {
       // Handle notification tap when app is in foreground/background but not terminated
       print('Local notification tapped with payload: ${notificationResponse.payload}');
       if (notificationResponse.payload != null && notificationResponse.payload!.isNotEmpty) {
-        // Example: Navigate if payload contains a route
-        // This logic needs to be robust and fit your navigation strategy.
-        // For instance, if payload is a route string like '/follow_requests'
-        // navigatorKey.currentState?.pushNamed(notificationResponse.payload!);
+        // Navigate based on the payload (screen path)
+        final screen = notificationResponse.payload!;
+        print("Local notification: Navigating to screen: $screen");
+        
+        if (screen == '/follow_requests' && navigatorKey.currentState != null) {
+          navigatorKey.currentState!.push(
+            MaterialPageRoute(
+              builder: (context) => const FollowRequestsScreen(),
+            ),
+          );
+        }
       }
     }
   );
@@ -133,14 +141,28 @@ void main() async {
       print('FCM: Message clicked and opened app!');
       print('FCM: Message data: ${message.data}');
       final screen = message.data['screen'] as String?;
-      if (screen != null) {
-        // Example: navigatorKey.currentState?.pushNamed(screen);
-        // Ensure your navigatorKey and routing are set up for this.
-        print("FCM: Would navigate to screen: $screen");
-        if (screen == '/follow_requests' && navigatorKey.currentState != null) {
-            // Example specific navigation:
-            // navigatorKey.currentState!.push(MaterialPageRoute(builder: (context) => FollowRequestsScreen()));
-            // This needs actual navigation logic based on your app's routes.
+      final type = message.data['type'] as String?;
+      
+      if (screen != null && navigatorKey.currentState != null) {
+        print("FCM: Navigating to screen: $screen");
+        
+        // Handle different notification types
+        if (type == 'follow_request' && screen == '/follow_requests') {
+          // Navigate to Follow Requests screen
+          navigatorKey.currentState!.push(
+            MaterialPageRoute(
+              builder: (context) => const FollowRequestsScreen(),
+            ),
+          );
+        } else if (type == 'new_follower') {
+          // For new follower notifications, you might want to navigate to the user's profile
+          // For now, we'll just print a message
+          print("FCM: New follower notification - would navigate to user profile");
+          // You could implement navigation to user profile here:
+          // final followerId = message.data['followerId'] as String?;
+          // if (followerId != null) {
+          //   // Navigate to user profile screen with followerId
+          // }
         }
       }
     });
