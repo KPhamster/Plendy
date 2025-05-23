@@ -176,32 +176,51 @@ class UserService {
   Future<void> followUser(String currentUserId, String targetUserId) async {
     if (currentUserId == targetUserId) return; // Cannot follow self
 
+    print('DEBUG: followUser called - current: $currentUserId, target: $targetUserId');
+
     try {
       final targetUserProfile = await getUserProfile(targetUserId);
       if (targetUserProfile == null) {
         throw Exception('Target user profile not found.');
       }
 
-      if (targetUserProfile.isPrivate) {
-        print('DEBUG: Target is private, attempting sendFollowRequest...');
+      print('DEBUG: Target user profile found - isPrivate: ${targetUserProfile.isPrivate}');
+
+      // Check if this is a "follow back" scenario (target is already following current user)
+      bool isFollowBack = await isFollowing(targetUserId, currentUserId);
+      print('DEBUG: Is follow back scenario: $isFollowBack');
+
+      if (targetUserProfile.isPrivate && !isFollowBack) {
+        // Only send follow request for private profiles if it's NOT a follow back
+        print('DEBUG: Target is private and not follow back, attempting sendFollowRequest...');
         await sendFollowRequest(currentUserId, targetUserId);
-        print('DEBUG: sendFollowRequest completed (error might have been caught and logged within it).');
+        print('DEBUG: sendFollowRequest completed successfully.');
       } else {
-        // Directly follow public profiles
+        // Directly follow in these cases:
+        // 1. Target has public profile
+        // 2. Target has private profile but this is a follow back (they already follow us)
+        print('DEBUG: Following directly (public profile or follow back scenario)...');
+        
+        print('DEBUG: Adding $targetUserId to $currentUserId following list...');
         await _firestore
             .collection('users')
             .doc(currentUserId)
             .collection('following')
             .doc(targetUserId)
             .set({}); 
+        print('DEBUG: Following list updated successfully.');
 
+        print('DEBUG: Adding $currentUserId to $targetUserId followers list...');
         await _firestore
             .collection('users')
             .doc(targetUserId)
             .collection('followers')
             .doc(currentUserId)
             .set({});
+        print('DEBUG: Followers list updated successfully.');
       }
+      
+      print('DEBUG: followUser completed successfully.');
     } catch (e) {
       print('Error in followUser for $targetUserId: $e');
       rethrow; 
@@ -253,6 +272,9 @@ class UserService {
   // Send a follow request to a private profile
   Future<void> sendFollowRequest(String currentUserId, String targetUserId) async {
     if (currentUserId == targetUserId) return;
+    
+    print('DEBUG: sendFollowRequest called - from: $currentUserId to: $targetUserId');
+    
     try {
       await _firestore
           .collection('users')
@@ -262,6 +284,8 @@ class UserService {
           .set({'requestedAt': FieldValue.serverTimestamp()});
       print('DEBUG: sendFollowRequest successfully wrote to Firestore for $targetUserId from $currentUserId');
     } catch (e) {
+      print('DEBUG: sendFollowRequest failed - error type: ${e.runtimeType}');
+      print('DEBUG: sendFollowRequest failed - error details: $e');
       print('Error sending follow request to $targetUserId from $currentUserId: $e');
       rethrow;
     }
