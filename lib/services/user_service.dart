@@ -157,14 +157,14 @@ class UserService {
       List<String> friendIds = [];
       // For each user the current user is following, check if they follow back
       for (String followedUserId in followingIds) {
-        final theirFollowersSnapshot = await _firestore
+        final myFollowersSnapshot = await _firestore
             .collection('users')
-            .doc(followedUserId)
+            .doc(userId)
             .collection('followers')
-            .doc(userId) // Check if the current user (userId) is in their followers list
+            .doc(followedUserId) // Check if the followed user is in the current user's followers list
             .get();
         
-        if (theirFollowersSnapshot.exists) {
+        if (myFollowersSnapshot.exists) {
           friendIds.add(followedUserId);
         }
       }
@@ -507,14 +507,11 @@ class UserService {
         }
       }
 
-      // Search by displayName (starts with)
-      // Note: Firestore string comparisons are case-sensitive.
-      // For true case-insensitive "starts with" on displayName, store a lowercaseDisplayName field.
-      // This query is case-sensitive for the first letter, but less sensitive for subsequent letters.
+      // Search by lowercaseDisplayName (case-insensitive starts with)
       final displayNameSnapshot = await _firestore
           .collection('users')
-          .where('displayName', isGreaterThanOrEqualTo: query)
-          .where('displayName', isLessThanOrEqualTo: '${query}\uf8ff')
+          .where('lowercaseDisplayName', isGreaterThanOrEqualTo: lowercaseQuery)
+          .where('lowercaseDisplayName', isLessThanOrEqualTo: '${lowercaseQuery}\uf8ff')
           .limit(10) // Limit results
           .get();
 
@@ -526,10 +523,38 @@ class UserService {
           userIds.add(doc.id);
         }
       }
-      
-      // TODO: Consider searching by full username if no displayName is set or vice-versa.
-      // TODO: Ensure `displayName` field exists in user documents for this query to be effective.
-      //       Users update their displayName via Auth, ensure it's synced to Firestore user doc.
+
+      // Fallback: Search by original displayName field for users who don't have lowercaseDisplayName yet
+      // This ensures existing users can be found while we migrate to the new field
+      // We need to search both with original case and lowercase because Firestore queries are case-sensitive
+      final queryVariants = [
+        query, // Original case
+        query.toLowerCase(), // Lowercase
+        query.toUpperCase(), // Uppercase  
+        '${query[0].toUpperCase()}${query.substring(1).toLowerCase()}' // Title case
+      ];
+
+      for (String searchQuery in queryVariants) {
+        final originalDisplayNameSnapshot = await _firestore
+            .collection('users')
+            .where('displayName', isGreaterThanOrEqualTo: searchQuery)
+            .where('displayName', isLessThanOrEqualTo: '${searchQuery}\uf8ff')
+            .limit(5) // Smaller limit since we're doing multiple queries
+            .get();
+
+        for (var doc in originalDisplayNameSnapshot.docs) {
+          if (doc.data() != null && !userIds.contains(doc.id)) {
+            // Safely cast the data to Map<String, dynamic> to avoid type casting errors
+            final data = Map<String, dynamic>.from(doc.data()!);
+            // Check if displayName contains the query (case-insensitive)
+            final displayName = data['displayName'] as String?;
+            if (displayName != null && displayName.toLowerCase().contains(lowercaseQuery)) {
+              users.add(UserProfile.fromMap(doc.id, data));
+              userIds.add(doc.id);
+            }
+          }
+        }
+      }
 
       return users;
     } catch (e) {
@@ -542,6 +567,17 @@ class UserService {
   Future<void> updateUserCoreData(String userId, Map<String, dynamic> dataToUpdate) async {
     try {
       Map<String, dynamic> data = Map.from(dataToUpdate); // Create a mutable copy
+      
+      // If displayName is being updated, also store lowercaseDisplayName for search
+      if (data.containsKey('displayName')) {
+        final displayName = data['displayName'] as String?;
+        if (displayName != null && displayName.isNotEmpty) {
+          data['lowercaseDisplayName'] = displayName.toLowerCase();
+        } else {
+          data['lowercaseDisplayName'] = null; // Clear if display name is empty
+        }
+      }
+      
       data['updatedAt'] = FieldValue.serverTimestamp();
       await _firestore.collection('users').doc(userId).set(
         data,

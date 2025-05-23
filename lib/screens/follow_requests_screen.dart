@@ -6,6 +6,7 @@ import '../services/auth_service.dart';
 import '../services/user_service.dart';
 import '../services/notification_state_service.dart'; // Import NotificationStateService
 import '../widgets/notification_dot.dart'; // Import NotificationDot
+import 'my_people_screen.dart'; // Import MyPeopleScreen
 
 class FollowRequestsScreen extends StatefulWidget {
   const FollowRequestsScreen({super.key});
@@ -114,6 +115,15 @@ class _FollowRequestsScreenState extends State<FollowRequestsScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Follow Requests'),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () {
+            // Navigate back to MyPeopleScreen instead of just popping
+            Navigator.of(context).pushReplacement(
+              MaterialPageRoute(builder: (context) => const MyPeopleScreen()),
+            );
+          },
+        ),
       ),
       body: _isLoadingInitial
           ? const Center(child: CircularProgressIndicator())

@@ -107,16 +107,40 @@ class NotificationStateService extends ChangeNotifier {
   void _handleFollowersChange(QuerySnapshot snapshot) {
     Set<String> currentFollowerIds = snapshot.docs.map((doc) => doc.id).toSet();
     
-    if (_seenFollowerIds.isEmpty) {
-      // First time initialization - mark all current followers as seen
-      _seenFollowerIds = Set.from(currentFollowerIds);
-      _unseenFollowerIds.clear();
-      _unseenFollowersCount = 0;
+    print('DEBUG NotificationStateService: _handleFollowersChange called');
+    print('DEBUG NotificationStateService: currentFollowerIds = $currentFollowerIds');
+    print('DEBUG NotificationStateService: _seenFollowerIds = $_seenFollowerIds');
+    print('DEBUG NotificationStateService: _lastSeenFollowers = $_lastSeenFollowers');
+    
+    // Always clean up the seen set - remove people who are no longer following
+    _seenFollowerIds = _seenFollowerIds.intersection(currentFollowerIds);
+    print('DEBUG NotificationStateService: cleaned _seenFollowerIds = $_seenFollowerIds');
+    
+    if (_seenFollowerIds.isEmpty && currentFollowerIds.isNotEmpty) {
+      // First time or clean slate - check if we have a stored timestamp
+      if (_lastSeenFollowers != null) {
+        // We have a timestamp, so this is likely not the very first time
+        // Don't auto-mark as seen - let the user see red dots
+        print('DEBUG NotificationStateService: Clean slate but have timestamp - showing dots for all current followers');
+        _unseenFollowerIds = Set.from(currentFollowerIds);
+        _unseenFollowersCount = _unseenFollowerIds.length;
+      } else {
+        // Truly first time - show dots for all current followers  
+        print('DEBUG NotificationStateService: Truly first time - showing dots for all current followers');
+        _unseenFollowerIds = Set.from(currentFollowerIds);
+        _unseenFollowersCount = _unseenFollowerIds.length;
+      }
     } else {
-      // Find new followers (those not in the seen set)
+      // Normal case: any current follower not in the seen set gets a red dot
+      print('DEBUG NotificationStateService: Finding unseen followers');
       _unseenFollowerIds = currentFollowerIds.difference(_seenFollowerIds);
       _unseenFollowersCount = _unseenFollowerIds.length;
     }
+    
+    print('DEBUG NotificationStateService: Final state - _unseenFollowerIds = $_unseenFollowerIds');
+    print('DEBUG NotificationStateService: Final state - _unseenFollowersCount = $_unseenFollowersCount');
+    print('DEBUG NotificationStateService: Final state - hasUnseenFollowers = $hasUnseenFollowers');
+    print('DEBUG NotificationStateService: Final state - hasAnyUnseen = $hasAnyUnseen');
     
     notifyListeners();
   }
@@ -162,10 +186,19 @@ class NotificationStateService extends ChangeNotifier {
         .collection('followers')
         .get();
     
-    _seenFollowerIds = snapshot.docs.map((doc) => doc.id).toSet();
+    Set<String> currentFollowerIds = snapshot.docs.map((doc) => doc.id).toSet();
+    
+    // Simply set seen followers to current followers
+    // If someone unfollows and re-follows, they'll be treated as unseen until next visit
+    _seenFollowerIds = Set.from(currentFollowerIds);
+    
     _lastSeenFollowers = DateTime.now();
     _unseenFollowerIds.clear();
     _unseenFollowersCount = 0;
+    
+    print('DEBUG NotificationStateService: markFollowersAsSeen called');
+    print('DEBUG NotificationStateService: currentFollowerIds = $currentFollowerIds');
+    print('DEBUG NotificationStateService: updated _seenFollowerIds = $_seenFollowerIds');
     
     // Save to SharedPreferences
     final prefs = await SharedPreferences.getInstance();

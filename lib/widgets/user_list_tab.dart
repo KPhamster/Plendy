@@ -211,6 +211,15 @@ class _UserListTabState extends State<UserListTab> {
             bool isUnseen = widget.listType == "followers" && 
                            notificationService.unseenFollowerIds.contains(userProfile.id);
             
+            // Prepare display name and username strings (same as search results)
+            String displayName = userProfile.displayName?.isNotEmpty ?? false
+                ? userProfile.displayName!
+                : (userProfile.username ?? 'Unknown User'); // Fallback for title if display name is empty
+            String username = userProfile.username?.isNotEmpty ?? false
+                ? '@${userProfile.username!}'
+                : '@unknown'; // Fallback for subtitle if username is empty
+            bool showUsernameAsSubtitle = userProfile.displayName?.isNotEmpty ?? false; 
+            
             return ListTile(
               leading: ProfilePictureNotificationDot(
                 profilePicture: CircleAvatar(
@@ -223,7 +232,8 @@ class _UserListTabState extends State<UserListTab> {
                 ),
                 showDot: isUnseen,
               ),
-              title: Text(userProfile.username ?? 'Unknown User'),
+              title: Text(displayName),
+              subtitle: showUsernameAsSubtitle ? Text(username) : null,
               trailing: _buildActionButton(userProfile),
             );
           },
