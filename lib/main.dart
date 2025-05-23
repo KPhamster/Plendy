@@ -11,6 +11,7 @@ import 'screens/receive_share_screen.dart';
 import 'screens/follow_requests_screen.dart'; // Import FollowRequestsScreen
 import 'services/auth_service.dart';
 import 'services/sharing_service.dart';
+import 'services/notification_state_service.dart'; // Import NotificationStateService
 import 'package:provider/provider.dart';
 import 'providers/receive_share_provider.dart';
 import 'dart:async'; // Import dart:async for StreamSubscription
@@ -171,8 +172,15 @@ void main() async {
   }
 
   runApp(
-    ChangeNotifierProvider<AuthService>(
-      create: (_) => AuthService(),
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider<AuthService>(
+          create: (_) => AuthService(),
+        ),
+        ChangeNotifierProvider<NotificationStateService>(
+          create: (_) => NotificationStateService(),
+        ),
+      ],
       child: const MyApp(),
     ),
   );
@@ -306,6 +314,20 @@ class _MyAppState extends State<MyApp> {
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return const Center(child: CircularProgressIndicator());
+                }
+
+                // Initialize/cleanup NotificationStateService based on auth state
+                final notificationService = Provider.of<NotificationStateService>(context, listen: false);
+                if (snapshot.hasData && snapshot.data?.uid != null) {
+                  // User is logged in - initialize notification service
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    notificationService.initializeForUser(snapshot.data!.uid);
+                  });
+                } else {
+                  // User is logged out - clean up notification service
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    notificationService.cleanup();
+                  });
                 }
 
                 // Print debug info

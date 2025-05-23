@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import '../models/user_profile.dart';
 import '../services/user_service.dart';
+import '../services/notification_state_service.dart';
+import '../widgets/notification_dot.dart';
 import 'package:provider/provider.dart';
 import '../services/auth_service.dart';
 
@@ -198,21 +200,33 @@ class _UserListTabState extends State<UserListTab> {
       return Center(child: Text(widget.emptyListMessage));
     }
 
-    return ListView.builder(
-      itemCount: _userProfiles.length,
-      itemBuilder: (context, index) {
-        final userProfile = _userProfiles[index];
-        return ListTile(
-          leading: CircleAvatar(
-            backgroundImage: userProfile.photoURL != null
-                ? NetworkImage(userProfile.photoURL!)
-                : null,
-            child: userProfile.photoURL == null
-                ? const Icon(Icons.person)
-                : null,
-          ),
-          title: Text(userProfile.username ?? 'Unknown User'),
-          trailing: _buildActionButton(userProfile),
+    return Consumer<NotificationStateService>(
+      builder: (context, notificationService, child) {
+        return ListView.builder(
+          itemCount: _userProfiles.length,
+          itemBuilder: (context, index) {
+            final userProfile = _userProfiles[index];
+            
+            // Check if this user is unseen (only for followers tab)
+            bool isUnseen = widget.listType == "followers" && 
+                           notificationService.unseenFollowerIds.contains(userProfile.id);
+            
+            return ListTile(
+              leading: ProfilePictureNotificationDot(
+                profilePicture: CircleAvatar(
+                  backgroundImage: userProfile.photoURL != null
+                      ? NetworkImage(userProfile.photoURL!)
+                      : null,
+                  child: userProfile.photoURL == null
+                      ? const Icon(Icons.person)
+                      : null,
+                ),
+                showDot: isUnseen,
+              ),
+              title: Text(userProfile.username ?? 'Unknown User'),
+              trailing: _buildActionButton(userProfile),
+            );
+          },
         );
       },
     );

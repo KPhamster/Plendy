@@ -3,8 +3,10 @@ import 'package:provider/provider.dart';
 import 'dart:async'; // For StreamSubscription
 import '../services/auth_service.dart';
 import '../services/user_service.dart'; // Assuming UserService will provide these counts
+import '../services/notification_state_service.dart'; // Import NotificationStateService
 import '../widgets/user_list_tab.dart';
 import '../widgets/user_search_delegate.dart'; // Import the search delegate
+import '../widgets/notification_dot.dart'; // Import NotificationDot
 import '../models/user_profile.dart';      // Import UserProfile for search result type
 import '../widgets/user_list_tab.dart'; // Reusing for action button logic for now
 import 'follow_requests_screen.dart'; // Import FollowRequestsScreen
@@ -21,6 +23,7 @@ class _MyPeopleScreenState extends State<MyPeopleScreen>
   late TabController _tabController;
   final UserService _userService = UserService();
   AuthService? _authService;
+  NotificationStateService? _notificationService; // Store reference to notification service
 
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
@@ -48,8 +51,11 @@ class _MyPeopleScreenState extends State<MyPeopleScreen>
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
     _tabController.addListener(() {
-      // Optional: if you want to do something when tab changes, but not strictly needed for the button.
-      // setState(() {}); 
+      // Track when user switches away from Followers tab (index 1)
+      if (_tabController.previousIndex == 1 && _tabController.index != 1) {
+        // User left the Followers tab - mark followers as seen
+        _notificationService?.markFollowersAsSeen();
+      }
     });
     _searchController.addListener(() {
       if (_searchQuery != _searchController.text.trim()) {
@@ -74,6 +80,8 @@ class _MyPeopleScreenState extends State<MyPeopleScreen>
   void didChangeDependencies() {
     super.didChangeDependencies();
     final authService = Provider.of<AuthService>(context);
+    final notificationService = Provider.of<NotificationStateService>(context, listen: false);
+    
     if (_authService != authService) {
       _authService = authService;
       if (_authService?.currentUser != null) {
@@ -81,6 +89,11 @@ class _MyPeopleScreenState extends State<MyPeopleScreen>
       }
     } else if (_authService?.currentUser != null && _currentUserProfile == null && !_isLoadingCounts) {
         _loadInitialDataAndSubscribe(); 
+    }
+    
+    // Store reference to notification service
+    if (_notificationService != notificationService) {
+      _notificationService = notificationService;
     }
   }
 
@@ -382,21 +395,24 @@ class _MyPeopleScreenState extends State<MyPeopleScreen>
             if ((_currentUserProfile?.isPrivate ?? false) && _pendingRequestCount > 0)
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-                child: ElevatedButton.icon(
-                  icon: const Icon(Icons.notification_important_outlined), 
-                  label: Text('View Follow Requests ($_pendingRequestCount)'),
-                  onPressed: () async {
-                    // No longer need to capture result if FollowRequestScreen manages its own refresh well.
-                    await Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (context) => const FollowRequestsScreen()),
+                child: Consumer<NotificationStateService>(
+                  builder: (context, notificationService, child) {
+                    return ElevatedButton.icon(
+                      icon: IconNotificationDot(
+                        icon: const Icon(Icons.notification_important_outlined),
+                        showDot: notificationService.hasUnseenFollowRequests,
+                      ),
+                      label: Text('View Follow Requests ($_pendingRequestCount)'),
+                      onPressed: () async {
+                        await Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (context) => const FollowRequestsScreen()),
+                        );
+                        _loadSocialCounts(); 
+                      },
+                      style: ElevatedButton.styleFrom(minimumSize: const Size(double.infinity, 36)),
                     );
-                    // Stream listeners should handle updates, but an explicit call might be desired
-                    // if FollowRequestsScreen doesn't notify parent of changes that affect this screen's data beyond the count.
-                    // For count, stream handles it. For social counts, if accept/deny changes them:
-                    _loadSocialCounts(); 
                   },
-                  style: ElevatedButton.styleFrom(minimumSize: const Size(double.infinity, 36)),
                 ),
               ),
             TabBar(
@@ -409,7 +425,16 @@ class _MyPeopleScreenState extends State<MyPeopleScreen>
                     ]
                   : [
                       Tab(text: '$_friendsCount Friends'),
-                      Tab(text: '$_followersCount Followers'),
+                      Consumer<NotificationStateService>(
+                        builder: (context, notificationService, child) {
+                          return Tab(
+                            child: TabNotificationDot(
+                              text: '$_followersCount Followers',
+                              showDot: notificationService.hasUnseenFollowers,
+                            ),
+                          );
+                        },
+                      ),
                       Tab(text: '$_followingCount Following'),
                     ],
             ),
