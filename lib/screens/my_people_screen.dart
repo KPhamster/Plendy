@@ -25,6 +25,9 @@ class _MyPeopleScreenState extends State<MyPeopleScreen>
   AuthService? _authService;
   NotificationStateService? _notificationService; // Store reference to notification service
 
+  // Track if user has visited the Followers tab
+  bool _hasVisitedFollowersTab = false;
+
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
   List<UserProfile> _searchResults = [];
@@ -49,12 +52,12 @@ class _MyPeopleScreenState extends State<MyPeopleScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: 3, vsync: this, initialIndex: 1); // Set Followers tab as default
+    _hasVisitedFollowersTab = true; // Since we start on Followers tab, mark as visited
     _tabController.addListener(() {
-      // Track when user switches away from Followers tab (index 1)
-      if (_tabController.previousIndex == 1 && _tabController.index != 1) {
-        // User left the Followers tab - mark followers as seen
-        _notificationService?.markFollowersAsSeen();
+      // Track when user visits the Followers tab
+      if (_tabController.index == 1) {
+        _hasVisitedFollowersTab = true;
       }
     });
     _searchController.addListener(() {
@@ -244,25 +247,14 @@ class _MyPeopleScreenState extends State<MyPeopleScreen>
         await _userService.followUser(currentUserId, targetUserId);
       }
       
-      // After action, refresh follow status for this specific user in search results
-      // and also reload social counts for the main tabs.
+      // Always toggle the state, just like UserListTab does for consistency
       if (mounted) {
-        bool newFollowStatus = await _userService.isFollowing(currentUserId, targetUserId);
-        bool newPendingStatus = false;
-        if (targetUserProfile.isPrivate && !newFollowStatus) {
-           newPendingStatus = await _userService.hasPendingRequest(currentUserId, targetUserId);
-        }
         setState(() {
-          if (targetUserProfile.isPrivate && !newFollowStatus && newPendingStatus) {
-            // If it's private and request was just sent, update status to a conceptual "requested"
-            // For simplicity, we might just disable button or change text. 
-            // Here, we update the _searchResultIsFollowingStatus to reflect actual follow state (false after sending request)
-             _searchResultIsFollowingStatus[targetUserId] = false; 
-          } else {
-            _searchResultIsFollowingStatus[targetUserId] = newFollowStatus;
-          }
+          _searchResultIsFollowingStatus[targetUserId] = !currentlyFollowing;
           _searchResultButtonLoading[targetUserId] = false;
         });
+        
+        // Still reload social counts for the main tabs
         _loadSocialCounts(); 
         if (_currentUserProfile?.isPrivate ?? false) {
            _subscribeToRequestCount(); // Refresh request count as well
@@ -282,6 +274,11 @@ class _MyPeopleScreenState extends State<MyPeopleScreen>
 
   @override
   void dispose() {
+    // Mark followers as seen when leaving the screen if user visited the Followers tab
+    if (_hasVisitedFollowersTab) {
+      _notificationService?.markFollowersAsSeen();
+    }
+    
     _tabController.dispose();
     _searchController.dispose(); // Dispose the search controller
     _requestCountSubscription?.cancel(); // Cancel subscription on dispose
@@ -302,20 +299,6 @@ class _MyPeopleScreenState extends State<MyPeopleScreen>
             Navigator.of(context).pop();
           },
         ),
-        actions: [
-          // Optional: Keep the icon to open the full SearchDelegate page, or remove it
-          IconButton(
-            icon: const Icon(Icons.person_search_outlined), // Changed icon slightly
-            tooltip: 'Advanced Search Page',
-            onPressed: () {
-              showSearch<UserProfile?>(
-                context: context,
-                delegate: UserSearchDelegate(userService: _userService),
-              ).then((_) => _loadSocialCounts()); // Refresh on close
-            },
-          ),
-        ],
-        // TabBar is now moved into the body
       ),
       body: Column(
         children: [
