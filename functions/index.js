@@ -47,9 +47,11 @@ exports.sendFollowRequestNotificationV2 = onDocumentCreated(
       }
       const tokens = tokensSnapshot.docs.map((doc) => doc.id);
 
-      const payload = {
+      // Use v1 API with messaging.sendEach for multiple tokens
+      const messages = tokens.map((token) => ({
+        token: token,
         notification: {
-          title: "New Follow Request! (V2)",
+          title: "New Follow Request!",
           body: `${requesterName} wants to follow you.`,
         },
         data: {
@@ -57,20 +59,21 @@ exports.sendFollowRequestNotificationV2 = onDocumentCreated(
           screen: "/follow_requests",
           requesterId: requesterId,
         },
-      };
+      }));
 
-      functions.logger.log("V2: Sending FCM to tokens:", tokens, "with payload:", payload);
-      const response = await messaging.sendToDevice(tokens, payload);
-      functions.logger.log("V2: Successfully sent:", response.successCount);
+      functions.logger.log("V2: Sending FCM to tokens:", tokens, "with messages:", messages);
+      const response = await messaging.sendEach(messages);
+      functions.logger.log("V2: Successfully sent:", response.successCount, "failed:", response.failureCount);
 
+      // Handle failed tokens (same logic as before)
       const tokensToRemovePromises = [];
-      response.results.forEach((result, index) => {
-        const error = result.error;
-        if (error) {
+      response.responses.forEach((result, index) => {
+        if (!result.success) {
+          const error = result.error;
           functions.logger.error("V2: Failure sending to", tokens[index], error);
           if (
-            error.code === "messaging/invalid-registration-token" ||
-                    error.code === "messaging/registration-token-not-registered"
+            error?.code === "messaging/invalid-registration-token" ||
+            error?.code === "messaging/registration-token-not-registered"
           ) {
             tokensToRemovePromises.push(
               db.collection("users").doc(targetUserId).collection("fcmTokens").doc(tokens[index]).delete(),
@@ -124,9 +127,11 @@ exports.sendNewFollowerNotificationV2 = onDocumentCreated(
       }
       const tokens = tokensSnapshot.docs.map((doc) => doc.id);
 
-      const payload = {
+      // Use v1 API with messaging.sendEach for multiple tokens
+      const messages = tokens.map((token) => ({
+        token: token,
         notification: {
-          title: "New Follower! (V2)",
+          title: "New Follower!",
           body: `${followerName} started following you.`,
         },
         data: {
@@ -134,20 +139,21 @@ exports.sendNewFollowerNotificationV2 = onDocumentCreated(
           followerId: followerId,
           screen: `/user_profile/${followerId}`,
         },
-      };
+      }));
 
-      functions.logger.log("V2: Sending FCM to tokens:", tokens, "with payload:", payload);
-      const response = await messaging.sendToDevice(tokens, payload);
-      functions.logger.log("V2: Successfully sent:", response.successCount);
+      functions.logger.log("V2: Sending FCM to tokens:", tokens, "with messages:", messages);
+      const response = await messaging.sendEach(messages);
+      functions.logger.log("V2: Successfully sent:", response.successCount, "failed:", response.failureCount);
 
+      // Handle failed tokens (same logic as before)
       const tokensToRemovePromises = [];
-      response.results.forEach((result, index) => {
-        const error = result.error;
-        if (error) {
+      response.responses.forEach((result, index) => {
+        if (!result.success) {
+          const error = result.error;
           functions.logger.error("V2: Failure sending to", tokens[index], error);
           if (
-            error.code === "messaging/invalid-registration-token" ||
-                    error.code === "messaging/registration-token-not-registered"
+            error?.code === "messaging/invalid-registration-token" ||
+            error?.code === "messaging/registration-token-not-registered"
           ) {
             tokensToRemovePromises.push(
               db.collection("users").doc(targetUserId).collection("fcmTokens").doc(tokens[index]).delete(),
@@ -163,3 +169,76 @@ exports.sendNewFollowerNotificationV2 = onDocumentCreated(
       functions.logger.error("V2: Error sending new follower notification:", error);
     }
   });
+
+/**
+ * Minimal test function to diagnose FCM 404 issue (1st Gen)
+ */
+exports.testFcmSend1stGen = functions.https.onRequest(async (req, res) => {
+  const defaultToken = "dxOkUz9DQLe3enHKhzZ3Tt:APA91bEwTSpJn5QJg7at4-szgDHCnr9oeiycGzR7pxW5n4NE8pXxlRDYaw3o7i" +
+    "QW7puTP6bUV57PzODMDEQfZpsPvc3R9kc06vYADQlrIoYphxRMT4nC9rA";
+  const targetToken = req.query.token || defaultToken;
+
+  if (!targetToken) {
+    functions.logger.error("Test 1st Gen: No token provided.");
+    res.status(400).send("No token");
+    return;
+  }
+
+  const payload = {
+    notification: {
+      title: "Test Notification from 1st Gen Cloud Function",
+      body: "This is a test from the 1st Gen testFcmSend Cloud Function.",
+    },
+    data: {
+      test: "true",
+      generation: "1st",
+    },
+  };
+
+  try {
+    functions.logger.log("Test 1st Gen: Sending FCM to token:", targetToken, "with payload:", payload);
+    const response = await messaging.sendToDevice(targetToken, payload);
+    functions.logger.log("Test 1st Gen: Successfully sent:", response);
+    res.status(200).send(`1st Gen - Successfully sent: ${JSON.stringify(response)}`);
+  } catch (error) {
+    functions.logger.error("Test 1st Gen: Error sending notification:", error);
+    res.status(500).send(`1st Gen Error: ${error.toString()}`);
+  }
+});
+
+/**
+ * Test function using FCM v1 API instead of legacy sendToDevice
+ */
+exports.testFcmV1Send = functions.https.onRequest(async (req, res) => {
+  const defaultToken = "dxOkUz9DQLe3enHKhzZ3Tt:APA91bEwTSpJn5QJg7at4-szgDHCnr9oeiycGzR7pxW5n4NE8pXxlRDYaw3o7i" +
+    "QW7puTP6bUV57PzODMDEQfZpsPvc3R9kc06vYADQlrIoYphxRMT4nC9rA";
+  const targetToken = req.query.token || defaultToken;
+
+  if (!targetToken) {
+    functions.logger.error("Test v1: No token provided.");
+    res.status(400).send("No token");
+    return;
+  }
+
+  const message = {
+    token: targetToken,
+    notification: {
+      title: "Test Notification using FCM v1 API",
+      body: "This is a test using the v1 API instead of sendToDevice.",
+    },
+    data: {
+      test: "true",
+      api_version: "v1",
+    },
+  };
+
+  try {
+    functions.logger.log("Test v1: Sending FCM message:", message);
+    const response = await messaging.send(message);
+    functions.logger.log("Test v1: Successfully sent, message ID:", response);
+    res.status(200).send(`v1 API - Successfully sent: ${response}`);
+  } catch (error) {
+    functions.logger.error("Test v1: Error sending notification:", error);
+    res.status(500).send(`v1 API Error: ${error.toString()}`);
+  }
+});
