@@ -2633,7 +2633,17 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             : const Text('Save Shared Content'),
         leading: IconButton(
           icon: Icon(Platform.isIOS ? Icons.arrow_back_ios : Icons.arrow_back),
-          onPressed: widget.onCancel, 
+          onPressed: () {
+            print("ReceiveShareScreen: AppBar back button pressed.");
+            _sharingService.markShareFlowAsInactive(); 
+            if (mounted) { 
+              Navigator.pushAndRemoveUntil(
+                context,
+                MaterialPageRoute(builder: (context) => const MainScreen()),
+                (Route<dynamic> route) => false, 
+              );
+            }
+          },
         ),
         automaticallyImplyLeading:
             false, 
