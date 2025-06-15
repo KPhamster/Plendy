@@ -202,9 +202,12 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
     if (!widget.cardData.titleFocusNode.hasFocus) {
       // Field lost focus, trigger update with current title for duplicate check
       final currentTitle = widget.cardData.titleController.text.trim();
-      if (currentTitle.isNotEmpty) { // Only check if title is not empty
-        print("ExperienceCardForm: Title field lost focus. Current title: '$currentTitle'. Triggering update for potential duplicate check.");
-        widget.onUpdate(refreshCategories: false, newTitleFromCard: currentTitle);
+      if (currentTitle.isNotEmpty) {
+        // Only check if title is not empty
+        print(
+            "ExperienceCardForm: Title field lost focus. Current title: '$currentTitle'. Triggering update for potential duplicate check.");
+        widget.onUpdate(
+            refreshCategories: false, newTitleFromCard: currentTitle);
       }
     }
   }
@@ -274,7 +277,8 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
     if (yelpUrlString.isNotEmpty) {
       // Current behavior: field is not empty
       if (_isValidUrl(yelpUrlString) &&
-          (yelpUrlString.contains('yelp.com') || yelpUrlString.contains('yelp.to'))) {
+          (yelpUrlString.contains('yelp.com') ||
+              yelpUrlString.contains('yelp.to'))) {
         uri = Uri.parse(yelpUrlString);
       } else {
         // Fallback to Yelp homepage if URL in field is invalid
@@ -293,7 +297,8 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
         if (addressString != null && addressString.isNotEmpty) {
           // Both title and address are available
           String searchLoc = Uri.encodeComponent(addressString);
-          uri = Uri.parse('https://www.yelp.com/search?find_desc=$searchDesc&find_loc=$searchLoc');
+          uri = Uri.parse(
+              'https://www.yelp.com/search?find_desc=$searchDesc&find_loc=$searchLoc');
         } else {
           // Only title is available, address is not
           uri = Uri.parse('https://www.yelp.com/search?find_desc=$searchDesc');
@@ -383,7 +388,8 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
       ),
     );
     // ADDED LOGGING
-    print("EditCategoriesModal closed, categoriesChanged: $categoriesChanged (Text Categories)");
+    print(
+        "EditCategoriesModal closed, categoriesChanged: $categoriesChanged (Text Categories)");
 
     if (categoriesChanged == true && mounted) {
       print("Categories potentially changed in Edit modal, refreshing list.");
@@ -414,7 +420,8 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                 for (var category in currentCategories) {
                   uniqueCategoriesByName[category.name] = category;
                 }
-                final uniqueCategoryList = uniqueCategoriesByName.values.toList();
+                final uniqueCategoryList =
+                    uniqueCategoriesByName.values.toList();
 
                 return Dialog(
                   shape: RoundedRectangleBorder(
@@ -429,7 +436,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                         Padding(
                           padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
                           child: Text(
-                            'Select Category',
+                            'Select Primary Category',
                             style: Theme.of(stfContext).textTheme.titleLarge,
                           ),
                         ),
@@ -439,13 +446,15 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                             itemCount: uniqueCategoryList.length,
                             itemBuilder: (context, index) {
                               final category = uniqueCategoryList[index];
-                              final bool isSelected = category.id == widget.cardData.selectedCategoryId;
+                              final bool isSelected = category.id ==
+                                  widget.cardData.selectedCategoryId;
                               return ListTile(
                                 leading: Text(category.icon,
                                     style: const TextStyle(fontSize: 20)),
                                 title: Text(category.name),
                                 trailing: isSelected
-                                    ? const Icon(Icons.check, color: Colors.blue)
+                                    ? const Icon(Icons.check,
+                                        color: Colors.blue)
                                     : null,
                                 onTap: () {
                                   Navigator.pop(dialogContext, category.id);
@@ -463,11 +472,13 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
                               TextButton.icon(
-                                icon: Icon(Icons.add, size: 20, color: Colors.blue[700]),
+                                icon: Icon(Icons.add,
+                                    size: 20, color: Colors.blue[700]),
                                 label: Text('Add New Category',
                                     style: TextStyle(color: Colors.blue[700])),
                                 onPressed: () {
-                                  Navigator.pop(dialogContext, _dialogActionAdd);
+                                  Navigator.pop(
+                                      dialogContext, _dialogActionAdd);
                                 },
                                 style: TextButton.styleFrom(
                                     alignment: Alignment.centerLeft,
@@ -475,19 +486,22 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                         horizontal: 12, vertical: 12)),
                               ),
                               TextButton.icon(
-                                icon: Icon(Icons.edit, size: 20, color: Colors.orange[700]),
+                                icon: Icon(Icons.edit,
+                                    size: 20, color: Colors.orange[700]),
                                 label: Text('Edit Categories',
-                                    style: TextStyle(color: Colors.orange[700])),
+                                    style:
+                                        TextStyle(color: Colors.orange[700])),
                                 onPressed: () async {
-                                  final bool? categoriesActuallyChanged = await _handleEditCategories();
+                                  final bool? categoriesActuallyChanged =
+                                      await _handleEditCategories();
                                   // _handleEditCategories already calls widget.onUpdate(refreshCategories: true)
                                   // which updates the notifier. The ValueListenableBuilder above will rebuild.
                                   // No need to pop dialogContext here if changes were made,
                                   // as the goal is to keep the dialog open and show the refreshed list.
                                   if (categoriesActuallyChanged == true) {
-                                      // Optional: if you want to do something specific in the dialog after edit modal closes with changes
-                                      // For example, scroll to a newly selected/edited item if possible.
-                                      // stfSetState(() {}); // Could be used if local dialog state needs refresh not covered by ValueListenableBuilder
+                                    // Optional: if you want to do something specific in the dialog after edit modal closes with changes
+                                    // For example, scroll to a newly selected/edited item if possible.
+                                    // stfSetState(() {}); // Could be used if local dialog state needs refresh not covered by ValueListenableBuilder
                                   }
                                 },
                                 style: TextButton.styleFrom(
@@ -516,7 +530,8 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
       } else if (selectedValue == _dialogActionEdit) {
         // This case is less likely to be hit if we don't pop from edit action anymore unless intended
         // However, _handleEditCategories already calls onUpdate which should refresh the parent.
-        print("CategorySelectionDialog popped with _dialogActionEdit, parent will refresh categories via onUpdate.");
+        print(
+            "CategorySelectionDialog popped with _dialogActionEdit, parent will refresh categories via onUpdate.");
       } else {
         if (widget.cardData.selectedCategoryId != selectedValue) {
           widget.cardData.selectedCategoryId = selectedValue;
@@ -533,7 +548,8 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
     if (selectedId == null) {
       return Colors.grey.shade400; // Default indicator color
     }
-    final matchingCategory = widget.userColorCategoriesNotifier.value.firstWhere(
+    final matchingCategory =
+        widget.userColorCategoriesNotifier.value.firstWhere(
       (category) => category.id == selectedId,
       orElse: () => const ColorCategory(
           id: '',
@@ -591,10 +607,10 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
   Future<bool?> _handleEditColorCategories() async {
     FocusScope.of(context).unfocus();
     await Future.microtask(() {});
-    
+
     final bool? categoriesChanged = await showModalBottomSheet<bool>(
       context: context,
-      builder: (context) => const EditColorCategoriesModal(), 
+      builder: (context) => const EditColorCategoriesModal(),
       isScrollControlled: true,
       enableDrag: false, // PREVENT DRAG TO DISMISS
       shape: const RoundedRectangleBorder(
@@ -602,7 +618,8 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
       ),
     );
     // ADDED LOGGING
-    print("EditColorCategoriesModal closed, categoriesChanged: $categoriesChanged (Color Categories)");
+    print(
+        "EditColorCategoriesModal closed, categoriesChanged: $categoriesChanged (Color Categories)");
 
     if (categoriesChanged == true && mounted) {
       print(
@@ -668,7 +685,8 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                 ),
                                 title: Text(category.name),
                                 trailing: isSelected
-                                    ? const Icon(Icons.check, color: Colors.blue)
+                                    ? const Icon(Icons.check,
+                                        color: Colors.blue)
                                     : null,
                                 onTap: () {
                                   Navigator.pop(dialogContext, category.id);
@@ -703,9 +721,11 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                 icon: Icon(Icons.edit_outlined,
                                     size: 20, color: Colors.orange[700]),
                                 label: Text('Edit Color Categories',
-                                    style: TextStyle(color: Colors.orange[700])),
+                                    style:
+                                        TextStyle(color: Colors.orange[700])),
                                 onPressed: () async {
-                                  final bool? categoriesActuallyChanged = await _handleEditColorCategories();
+                                  final bool? categoriesActuallyChanged =
+                                      await _handleEditColorCategories();
                                   // _handleEditColorCategories already calls widget.onUpdate(refreshCategories: true)
                                   // which updates the notifier. The ValueListenableBuilder above will rebuild.
                                   // No need to pop dialogContext here if changes were made,
@@ -738,8 +758,9 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
       if (selectedValue == _addColorCategoryValue) {
         _handleAddColorCategory();
       } else if (selectedValue == _editColorCategoriesValue) {
-         // This case is less likely to be hit if we don't pop from edit action anymore unless intended
-        print("ColorCategorySelectionDialog popped with _editColorCategoriesValue, parent will refresh categories via onUpdate.");
+        // This case is less likely to be hit if we don't pop from edit action anymore unless intended
+        print(
+            "ColorCategorySelectionDialog popped with _editColorCategoriesValue, parent will refresh categories via onUpdate.");
       } else {
         // User selected an actual category ID
         if (widget.cardData.selectedColorCategoryId != selectedValue) {
@@ -749,6 +770,31 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
           );
         }
       }
+    }
+  }
+  // --- END ADDED ---
+
+  // --- ADDED: Function to show the other categories selection dialog ---
+  Future<void> _showOtherCategoriesSelectionDialog() async {
+    FocusScope.of(context).unfocus();
+    await Future.microtask(() {});
+
+    final List<String>? result = await showDialog<List<String>>(
+      context: context,
+      barrierDismissible: false, // User must press button
+      builder: (BuildContext dialogContext) {
+        return _OtherCategoriesSelectionDialog(
+          allCategories: widget.userCategoriesNotifier.value,
+          initiallySelectedIds: widget.cardData.selectedOtherCategoryIds,
+          primaryCategoryId: widget.cardData.selectedCategoryId,
+        );
+      },
+    );
+
+    if (result != null) {
+      // No need for setState since parent rebuild is triggered by onUpdate
+      widget.cardData.selectedOtherCategoryIds = result;
+      widget.onUpdate(refreshCategories: false);
     }
   }
   // --- END ADDED ---
@@ -801,7 +847,8 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                   child: Row(
                     children: [
                       Icon(
-                        widget.cardData.isExpanded // Read directly from cardData
+                        widget.cardData
+                                .isExpanded // Read directly from cardData
                             ? Icons.keyboard_arrow_up
                             : Icons.keyboard_arrow_down,
                         color: Colors.blue,
@@ -823,8 +870,8 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                       // Use the passed flag to control delete button
                       if (widget.canRemove)
                         IconButton(
-                          icon:
-                              Icon(Icons.delete_outline, color: Colors.red[400]),
+                          icon: Icon(Icons.delete_outline,
+                              color: Colors.red[400]),
                           onPressed: () => widget.onRemove(widget.cardData),
                           tooltip: 'Remove experience',
                         ),
@@ -850,8 +897,8 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                               widget.onSelectSavedExperience(widget.cardData),
                           style: OutlinedButton.styleFrom(
                             foregroundColor: Colors.blue,
-                            padding:
-                                EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            padding: EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 8),
                             visualDensity: VisualDensity.compact,
                           ),
                         ),
@@ -870,20 +917,22 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                             child: Container(
                               decoration: BoxDecoration(
                                 border: Border.all(
-                                    color: isEnabled // Use isEnabled from builder
-                                        ? Colors.grey
-                                        : Colors.grey.shade300),
+                                    color:
+                                        isEnabled // Use isEnabled from builder
+                                            ? Colors.grey
+                                            : Colors.grey.shade300),
                                 borderRadius: BorderRadius.circular(4),
                                 color: Colors.transparent,
                               ),
-                              padding:
-                                  EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                              padding: EdgeInsets.symmetric(
+                                  horizontal: 12, vertical: 12),
                               child: Row(
                                 children: [
                                   Icon(Icons.location_on,
-                                      color: isEnabled // Use isEnabled from builder
-                                          ? Colors.grey[600]
-                                          : Colors.grey[400]),
+                                      color:
+                                          isEnabled // Use isEnabled from builder
+                                              ? Colors.grey[600]
+                                              : Colors.grey[400]),
                                   SizedBox(width: 12),
                                   Expanded(
                                     child: currentLocation != null
@@ -897,39 +946,46 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                                 currentLocation.getPlaceName(),
                                                 style: TextStyle(
                                                   fontWeight: FontWeight.bold,
-                                                  color: isEnabled // Use isEnabled from builder
-                                                      ? Colors.black
-                                                      : Colors.grey[500],
+                                                  color:
+                                                      isEnabled // Use isEnabled from builder
+                                                          ? Colors.black
+                                                          : Colors.grey[500],
                                                 ),
                                               ),
                                               // Address
-                                              if (currentLocation.address != null)
+                                              if (currentLocation.address !=
+                                                  null)
                                                 Text(
                                                   currentLocation.address!,
                                                   style: TextStyle(
                                                     fontSize: 12,
-                                                    color: isEnabled // Use isEnabled from builder
-                                                        ? Colors.black87
-                                                        : Colors.grey[500],
+                                                    color:
+                                                        isEnabled // Use isEnabled from builder
+                                                            ? Colors.black87
+                                                            : Colors.grey[500],
                                                   ),
-                                                  maxLines: 1, // Limit address lines
-                                                  overflow: TextOverflow.ellipsis,
+                                                  maxLines:
+                                                      1, // Limit address lines
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
                                                 ),
                                             ],
                                           )
                                         : Text(
                                             'Select location',
                                             style: TextStyle(
-                                                color: isEnabled // Use isEnabled from builder
-                                                    ? Colors.grey[600]
-                                                    : Colors.grey[400]),
+                                                color:
+                                                    isEnabled // Use isEnabled from builder
+                                                        ? Colors.grey[600]
+                                                        : Colors.grey[400]),
                                           ),
                                   ),
                                   // Toggle switch inside the location field
                                   Transform.scale(
                                     scale: 0.8,
                                     child: Switch(
-                                      value: isEnabled, // Use isEnabled from builder
+                                      value:
+                                          isEnabled, // Use isEnabled from builder
                                       onChanged: (value) {
                                         widget.cardData.locationEnabled.value =
                                             value; // Update model directly
@@ -950,7 +1006,8 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
 
                       // Experience title
                       TextFormField(
-                        controller: titleController, // Use controller from widget
+                        controller:
+                            titleController, // Use controller from widget
                         focusNode: titleFocusNode, // Use focus node from widget
                         decoration: InputDecoration(
                           labelText: 'Experience Title',
@@ -985,15 +1042,21 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                         onFieldSubmitted: (value) {
                           // When field is submitted (e.g., user presses done/next on keyboard),
                           // trigger onUpdate with the new title to initiate duplicate check.
-                          widget.onUpdate(refreshCategories: false, newTitleFromCard: value.trim());
+                          widget.onUpdate(
+                              refreshCategories: false,
+                              newTitleFromCard: value.trim());
                         },
                       ),
                       SizedBox(height: 16),
 
                       // --- REPLACED Dropdown with a Button wrapped in ValueListenableBuilder ---
-                      Text('Category',
-                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                              color: Colors.grey[600])), // Label like text field
+                      Text('Primary Category',
+                          style: Theme.of(context)
+                              .textTheme
+                              .bodyMedium
+                              ?.copyWith(
+                                  color: Colors
+                                      .grey[600])), // Label like text field
                       const SizedBox(height: 4),
                       ValueListenableBuilder<List<UserCategory>>(
                         valueListenable: widget.userCategoriesNotifier,
@@ -1003,9 +1066,10 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                           UserCategory? selectedCategoryObject;
                           if (widget.cardData.selectedCategoryId != null) {
                             try {
-                              selectedCategoryObject = currentCategoryList.firstWhere(
-                                (cat) => cat.id == widget.cardData.selectedCategoryId
-                              );
+                              selectedCategoryObject =
+                                  currentCategoryList.firstWhere((cat) =>
+                                      cat.id ==
+                                      widget.cardData.selectedCategoryId);
                             } catch (e) {
                               // Category ID from cardData not found in current list, leave selectedCategoryObject null
                             }
@@ -1037,17 +1101,17 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                         style: const TextStyle(fontSize: 18)),
                                     const SizedBox(width: 8),
                                     Text(
-                                      selectedCategoryObject?.name ?? 'Select Category',
+                                      selectedCategoryObject?.name ??
+                                          'Select Primary Category',
                                       style: TextStyle(
                                         // Ensure text color matches default button text color or form field color
-                                        color:
-                                            selectedCategoryObject != null
-                                                ? Theme.of(context)
-                                                    .textTheme
-                                                    .bodyLarge
-                                                    ?.color
-                                                : Colors.grey[
-                                                    600], // Hint color if nothing selected
+                                        color: selectedCategoryObject != null
+                                            ? Theme.of(context)
+                                                .textTheme
+                                                .bodyLarge
+                                                ?.color
+                                            : Colors.grey[
+                                                600], // Hint color if nothing selected
                                       ),
                                     ),
                                   ],
@@ -1109,14 +1173,14 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                       _getSelectedColorCategoryObject()?.name ??
                                           'Select Color Category',
                                       style: TextStyle(
-                                        color:
-                                            widget.cardData.selectedColorCategoryId !=
-                                                    null
-                                                ? Theme.of(context)
-                                                    .textTheme
-                                                    .bodyLarge
-                                                    ?.color
-                                                : Colors.grey[600],
+                                        color: widget.cardData
+                                                    .selectedColorCategoryId !=
+                                                null
+                                            ? Theme.of(context)
+                                                .textTheme
+                                                .bodyLarge
+                                                ?.color
+                                            : Colors.grey[600],
                                       ),
                                     ),
                                   ],
@@ -1132,6 +1196,94 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
 
                       SizedBox(height: 16),
 
+                      // --- ADDED: Other Categories Selection ---
+                      Text('Other Categories',
+                          style: Theme.of(context)
+                              .textTheme
+                              .bodyMedium
+                              ?.copyWith(color: Colors.grey[600])),
+                      const SizedBox(height: 4),
+                      Container(
+                        width: double.infinity, // Ensure it takes full width
+                        padding: const EdgeInsets.all(12.0),
+                        decoration: BoxDecoration(
+                          border: Border.all(color: Colors.grey),
+                          borderRadius: BorderRadius.circular(8.0),
+                        ),
+                        child: ValueListenableBuilder<List<UserCategory>>(
+                          valueListenable: widget.userCategoriesNotifier,
+                          builder: (context, allCategories, child) {
+                            final selectedCategories = allCategories
+                                .where((cat) => widget
+                                    .cardData.selectedOtherCategoryIds
+                                    .contains(cat.id))
+                                .toList();
+
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (selectedCategories.isEmpty)
+                                  Padding(
+                                    padding: const EdgeInsets.only(bottom: 8.0),
+                                    child: Text(
+                                      'No other categories assigned.',
+                                      style: TextStyle(color: Colors.grey[700]),
+                                    ),
+                                  )
+                                else
+                                  Padding(
+                                    padding: const EdgeInsets.only(bottom: 8.0),
+                                    child: Wrap(
+                                      spacing: 6.0,
+                                      runSpacing: 0.0,
+                                      children:
+                                          selectedCategories.map((category) {
+                                        return Chip(
+                                          avatar: Text(category.icon,
+                                              style: const TextStyle(
+                                                  fontSize: 14)),
+                                          label: Text(category.name),
+                                          onDeleted: () {
+                                            setState(() {
+                                              widget.cardData
+                                                  .selectedOtherCategoryIds
+                                                  .remove(category.id);
+                                            });
+                                            widget.onUpdate(
+                                                refreshCategories: false);
+                                          },
+                                          materialTapTargetSize:
+                                              MaterialTapTargetSize.shrinkWrap,
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 6),
+                                          visualDensity: VisualDensity.compact,
+                                        );
+                                      }).toList(),
+                                    ),
+                                  ),
+                                Center(
+                                  child: TextButton.icon(
+                                    icon: const Icon(Icons.add, size: 20),
+                                    label: const Text('Add / Edit Categories'),
+                                    onPressed:
+                                        _showOtherCategoriesSelectionDialog,
+                                    style: TextButton.styleFrom(
+                                      visualDensity: VisualDensity.compact,
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 12),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            );
+                          },
+                        ),
+                      ),
+                      // --- END ADDED ---
+
+                      SizedBox(height: 16),
+
                       // Yelp URL
                       TextFormField(
                         controller:
@@ -1140,8 +1292,8 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                             labelText: 'Yelp URL (optional)',
                             hintText: 'https://yelp.com/...',
                             border: OutlineInputBorder(),
-                            prefixIcon:
-                                Icon(FontAwesomeIcons.yelp), // Use Yelp icon here
+                            prefixIcon: Icon(
+                                FontAwesomeIcons.yelp), // Use Yelp icon here
                             suffixIconConstraints: BoxConstraints.tightFor(
                                 width: 110, // Keep width for three icons
                                 height: 48), // Increase width for both icons
@@ -1160,7 +1312,8 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                     },
                                     borderRadius: BorderRadius.circular(16),
                                     child: Padding(
-                                      padding: const EdgeInsets.all(4.0), // No horizontal padding
+                                      padding: const EdgeInsets.all(
+                                          4.0), // No horizontal padding
                                       child: Icon(Icons.clear, size: 22),
                                     ),
                                   ),
@@ -1174,7 +1327,8 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                   onTap: _pasteYelpUrlFromClipboard,
                                   borderRadius: BorderRadius.circular(16),
                                   child: Padding(
-                                    padding: const EdgeInsets.all(4.0), // No horizontal padding
+                                    padding: const EdgeInsets.all(
+                                        4.0), // No horizontal padding
                                     child: Icon(Icons.content_paste,
                                         size: 22, color: Colors.blue[700]),
                                   ),
@@ -1185,13 +1339,19 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
 
                                 // Yelp launch button (remains last)
                                 InkWell(
-                                  onTap: _launchYelpUrl, // Always calls _launchYelpUrl
-                                  borderRadius: BorderRadius.circular(16), 
+                                  onTap:
+                                      _launchYelpUrl, // Always calls _launchYelpUrl
+                                  borderRadius: BorderRadius.circular(16),
                                   child: Padding(
-                                    padding: const EdgeInsets.fromLTRB(4.0, 4.0, 8.0, 4.0), // Add padding only on the right end
+                                    padding: const EdgeInsets.fromLTRB(
+                                        4.0,
+                                        4.0,
+                                        8.0,
+                                        4.0), // Add padding only on the right end
                                     child: Icon(FontAwesomeIcons.yelp,
                                         size: 22,
-                                        color: Colors.red[700]), // Always active color
+                                        color: Colors
+                                            .red[700]), // Always active color
                                   ),
                                 ),
                               ],
@@ -1239,8 +1399,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                   },
                                   borderRadius: BorderRadius.circular(16),
                                   child: Padding(
-                                    padding:
-                                        const EdgeInsets.all(4.0),
+                                    padding: const EdgeInsets.all(4.0),
                                     child: Icon(Icons.clear, size: 22),
                                   ),
                                 ),
@@ -1253,8 +1412,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                 onTap: _pasteWebsiteUrlFromClipboard,
                                 borderRadius: BorderRadius.circular(16),
                                 child: Padding(
-                                  padding:
-                                      const EdgeInsets.all(4.0),
+                                  padding: const EdgeInsets.all(4.0),
                                   child: Icon(Icons.content_paste,
                                       size: 22, color: Colors.blue[700]),
                                 ),
@@ -1266,7 +1424,8 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                               // Launch button (last)
                               InkWell(
                                 onTap: websiteController.text.isNotEmpty &&
-                                        _isValidUrl(websiteController.text.trim())
+                                        _isValidUrl(
+                                            websiteController.text.trim())
                                     ? () async {
                                         String urlString =
                                             websiteController.text.trim();
@@ -1274,7 +1433,8 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                         try {
                                           await launchUrl(
                                             Uri.parse(urlString),
-                                            mode: LaunchMode.externalApplication,
+                                            mode:
+                                                LaunchMode.externalApplication,
                                           );
                                         } catch (e) {
                                           if (mounted) {
@@ -1290,10 +1450,12 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                     : null,
                                 borderRadius: BorderRadius.circular(16),
                                 child: Padding(
-                                  padding: const EdgeInsets.fromLTRB(4.0, 4.0, 8.0, 4.0),
+                                  padding: const EdgeInsets.fromLTRB(
+                                      4.0, 4.0, 8.0, 4.0),
                                   child: Icon(Icons.launch, // Use launch icon
                                       size: 22,
-                                      color: websiteController.text.isNotEmpty &&
+                                      color: websiteController
+                                                  .text.isNotEmpty &&
                                               _isValidUrl(
                                                   websiteController.text.trim())
                                           ? Colors.blue[700]
@@ -1331,16 +1493,16 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                           prefixIcon: Icon(Icons.notes),
                           alignLabelWithHint:
                               true, // Align label top-left for multi-line
-                          suffixIcon:
-                              widget.cardData.notesController.text.isNotEmpty
-                                  ? IconButton(
-                                      icon: Icon(Icons.clear, size: 18),
-                                      onPressed: () {
-                                        widget.cardData.notesController.clear();
-                                        widget.onUpdate(refreshCategories: false);
-                                      },
-                                    )
-                                  : null,
+                          suffixIcon: widget
+                                  .cardData.notesController.text.isNotEmpty
+                              ? IconButton(
+                                  icon: Icon(Icons.clear, size: 18),
+                                  onPressed: () {
+                                    widget.cardData.notesController.clear();
+                                    widget.onUpdate(refreshCategories: false);
+                                  },
+                                )
+                              : null,
                         ),
                         keyboardType: TextInputType.multiline,
                         minLines: 3, // Start with 3 lines height
@@ -1361,3 +1523,90 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
     );
   }
 }
+
+// --- ADDED: Dialog for selecting 'Other' categories ---
+class _OtherCategoriesSelectionDialog extends StatefulWidget {
+  final List<UserCategory> allCategories;
+  final List<String> initiallySelectedIds;
+  final String? primaryCategoryId; // To disable primary category
+
+  const _OtherCategoriesSelectionDialog({
+    required this.allCategories,
+    required this.initiallySelectedIds,
+    this.primaryCategoryId,
+  });
+
+  @override
+  State<_OtherCategoriesSelectionDialog> createState() =>
+      _OtherCategoriesSelectionDialogState();
+}
+
+class _OtherCategoriesSelectionDialogState
+    extends State<_OtherCategoriesSelectionDialog> {
+  late Set<String> _selectedIds;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedIds = Set<String>.from(widget.initiallySelectedIds);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Filter out the primary category from the list of choices
+    final availableCategories = widget.allCategories
+        .where((cat) => cat.id != widget.primaryCategoryId)
+        .toList();
+
+    // Sort categories alphabetically by name
+    availableCategories.sort((a, b) => a.name.compareTo(b.name));
+
+    return AlertDialog(
+      title: const Text('Select Other Categories'),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 0, vertical: 20),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: ListView.builder(
+          shrinkWrap: true,
+          itemCount: availableCategories.length,
+          itemBuilder: (context, index) {
+            final category = availableCategories[index];
+            final bool isSelected = _selectedIds.contains(category.id);
+            return CheckboxListTile(
+              title: Text(category.name),
+              secondary:
+                  Text(category.icon, style: const TextStyle(fontSize: 20)),
+              value: isSelected,
+              onChanged: (bool? value) {
+                setState(() {
+                  if (value == true) {
+                    _selectedIds.add(category.id);
+                  } else {
+                    _selectedIds.remove(category.id);
+                  }
+                });
+              },
+              controlAffinity: ListTileControlAffinity.leading,
+            );
+          },
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          child: const Text('Cancel'),
+          onPressed: () {
+            Navigator.of(context).pop(); // Pop without a value
+          },
+        ),
+        TextButton(
+          child: const Text('Confirm'),
+          onPressed: () {
+            Navigator.of(context).pop(_selectedIds.toList());
+          },
+        ),
+      ],
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+    );
+  }
+}
+// --- END ADDED ---
