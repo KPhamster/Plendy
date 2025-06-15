@@ -1257,7 +1257,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                     padding: const EdgeInsets.only(bottom: 8.0),
                                     child: Wrap(
                                       spacing: 6.0,
-                                      runSpacing: 0.0,
+                                      runSpacing: 6.0,
                                       children:
                                           selectedCategories.map((category) {
                                         return Chip(
@@ -1276,9 +1276,11 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                           },
                                           materialTapTargetSize:
                                               MaterialTapTargetSize.shrinkWrap,
-                                          padding: const EdgeInsets.symmetric(
-                                              horizontal: 6),
+                                          padding: const EdgeInsets.symmetric(horizontal: 0),
                                           visualDensity: VisualDensity.compact,
+                                          labelPadding: const EdgeInsets.symmetric(horizontal: 4.0),
+                                          deleteIconColor: Colors.grey[600],
+                                          deleteButtonTooltipMessage: 'Remove category',
                                         );
                                       }).toList(),
                                     ),
