@@ -9,6 +9,7 @@ class SharedMediaItem extends Equatable {
   final String ownerUserId; // User who first added this media
   final List<String>
       experienceIds; // List of Experience IDs this media belongs to
+  final bool? isTiktokPhoto; // Whether this TikTok URL is a photo carousel (null for non-TikTok items)
   // Add other potential metadata if needed (e.g., mediaType, thumbnail?)
 
   const SharedMediaItem({
@@ -17,10 +18,11 @@ class SharedMediaItem extends Equatable {
     required this.createdAt,
     required this.ownerUserId,
     required this.experienceIds,
+    this.isTiktokPhoto,
   });
 
   @override
-  List<Object?> get props => [id, path, createdAt, ownerUserId, experienceIds];
+  List<Object?> get props => [id, path, createdAt, ownerUserId, experienceIds, isTiktokPhoto];
 
   /// Creates a SharedMediaItem from a Firestore document
   factory SharedMediaItem.fromFirestore(DocumentSnapshot doc) {
@@ -32,6 +34,7 @@ class SharedMediaItem extends Equatable {
       ownerUserId: data['ownerUserId'] ?? '',
       // Ensure experienceIds is always a List<String>, even if null/empty in Firestore
       experienceIds: List<String>.from(data['experienceIds'] ?? []),
+      isTiktokPhoto: data['isTiktokPhoto'] as bool?,
     );
   }
 
@@ -42,6 +45,7 @@ class SharedMediaItem extends Equatable {
       'createdAt': Timestamp.fromDate(createdAt),
       'ownerUserId': ownerUserId,
       'experienceIds': experienceIds,
+      if (isTiktokPhoto != null) 'isTiktokPhoto': isTiktokPhoto,
       // Note: 'id' is the document ID, not stored as a field within the document
     };
   }
@@ -62,6 +66,7 @@ class SharedMediaItem extends Equatable {
     DateTime? createdAt,
     String? ownerUserId,
     List<String>? experienceIds,
+    bool? isTiktokPhoto,
   }) {
     return SharedMediaItem(
       id: id ?? this.id,
@@ -69,6 +74,7 @@ class SharedMediaItem extends Equatable {
       createdAt: createdAt ?? this.createdAt,
       ownerUserId: ownerUserId ?? this.ownerUserId,
       experienceIds: experienceIds ?? this.experienceIds,
+      isTiktokPhoto: isTiktokPhoto ?? this.isTiktokPhoto,
     );
   }
 }
