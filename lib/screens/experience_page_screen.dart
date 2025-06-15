@@ -1289,6 +1289,9 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
             formattedParking, // Use pre-formatted value
             showLabel: false, // HIDE label
           ),
+          // --- ADDED: Other Categories Row ---
+          _buildOtherCategoriesRow(context, _currentExperience),
+          // --- END ADDED ---
           // --- ADDED Notes Row ---
           _buildDetailRow(
             context,
@@ -2443,6 +2446,72 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     }
   }
   // --- ADDED: Method to load data about other experiences linked to the media items --- END --- 
+
+  // --- ADDED: Helper Widget for Other Categories Row --- START ---
+  Widget _buildOtherCategoriesRow(BuildContext context, Experience experience) {
+    if (experience.otherCategories.isEmpty) {
+      return const SizedBox.shrink(); // Don't show row if no other categories
+    }
+
+    // Find the category objects from the loaded user categories
+    final otherCategoryObjects = experience.otherCategories
+        .map((categoryId) {
+          try {
+            return _userCategories.firstWhere((cat) => cat.id == categoryId);
+          } catch (e) {
+            return null; // Category not found
+          }
+        })
+        .where((cat) => cat != null)
+        .cast<UserCategory>()
+        .toList();
+
+    // Don't show if no valid category objects were found
+    if (otherCategoryObjects.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6.0),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.category_outlined, size: 20.0, color: Colors.black54),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Other Categories:',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                ),
+                const SizedBox(height: 4),
+                Wrap(
+                  spacing: 6.0,
+                  runSpacing: 6.0,
+                  children: otherCategoryObjects.map((category) {
+                    return Chip(
+                      avatar: Text(category.icon,
+                          style: const TextStyle(fontSize: 14)),
+                      label: Text(category.name),
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      padding: const EdgeInsets.symmetric(horizontal: 6),
+                      visualDensity: VisualDensity.compact,
+                      labelPadding: const EdgeInsets.symmetric(horizontal: 4.0),
+                    );
+                  }).toList(),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+  // --- ADDED: Helper Widget for Other Categories Row --- END ---
 }
 
 // --- ADDED Helper class for SliverPersistentHeader (for TabBar) ---
@@ -2488,5 +2557,5 @@ class _SliverAppBarDelegate extends SliverPersistentHeaderDelegate {
     // Rebuild if the TabBar instance changes
     return _tabBar != oldDelegate._tabBar;
   }
-}
-// --- End Helper Class ---
+  }
+  // --- End Helper Class ---
