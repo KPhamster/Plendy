@@ -18,6 +18,7 @@ import '../services/experience_service.dart'; // For fetching reviews/comments
 import 'receive_share/widgets/instagram_preview_widget.dart'
     as instagram_widget;
 import 'receive_share/widgets/tiktok_preview_widget.dart';
+import 'receive_share/widgets/facebook_preview_widget.dart';
 // REMOVED: Dio import (no longer needed for thumbnail fetching)
 // import 'package:dio/dio.dart';
 // REMOVED: Dotenv import (no longer needed for credentials)
@@ -1725,6 +1726,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
               Widget mediaWidget;
               final isTikTokUrl = url.toLowerCase().contains('tiktok.com') || url.toLowerCase().contains('vm.tiktok.com');
               final isInstagramUrl = url.toLowerCase().contains('instagram.com');
+              final isFacebookUrl = url.toLowerCase().contains('facebook.com') || url.toLowerCase().contains('fb.com') || url.toLowerCase().contains('fb.watch');
 
               if (isTikTokUrl) {
                 mediaWidget = TikTokPreviewWidget(
@@ -1739,6 +1741,16 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                       ? 1200.0 // Expanded height (adjust if needed)
                       : 840.0, // Collapsed height
                   // --- END UPDATE ---
+                  launchUrlCallback: _launchUrl,
+                  onWebViewCreated: (controller) {},
+                  onPageFinished: (url) {},
+                );
+              } else if (isFacebookUrl) {
+                mediaWidget = FacebookPreviewWidget(
+                  url: url,
+                  height: (_mediaTabExpansionStates[url] ?? false)
+                      ? 800.0 // Expanded height
+                      : 500.0, // Collapsed height
                   launchUrlCallback: _launchUrl,
                   onWebViewCreated: (controller) {},
                   onPageFinished: (url) {},
@@ -1963,10 +1975,30 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                           Align(
                             alignment: Alignment.center,
                             child: IconButton(
-                              icon: const Icon(FontAwesomeIcons.instagram),
-                              color: const Color(0xFFE1306C),
+                              icon: Icon(
+                                isInstagramUrl 
+                                  ? FontAwesomeIcons.instagram 
+                                  : isFacebookUrl 
+                                    ? FontAwesomeIcons.facebook
+                                    : isTikTokUrl
+                                      ? FontAwesomeIcons.tiktok
+                                      : Icons.open_in_new,
+                              ),
+                              color: isInstagramUrl 
+                                ? const Color(0xFFE1306C) 
+                                : isFacebookUrl 
+                                  ? const Color(0xFF1877F2)
+                                  : isTikTokUrl
+                                    ? Colors.black
+                                    : Theme.of(context).primaryColor,
                               iconSize: 32,
-                              tooltip: 'Open in Instagram',
+                              tooltip: isInstagramUrl 
+                                ? 'Open in Instagram'
+                                : isFacebookUrl
+                                  ? 'Open in Facebook'
+                                  : isTikTokUrl
+                                    ? 'Open in TikTok'
+                                    : 'Open URL',
                               constraints: const BoxConstraints(),
                               padding: EdgeInsets.zero,
                               onPressed: () => _launchUrl(url),
