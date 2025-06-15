@@ -18,6 +18,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart'; // ADDED for ic
 import 'receive_share/widgets/instagram_preview_widget.dart'
     as instagram_widget;
 import 'receive_share/widgets/tiktok_preview_widget.dart';
+import 'receive_share/widgets/facebook_preview_widget.dart';
 import '../models/shared_media_item.dart'; // ADDED Import
 import 'package:collection/collection.dart'; // ADDED: Import for groupBy
 import 'map_screen.dart'; // ADDED: Import for MapScreen
@@ -1820,6 +1821,9 @@ class _CollectionsScreenState extends State<CollectionsScreen>
               mediaPath.toLowerCase().contains('instagram.com');
           final bool isTikTokUrl = mediaPath.toLowerCase().contains('tiktok.com') ||
               mediaPath.toLowerCase().contains('vm.tiktok.com');
+          final bool isFacebookUrl = mediaPath.toLowerCase().contains('facebook.com') ||
+              mediaPath.toLowerCase().contains('fb.com') ||
+              mediaPath.toLowerCase().contains('fb.watch');
           bool isNetworkUrl =
               mediaPath.startsWith('http') || mediaPath.startsWith('https');
 
@@ -1838,6 +1842,14 @@ class _CollectionsScreenState extends State<CollectionsScreen>
               onPageFinished: (_) {},
             );
             // Ensure no Center/ConstrainedBox here for mobile web list view
+          } else if (isFacebookUrl) {
+            mediaWidget = FacebookPreviewWidget(
+              url: mediaPath,
+              height: 500.0, // Height for FacebookPreviewWidget
+              launchUrlCallback: _launchUrl,
+              onWebViewCreated: (_) {},
+              onPageFinished: (_) {},
+            );
           } else if (isNetworkUrl) {
             mediaWidget = Image.network(
               mediaPath,
@@ -1993,6 +2005,11 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                           onPressed: () => _launchUrl(mediaPath),
                           child: const Text('View on Instagram'),
                         ),
+                      if (isFacebookUrl)
+                        TextButton(
+                          onPressed: () => _launchUrl(mediaPath),
+                          child: const Text('View on Facebook'),
+                        ),
                     ],
                   ),
                 ),
@@ -2026,6 +2043,10 @@ class _CollectionsScreenState extends State<CollectionsScreen>
             Text(
               mediaItem.path.contains('instagram.com')
                   ? 'Instagram Post'
+                  : mediaItem.path.contains('facebook.com') || mediaItem.path.contains('fb.com') || mediaItem.path.contains('fb.watch')
+                    ? 'Facebook Post'
+                    : mediaItem.path.contains('tiktok.com') || mediaItem.path.contains('vm.tiktok.com')
+                      ? 'TikTok Post'
                   : mediaItem.path.split('/').last, // Show filename if possible
               style: Theme.of(context)
                   .textTheme

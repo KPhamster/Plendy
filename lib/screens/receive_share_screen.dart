@@ -35,6 +35,7 @@ import '../widgets/select_saved_experience_modal_content.dart'; // Attempting re
 import 'receive_share/widgets/instagram_preview_widget.dart'
     as instagram_widget;
 import 'receive_share/widgets/tiktok_preview_widget.dart';
+import 'receive_share/widgets/facebook_preview_widget.dart';
 import 'main_screen.dart';
 import '../models/public_experience.dart';
 import '../services/auth_service.dart';
@@ -765,14 +766,17 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     final yelpPattern = RegExp(r'yelp\.(com/biz|to)/');
     final mapsPattern =
         RegExp(r'(google\.com/maps|maps\.app\.goo\.gl|goo\.gl/maps)');
+    final facebookPattern = RegExp(r'(facebook\.com|fb\.com|fb\.watch)');
 
-    if (yelpPattern.hasMatch(urlLower) || mapsPattern.hasMatch(urlLower)) {
-      print("DEBUG: _isSpecialUrl detected Yelp or Maps pattern in URL: $url");
+    if (yelpPattern.hasMatch(urlLower) || 
+        mapsPattern.hasMatch(urlLower) || 
+        facebookPattern.hasMatch(urlLower)) {
+      print("DEBUG: _isSpecialUrl detected special pattern in URL: $url");
       return true;
     }
 
     print(
-        "DEBUG: _isSpecialUrl did not find Yelp or Maps pattern in URL: $url");
+        "DEBUG: _isSpecialUrl did not find special pattern in URL: $url");
     return false;
   }
 
@@ -807,6 +811,14 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       firstCard.originalShareType = ShareType.maps; 
       _yelpPreviewFutures[normalizedUrl] =
           _getLocationFromMapsUrl(normalizedUrl);
+    } else if (normalizedUrl.contains('facebook.com') ||
+               normalizedUrl.contains('fb.com') ||
+               normalizedUrl.contains('fb.watch')) {
+      print("SHARE DEBUG: Processing as Facebook URL: $normalizedUrl");
+      // Facebook URLs are handled differently - they're displayed in the preview
+      // but don't extract location data like Yelp/Maps
+      firstCard.originalShareType = ShareType.genericUrl;
+      // The URL will be displayed in the media preview section
     } else {
       print("ERROR: _processSpecialUrl called with non-special URL: $url");
     }
@@ -3045,6 +3057,20 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           _tiktokPhotoStatus[detectedUrl] = isPhoto;
           print('TikTok photo detection: URL=$detectedUrl, isPhoto=$isPhoto');
         },
+      );
+    }
+
+    if (url.contains('facebook.com') || url.contains('fb.com') || url.contains('fb.watch')) {
+      return FacebookPreviewWidget(
+        url: url,
+        height: 500,
+        onWebViewCreated: (controller) {
+          // Handle controller if needed
+        },
+        onPageFinished: (url) {
+          // Handle page finished if needed
+        },
+        launchUrlCallback: _launchUrl,
       );
     }
 

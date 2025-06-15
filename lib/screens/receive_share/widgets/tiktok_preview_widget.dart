@@ -29,6 +29,7 @@ class _TikTokPreviewWidgetState extends State<TikTokPreviewWidget> {
   bool _isLoading = true;
   String? _errorMessage;
   String? _currentEmbedHtml;
+  bool _isPhotoCarousel = false;
 
   @override
   void initState() {
@@ -69,6 +70,12 @@ class _TikTokPreviewWidgetState extends State<TikTokPreviewWidget> {
           final bool isPhotoPost = data['type'] == 'photo' || 
                                    (data['title'] != null && data['title'].toString().contains('photo')) ||
                                    (data['author_name'] != null && data['html'].toString().contains('photo'));
+          
+          if (mounted) {
+            setState(() {
+              _isPhotoCarousel = isPhotoPost;
+            });
+          }
           
           if (isPhotoPost) {
             print('TikTok oEmbed: Detected photo carousel post');
@@ -340,6 +347,11 @@ class _TikTokPreviewWidgetState extends State<TikTokPreviewWidget> {
   }
 
   void _loadDirectEmbed() {
+    if(mounted) {
+      setState(() {
+        _isPhotoCarousel = true;
+      });
+    }
     print('TikTok: Attempting direct embed for URL: ${widget.url}');
     
     // For photo carousels, skip the embed attempt and show our custom message directly
@@ -377,11 +389,6 @@ class _TikTokPreviewWidgetState extends State<TikTokPreviewWidget> {
       width: 100%;
       background: rgba(255, 255, 255, 0.05);
       border-radius: 12px;
-    }
-    .tiktok-logo {
-      width: 80px;
-      height: 80px;
-      margin-bottom: 24px;
     }
     .open-button {
       background: #FE2C55;
@@ -428,13 +435,7 @@ class _TikTokPreviewWidgetState extends State<TikTokPreviewWidget> {
 </head>
 <body>
   <div class="embed-container">
-    <div class="fallback-container">
-      <svg class="tiktok-logo" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <path d="M34.353 13.547c2.849.204 5.524-1.27 7.455-3.13v7.126a14.41 14.41 0 01-7.455-2.002v9.154c0 9.154-9.843 15.487-17.484 9.702-5.072-3.838-6.361-11.627-2.829-16.936 3.532-5.31 10.794-6.748 16.087-3.195v7.57c-.88-.352-1.863-.52-2.84-.477-2.876.127-5.128 2.509-5.026 5.38.102 2.871 2.557 5.136 5.433 5.026 2.876-.11 5.173-2.463 5.173-5.338V4h7.486v9.547z" fill="#FE2C55"/>
-        <path d="M34.353 13.547V4h7.486c-.086 4.023 2.126 7.78 5.725 9.547-1.931 1.86-4.606 3.334-7.455 3.13a10.41 10.41 0 01-5.756-3.13z" fill="#25F4EE"/>
-        <path d="M11.343 28.705c-3.532 5.309-2.243 13.098 2.829 16.936 7.641 5.785 17.484-.548 17.484-9.702v-9.154a14.41 14.41 0 007.455 2.002v-7.126c-3.599-1.767-5.811-5.524-5.725-9.547H26.9v23.314c0 2.875-2.297 5.228-5.173 5.338-2.876.11-5.331-2.155-5.433-5.026-.102-2.871 2.15-5.253 5.026-5.38.977-.043 1.96.125 2.84.477v-7.57c-5.293-3.553-12.555-2.115-16.087 3.195z" fill="#FE2C55"/>
-      </svg>
-      
+    <div class="fallback-container">      
       <div class="icon-container">
         <svg class="photo-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
           <path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/>
@@ -511,7 +512,7 @@ class _TikTokPreviewWidgetState extends State<TikTokPreviewWidget> {
   @override
   Widget build(BuildContext context) {
     // Fixed height for TikTok embed
-    const double height = 700.0;
+    final double height = _isPhotoCarousel ? 350.0 : 700.0;
 
     return Container(
       color: Colors.black,
@@ -548,7 +549,7 @@ class _TikTokPreviewWidgetState extends State<TikTokPreviewWidget> {
                 const SizedBox(width: 48),
                 IconButton(
                   icon: const FaIcon(FontAwesomeIcons.tiktok),
-                  color: const Color(0xFF000000),
+                  color: Colors.black,
                   iconSize: 32,
                   tooltip: 'Open in TikTok',
                   constraints: const BoxConstraints(),
