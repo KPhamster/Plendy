@@ -1,11 +1,14 @@
+import 'dart:io';
+import 'package:cloud_firestore/cloud_firestore.dart'; // Added for FieldValue
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:plendy/screens/auth_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:firebase_storage/firebase_storage.dart';
-import 'dart:io';
-import 'package:cloud_firestore/cloud_firestore.dart'; // Added for FieldValue
 import '../services/auth_service.dart';
 import '../services/user_service.dart';
 import '../models/user_profile.dart'; // Import UserProfile model
+import 'auth_screen.dart';
 
 class EditProfileScreen extends StatefulWidget {
   const EditProfileScreen({super.key});
@@ -250,9 +253,94 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                       }
                     },
                   ),
+                  const SizedBox(height: 32),
+                  TextButton(
+                    onPressed: _confirmDeleteAccount,
+                    child: const Text(
+                      'Delete Account',
+                      style: TextStyle(color: Colors.red, fontSize: 16),
+                    ),
+                  ),
                 ],
               ),
             ),
     );
   }
+
+  // --- ADDED: Show confirmation dialog for account deletion ---
+  void _confirmDeleteAccount() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Delete Account'),
+          content: const Text(
+              'Are you sure you want to delete your account? This action is permanent and cannot be undone. All of your data, including experiences and reviews, will be removed.'),
+          actions: <Widget>[
+            TextButton(
+              child: const Text('Cancel'),
+              onPressed: () {
+                Navigator.of(context).pop();
+              },
+            ),
+            TextButton(
+              child: const Text('Delete', style: TextStyle(color: Colors.red)),
+              onPressed: () {
+                Navigator.of(context).pop(); // Close the dialog
+                _deleteAccount(); // Proceed with deletion
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+  // --- END ADDED ---
+
+  // --- ADDED: Placeholder for account deletion logic ---
+  Future<void> _deleteAccount() async {
+    setState(() => _isLoading = true);
+    try {
+      final user = _authService.currentUser;
+      if (user == null) {
+        throw Exception("No user is currently signed in.");
+      }
+
+      // This will trigger the Cloud Function to delete all associated data
+      await user.delete();
+
+      // After deletion, navigate away from the profile screen, perhaps to the auth screen
+      if (mounted) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (context) => AuthScreen()), // Navigate to your main/auth screen
+          (Route<dynamic> route) => false, // Remove all previous routes
+        );
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Account successfully deleted.')),
+        );
+      }
+    } on FirebaseAuthException catch (e) {
+      // Handle potential re-authentication requirement
+      if (e.code == 'requires-recent-login') {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text(
+                  'This action requires you to have recently signed in. Please sign out and sign back in to continue.')),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error deleting account: ${e.message}')),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('An unexpected error occurred: $e')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+  // --- END ADDED ---
 } 

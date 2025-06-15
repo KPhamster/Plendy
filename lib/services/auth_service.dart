@@ -27,7 +27,7 @@ class AuthService extends ChangeNotifier {
       _currentUser = user;
       if (user != null) {
         // Delay FCM setup slightly to allow UI to settle
-        Timer(const Duration(seconds: 2), () => _setupFcmForUser(user.uid));
+        Timer(const Duration(milliseconds: 500), () => _setupFcmForUser(user.uid));
       } else {
         // Optional: If user logs out, you might want to delete their old token or handle it.
         // For simplicity, we are not deleting tokens on logout here, but it's a consideration.
@@ -37,7 +37,7 @@ class AuthService extends ChangeNotifier {
     // Initial setup if user is already logged in when AuthService is instantiated
     if (_currentUser != null) {
       // Delay FCM setup slightly for initial logged-in state too
-      Timer(const Duration(seconds: 2), () => _setupFcmForUser(_currentUser!.uid));
+      Timer(const Duration(milliseconds: 500), () => _setupFcmForUser(_currentUser!.uid));
     }
   }
 
@@ -197,36 +197,81 @@ class AuthService extends ChangeNotifier {
     if (kIsWeb) return; // FCM setup for web is different, skipping for now
 
     try {
-      // Request permission (iOS and web)
-      NotificationSettings settings = await _firebaseMessaging.requestPermission(
-        alert: true,
-        announcement: false,
-        badge: true,
-        carPlay: false,
-        criticalAlert: false,
-        provisional: false,
-        sound: true,
-      );
+      print('Setting up FCM for user: $userId');
+      
+      // Check current permission status first
+      NotificationSettings currentSettings = await _firebaseMessaging.getNotificationSettings();
+      print('Current FCM permission status: ${currentSettings.authorizationStatus}');
+      
+      // Only request permission if not already granted
+      if (currentSettings.authorizationStatus == AuthorizationStatus.notDetermined) {
+        print('Requesting FCM permission...');
+        
+        // Request permission with timeout to prevent freezing
+        NotificationSettings settings = await _firebaseMessaging.requestPermission(
+          alert: true,
+          announcement: false,
+          badge: true,
+          carPlay: false,
+          criticalAlert: false,
+          provisional: false,
+          sound: true,
+        ).timeout(
+          const Duration(seconds: 10),
+          onTimeout: () {
+            print('FCM permission request timed out');
+            return NotificationSettings(
+              authorizationStatus: AuthorizationStatus.denied,
+              alert: AppleNotificationSetting.disabled,
+              announcement: AppleNotificationSetting.disabled,
+              badge: AppleNotificationSetting.disabled,
+              carPlay: AppleNotificationSetting.disabled,
+              lockScreen: AppleNotificationSetting.disabled,
+              notificationCenter: AppleNotificationSetting.disabled,
+              showPreviews: AppleShowPreviewSetting.never,
+              timeSensitive: AppleNotificationSetting.disabled,
+              criticalAlert: AppleNotificationSetting.disabled,
+              sound: AppleNotificationSetting.disabled,
+            );
+          },
+        );
+        
+        print('FCM permission request completed with status: ${settings.authorizationStatus}');
+        currentSettings = settings;
+      }
 
-      if (settings.authorizationStatus == AuthorizationStatus.authorized) {
+      // Handle the permission result
+      if (currentSettings.authorizationStatus == AuthorizationStatus.authorized) {
         print('User granted FCM permission');
-        String? token = await _firebaseMessaging.getToken();
-        if (token != null) {
-          await _saveTokenToFirestore(userId, token);
-        }
+        await _setupFcmToken(userId);
+      } else if (currentSettings.authorizationStatus == AuthorizationStatus.provisional) {
+        print('User granted provisional FCM permission');
+        await _setupFcmToken(userId);
+      } else {
+        print('User declined or has not accepted FCM permission: ${currentSettings.authorizationStatus}');
+        // Don't set up token if permission denied
+      }
+    } catch (e) {
+      print("Error setting up FCM for user $userId: $e");
+      // Don't rethrow - FCM setup failure shouldn't break the app
+    }
+  }
 
+  Future<void> _setupFcmToken(String userId) async {
+    try {
+      String? token = await _firebaseMessaging.getToken();
+      if (token != null) {
+        await _saveTokenToFirestore(userId, token);
+        
         // Listen for token refresh
         _firebaseMessaging.onTokenRefresh.listen((newToken) {
           _saveTokenToFirestore(userId, newToken);
         });
-      } else if (settings.authorizationStatus == AuthorizationStatus.provisional) {
-        print('User granted provisional FCM permission');
-         // Handle provisional state if needed
       } else {
-        print('User declined or has not accepted FCM permission');
+        print('Failed to get FCM token');
       }
     } catch (e) {
-      print("Error setting up FCM for user $userId: $e");
+      print("Error setting up FCM token for user $userId: $e");
     }
   }
 
