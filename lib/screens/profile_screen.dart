@@ -6,6 +6,8 @@ import '../widgets/notification_dot.dart';
 import 'edit_profile_screen.dart';
 import 'package:provider/provider.dart';
 import 'my_people_screen.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'browser_signin_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -125,18 +127,34 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   const SizedBox(height: 16),
                   Consumer<NotificationStateService>(
                     builder: (context, notificationService, child) {
-                      return ListTile(
-                        leading: IconNotificationDot(
-                          icon: const Icon(Icons.person_add),
-                          showDot: notificationService.hasAnyUnseen,
-                        ),
-                        title: const Text('My People'),
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(builder: (context) => const MyPeopleScreen()),
-                          );
-                        },
+                      return Column(
+                        children: [
+                          ListTile(
+                            leading: IconNotificationDot(
+                              icon: const Icon(Icons.person_add),
+                              showDot: notificationService.hasAnyUnseen,
+                            ),
+                            title: const Text('My People'),
+                            onTap: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(builder: (context) => const MyPeopleScreen()),
+                              );
+                            },
+                          ),
+                          ListTile(
+                            leading: const Icon(FontAwesomeIcons.instagram),
+                            title: const Text('Sign in with Instagram'),
+                            onTap: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => const BrowserSignInScreen(),
+                                ),
+                              );
+                            },
+                          ),
+                        ],
                       );
                     },
                   ),
