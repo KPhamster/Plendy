@@ -1210,7 +1210,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                         padding: const EdgeInsets.only(bottom: 8.0),
                         child: Wrap(
                           spacing: 6.0,
-                          runSpacing: 0.0,
+                          runSpacing: 6.0,
                           children: _cardData.selectedOtherCategoryIds.map((categoryId) {
                             final category = _currentUserCategories.firstWhereOrNull((cat) => cat.id == categoryId);
                             if (category == null) return const SizedBox.shrink();
@@ -1225,8 +1225,11 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                               },
                               materialTapTargetSize:
                                   MaterialTapTargetSize.shrinkWrap,
-                              padding: const EdgeInsets.symmetric(horizontal: 6),
+                              padding: const EdgeInsets.symmetric(horizontal: 0),
                               visualDensity: VisualDensity.compact,
+                              labelPadding: const EdgeInsets.symmetric(horizontal: 4.0),
+                              deleteIconColor: Colors.grey[600],
+                              deleteButtonTooltipMessage: 'Remove category',
                             );
                           }).toList(),
                         ),
