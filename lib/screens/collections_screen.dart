@@ -17,6 +17,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart'; // ADDED for ic
 // ADDED: Import Instagram Preview Widget (adjust alias if needed)
 import 'receive_share/widgets/instagram_preview_widget.dart'
     as instagram_widget;
+import 'receive_share/widgets/tiktok_preview_widget.dart';
 import '../models/shared_media_item.dart'; // ADDED Import
 import 'package:collection/collection.dart'; // ADDED: Import for groupBy
 import 'map_screen.dart'; // ADDED: Import for MapScreen
@@ -1817,15 +1818,21 @@ class _CollectionsScreenState extends State<CollectionsScreen>
           final isExpanded = _contentExpansionStates[mediaPath] ?? false;
           final bool isInstagramUrl =
               mediaPath.toLowerCase().contains('instagram.com');
+          final bool isTikTokUrl = mediaPath.toLowerCase().contains('tiktok.com') ||
+              mediaPath.toLowerCase().contains('vm.tiktok.com');
           bool isNetworkUrl =
               mediaPath.startsWith('http') || mediaPath.startsWith('https');
 
           Widget mediaWidget;
-          if (isInstagramUrl) {
+          if (isTikTokUrl) {
+            mediaWidget = TikTokPreviewWidget(
+              url: mediaPath,
+              launchUrlCallback: _launchUrl,
+            );
+          } else if (isInstagramUrl) {
             mediaWidget = instagram_widget.InstagramWebView(
               url: mediaPath,
-              // MODIFIED: Restored original height logic for _buildContentTabBody
-              height: isExpanded ? 1200 : 840, 
+              height: 640.0, // Height for InstagramWebView
               launchUrlCallback: _launchUrl,
               onWebViewCreated: (_) {},
               onPageFinished: (_) {},
@@ -2736,10 +2743,18 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     final mediaItem = group.mediaItem;
     final mediaPath = mediaItem.path;
     final isInstagramUrl = mediaPath.toLowerCase().contains('instagram.com');
-    final bool isNetworkUrl = mediaPath.startsWith('http') || mediaPath.startsWith('https');
+    final isTikTokUrl = mediaPath.toLowerCase().contains('tiktok.com') ||
+        mediaPath.toLowerCase().contains('vm.tiktok.com');
+    final bool isNetworkUrl =
+        mediaPath.startsWith('http') || mediaPath.startsWith('https');
 
     Widget mediaDisplayWidget;
-    if (isInstagramUrl) {
+    if (isTikTokUrl) {
+      mediaDisplayWidget = TikTokPreviewWidget(
+        url: mediaPath,
+        launchUrlCallback: _launchUrl,
+      );
+    } else if (isInstagramUrl) {
       mediaDisplayWidget = instagram_widget.InstagramWebView(
         url: mediaPath,
         height: 640.0, // Height for InstagramWebView
