@@ -352,7 +352,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
   }
 
   // UPDATED: Method to handle adding a new category
-  Future<void> _handleAddCategory() async {
+  Future<void> _handleAddCategory({bool selectAfterAdding = true}) async {
     FocusScope.of(context).unfocus();
     await Future.microtask(() {});
     print("DEBUG: Attempting to show AddCategoryModal...");
@@ -366,9 +366,21 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
     );
     if (newCategory != null && mounted) {
       print("New category added: ${newCategory.name} (${newCategory.icon})");
-      // Notify parent to refresh list and pass new name to potentially select it
-      widget.onUpdate(
-          refreshCategories: true, newCategoryName: newCategory.name);
+      
+      // Always just refresh the list without passing newCategoryName
+      // This prevents the parent from trying to select the category
+      widget.onUpdate(refreshCategories: true);
+      
+      // Handle selection locally within the form component
+      if (selectAfterAdding) {
+        // Wait a bit for the refresh to complete, then select the new category
+        await Future.delayed(const Duration(milliseconds: 100));
+        if (mounted) {
+          setState(() {
+            widget.cardData.selectedCategoryId = newCategory.id;
+          });
+        }
+      }
     }
   }
 
@@ -666,7 +678,6 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                         ),
                         Expanded(
                           child: ListView.builder(
-                            shrinkWrap: true,
                             itemCount: categoriesToShow.length,
                             itemBuilder: (context, index) {
                               final category = categoriesToShow[index];
@@ -779,21 +790,32 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
     FocusScope.of(context).unfocus();
     await Future.microtask(() {});
 
-    final List<String>? result = await showDialog<List<String>>(
+    // This is the key change. We are now calling a modified _handleAddCategory that
+    // does not automatically select the new category.
+    final result = await showDialog<dynamic>(
       context: context,
       barrierDismissible: false, // User must press button
       builder: (BuildContext dialogContext) {
         return _OtherCategoriesSelectionDialog(
-          allCategories: widget.userCategoriesNotifier.value,
+          userCategoriesNotifier: widget.userCategoriesNotifier,
           initiallySelectedIds: widget.cardData.selectedOtherCategoryIds,
           primaryCategoryId: widget.cardData.selectedCategoryId,
+          onEditCategories: _handleEditCategories,
+          onAddCategory: () async {
+            await _handleAddCategory(selectAfterAdding: false);
+            // After adding the category, reopen this dialog
+            if (mounted) {
+              _showOtherCategoriesSelectionDialog();
+            }
+          },
         );
       },
     );
 
-    if (result != null) {
-      // No need for setState since parent rebuild is triggered by onUpdate
-      widget.cardData.selectedOtherCategoryIds = result;
+    if (result is List<String>) {
+      setState(() {
+        widget.cardData.selectedOtherCategoryIds = result;
+      });
       widget.onUpdate(refreshCategories: false);
     }
   }
@@ -1049,7 +1071,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                       ),
                       SizedBox(height: 16),
 
-                      // --- REPLACED Dropdown with a Button wrapped in ValueListenableBuilder ---
+                      // --- REPLACEMENT Dropdown with a Button wrapped in ValueListenableBuilder ---
                       Text('Primary Category',
                           style: Theme.of(context)
                               .textTheme
@@ -1221,7 +1243,6 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
 
                             return Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisSize: MainAxisSize.min,
                               children: [
                                 if (selectedCategories.isEmpty)
                                   Padding(
@@ -1526,14 +1547,18 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
 
 // --- ADDED: Dialog for selecting 'Other' categories ---
 class _OtherCategoriesSelectionDialog extends StatefulWidget {
-  final List<UserCategory> allCategories;
+  final ValueNotifier<List<UserCategory>> userCategoriesNotifier;
   final List<String> initiallySelectedIds;
   final String? primaryCategoryId; // To disable primary category
+  final Future<bool?> Function() onEditCategories;
+  final Future<void> Function() onAddCategory;
 
   const _OtherCategoriesSelectionDialog({
-    required this.allCategories,
+    required this.userCategoriesNotifier,
     required this.initiallySelectedIds,
     this.primaryCategoryId,
+    required this.onEditCategories,
+    required this.onAddCategory,
   });
 
   @override
@@ -1553,40 +1578,94 @@ class _OtherCategoriesSelectionDialogState
 
   @override
   Widget build(BuildContext context) {
-    // Filter out the primary category from the list of choices
-    final availableCategories = widget.allCategories
-        .where((cat) => cat.id != widget.primaryCategoryId)
-        .toList();
-
-    // Sort categories alphabetically by name
-    availableCategories.sort((a, b) => a.name.compareTo(b.name));
-
     return AlertDialog(
       title: const Text('Select Other Categories'),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 0, vertical: 20),
+      contentPadding: const EdgeInsets.fromLTRB(0, 20, 0, 0),
       content: SizedBox(
         width: double.maxFinite,
-        child: ListView.builder(
-          shrinkWrap: true,
-          itemCount: availableCategories.length,
-          itemBuilder: (context, index) {
-            final category = availableCategories[index];
-            final bool isSelected = _selectedIds.contains(category.id);
-            return CheckboxListTile(
-              title: Text(category.name),
-              secondary:
-                  Text(category.icon, style: const TextStyle(fontSize: 20)),
-              value: isSelected,
-              onChanged: (bool? value) {
-                setState(() {
-                  if (value == true) {
-                    _selectedIds.add(category.id);
-                  } else {
-                    _selectedIds.remove(category.id);
-                  }
-                });
-              },
-              controlAffinity: ListTileControlAffinity.leading,
+        height: MediaQuery.of(context).size.height * 0.6,
+        child: ValueListenableBuilder<List<UserCategory>>(
+          valueListenable: widget.userCategoriesNotifier,
+          builder: (context, allCategories, child) {
+            // Use the same ordering logic as the primary category dialog
+            final uniqueCategoriesByName = <String, UserCategory>{};
+            for (var category in allCategories) {
+              uniqueCategoriesByName[category.name] = category;
+            }
+            final uniqueCategoryList = uniqueCategoriesByName.values.toList();
+            
+            // Filter out the primary category from the deduplicated list
+            final availableCategories = uniqueCategoryList
+                .where((cat) => cat.id != widget.primaryCategoryId)
+                .toList();
+
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Expanded(
+                  child: ListView.builder(
+                    itemCount: availableCategories.length,
+                    itemBuilder: (context, index) {
+                      final category = availableCategories[index];
+                      final bool isSelected = _selectedIds.contains(category.id);
+                      return CheckboxListTile(
+                        title: Text(category.name),
+                        secondary: Text(category.icon, 
+                            style: const TextStyle(fontSize: 20)),
+                        value: isSelected,
+                        onChanged: (bool? value) {
+                          setState(() {
+                            if (value == true) {
+                              _selectedIds.add(category.id);
+                            } else {
+                              _selectedIds.remove(category.id);
+                            }
+                          });
+                        },
+                        controlAffinity: ListTileControlAffinity.leading,
+                      );
+                    },
+                  ),
+                ),
+                const Divider(height: 1),
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 8.0, vertical: 8.0),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      TextButton.icon(
+                        icon: Icon(Icons.add,
+                            size: 20, color: Colors.blue[700]),
+                        label: Text('Add New Category',
+                            style: TextStyle(color: Colors.blue[700])),
+                        onPressed: () async {
+                          Navigator.of(context).pop();
+                          await widget.onAddCategory();
+                        },
+                        style: TextButton.styleFrom(
+                            alignment: Alignment.centerLeft,
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 12)),
+                      ),
+                      TextButton.icon(
+                        icon: Icon(Icons.edit,
+                            size: 20, color: Colors.orange[700]),
+                        label: Text('Edit Categories',
+                            style: TextStyle(color: Colors.orange[700])),
+                        onPressed: () async {
+                          await widget.onEditCategories();
+                        },
+                        style: TextButton.styleFrom(
+                            alignment: Alignment.centerLeft,
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 12)),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             );
           },
         ),
@@ -1595,7 +1674,7 @@ class _OtherCategoriesSelectionDialogState
         TextButton(
           child: const Text('Cancel'),
           onPressed: () {
-            Navigator.of(context).pop(); // Pop without a value
+            Navigator.of(context).pop();
           },
         ),
         TextButton(
