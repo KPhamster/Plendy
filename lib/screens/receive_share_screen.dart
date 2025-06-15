@@ -34,6 +34,7 @@ import 'receive_share/widgets/experience_card_form.dart';
 import '../widgets/select_saved_experience_modal_content.dart'; // Attempting relative import again
 import 'receive_share/widgets/instagram_preview_widget.dart'
     as instagram_widget;
+import 'receive_share/widgets/tiktok_preview_widget.dart';
 import 'main_screen.dart';
 import '../models/public_experience.dart';
 import '../services/auth_service.dart';
@@ -2535,6 +2536,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     if (_showUpArrowForFab) { // Scroll Up
       print("FAB_DEBUG: Trying to scroll UP."); // DEBUG
+      
+      // Check for expanded Instagram preview
       if (_isInstagramPreviewExpanded && _currentVisibleInstagramUrl != null && _instagramPreviewKeys.containsKey(_currentVisibleInstagramUrl)) {
         final instagramKey = _instagramPreviewKeys[_currentVisibleInstagramUrl]!;
         final instagramContext = instagramKey.currentContext;
@@ -2732,16 +2735,20 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                               final file = _currentSharedFiles[index];
                                               
                                               bool isInstagram = false;
+                                              bool isTikTok = false;
                                               if (file.type == SharedMediaType.text ||
                                                   file.type == SharedMediaType.url) {
                                                 String? url = _extractFirstUrl(file.path);
-                                                if (url != null &&
-                                                    url.contains('instagram.com')) {
-                                                  isInstagram = true;
+                                                if (url != null) {
+                                                  if (url.contains('instagram.com')) {
+                                                    isInstagram = true;
+                                                  } else if (url.contains('tiktok.com') || url.contains('vm.tiktok.com')) {
+                                                    isTikTok = true;
+                                                  }
                                                 }
                                               }
                                               final double horizontalPadding =
-                                                  isInstagram ? 0.0 : 16.0;
+                                                  (isInstagram || isTikTok) ? 0.0 : 16.0;
                                               final double verticalPadding =
                                                   8.0; 
                                               
@@ -2753,16 +2760,16 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                                 ),
                                                 child: Card(
                                                   elevation: 2.0,
-                                                  margin: isInstagram
+                                                  margin: (isInstagram || isTikTok)
                                                       ? EdgeInsets.zero
                                                       : const EdgeInsets.only(
                                                           bottom:
                                                               0), 
                                                   shape: RoundedRectangleBorder(
                                                     borderRadius: BorderRadius.circular(
-                                                        isInstagram ? 0 : 8),
+                                                        (isInstagram || isTikTok) ? 0 : 8),
                                                   ),
-                                                  clipBehavior: isInstagram
+                                                  clipBehavior: (isInstagram || isTikTok)
                                                       ? Clip.antiAlias
                                                       : Clip.none,
                                                   child: Column(
@@ -3014,6 +3021,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         url: url,
         launchUrlCallback: _launchUrl,
         onExpansionChanged: (isExpanded, instaUrl) => _onInstagramExpansionChanged(isExpanded, instaUrl), // CORRECTED: Match signature
+      );
+    }
+
+    if (url.contains('tiktok.com') || url.contains('vm.tiktok.com')) {
+      return TikTokPreviewWidget(
+        url: url,
+        launchUrlCallback: _launchUrl,
       );
     }
 
