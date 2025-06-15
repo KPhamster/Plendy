@@ -17,6 +17,7 @@ import '../services/experience_service.dart'; // For fetching reviews/comments
 // RE-ADDED: Import Instagram Preview Widget
 import 'receive_share/widgets/instagram_preview_widget.dart'
     as instagram_widget;
+import 'receive_share/widgets/tiktok_preview_widget.dart';
 // REMOVED: Dio import (no longer needed for thumbnail fetching)
 // import 'package:dio/dio.dart';
 // REMOVED: Dotenv import (no longer needed for credentials)
@@ -24,8 +25,6 @@ import 'receive_share/widgets/instagram_preview_widget.dart'
 // ADDED: Import the new fullscreen screen
 import 'media_fullscreen_screen.dart';
 // UPDATED: Import the renamed widget
-import 'receive_share/widgets/instagram_preview_widget.dart'
-    as instagram_widget;
 // ADDED: Import for FontAwesomeIcons
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 // ADDED: Import AuthService (adjust path if necessary)
@@ -723,11 +722,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     }
 
     // Calculate tab counts using fetched media items
-    final instagramMediaItems = _mediaItems
-        .where((item) => item.path.toLowerCase().contains('instagram.com'))
-        .toList();
     final mediaCount =
-        _isLoadingMedia ? '...' : instagramMediaItems.length.toString();
+        _isLoadingMedia ? '...' : _mediaItems.length.toString();
     final reviewCount = _isLoadingReviews ? '...' : _reviews.length.toString();
     final commentCount = _isLoadingComments ? '...' : _commentCount.toString();
 
@@ -1665,16 +1661,11 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   Widget _buildMediaTab(
       BuildContext context, List<SharedMediaItem> mediaItems) {
     // Use the passed mediaItems list directly
-    final instagramItems = mediaItems
-        .where((item) => item.path.toLowerCase().contains('instagram.com'))
-        .toList();
-
-    // MODIFIED: Check the item list
     if (_isLoadingMedia) {
       return const Center(child: CircularProgressIndicator());
-    } else if (instagramItems.isEmpty) {
+    } else if (mediaItems.isEmpty) {
       return const Center(
-          child: Text('No Instagram posts shared for this experience.'));
+          child: Text('No media items shared for this experience.'));
     }
 
     // Wrap content in a Column
@@ -1698,7 +1689,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                   context,
                   MaterialPageRoute(
                     builder: (context) => MediaFullscreenScreen(
-                      instagramUrls: instagramItems,
+                      mediaItems: mediaItems,
                       launchUrlCallback: _launchUrl,
                       experience: _currentExperience,
                       experienceService: _experienceService,
@@ -1725,24 +1716,48 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                 right: 16.0,
                 top: 8.0,
                 bottom: 16.0), // Adjust padding
-            itemCount: instagramItems.length,
+            itemCount: mediaItems.length,
             itemBuilder: (context, index) {
               // MODIFIED: Get SharedMediaItem and its path
-              final item = instagramItems[index];
+              final item = mediaItems[index];
               final url = item.path;
+
+              Widget mediaWidget;
+              final isTikTokUrl = url.toLowerCase().contains('tiktok.com') || url.toLowerCase().contains('vm.tiktok.com');
+              final isInstagramUrl = url.toLowerCase().contains('instagram.com');
+
+              if (isTikTokUrl) {
+                mediaWidget = TikTokPreviewWidget(
+                  url: url,
+                  launchUrlCallback: _launchUrl,
+                );
+              } else if (isInstagramUrl) {
+                mediaWidget = instagram_widget.InstagramWebView(
+                  url: url,
+                  // --- UPDATED: Use expansion state for height ---
+                  height: (_mediaTabExpansionStates[url] ?? false)
+                      ? 1200.0 // Expanded height (adjust if needed)
+                      : 840.0, // Collapsed height
+                  // --- END UPDATE ---
+                  launchUrlCallback: _launchUrl,
+                  onWebViewCreated: (controller) {},
+                  onPageFinished: (url) {},
+                );
+              } else {
+                mediaWidget = Image.network(
+                  url,
+                  fit: BoxFit.cover,
+                  errorBuilder: (context, error, stackTrace) =>
+                      Container(height: 200, color: Colors.grey[200], child: Center(child: Icon(Icons.broken_image)))
+                );
+              }
+
               // Keep the Column for layout *within* the list item
               return Padding(
                 padding: const EdgeInsets.only(bottom: 24.0),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    // REMOVED Fullscreen Button from here
-                    /*
-                     Align(
-                       alignment: Alignment.centerRight,
-                        child: TextButton.icon(...)
-                     ),
-                    */
                     Padding(
                       padding: const EdgeInsets.only(bottom: 8.0, top: 4.0),
                       child: CircleAvatar(
@@ -1763,17 +1778,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                       margin: EdgeInsets.zero,
                       elevation: 2.0,
                       clipBehavior: Clip.antiAlias,
-                      child: instagram_widget.InstagramWebView(
-                        url: url,
-                        // --- UPDATED: Use expansion state for height ---
-                        height: (_mediaTabExpansionStates[url] ?? false)
-                            ? 1200.0 // Expanded height (adjust if needed)
-                            : 840.0, // Collapsed height
-                        // --- END UPDATE ---
-                        launchUrlCallback: _launchUrl,
-                        onWebViewCreated: (controller) {},
-                        onPageFinished: (url) {},
-                      ),
+                      child: mediaWidget,
                     ),
                     // --- ADDED: 'Also linked to' section --- START ---
                     Builder(

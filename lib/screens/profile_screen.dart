@@ -144,7 +144,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           ),
                           ListTile(
                             leading: const Icon(FontAwesomeIcons.instagram),
-                            title: const Text('Sign in with Instagram'),
+                            title: const Text('Sign in for improved experience'),
                             onTap: () {
                               Navigator.push(
                                 context,
