@@ -327,6 +327,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   // Add a map to cache futures for Yelp preview data
   final Map<String, Future<Map<String, dynamic>?>> _yelpPreviewFutures = {};
 
+  // Add a map to track TikTok photo carousel status
+  final Map<String, bool> _tiktokPhotoStatus = {};
+
   // Method to show snackbar only if not already showing
   void _showSnackBar(BuildContext context, String message) {
     // Hide any existing snackbar first
@@ -1771,12 +1774,21 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           } else {
             print(
                 "SAVE_DEBUG: Creating new SharedMediaItem for path: $path, owner: $currentUserId");
+            
+            // Check if this is a TikTok URL and get its photo status
+            bool? isTiktokPhoto;
+            if (path.contains('tiktok.com') || path.contains('vm.tiktok.com')) {
+              isTiktokPhoto = _tiktokPhotoStatus[path];
+              print("SAVE_DEBUG: TikTok URL detected. Is photo carousel: $isTiktokPhoto");
+            }
+            
             SharedMediaItem newItem = SharedMediaItem(
               id: '',
               path: path,
               createdAt: now,
               ownerUserId: currentUserId,
               experienceIds: [],
+              isTiktokPhoto: isTiktokPhoto,
             );
             String newItemId =
                 await _experienceService.createSharedMediaItem(newItem);
@@ -3028,6 +3040,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       return TikTokPreviewWidget(
         url: url,
         launchUrlCallback: _launchUrl,
+        onPhotoDetected: (detectedUrl, isPhoto) {
+          // Track whether this TikTok URL is a photo carousel
+          _tiktokPhotoStatus[detectedUrl] = isPhoto;
+          print('TikTok photo detection: URL=$detectedUrl, isPhoto=$isPhoto');
+        },
       );
     }
 
