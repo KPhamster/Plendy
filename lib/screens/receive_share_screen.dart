@@ -234,6 +234,10 @@ class ExperienceCardData {
   String? selectedColorCategoryId;
   // --- END ADDED ---
 
+  // --- ADDED for Other Categories ---
+  List<String> selectedOtherCategoryIds = [];
+  // --- END ADDED ---
+
   // Constructor can set initial values if needed
   // Set default category name
   ExperienceCardData() {
