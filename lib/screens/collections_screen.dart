@@ -397,8 +397,11 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   }
 
   int _getExperienceCountForCategory(UserCategory category) {
-    // MODIFIED: Filter by categoryId
-    return _experiences.where((exp) => exp.categoryId == category.id).length;
+    // MODIFIED: Include experiences with this category as primary OR in otherCategories
+    return _experiences.where((exp) => 
+      exp.categoryId == category.id || 
+      exp.otherCategories.contains(category.id)
+    ).length;
   }
 
   // ADDED: Widget builder for a Category Grid Item (for web)
@@ -1344,10 +1347,42 @@ class _CollectionsScreenState extends State<CollectionsScreen>
               fullAddress, // Use full address
               style: Theme.of(context).textTheme.bodySmall,
             ),
-          Text(
-            '$categoryIcon $categoryName', // Use looked-up category name
-            style: Theme.of(context).textTheme.bodySmall,
+          // --- MODIFIED: Primary category and other categories in same row ---
+          Row(
+            children: [
+              // Primary category on the left
+              Expanded(
+                child: Text(
+                  '$categoryIcon $categoryName', // Use looked-up category name
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
+              // Other categories icons on the right
+              if (experience.otherCategories.isNotEmpty)
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: experience.otherCategories
+                      .map((categoryId) {
+                        // Find the category object for this ID
+                        final otherCategory = _categories.firstWhereOrNull(
+                          (cat) => cat.id == categoryId,
+                        );
+                        if (otherCategory != null) {
+                          return Padding(
+                            padding: const EdgeInsets.only(left: 4.0),
+                            child: Text(
+                              otherCategory.icon,
+                              style: const TextStyle(fontSize: 14),
+                            ),
+                          );
+                        }
+                        return const SizedBox.shrink(); // Skip if category not found
+                      })
+                      .toList(),
+                ),
+            ],
           ),
+          // --- END MODIFIED ---
           // ADDED: Display notes if available
           if (experience.additionalNotes != null &&
               experience.additionalNotes!.isNotEmpty)
@@ -1667,7 +1702,10 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   // ADDED: Widget to display experiences for a specific category
   Widget _buildCategoryExperiencesList(UserCategory category) {
     final categoryExperiences = _experiences
-        .where((exp) => exp.categoryId == category.id) // MODIFIED: Filter by categoryId
+        .where((exp) => 
+          exp.categoryId == category.id || 
+          exp.otherCategories.contains(category.id)
+        ) // MODIFIED: Include experiences with this category as primary OR in otherCategories
         .toList(); // Filter experiences
 
     // Apply the current experience sort order to this sublist
