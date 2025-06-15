@@ -1,0 +1,79 @@
+name: Version Bump
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_type:
+        description: 'Version type to bump'
+        required: true
+        default: 'build'
+        type: choice
+        options:
+          - build
+          - patch
+          - minor
+          - major
+  push:
+    branches:
+      - main
+      - master
+    paths-ignore:
+      - 'README.md'
+      - 'docs/**'
+      - '.github/**'
+
+jobs:
+  bump-version:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        fetch-depth: 0
+
+    - name: Set up Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: '3.24.0'
+        channel: 'stable'
+
+    - name: Set up Dart
+      uses: dart-lang/setup-dart@v1
+
+    - name: Determine version type
+      id: version_type
+      run: |
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          echo "type=${{ github.event.inputs.version_type }}" >> $GITHUB_OUTPUT
+        else
+          # Auto-bump build number on push to main/master
+          echo "type=build" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Bump version
+      run: |
+        dart run scripts/bump_version.dart ${{ steps.version_type.outputs.type }}
+
+    - name: Get new version
+      id: get_version
+      run: |
+        VERSION=$(grep '^version:' pubspec.yaml | sed 's/version: //')
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+    - name: Commit and push changes
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add pubspec.yaml
+        git commit -m "Bump version to ${{ steps.get_version.outputs.version }}" || exit 0
+        git push
+
+    - name: Create tag
+      if: github.event.inputs.version_type != 'build' && github.event.inputs.version_type != ''
+      run: |
+        VERSION=${{ steps.get_version.outputs.version }}
+        VERSION_NAME=$(echo $VERSION | cut -d'+' -f1)
+        git tag "v$VERSION_NAME"
+        git push origin "v$VERSION_NAME" 
