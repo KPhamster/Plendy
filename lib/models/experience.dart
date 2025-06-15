@@ -163,6 +163,7 @@ class Experience {
 
   // --- ADDED ---
   final String? colorCategoryId; // ID linking to the selected ColorCategory
+  final List<String> otherCategories; // List of other category IDs
   // --- END ADDED ---
 
   Experience({
@@ -195,6 +196,7 @@ class Experience {
     this.additionalNotes,
     required this.editorUserIds,
     this.colorCategoryId,
+    this.otherCategories = const [], // Default to empty list
   });
 
   /// Creates an Experience from a Firestore document
@@ -231,6 +233,7 @@ class Experience {
       additionalNotes: data['additionalNotes'],
       editorUserIds: _parseStringList(data['editorUserIds']),
       colorCategoryId: data['colorCategoryId'] as String?,
+      otherCategories: _parseStringList(data['otherCategories']),
     );
   }
 
@@ -265,6 +268,7 @@ class Experience {
       'sharedMediaType': sharedMediaType,
       'additionalNotes': additionalNotes,
       'colorCategoryId': colorCategoryId,
+      'otherCategories': otherCategories,
     };
   }
 
@@ -298,6 +302,7 @@ class Experience {
     String? additionalNotes,
     List<String>? editorUserIds,
     String? colorCategoryId,
+    List<String>? otherCategories,
   }) {
     return Experience(
       id: id,
@@ -329,6 +334,7 @@ class Experience {
       additionalNotes: additionalNotes,
       editorUserIds: editorUserIds ?? this.editorUserIds,
       colorCategoryId: colorCategoryId ?? this.colorCategoryId,
+      otherCategories: otherCategories ?? this.otherCategories,
     );
   }
 

@@ -1854,6 +1854,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                 updatedAt: now,
                 editorUserIds: [currentUserId],
                 colorCategoryId: colorCategoryIdToSave,
+                otherCategories: card.selectedOtherCategoryIds,
               );
               targetExperienceId =
                   await _experienceService.createExperience(newExperience);
@@ -1891,7 +1892,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                   editorUserIds: currentExperienceData.editorUserIds.contains(currentUserId)
                       ? currentExperienceData.editorUserIds
                       : [...currentExperienceData.editorUserIds, currentUserId],
-                  colorCategoryId: colorCategoryIdToSave);
+                  colorCategoryId: colorCategoryIdToSave,
+                  otherCategories: card.selectedOtherCategoryIds);
               await _experienceService.updateExperience(updatedExpData);
               currentExperienceData = updatedExpData;
               if (!mounted) return;
@@ -1942,6 +1944,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                   colorCategoryId: !isNewExperience
                       ? colorCategoryIdToSave
                       : currentExperienceData.colorCategoryId,
+                  otherCategories: !isNewExperience
+                      ? card.selectedOtherCategoryIds
+                      : currentExperienceData.otherCategories,
                   sharedMediaItemIds: finalMediaIds,
                   updatedAt: now,
                 );
