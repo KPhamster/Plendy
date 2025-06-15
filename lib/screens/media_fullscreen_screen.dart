@@ -8,16 +8,17 @@ import '../models/shared_media_item.dart';
 import '../models/user_category.dart';
 import '../models/color_category.dart';
 import 'experience_page_screen.dart';
+import 'package:collection/collection.dart';
 
 class MediaFullscreenScreen extends StatefulWidget {
-  final List<SharedMediaItem> instagramUrls;
+  final List<SharedMediaItem> mediaItems;
   final Future<void> Function(String) launchUrlCallback;
   final Experience experience;
   final ExperienceService experienceService;
 
   const MediaFullscreenScreen({
     super.key,
-    required this.instagramUrls,
+    required this.mediaItems,
     required this.launchUrlCallback,
     required this.experience,
     required this.experienceService,
@@ -28,6 +29,8 @@ class MediaFullscreenScreen extends StatefulWidget {
 }
 
 class _MediaFullscreenScreenState extends State<MediaFullscreenScreen> {
+  late PageController _pageController;
+  int _currentIndex = 0;
   // State map for expansion
   final Map<String, bool> _expansionStates = {};
   // ADDED: Local mutable list for URLs and change tracking flag
@@ -45,23 +48,29 @@ class _MediaFullscreenScreenState extends State<MediaFullscreenScreen> {
   @override
   void initState() {
     super.initState();
-    // Initialize local list from widget property
-    _localInstagramItems = List<SharedMediaItem>.from(widget.instagramUrls);
-    // ADDED: Sort the local list by createdAt descending (most recent first)
+    _pageController = PageController();
+    _localInstagramItems = List<SharedMediaItem>.from(widget.mediaItems);
     _localInstagramItems.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-    // ADDED: Load other experience data after initial build
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadOtherExperienceData();
-      // --- ADDED: Load Color Categories --- START ---
       _loadColorCategories();
-      // --- ADDED: Load Color Categories --- END ---
     });
   }
 
-  // ADDED: Method to load data about other experiences linked to the media items
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
   Future<void> _loadOtherExperienceData() async {
-    print("[_loadOtherExperienceData] Starting..."); // DEBUG
-    if (!mounted) return;
+    print("[Fullscreen - _loadOtherExperienceData] Starting...");
+    if (!mounted || widget.mediaItems.isEmpty) {
+      print("[Fullscreen - _loadOtherExperienceData] Not mounted or no media items. Aborting.");
+      setState(() => _isLoadingOtherExperiences = false);
+      return;
+    }
+
     setState(() {
       _isLoadingOtherExperiences = true;
     });
@@ -70,136 +79,70 @@ class _MediaFullscreenScreenState extends State<MediaFullscreenScreen> {
     final Set<String> otherExperienceIds = {};
     final Set<String?> requiredCategoryIds = {};
 
-    print(
-        "[_loadOtherExperienceData] Comparing against current Experience ID: ${widget.experience.id}"); // DEBUG
-
-    // 1. Collect all *other* experience IDs
-    for (final item in _localInstagramItems) {
-      print(
-          "[_loadOtherExperienceData] Processing item ${item.id} (Path: ${item.path}) with experienceIds: ${item.experienceIds}"); // DEBUG
-      final otherIds =
-          item.experienceIds.where((id) => id != widget.experience.id).toList();
+    for (final item in widget.mediaItems) {
+      final otherIds = item.experienceIds.where((id) => id != widget.experience.id).toList();
       if (otherIds.isNotEmpty) {
         otherExperienceIds.addAll(otherIds);
       }
     }
 
-    print(
-        "[_loadOtherExperienceData] Found other experience IDs: $otherExperienceIds"); // DEBUG
-
-    // 2. Fetch other experiences if any exist
     Map<String, Experience> fetchedExperiencesById = {};
     if (otherExperienceIds.isNotEmpty) {
       try {
-        // Fetch experiences individually using Future.wait
-        final List<Experience?> experienceFutures = await Future.wait(
-            otherExperienceIds
-                .map((id) => widget.experienceService.getExperience(id))
-                .toList());
-
-        final List<Experience> experiences = experienceFutures
-            .whereType<Experience>()
-            .toList(); // Filter out nulls
-
-        print(
-            "[_loadOtherExperienceData] Fetched ${experiences.length} other experiences."); // DEBUG
-
+        final List<Experience?> experienceFutures = await Future.wait(otherExperienceIds.map((id) => widget.experienceService.getExperience(id)).toList());
+        final List<Experience> experiences = experienceFutures.whereType<Experience>().toList();
         fetchedExperiencesById = {for (var exp in experiences) exp.id: exp};
-        // Collect required category IDs from fetched experiences
         for (final exp in experiences) {
           if (exp.categoryId != null && exp.categoryId!.isNotEmpty) {
             requiredCategoryIds.add(exp.categoryId);
-          } else {
-            requiredCategoryIds.add(null);
           }
         }
       } catch (e) {
         print("Error fetching other experiences: $e");
-        // Handle error appropriately, maybe show a message
       }
     }
 
-    // 3. Fetch required categories if any exist
-    Map<String, UserCategory> fetchedCategoriesById = {};
-
-    // Get non-null category IDs required
-    final Set<String> nonNullRequiredIds = requiredCategoryIds.whereType<String>().toSet(); 
-
-    if (nonNullRequiredIds.isNotEmpty) {
+    Map<String, UserCategory> categoryLookupMap = {};
+    if (requiredCategoryIds.isNotEmpty) {
       try {
-        // Fetch ALL categories once and create a lookup map by ID
-        final allUserCategories =
-            await widget.experienceService.getUserCategories();
-        fetchedCategoriesById = {
-          for (var cat in allUserCategories) cat.id: cat
-        };
-        print(
-            "[_loadOtherExperienceData] Fetched ${fetchedCategoriesById.length} categories and mapped by ID."); // DEBUG
+        final List<UserCategory> categories = await widget.experienceService.getUserCategories();
+        categoryLookupMap = {for (var cat in categories) cat.id: cat};
       } catch (e) {
         print("Error fetching user categories: $e");
-        // Handle error - icons might be missing
       }
     }
 
-    // 4. Build the map for the state
-    for (final item in _localInstagramItems) {
-      final otherIds =
-          item.experienceIds.where((id) => id != widget.experience.id).toList();
+    for (final item in widget.mediaItems) {
+      final otherIds = item.experienceIds.where((id) => id != widget.experience.id).toList();
       if (otherIds.isNotEmpty) {
-        final associatedExps = otherIds
-            .map((id) => fetchedExperiencesById[id])
-            .where((exp) => exp != null)
-            .cast<Experience>()
-            .toList();
-        // Sort them alphabetically for consistent display
-        associatedExps.sort(
-            (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+        final associatedExps = otherIds.map((id) => fetchedExperiencesById[id]).where((exp) => exp != null).cast<Experience>().toList();
+        associatedExps.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
         otherExperiencesMap[item.path] = associatedExps;
       }
     }
 
-    print(
-        "[_loadOtherExperienceData] Built map for UI: ${otherExperiencesMap.keys.length} items have other experiences."); // DEBUG
-
     if (mounted) {
       setState(() {
         _otherAssociatedExperiences = otherExperiencesMap;
-        _fetchedCategories = fetchedCategoriesById;
+        _fetchedCategories = categoryLookupMap;
         _isLoadingOtherExperiences = false;
-        print("[_loadOtherExperienceData] Set state: isLoading=false"); // DEBUG
+        print("[Fullscreen - _loadOtherExperienceData] Set state: isLoading=false");
       });
     }
   }
 
-  // --- ADDED: Method to load color categories --- START ---
   Future<void> _loadColorCategories() async {
-    print("[_loadColorCategories] Starting...");
-    if (!mounted) return;
-    setState(() {
-      _isLoadingColorCategories = true;
-    });
     try {
-      final categories =
-          await widget.experienceService.getUserColorCategories();
-      print(
-          "[_loadColorCategories] Fetched ${categories.length} color categories.");
+      final colors = await widget.experienceService.getUserColorCategories();
       if (mounted) {
         setState(() {
-          _userColorCategories = categories;
-          _isLoadingColorCategories = false;
+          _userColorCategories = colors;
         });
       }
     } catch (e) {
-      print("[_loadColorCategories] Error fetching color categories: $e");
-      if (mounted) {
-        setState(() {
-          _isLoadingColorCategories = false; // Stop loading on error
-        });
-        // Optionally show error message
-      }
+      print("Error loading color categories in fullscreen: $e");
     }
   }
-  // --- ADDED: Method to load color categories --- END ---
 
   Future<void> _confirmAndDelete(String urlToDelete) async {
     final bool? confirm = await showDialog<bool>(
@@ -299,273 +242,184 @@ class _MediaFullscreenScreenState extends State<MediaFullscreenScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // ADDED: Wrap with WillPopScope to return the change status
     return WillPopScope(
       onWillPop: () async {
-        // Pop with the value of _didDataChange
         Navigator.of(context).pop(_didDataChange);
-        // Return false because we handled the pop manually
         return false;
       },
       child: Scaffold(
         appBar: AppBar(
           title: const Text('Content'),
-          // Back button is automatically added, WillPopScope handles its pop result
         ),
-        body: ListView.builder(
-          // Use similar padding as the tab view for consistency
-          padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 16.0),
-          // MODIFIED: Use local item list length
-          itemCount: _localInstagramItems.length,
+        body: PageView.builder(
+          controller: _pageController,
+          itemCount: widget.mediaItems.length,
+          onPageChanged: (index) {
+            setState(() {
+              _currentIndex = index;
+            });
+          },
           itemBuilder: (context, index) {
-            // MODIFIED: Get item and extract url (path)
-            final item = _localInstagramItems[index];
+            final item = widget.mediaItems[index];
             final url = item.path;
-            // ADDED: Get other associated experiences for this URL
-            final List<Experience> otherExperiences =
-                _otherAssociatedExperiences[url] ?? [];
+            final otherExperiences = _otherAssociatedExperiences[url] ?? [];
 
-            // --- DEBUG PRINTS --- START ---
-            print("[itemBuilder index $index] URL: $url");
-            print(
-                "[itemBuilder index $index] _isLoadingOtherExperiences: $_isLoadingOtherExperiences");
-            print(
-                "[itemBuilder index $index] otherExperiences found: ${otherExperiences.length}");
-            final bool shouldShowSection =
-                !_isLoadingOtherExperiences && otherExperiences.isNotEmpty;
-            print(
-                "[itemBuilder index $index] Should show section: $shouldShowSection");
-            // --- DEBUG PRINTS --- END ---
-
-            // Replicate the Column + Number Bubble + Card structure
-            return Padding(
-              // ADDED: Use ValueKey based on the URL for stable identification
-              key: ValueKey(url),
-              // Add padding below each item for vertical spacing
-              padding: const EdgeInsets.only(bottom: 24.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Display the number inside a bubble
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8.0),
+                  child: CircleAvatar(
+                    radius: 14,
+                    backgroundColor:
+                        Theme.of(context).primaryColor.withOpacity(0.8),
+                    child: Text(
+                      '${index + 1}',
+                      style: TextStyle(
+                        fontSize: 14.0,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                ),
+                Card(
+                  margin: EdgeInsets.zero,
+                  elevation: 2.0,
+                  clipBehavior: Clip.antiAlias,
+                  child: instagram_widget.InstagramWebView(
+                    url: url,
+                    height: (_expansionStates[url] ?? false)
+                        ? 1200.0
+                        : 840.0,
+                    launchUrlCallback: widget.launchUrlCallback,
+                    onWebViewCreated: (controller) {},
+                    onPageFinished: (url) {},
+                  ),
+                ),
+                if (!_isLoadingOtherExperiences && otherExperiences.isNotEmpty)
                   Padding(
-                    padding: const EdgeInsets.only(bottom: 8.0),
-                    child: CircleAvatar(
-                      radius: 14,
-                      backgroundColor:
-                          Theme.of(context).primaryColor.withOpacity(0.8),
-                      child: Text(
-                        '${index + 1}', // Number without period
-                        style: TextStyle(
-                          fontSize: 14.0,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                  ),
-                  // The Card containing the preview
-                  Card(
-                    margin: EdgeInsets.zero,
-                    elevation: 2.0,
-                    clipBehavior: Clip.antiAlias,
-                    child: instagram_widget.InstagramWebView(
-                      url: url,
-                      // Calculate height based on state
-                      height: (_expansionStates[url] ?? false)
-                          ? 1200.0
-                          : 840.0, // Use fullscreen height
-                      launchUrlCallback: widget.launchUrlCallback,
-                      // Add required callbacks
-                      onWebViewCreated: (controller) {},
-                      onPageFinished: (url) {},
-                    ),
-                  ),
-                  // --- ADDED: Section for Other Linked Experiences --- START ---
-                  if (shouldShowSection) // Use the calculated boolean
-                    Padding(
-                      padding: const EdgeInsets.only(top: 12.0, bottom: 4.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 6.0),
-                            child: Text(
-                              otherExperiences.length == 1
-                                  ? 'Also linked to:'
-                                  : 'Also linked to (${otherExperiences.length}):',
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .labelLarge
-                                  ?.copyWith(
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.black87,
-                                  ),
-                            ),
-                          ),
-                          // List the other experiences
-                          ...otherExperiences.map((exp) {
-                            // NEW: Lookup category by ID from the refactored _fetchedCategories map
-                            final UserCategory? categoryForDisplay = _fetchedCategories[exp.categoryId];
-                            final String categoryIcon = categoryForDisplay?.icon ?? '❓';
-                            final String categoryName = categoryForDisplay?.name ?? 'Uncategorized';
-
-                            final address = exp.location.address;
-                            final bool hasAddress =
-                                address != null && address.isNotEmpty;
-
-                            return Padding(
-                              padding: const EdgeInsets.only(bottom: 4.0),
-                              child: InkWell(
-                                onTap: () async {
-                                  print(
-                                      'Tapped on other experience ${exp.name} from fullscreen');
-                                  // NEW: Lookup category by ID for navigation
-                                  final UserCategory categoryForNavigation = 
-                                      _fetchedCategories[exp.categoryId] ?? // Use ID for lookup
-                                      UserCategory(
-                                          id: exp.categoryId ?? '', // Fallback with actual ID if present
-                                          name: 'Uncategorized',
-                                          icon: '❓',
-                                          ownerUserId: ''
-                                      );
-
-                                  // Await result and potentially refresh if the main screen needs it (though unlikely from here)
-                                  final result = await Navigator.push<bool>(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (context) =>
-                                          ExperiencePageScreen(
-                                        experience: exp,
-                                        category:
-                                            categoryForNavigation, // Pass the found/fallback category
-                                        // --- ADDED: Pass color categories --- START ---
-                                        userColorCategories:
-                                            _userColorCategories,
-                                        // --- ADDED: Pass color categories --- END ---
-                                      ),
-                                    ),
-                                  );
-                                  // Optionally handle result if needed (e.g., _loadOtherExperienceData() if modification is possible)
-                                  if (result == true && mounted) {
-                                    // Might need a more targeted refresh depending on what ExperiencePageScreen returns
-                                    _loadOtherExperienceData();
-                                  }
-                                },
-                                child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Padding(
-                                      padding: const EdgeInsets.only(
-                                          right: 8.0, top: 2.0),
-                                      child: Text(categoryIcon,
-                                          style: TextStyle(fontSize: 14)),
-                                    ),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            exp.name,
-                                            style: Theme.of(context)
-                                                .textTheme
-                                                .titleSmall
-                                                ?.copyWith(
-                                                    fontWeight:
-                                                        FontWeight.w500),
-                                            overflow: TextOverflow.ellipsis,
-                                            maxLines: 1,
-                                          ),
-                                          if (hasAddress)
-                                            Text(
-                                              address,
-                                              style: Theme.of(context)
-                                                  .textTheme
-                                                  .bodySmall
-                                                  ?.copyWith(
-                                                      color: Colors.black54),
-                                              overflow: TextOverflow.ellipsis,
-                                              maxLines: 1,
-                                            ),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            );
-                          }),
-                        ],
-                      ),
-                    ),
-                  // --- ADDED: Section for Other Linked Experiences --- END ---
-                  // Add spacing before buttons
-                  const SizedBox(height: 8),
-                  // Buttons Row - REFRACTORED to use Stack for centering
-                  SizedBox(
-                    height: 48, // Provide height constraint for Stack alignment
-                    child: Stack(
+                    padding: const EdgeInsets.only(top: 12.0, bottom: 4.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // Instagram Button (Centered)
-                        Align(
-                          alignment: Alignment.center, // Alignment(0.0, 0.0)
-                          child: IconButton(
-                            icon: const Icon(FontAwesomeIcons.instagram),
-                            color: const Color(0xFFE1306C), // Instagram color
-                            iconSize: 32, // Standard size
-                            tooltip: 'Open in Instagram',
-                            constraints: const BoxConstraints(),
-                            padding: EdgeInsets.zero,
-                            onPressed: () => widget.launchUrlCallback(url),
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 6.0),
+                          child: Text(
+                            otherExperiences.length == 1
+                                ? 'Also linked to:'
+                                : 'Also linked to (${otherExperiences.length}):',
+                            style: Theme.of(context)
+                                .textTheme
+                                .labelLarge
+                                ?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.black87,
+                                ),
                           ),
                         ),
-                        // Expand/Collapse Button (Halfway between Center and Right)
-                        Align(
-                          alignment: const Alignment(0.5, 0.0), // Halfway point
-                          child: IconButton(
-                            icon: Icon((_expansionStates[url] ?? false)
-                                ? Icons.fullscreen_exit
-                                : Icons.fullscreen),
-                            iconSize: 24,
-                            color: Colors.blue,
-                            tooltip: (_expansionStates[url] ?? false)
-                                ? 'Collapse'
-                                : 'Expand',
-                            constraints: const BoxConstraints(),
-                            padding: EdgeInsets
-                                .zero, // Remove padding for precise alignment
-                            onPressed: () {
-                              setState(() {
-                                _expansionStates[url] =
-                                    !(_expansionStates[url] ?? false);
-                              });
+                        ...otherExperiences.map((exp) {
+                          final UserCategory? categoryForDisplay = _fetchedCategories[exp.categoryId];
+                          final String categoryIcon = categoryForDisplay?.icon ?? '❓';
+                          final String categoryName = categoryForDisplay?.name ?? 'Uncategorized';
+
+                          return ListTile(
+                            leading: Text(categoryIcon, style: const TextStyle(fontSize: 20)),
+                            title: Text(exp.name),
+                            trailing: const Icon(Icons.chevron_right),
+                            onTap: () async {
+                              print('Tapped on other experience ${exp.name} from fullscreen');
+                              final UserCategory categoryForNavigation = 
+                                  _fetchedCategories[exp.categoryId] ??
+                                  UserCategory(
+                                      id: exp.categoryId ?? '',
+                                      name: 'Uncategorized',
+                                      icon: '❓',
+                                      ownerUserId: ''
+                                  );
+                              final result = await Navigator.push<bool>(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) =>
+                                      ExperiencePageScreen(
+                                    experience: exp,
+                                    category:
+                                        categoryForNavigation,
+                                    userColorCategories:
+                                        _userColorCategories,
+                                  ),
+                                ),
+                              );
+                              if (result == true && mounted) {
+                                _loadOtherExperienceData();
+                              }
                             },
-                          ),
-                        ),
-                        // Delete Button (Right Edge)
-                        Align(
-                          alignment:
-                              Alignment.centerRight, // Alignment(1.0, 0.0)
-                          child: IconButton(
-                            icon: const Icon(Icons.delete_outline),
-                            iconSize: 24,
-                            color: Colors.red[700],
-                            tooltip: 'Delete Media',
-                            constraints: const BoxConstraints(),
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 12), // Keep some padding from edge
-                            onPressed: () => _confirmAndDelete(url),
-                          ),
-                        ),
+                          );
+                        }),
                       ],
                     ),
                   ),
-                ],
-              ),
+                const SizedBox(height: 8),
+                SizedBox(
+                  height: 48,
+                  child: Stack(
+                    children: [
+                      Align(
+                        alignment: Alignment.center,
+                        child: IconButton(
+                          icon: const Icon(FontAwesomeIcons.instagram),
+                          color: const Color(0xFFE1306C),
+                          iconSize: 32,
+                          tooltip: 'Open in Instagram',
+                          constraints: const BoxConstraints(),
+                          padding: EdgeInsets.zero,
+                          onPressed: () => widget.launchUrlCallback(url),
+                        ),
+                      ),
+                      Align(
+                        alignment: const Alignment(0.5, 0.0),
+                        child: IconButton(
+                          icon: Icon((_expansionStates[url] ?? false)
+                              ? Icons.fullscreen_exit
+                              : Icons.fullscreen),
+                          iconSize: 24,
+                          color: Colors.blue,
+                          tooltip: (_expansionStates[url] ?? false)
+                              ? 'Collapse'
+                              : 'Expand',
+                          constraints: const BoxConstraints(),
+                          padding: EdgeInsets
+                              .zero,
+                          onPressed: () {
+                            setState(() {
+                              _expansionStates[url] =
+                                  !(_expansionStates[url] ?? false);
+                            });
+                          },
+                        ),
+                      ),
+                      Align(
+                        alignment:
+                            Alignment.centerRight,
+                        child: IconButton(
+                          icon: const Icon(Icons.delete_outline),
+                          iconSize: 24,
+                          color: Colors.red[700],
+                          tooltip: 'Delete Media',
+                          constraints: const BoxConstraints(),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12),
+                          onPressed: () => _confirmAndDelete(url),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             );
           },
         ),
-      ), // End WillPopScope
+      ),
     );
   }
 }

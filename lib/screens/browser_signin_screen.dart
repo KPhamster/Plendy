@@ -81,7 +81,7 @@ class _BrowserSignInScreenState extends State<BrowserSignInScreen> {
           const Padding(
             padding: EdgeInsets.all(16.0),
             child: Text(
-              'Plendy uses a web browser view to display content from Instagram,  TikTok, and other sites. For the best experience, use the browser window below to sign into any accounts you wish to save to Plendy from. This ensures all content you save displays correctly. Plendy does not save any data from the web browser.',
+              'Plendy uses a web browser view to display content from Instagram, TikTok, and other sites. For the best experience, use the browser window below to sign into any accounts you wish to save to Plendy from. This ensures all content you save displays correctly. Plendy does not save any data from the web browser.',
               textAlign: TextAlign.center,
             ),
           ),
