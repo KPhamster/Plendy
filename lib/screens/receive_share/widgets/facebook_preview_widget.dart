@@ -376,35 +376,35 @@ class _FacebookPreviewWidgetState extends State<FacebookPreviewWidget> {
           ],
         ),
         if (widget.showControls) ...[
-          const SizedBox(height: 8),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: [
-              IconButton(
-                icon: const Icon(Icons.refresh),
-                tooltip: 'Refresh',
-                onPressed: () {
-                  if (controller != null) {
-                    controller!.reload();
-                  }
-                },
-              ),
-              IconButton(
-                icon: const FaIcon(FontAwesomeIcons.facebook, color: Color(0xFF1877F2)),
-                tooltip: 'Open in Facebook',
-                onPressed: _launchFacebookUrl,
-              ),
-              IconButton(
-                icon: Icon(_isExpanded ? Icons.fullscreen_exit : Icons.fullscreen),
-                tooltip: _isExpanded ? 'Collapse' : 'Expand',
-                onPressed: () {
-                  setState(() {
-                    _isExpanded = !_isExpanded;
-                  });
-                },
-              ),
-            ],
-          ),
+        const SizedBox(height: 8),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceAround,
+          children: [
+            IconButton(
+              icon: const Icon(Icons.refresh),
+              tooltip: 'Refresh',
+              onPressed: () {
+                if (controller != null) {
+                  controller!.reload();
+                }
+              },
+            ),
+            IconButton(
+              icon: const FaIcon(FontAwesomeIcons.facebook, color: Color(0xFF1877F2)),
+              tooltip: 'Open in Facebook',
+              onPressed: _launchFacebookUrl,
+            ),
+            IconButton(
+              icon: Icon(_isExpanded ? Icons.fullscreen_exit : Icons.fullscreen),
+              tooltip: _isExpanded ? 'Collapse' : 'Expand',
+              onPressed: () {
+                setState(() {
+                  _isExpanded = !_isExpanded;
+                });
+              },
+            ),
+          ],
+        ),
         ]
       ],
     );

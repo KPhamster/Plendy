@@ -546,34 +546,34 @@ class TikTokPreviewWidgetState extends State<TikTokPreviewWidget> {
           ),
           // Controls
           if (widget.showControls)
-            Container(
-              color: Colors.white,
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const SizedBox(width: 48),
-                  IconButton(
-                    icon: const FaIcon(FontAwesomeIcons.tiktok),
-                    color: Colors.black,
-                    iconSize: 32,
-                    tooltip: 'Open in TikTok',
-                    constraints: const BoxConstraints(),
-                    padding: EdgeInsets.zero,
-                    onPressed: () => widget.launchUrlCallback(widget.url),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.refresh),
-                    iconSize: 24,
-                    color: Colors.blue,
-                    tooltip: 'Refresh',
-                    constraints: const BoxConstraints(),
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
+          Container(
+            color: Colors.white,
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const SizedBox(width: 48),
+                IconButton(
+                  icon: const FaIcon(FontAwesomeIcons.tiktok),
+                  color: Colors.black,
+                  iconSize: 32,
+                  tooltip: 'Open in TikTok',
+                  constraints: const BoxConstraints(),
+                  padding: EdgeInsets.zero,
+                  onPressed: () => widget.launchUrlCallback(widget.url),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.refresh),
+                  iconSize: 24,
+                  color: Colors.blue,
+                  tooltip: 'Refresh',
+                  constraints: const BoxConstraints(),
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
                     onPressed: refreshWebView,
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
+          ),
         ],
       ),
     );

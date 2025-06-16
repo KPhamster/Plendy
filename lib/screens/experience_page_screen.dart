@@ -19,6 +19,7 @@ import 'receive_share/widgets/instagram_preview_widget.dart'
     as instagram_widget;
 import 'receive_share/widgets/tiktok_preview_widget.dart';
 import 'receive_share/widgets/facebook_preview_widget.dart';
+import 'receive_share/widgets/youtube_preview_widget.dart';
 // REMOVED: Dio import (no longer needed for thumbnail fetching)
 // import 'package:dio/dio.dart';
 // REMOVED: Dotenv import (no longer needed for credentials)
@@ -118,6 +119,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   final Map<String, WebViewController> _webViewControllers = {};
   final Map<String, GlobalKey<TikTokPreviewWidgetState>> _tiktokControllerKeys = {};
   final Map<String, GlobalKey<instagram_widget.InstagramWebViewState>> _instagramControllerKeys = {};
+  final Map<String, GlobalKey<YouTubePreviewWidgetState>> _youtubeControllerKeys = {};
   // --- END ADDED ---
 
   // --- ADDED: State for other experiences linked to media --- START ---
@@ -1733,6 +1735,9 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
               final isTikTokUrl = url.toLowerCase().contains('tiktok.com') || url.toLowerCase().contains('vm.tiktok.com');
               final isInstagramUrl = url.toLowerCase().contains('instagram.com');
               final isFacebookUrl = url.toLowerCase().contains('facebook.com') || url.toLowerCase().contains('fb.com') || url.toLowerCase().contains('fb.watch');
+              final isYouTubeUrl = url.toLowerCase().contains('youtube.com') || 
+                                   url.toLowerCase().contains('youtu.be') || 
+                                   url.toLowerCase().contains('youtube.com/shorts');
 
               if (isTikTokUrl) {
                 final key = GlobalKey<TikTokPreviewWidgetState>();
@@ -1775,6 +1780,21 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                   },
                   onPageFinished: (url) {},
                   showControls: false,
+                );
+              } else if (isYouTubeUrl) {
+                final key = GlobalKey<YouTubePreviewWidgetState>();
+                _youtubeControllerKeys[url] = key;
+                mediaWidget = YouTubePreviewWidget(
+                  key: key,
+                  url: url,
+                  launchUrlCallback: _launchUrl,
+                  showControls: false,
+                  height: (_mediaTabExpansionStates[url] ?? false)
+                      ? 600.0 // Expanded height for YouTube
+                      : null, // Let widget auto-calculate based on video type
+                  onWebViewCreated: (controller) {
+                    _webViewControllers[url] = controller;
+                  },
                 );
               } else {
                 mediaWidget = Image.network(
@@ -1979,6 +1999,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                                 _tiktokControllerKeys[url]?.currentState?.refreshWebView();
                               } else if (isInstagramUrl) {
                                 _instagramControllerKeys[url]?.currentState?.refresh();
+                              } else if (isYouTubeUrl) {
+                                _youtubeControllerKeys[url]?.currentState?.refreshWebView();
                               } else if (_webViewControllers.containsKey(url)) {
                                 _webViewControllers[url]!.reload();
                               } else {
@@ -1990,76 +2012,82 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                           ),
                           // Share Button
                           IconButton(
-                            icon: const Icon(Icons.share_outlined),
-                            iconSize: 24,
-                            color:
-                                Colors.blue, // Use blue like expand/collapse
-                            tooltip:
-                                'Share Media', // Tooltip for the new button
-                            onPressed: () {
-                              // TODO: Implement share media functionality
-                              print(
-                                  'Share media button tapped for url: $url');
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                    content: Text(
-                                        'Share media not implemented yet.')),
-                              );
-                            },
-                          ),
+                              icon: const Icon(Icons.share_outlined),
+                              iconSize: 24,
+                              color:
+                                  Colors.blue, // Use blue like expand/collapse
+                              tooltip:
+                                  'Share Media', // Tooltip for the new button
+                              onPressed: () {
+                                // TODO: Implement share media functionality
+                                print(
+                                    'Share media button tapped for url: $url');
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                      content: Text(
+                                          'Share media not implemented yet.')),
+                                );
+                              },
+                            ),
                           // Open in App button
                           IconButton(
-                            icon: Icon(
-                              isInstagramUrl 
-                                ? FontAwesomeIcons.instagram 
+                              icon: Icon(
+                                isInstagramUrl 
+                                  ? FontAwesomeIcons.instagram 
+                                  : isFacebookUrl 
+                                    ? FontAwesomeIcons.facebook
+                                    : isTikTokUrl
+                                      ? FontAwesomeIcons.tiktok
+                                      : isYouTubeUrl
+                                        ? FontAwesomeIcons.youtube
+                                        : Icons.open_in_new,
+                              ),
+                              color: isInstagramUrl 
+                                ? const Color(0xFFE1306C) 
                                 : isFacebookUrl 
-                                  ? FontAwesomeIcons.facebook
+                                  ? const Color(0xFF1877F2)
                                   : isTikTokUrl
-                                    ? FontAwesomeIcons.tiktok
-                                    : Icons.open_in_new,
+                                    ? Colors.black
+                                    : isYouTubeUrl
+                                      ? Colors.red
+                                      : Theme.of(context).primaryColor,
+                              iconSize: 32,
+                              tooltip: isInstagramUrl 
+                                ? 'Open in Instagram'
+                                : isFacebookUrl
+                                  ? 'Open in Facebook'
+                                  : isTikTokUrl
+                                    ? 'Open in TikTok'
+                                    : isYouTubeUrl
+                                      ? 'Open in YouTube'
+                                      : 'Open URL',
+                              onPressed: () => _launchUrl(url),
                             ),
-                            color: isInstagramUrl 
-                              ? const Color(0xFFE1306C) 
-                              : isFacebookUrl 
-                                ? const Color(0xFF1877F2)
-                                : isTikTokUrl
-                                  ? Colors.black
-                                  : Theme.of(context).primaryColor,
-                            iconSize: 32,
-                            tooltip: isInstagramUrl 
-                              ? 'Open in Instagram'
-                              : isFacebookUrl
-                                ? 'Open in Facebook'
-                                : isTikTokUrl
-                                  ? 'Open in TikTok'
-                                  : 'Open URL',
-                            onPressed: () => _launchUrl(url),
-                          ),
                           // Expand/Collapse Button
                           IconButton(
-                            icon: Icon(
-                                (_mediaTabExpansionStates[url] ?? false)
-                                    ? Icons.fullscreen_exit
-                                    : Icons.fullscreen),
-                            iconSize: 24,
-                            color: Colors.blue,
-                            tooltip: (_mediaTabExpansionStates[url] ?? false)
-                                ? 'Collapse'
-                                : 'Expand',
-                            onPressed: () {
-                              setState(() {
-                                _mediaTabExpansionStates[url] =
-                                    !(_mediaTabExpansionStates[url] ?? false);
-                              });
-                            },
-                          ),
+                              icon: Icon(
+                                  (_mediaTabExpansionStates[url] ?? false)
+                                      ? Icons.fullscreen_exit
+                                      : Icons.fullscreen),
+                              iconSize: 24,
+                              color: Colors.blue,
+                              tooltip: (_mediaTabExpansionStates[url] ?? false)
+                                  ? 'Collapse'
+                                  : 'Expand',
+                              onPressed: () {
+                                setState(() {
+                                  _mediaTabExpansionStates[url] =
+                                      !(_mediaTabExpansionStates[url] ?? false);
+                                });
+                              },
+                            ),
                           // Delete button
                           IconButton(
-                            icon: const Icon(Icons.delete_outline),
-                            iconSize: 24,
-                            color: Colors.red[700],
-                            tooltip: 'Delete Media',
-                            onPressed: () => _deleteMediaPath(url),
+                              icon: const Icon(Icons.delete_outline),
+                              iconSize: 24,
+                              color: Colors.red[700],
+                              tooltip: 'Delete Media',
+                              onPressed: () => _deleteMediaPath(url),
                           ),
                         ],
                       ),
