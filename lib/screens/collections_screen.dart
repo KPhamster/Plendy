@@ -19,6 +19,7 @@ import 'receive_share/widgets/instagram_preview_widget.dart'
     as instagram_widget;
 import 'receive_share/widgets/tiktok_preview_widget.dart';
 import 'receive_share/widgets/facebook_preview_widget.dart';
+import 'receive_share/widgets/youtube_preview_widget.dart';
 import '../models/shared_media_item.dart'; // ADDED Import
 import 'package:collection/collection.dart'; // ADDED: Import for groupBy
 import 'map_screen.dart'; // ADDED: Import for MapScreen
@@ -1824,6 +1825,9 @@ class _CollectionsScreenState extends State<CollectionsScreen>
           final bool isFacebookUrl = mediaPath.toLowerCase().contains('facebook.com') ||
               mediaPath.toLowerCase().contains('fb.com') ||
               mediaPath.toLowerCase().contains('fb.watch');
+          final bool isYouTubeUrl = mediaPath.toLowerCase().contains('youtube.com') ||
+              mediaPath.toLowerCase().contains('youtu.be') ||
+              mediaPath.toLowerCase().contains('youtube.com/shorts');
           bool isNetworkUrl =
               mediaPath.startsWith('http') || mediaPath.startsWith('https');
 
@@ -1849,6 +1853,11 @@ class _CollectionsScreenState extends State<CollectionsScreen>
               launchUrlCallback: _launchUrl,
               onWebViewCreated: (_) {},
               onPageFinished: (_) {},
+            );
+          } else if (isYouTubeUrl) {
+            mediaWidget = YouTubePreviewWidget(
+              url: mediaPath,
+              launchUrlCallback: _launchUrl,
             );
           } else if (isNetworkUrl) {
             mediaWidget = Image.network(
@@ -2001,14 +2010,23 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                         child: mediaWidget,
                       ),
                       if (isInstagramUrl)
-                        TextButton(
-                          onPressed: () => _launchUrl(mediaPath),
-                          child: const Text('View on Instagram'),
-                        ),
-                      if (isFacebookUrl)
-                        TextButton(
-                          onPressed: () => _launchUrl(mediaPath),
-                          child: const Text('View on Facebook'),
+                        Container(
+                          color: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              IconButton(
+                                icon: const FaIcon(FontAwesomeIcons.instagram),
+                                color: const Color(0xFFE4405F),
+                                iconSize: 32,
+                                tooltip: 'Open in Instagram',
+                                constraints: const BoxConstraints(),
+                                padding: EdgeInsets.zero,
+                                onPressed: () => _launchUrl(mediaPath),
+                              ),
+                            ],
+                          ),
                         ),
                     ],
                   ),
@@ -2047,7 +2065,9 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                     ? 'Facebook Post'
                     : mediaItem.path.contains('tiktok.com') || mediaItem.path.contains('vm.tiktok.com')
                       ? 'TikTok Post'
-                  : mediaItem.path.split('/').last, // Show filename if possible
+                      : mediaItem.path.contains('youtube.com') || mediaItem.path.contains('youtu.be')
+                          ? 'YouTube Video'
+                          : mediaItem.path.split('/').last, // Show filename if possible
               style: Theme.of(context)
                   .textTheme
                   .bodyMedium
@@ -2766,6 +2786,12 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     final isInstagramUrl = mediaPath.toLowerCase().contains('instagram.com');
     final isTikTokUrl = mediaPath.toLowerCase().contains('tiktok.com') ||
         mediaPath.toLowerCase().contains('vm.tiktok.com');
+    final isFacebookUrl = mediaPath.toLowerCase().contains('facebook.com') ||
+        mediaPath.toLowerCase().contains('fb.com') ||
+        mediaPath.toLowerCase().contains('fb.watch');
+    final isYouTubeUrl = mediaPath.toLowerCase().contains('youtube.com') ||
+        mediaPath.toLowerCase().contains('youtu.be') ||
+        mediaPath.toLowerCase().contains('youtube.com/shorts');
     final bool isNetworkUrl =
         mediaPath.startsWith('http') || mediaPath.startsWith('https');
 
@@ -2791,6 +2817,19 @@ class _CollectionsScreenState extends State<CollectionsScreen>
           ),
         );
       }
+    } else if (isFacebookUrl) {
+      mediaDisplayWidget = FacebookPreviewWidget(
+        url: mediaPath,
+        height: 500.0, // Height for FacebookPreviewWidget
+        launchUrlCallback: _launchUrl,
+        onWebViewCreated: (_) {},
+        onPageFinished: (_) {},
+      );
+    } else if (isYouTubeUrl) {
+      mediaDisplayWidget = YouTubePreviewWidget(
+        url: mediaPath,
+        launchUrlCallback: _launchUrl,
+      );
     } else if (isNetworkUrl) {
       mediaDisplayWidget = Image.network(
         mediaPath,
@@ -2810,7 +2849,9 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     } else {
       mediaDisplayWidget = Container(
         color: Colors.grey[300],
-        child: Center(child: Icon(Icons.image_not_supported_outlined, color: Colors.grey[700], size: 40)),
+        height: 150, 
+        child: Center(
+            child: Icon(Icons.description, color: Colors.grey[700], size: 40)),
       );
     }
 
@@ -2853,7 +2894,13 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         return AlertDialog(
           title: Text(group.mediaItem.path.contains("instagram.com")
               ? "Instagram Post Details"
-              : "Shared Media Details"),
+              : group.mediaItem.path.contains('facebook.com') || group.mediaItem.path.contains('fb.com') || group.mediaItem.path.contains('fb.watch')
+                  ? 'Facebook Post Details'
+                  : group.mediaItem.path.contains('tiktok.com') || group.mediaItem.path.contains('vm.tiktok.com')
+                      ? 'TikTok Post Details'
+                      : group.mediaItem.path.contains('youtube.com') || group.mediaItem.path.contains('youtu.be')
+                          ? 'YouTube Video Details'
+                          : "Shared Media Details"),
           content: SizedBox( // Wrap the Column with SizedBox to constrain its width
             width: MediaQuery.of(dialogContext).size.width * 0.2, // Example: 80% of screen width
             child: Column(

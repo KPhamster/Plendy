@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:url_launcher/url_launcher.dart';
@@ -350,33 +351,29 @@ class YouTubePreviewWidgetState extends State<YouTubePreviewWidget> {
         ),
         if (widget.showControls)
           Container(
-            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            color: Colors.white,
+            padding: const EdgeInsets.symmetric(vertical: 8),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(
-                  _isShort ? 'YouTube Short' : 'YouTube Video',
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
-                    color: Colors.grey[700],
-                  ),
+                const SizedBox(width: 48), // Spacer for alignment
+                IconButton(
+                  icon: const FaIcon(FontAwesomeIcons.youtube),
+                  color: Colors.red,
+                  iconSize: 32,
+                  tooltip: 'Open in YouTube',
+                  constraints: const BoxConstraints(),
+                  padding: EdgeInsets.zero,
+                  onPressed: _launchYouTubeUrl,
                 ),
-                Row(
-                  children: [
-                    IconButton(
-                      icon: Icon(Icons.refresh),
-                      onPressed: refreshWebView,
-                      tooltip: 'Refresh',
-                      iconSize: 20,
-                    ),
-                    IconButton(
-                      icon: Icon(Icons.open_in_new),
-                      onPressed: _launchYouTubeUrl,
-                      tooltip: 'Open in YouTube',
-                      iconSize: 20,
-                    ),
-                  ],
+                IconButton(
+                  icon: const Icon(Icons.refresh),
+                  iconSize: 24,
+                  color: Colors.blue,
+                  tooltip: 'Refresh',
+                  constraints: const BoxConstraints(),
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  onPressed: refreshWebView,
                 ),
               ],
             ),
