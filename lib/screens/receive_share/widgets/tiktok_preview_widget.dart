@@ -10,6 +10,8 @@ class TikTokPreviewWidget extends StatefulWidget {
   final Future<void> Function(String) launchUrlCallback;
   final void Function(bool, String)? onExpansionChanged;
   final void Function(String url, bool isPhotoCarousel)? onPhotoDetected;
+  final bool showControls;
+  final Function(WebViewController)? onWebViewCreated;
 
   const TikTokPreviewWidget({
     super.key,
@@ -17,13 +19,15 @@ class TikTokPreviewWidget extends StatefulWidget {
     required this.launchUrlCallback,
     this.onExpansionChanged,
     this.onPhotoDetected,
+    this.showControls = true,
+    this.onWebViewCreated,
   });
 
   @override
-  State<TikTokPreviewWidget> createState() => _TikTokPreviewWidgetState();
+  State<TikTokPreviewWidget> createState() => TikTokPreviewWidgetState();
 }
 
-class _TikTokPreviewWidgetState extends State<TikTokPreviewWidget> {
+class TikTokPreviewWidgetState extends State<TikTokPreviewWidget> {
   bool _isDisposed = false;
   late WebViewController _controller;
   bool _isLoading = true;
@@ -237,6 +241,7 @@ class _TikTokPreviewWidgetState extends State<TikTokPreviewWidget> {
           },
         ),
       );
+    widget.onWebViewCreated?.call(_controller);
   }
 
   void _loadEmbedHtml(String html) {
@@ -489,7 +494,7 @@ class _TikTokPreviewWidgetState extends State<TikTokPreviewWidget> {
     ''');
   }
   
-  void _refreshWebView() {
+  void refreshWebView() {
     if (_currentEmbedHtml != null) {
       setState(() {
         _isLoading = true;
@@ -540,34 +545,35 @@ class _TikTokPreviewWidgetState extends State<TikTokPreviewWidget> {
             ),
           ),
           // Controls
-          Container(
-            color: Colors.white,
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const SizedBox(width: 48),
-                IconButton(
-                  icon: const FaIcon(FontAwesomeIcons.tiktok),
-                  color: Colors.black,
-                  iconSize: 32,
-                  tooltip: 'Open in TikTok',
-                  constraints: const BoxConstraints(),
-                  padding: EdgeInsets.zero,
-                  onPressed: () => widget.launchUrlCallback(widget.url),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.refresh),
-                  iconSize: 24,
-                  color: Colors.blue,
-                  tooltip: 'Refresh',
-                  constraints: const BoxConstraints(),
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  onPressed: _refreshWebView,
-                ),
-              ],
+          if (widget.showControls)
+            Container(
+              color: Colors.white,
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const SizedBox(width: 48),
+                  IconButton(
+                    icon: const FaIcon(FontAwesomeIcons.tiktok),
+                    color: Colors.black,
+                    iconSize: 32,
+                    tooltip: 'Open in TikTok',
+                    constraints: const BoxConstraints(),
+                    padding: EdgeInsets.zero,
+                    onPressed: () => widget.launchUrlCallback(widget.url),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.refresh),
+                    iconSize: 24,
+                    color: Colors.blue,
+                    tooltip: 'Refresh',
+                    constraints: const BoxConstraints(),
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    onPressed: refreshWebView,
+                  ),
+                ],
+              ),
             ),
-          ),
         ],
       ),
     );
