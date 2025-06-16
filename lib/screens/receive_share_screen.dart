@@ -36,6 +36,7 @@ import 'receive_share/widgets/instagram_preview_widget.dart'
     as instagram_widget;
 import 'receive_share/widgets/tiktok_preview_widget.dart';
 import 'receive_share/widgets/facebook_preview_widget.dart';
+import 'receive_share/widgets/youtube_preview_widget.dart';
 import 'main_screen.dart';
 import '../models/public_experience.dart';
 import '../services/auth_service.dart';
@@ -3070,6 +3071,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         onPageFinished: (url) {
           // Handle page finished if needed
         },
+        launchUrlCallback: _launchUrl,
+      );
+    }
+
+    if (url.contains('youtube.com') || url.contains('youtu.be') || url.contains('youtube.com/shorts')) {
+      return YouTubePreviewWidget(
+        url: url,
         launchUrlCallback: _launchUrl,
       );
     }
