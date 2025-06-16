@@ -14,25 +14,24 @@ import 'instagram_web_logic_stub.dart'
 class InstagramWebView extends StatefulWidget {
   final String url;
   final double height; // Requires a specific height from the parent
+  final Future<void> Function(String) launchUrlCallback;
   final Function(WebViewController) onWebViewCreated;
   final Function(String) onPageFinished; // Callback when page finishes
-  final Future<void> Function(String)
-      launchUrlCallback; // For internal navigation
 
   const InstagramWebView({
     super.key,
     required this.url,
     required this.height, // This will be effectively ignored for web aspect ratio
+    required this.launchUrlCallback,
     required this.onWebViewCreated,
     required this.onPageFinished,
-    required this.launchUrlCallback,
   });
 
   @override
-  _InstagramWebViewState createState() => _InstagramWebViewState();
+  InstagramWebViewState createState() => InstagramWebViewState();
 }
 
-class _InstagramWebViewState extends State<InstagramWebView> {
+class InstagramWebViewState extends State<InstagramWebView> {
   // Mobile-only controller
   late final WebViewController controller;
   bool isLoading = true; // Still manage internal loading indicator
@@ -242,6 +241,16 @@ class _InstagramWebViewState extends State<InstagramWebView> {
     if (!mounted || _isDisposed) return;
     
     controller.loadHtmlString(_generateInstagramEmbedHtml(widget.url));
+  }
+
+  void refresh() {
+    if (kIsWeb) {
+      // Web logic would go here if needed
+    } else {
+      if (mounted && !_isDisposed) {
+        controller.loadHtmlString(_generateInstagramEmbedHtml(widget.url));
+      }
+    }
   }
 
   // Clean Instagram URL (keep this helper)

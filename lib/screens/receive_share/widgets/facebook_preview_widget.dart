@@ -11,6 +11,7 @@ class FacebookPreviewWidget extends StatefulWidget {
   final Function(WebViewController) onWebViewCreated;
   final Function(String) onPageFinished;
   final Future<void> Function(String) launchUrlCallback;
+  final bool showControls;
 
   const FacebookPreviewWidget({
     super.key,
@@ -19,6 +20,7 @@ class FacebookPreviewWidget extends StatefulWidget {
     required this.onWebViewCreated,
     required this.onPageFinished,
     required this.launchUrlCallback,
+    this.showControls = true,
   });
 
   @override
@@ -373,35 +375,37 @@ class _FacebookPreviewWidgetState extends State<FacebookPreviewWidget> {
               ),
           ],
         ),
-        const SizedBox(height: 8),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceAround,
-          children: [
-            IconButton(
-              icon: const Icon(Icons.refresh),
-              tooltip: 'Refresh',
-              onPressed: () {
-                if (controller != null) {
-                  controller!.reload();
-                }
-              },
-            ),
-            IconButton(
-              icon: const FaIcon(FontAwesomeIcons.facebook, color: Color(0xFF1877F2)),
-              tooltip: 'Open in Facebook',
-              onPressed: _launchFacebookUrl,
-            ),
-            IconButton(
-              icon: Icon(_isExpanded ? Icons.fullscreen_exit : Icons.fullscreen),
-              tooltip: _isExpanded ? 'Collapse' : 'Expand',
-              onPressed: () {
-                setState(() {
-                  _isExpanded = !_isExpanded;
-                });
-              },
-            ),
-          ],
-        ),
+        if (widget.showControls) ...[
+          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: [
+              IconButton(
+                icon: const Icon(Icons.refresh),
+                tooltip: 'Refresh',
+                onPressed: () {
+                  if (controller != null) {
+                    controller!.reload();
+                  }
+                },
+              ),
+              IconButton(
+                icon: const FaIcon(FontAwesomeIcons.facebook, color: Color(0xFF1877F2)),
+                tooltip: 'Open in Facebook',
+                onPressed: _launchFacebookUrl,
+              ),
+              IconButton(
+                icon: Icon(_isExpanded ? Icons.fullscreen_exit : Icons.fullscreen),
+                tooltip: _isExpanded ? 'Collapse' : 'Expand',
+                onPressed: () {
+                  setState(() {
+                    _isExpanded = !_isExpanded;
+                  });
+                },
+              ),
+            ],
+          ),
+        ]
       ],
     );
   }

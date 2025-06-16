@@ -43,6 +43,7 @@ import 'package:collection/collection.dart';
 // --- END ADDED ---
 import 'map_screen.dart'; // ADDED: Import for MapScreen
 import 'package:flutter/foundation.dart'; // ADDED for kIsWeb
+import 'package:webview_flutter/webview_flutter.dart';
 
 // Convert to StatefulWidget
 class ExperiencePageScreen extends StatefulWidget {
@@ -112,6 +113,11 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
 
   // --- ADDED: Expansion state for media tab items ---
   final Map<String, bool> _mediaTabExpansionStates = {};
+  // --- END ADDED ---
+  // --- ADDED: Webview controllers for refresh ---
+  final Map<String, WebViewController> _webViewControllers = {};
+  final Map<String, GlobalKey<TikTokPreviewWidgetState>> _tiktokControllerKeys = {};
+  final Map<String, GlobalKey<instagram_widget.InstagramWebViewState>> _instagramControllerKeys = {};
   // --- END ADDED ---
 
   // --- ADDED: State for other experiences linked to media --- START ---
@@ -1729,12 +1735,22 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
               final isFacebookUrl = url.toLowerCase().contains('facebook.com') || url.toLowerCase().contains('fb.com') || url.toLowerCase().contains('fb.watch');
 
               if (isTikTokUrl) {
+                final key = GlobalKey<TikTokPreviewWidgetState>();
+                _tiktokControllerKeys[url] = key;
                 mediaWidget = TikTokPreviewWidget(
+                  key: key,
                   url: url,
                   launchUrlCallback: _launchUrl,
+                  showControls: false,
+                  onWebViewCreated: (controller) {
+                    _webViewControllers[url] = controller;
+                  },
                 );
               } else if (isInstagramUrl) {
+                final key = GlobalKey<instagram_widget.InstagramWebViewState>();
+                _instagramControllerKeys[url] = key;
                 mediaWidget = instagram_widget.InstagramWebView(
+                  key: key,
                   url: url,
                   // --- UPDATED: Use expansion state for height ---
                   height: (_mediaTabExpansionStates[url] ?? false)
@@ -1742,7 +1758,9 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                       : 840.0, // Collapsed height
                   // --- END UPDATE ---
                   launchUrlCallback: _launchUrl,
-                  onWebViewCreated: (controller) {},
+                  onWebViewCreated: (controller) {
+                    _webViewControllers[url] = controller;
+                  },
                   onPageFinished: (url) {},
                 );
               } else if (isFacebookUrl) {
@@ -1752,8 +1770,11 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                       ? 800.0 // Expanded height
                       : 500.0, // Collapsed height
                   launchUrlCallback: _launchUrl,
-                  onWebViewCreated: (controller) {},
+                  onWebViewCreated: (controller) {
+                     _webViewControllers[url] = controller;
+                  },
                   onPageFinished: (url) {},
+                  showControls: false,
                 );
               } else {
                 mediaWidget = Image.network(
@@ -1944,103 +1965,101 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                     const SizedBox(height: 8),
                     SizedBox(
                       height: 48,
-                      child: Stack(
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                         children: [
-                          // --- ADDED: Share Button ---
-                          Align(
-                            alignment: const Alignment(
-                                -0.5, 0.0), // Position left of center
-                            child: IconButton(
-                              icon: const Icon(Icons.share_outlined),
-                              iconSize: 24,
-                              color:
-                                  Colors.blue, // Use blue like expand/collapse
-                              tooltip:
-                                  'Share Media', // Tooltip for the new button
-                              constraints: const BoxConstraints(),
-                              padding: EdgeInsets.zero,
-                              onPressed: () {
-                                // TODO: Implement share media functionality
-                                print(
-                                    'Share media button tapped for url: $url');
+                          // Refresh Button
+                          IconButton(
+                            icon: const Icon(Icons.refresh),
+                            iconSize: 24,
+                            color: Colors.blue,
+                            tooltip: 'Refresh Preview',
+                            onPressed: () {
+                              if (isTikTokUrl) {
+                                _tiktokControllerKeys[url]?.currentState?.refreshWebView();
+                              } else if (isInstagramUrl) {
+                                _instagramControllerKeys[url]?.currentState?.refresh();
+                              } else if (_webViewControllers.containsKey(url)) {
+                                _webViewControllers[url]!.reload();
+                              } else {
                                 ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                      content: Text(
-                                          'Share media not implemented yet.')),
+                                  const SnackBar(content: Text('Cannot refresh this item.'))
                                 );
-                              },
-                            ),
+                              }
+                            },
                           ),
-                          // --- END ADDED Button ---
-                          Align(
-                            alignment: Alignment.center,
-                            child: IconButton(
-                              icon: Icon(
-                                isInstagramUrl 
-                                  ? FontAwesomeIcons.instagram 
-                                  : isFacebookUrl 
-                                    ? FontAwesomeIcons.facebook
-                                    : isTikTokUrl
-                                      ? FontAwesomeIcons.tiktok
-                                      : Icons.open_in_new,
-                              ),
-                              color: isInstagramUrl 
-                                ? const Color(0xFFE1306C) 
+                          // Share Button
+                          IconButton(
+                            icon: const Icon(Icons.share_outlined),
+                            iconSize: 24,
+                            color:
+                                Colors.blue, // Use blue like expand/collapse
+                            tooltip:
+                                'Share Media', // Tooltip for the new button
+                            onPressed: () {
+                              // TODO: Implement share media functionality
+                              print(
+                                  'Share media button tapped for url: $url');
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                    content: Text(
+                                        'Share media not implemented yet.')),
+                              );
+                            },
+                          ),
+                          // Open in App button
+                          IconButton(
+                            icon: Icon(
+                              isInstagramUrl 
+                                ? FontAwesomeIcons.instagram 
                                 : isFacebookUrl 
-                                  ? const Color(0xFF1877F2)
+                                  ? FontAwesomeIcons.facebook
                                   : isTikTokUrl
-                                    ? Colors.black
-                                    : Theme.of(context).primaryColor,
-                              iconSize: 32,
-                              tooltip: isInstagramUrl 
-                                ? 'Open in Instagram'
-                                : isFacebookUrl
-                                  ? 'Open in Facebook'
-                                  : isTikTokUrl
-                                    ? 'Open in TikTok'
-                                    : 'Open URL',
-                              constraints: const BoxConstraints(),
-                              padding: EdgeInsets.zero,
-                              onPressed: () => _launchUrl(url),
+                                    ? FontAwesomeIcons.tiktok
+                                    : Icons.open_in_new,
                             ),
+                            color: isInstagramUrl 
+                              ? const Color(0xFFE1306C) 
+                              : isFacebookUrl 
+                                ? const Color(0xFF1877F2)
+                                : isTikTokUrl
+                                  ? Colors.black
+                                  : Theme.of(context).primaryColor,
+                            iconSize: 32,
+                            tooltip: isInstagramUrl 
+                              ? 'Open in Instagram'
+                              : isFacebookUrl
+                                ? 'Open in Facebook'
+                                : isTikTokUrl
+                                  ? 'Open in TikTok'
+                                  : 'Open URL',
+                            onPressed: () => _launchUrl(url),
                           ),
-                          // --- ADDED: Expand/Collapse Button ---
-                          Align(
-                            alignment: const Alignment(
-                                0.5, 0.0), // Position like fullscreen
-                            child: IconButton(
-                              icon: Icon(
-                                  (_mediaTabExpansionStates[url] ?? false)
-                                      ? Icons.fullscreen_exit
-                                      : Icons.fullscreen),
-                              iconSize: 24,
-                              color: Colors.blue,
-                              tooltip: (_mediaTabExpansionStates[url] ?? false)
-                                  ? 'Collapse'
-                                  : 'Expand',
-                              constraints: const BoxConstraints(),
-                              padding: EdgeInsets.zero,
-                              onPressed: () {
-                                setState(() {
-                                  _mediaTabExpansionStates[url] =
-                                      !(_mediaTabExpansionStates[url] ?? false);
-                                });
-                              },
-                            ),
+                          // Expand/Collapse Button
+                          IconButton(
+                            icon: Icon(
+                                (_mediaTabExpansionStates[url] ?? false)
+                                    ? Icons.fullscreen_exit
+                                    : Icons.fullscreen),
+                            iconSize: 24,
+                            color: Colors.blue,
+                            tooltip: (_mediaTabExpansionStates[url] ?? false)
+                                ? 'Collapse'
+                                : 'Expand',
+                            onPressed: () {
+                              setState(() {
+                                _mediaTabExpansionStates[url] =
+                                    !(_mediaTabExpansionStates[url] ?? false);
+                              });
+                            },
                           ),
-                          // --- END ADDED Button ---
-                          Align(
-                            alignment: Alignment.centerRight,
-                            child: IconButton(
-                              icon: const Icon(Icons.delete_outline),
-                              iconSize: 24,
-                              color: Colors.red[700],
-                              tooltip: 'Delete Media',
-                              constraints: const BoxConstraints(),
-                              padding:
-                                  const EdgeInsets.symmetric(horizontal: 12),
-                              onPressed: () => _deleteMediaPath(url),
-                            ),
+                          // Delete button
+                          IconButton(
+                            icon: const Icon(Icons.delete_outline),
+                            iconSize: 24,
+                            color: Colors.red[700],
+                            tooltip: 'Delete Media',
+                            onPressed: () => _deleteMediaPath(url),
                           ),
                         ],
                       ),
