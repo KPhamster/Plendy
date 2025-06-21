@@ -62,6 +62,8 @@ class _MapScreenState extends State<MapScreen> {
   // ADDED: State for tapped location
   Marker? _tappedLocationMarker;
   Location? _tappedLocationDetails;
+  Experience? _tappedExperience; // ADDED: Track associated experience
+  UserCategory? _tappedExperienceCategory; // ADDED: Track associated category
 
   // ADDED: State for search functionality
   final TextEditingController _searchController = TextEditingController();
@@ -239,6 +241,7 @@ class _MapScreenState extends State<MapScreen> {
     String text, {
     int size = 60,
     required Color backgroundColor, // Added required background color parameter
+    double backgroundOpacity = 0.7, // ADDED: Opacity parameter
   }) async {
     final ui.PictureRecorder pictureRecorder = ui.PictureRecorder();
     final Canvas canvas = Canvas(pictureRecorder);
@@ -248,10 +251,10 @@ class _MapScreenState extends State<MapScreen> {
     // final Paint circlePaint = Paint()..color = Colors.blue; // Example background
     // canvas.drawCircle(Offset(radius, radius), radius, circlePaint);
 
-    // ADDED: Draw semi-transparent background circle using the provided color
+    // MODIFIED: Draw background circle using the provided color and opacity
     final Paint circlePaint = Paint()
       ..color =
-          backgroundColor.withOpacity(0.7); // Use passed color with 70% opacity
+          backgroundColor.withOpacity(backgroundOpacity); // Use passed opacity
     canvas.drawCircle(Offset(radius, radius), radius, circlePaint);
 
     // Draw text (emoji)
@@ -292,6 +295,8 @@ class _MapScreenState extends State<MapScreen> {
     setState(() {
       _tappedLocationMarker = null;
       _tappedLocationDetails = null;
+      _tappedExperience = null; // ADDED: Clear associated experience
+      _tappedExperienceCategory = null; // ADDED: Clear associated category
     });
     Navigator.push(
       context,
@@ -367,78 +372,95 @@ class _MapScreenState extends State<MapScreen> {
       builder: (BuildContext context) {
         return AlertDialog(
           title: const Text('Filter Experiences'),
-          content: StatefulBuilder(
-            // Use StatefulBuilder to manage state within the dialog
-            builder: (BuildContext context, StateSetter setStateDialog) {
-              return SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    const Text('By Category:',
-                        style: TextStyle(fontWeight: FontWeight.bold)),
-                    // FIX: Correctly use map().toList() to generate CheckboxListTiles
-                    ...(_categories.toList()
-                          ..sort((a, b) => a.name.compareTo(b.name)))
-                        .map((category) {
-                      // This map returns a Widget (CheckboxListTile)
-                      return CheckboxListTile(
-                        title: Text('${category.icon} ${category.name}'),
-                        value: tempSelectedCategoryIds.contains(category.id),
-                        onChanged: (bool? selected) {
-                          setStateDialog(() {
-                            if (selected == true) {
-                              tempSelectedCategoryIds.add(category.id);
-                            } else {
-                              tempSelectedCategoryIds.remove(category.id);
-                            }
-                          });
-                        },
-                      );
-                    }), // This creates List<CheckboxListTile>
-                    const SizedBox(height: 16),
-                    const Text('By Color:',
-                        style: TextStyle(fontWeight: FontWeight.bold)),
-                    // FIX: Correctly use map().toList() to generate CheckboxListTiles
-                    ...(_colorCategories.toList()
-                          ..sort((a, b) => a.name.compareTo(b.name)))
-                        .map((colorCategory) {
-                      // This map returns a Widget (CheckboxListTile)
-                      return CheckboxListTile(
-                        title: Row(
-                          children: [
-                            Container(
-                              width: 16,
-                              height: 16,
-                              decoration: BoxDecoration(
-                                  color: _parseColor(colorCategory.colorHex),
-                                  shape: BoxShape.circle,
-                                  border: Border.all(color: Colors.grey)),
-                            ),
-                            const SizedBox(width: 8),
-                            Text(colorCategory.name),
-                          ],
-                        ),
-                        value: tempSelectedColorCategoryIds
-                            .contains(colorCategory.id),
-                        onChanged: (bool? selected) {
-                          setStateDialog(() {
-                            if (selected == true) {
-                              tempSelectedColorCategoryIds
-                                  .add(colorCategory.id);
-                            } else {
-                              tempSelectedColorCategoryIds
-                                  .remove(colorCategory.id);
-                            }
-                          });
-                        },
-                      );
-                    }),
-                  ],
-                ),
-              );
-            },
-          ),
+          insetPadding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 24.0),
+          content: SizedBox(
+            width: MediaQuery.of(context).size.width * 0.85,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(context).size.height * 0.6,
+              ),
+              child: StatefulBuilder(
+              // Use StatefulBuilder to manage state within the dialog
+              builder: (BuildContext context, StateSetter setStateDialog) {
+                return SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      const Text('By Category:',
+                          style: TextStyle(fontWeight: FontWeight.bold)),
+                      // FIX: Correctly use map().toList() to generate CheckboxListTiles
+                      ...(_categories.toList()
+                            ..sort((a, b) => a.name.compareTo(b.name)))
+                          .map((category) {
+                        // This map returns a Widget (CheckboxListTile)
+                        return CheckboxListTile(
+                          title: Text(
+                            '${category.icon} ${category.name}',
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          value: tempSelectedCategoryIds.contains(category.id),
+                          onChanged: (bool? selected) {
+                            setStateDialog(() {
+                              if (selected == true) {
+                                tempSelectedCategoryIds.add(category.id);
+                              } else {
+                                tempSelectedCategoryIds.remove(category.id);
+                              }
+                            });
+                          },
+                        );
+                      }), // This creates List<CheckboxListTile>
+                      const SizedBox(height: 16),
+                      const Text('By Color:',
+                          style: TextStyle(fontWeight: FontWeight.bold)),
+                      // FIX: Correctly use map().toList() to generate CheckboxListTiles
+                      ...(_colorCategories.toList()
+                            ..sort((a, b) => a.name.compareTo(b.name)))
+                          .map((colorCategory) {
+                        // This map returns a Widget (CheckboxListTile)
+                        return CheckboxListTile(
+                          title: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Container(
+                                width: 16,
+                                height: 16,
+                                decoration: BoxDecoration(
+                                    color: _parseColor(colorCategory.colorHex),
+                                    shape: BoxShape.circle,
+                                    border: Border.all(color: Colors.grey)),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  colorCategory.name,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ),
+                          value: tempSelectedColorCategoryIds
+                              .contains(colorCategory.id),
+                          onChanged: (bool? selected) {
+                            setStateDialog(() {
+                              if (selected == true) {
+                                tempSelectedColorCategoryIds
+                                    .add(colorCategory.id);
+                              } else {
+                                tempSelectedColorCategoryIds
+                                    .remove(colorCategory.id);
+                              }
+                            });
+                          },
+                        );
+                      }),
+                    ],
+                  ),
+                );
+              },
+            ),
+          )),
           actions: <Widget>[
             // ADDED: Show All Button
             TextButton(
@@ -655,18 +677,53 @@ class _MapScreenState extends State<MapScreen> {
         infoWindow: InfoWindow(
           title: '${category.icon} ${experience.name}',
           snippet: experience.location.getPlaceName(),
-          onTap: () => _navigateToExperience(experience, category),
         ),
         icon: categoryIconBitmap,
-        // IMPORTANT: Experience marker onTap clears the temporary tapped marker
-        onTap: () {
-          FocusScope.of(context).unfocus(); // ADDED: Unfocus search bar
-          // When an experience marker is tapped, clear the temporary one
+        // MODIFIED: Experience marker onTap shows location details panel
+        onTap: () async {
+          FocusScope.of(context).unfocus(); // Unfocus search bar
+          print("🗺️ MAP SCREEN: Experience marker tapped for '${experience.name}'. Showing location details panel.");
+          
+          // --- REGENERATING ICON FOR SELECTED STATE ---
+          Color markerBackgroundColor = Colors.grey;
+          try {
+            if (experience.colorCategoryId != null) {
+              final colorCategory = _colorCategories.firstWhere((cc) => cc.id == experience.colorCategoryId);
+              markerBackgroundColor = _parseColor(colorCategory.colorHex);
+            }
+          } catch (e) { /* Use default grey color */ }
+
+          final selectedIcon = await _bitmapDescriptorFromText(
+            category.icon,
+            backgroundColor: markerBackgroundColor,
+            size: 100, // 125% of 70
+            backgroundOpacity: 1.0, // Fully opaque
+          );
+          // --- END ICON REGENERATION ---
+
+          // Create a marker for the selected experience location
+          final tappedMarkerId = MarkerId('selected_experience_location');
+          final tappedMarker = Marker(
+            markerId: tappedMarkerId,
+            position: position,
+            infoWindow: InfoWindow(
+              title: '${category.icon} ${experience.name}',
+              snippet: experience.location.getPlaceName(),
+            ),
+            icon: selectedIcon, // Use the new enlarged icon
+            zIndex: 1.0,
+          );
+
           setState(() {
-            _tappedLocationMarker = null;
-            _tappedLocationDetails = null;
+            _mapWidgetInitialLocation = experience.location;
+            _tappedLocationDetails = experience.location;
+            _tappedLocationMarker = tappedMarker;
+            _tappedExperience = experience; // Set associated experience
+            _tappedExperienceCategory = category; // Set associated category
+            _searchController.clear();
+            _searchResults = [];
+            _showSearchResults = false;
           });
-          _navigateToExperience(experience, category);
         },
       );
       tempMarkers[experience.id] = marker;
@@ -793,6 +850,8 @@ class _MapScreenState extends State<MapScreen> {
           _mapWidgetInitialLocation = finalLocationDetails; // Update map widget's initial location
           _tappedLocationDetails = finalLocationDetails;
           _tappedLocationMarker = tappedMarker;
+          _tappedExperience = null; // ADDED: Clear associated experience for map-tapped locations
+          _tappedExperienceCategory = null; // ADDED: Clear associated category for map-tapped locations
           _isLoading = false; 
         });
         print("🗺️ MAP SCREEN: (_handleLocationSelected) Updated state with new tapped location and map initial location: ${finalLocationDetails.getPlaceName()}");
@@ -902,6 +961,46 @@ class _MapScreenState extends State<MapScreen> {
     return (lat1 - lat2) * (lat1 - lat2) + (lon1 - lon2) * (lon1 - lon2);
   }
 
+  // ADDED: Helper method to search through user's saved experiences
+  List<Map<String, dynamic>> _searchUserExperiences(String query) {
+    final queryLower = query.toLowerCase();
+    final matchingExperiences = <Map<String, dynamic>>[];
+
+    for (final experience in _experiences) {
+      final experienceName = experience.name.toLowerCase();
+      final locationName = experience.location.displayName?.toLowerCase() ?? '';
+      final locationAddress = experience.location.address?.toLowerCase() ?? '';
+      
+      // Check if query matches experience name, location name, or address
+      if (experienceName.contains(queryLower) || 
+          locationName.contains(queryLower) || 
+          locationAddress.contains(queryLower)) {
+        
+        // Find the category for display
+        final category = _categories.firstWhere(
+          (cat) => cat.id == experience.categoryId,
+          orElse: () => UserCategory(id: '', name: 'Uncategorized', icon: '❓', ownerUserId: ''),
+        );
+
+        matchingExperiences.add({
+          'type': 'experience',
+          'experienceId': experience.id,
+          'experience': experience,
+          'category': category,
+          'description': '${category.icon} ${experience.name}',
+          'address': experience.location.getPlaceName(),
+          'latitude': experience.location.latitude,
+          'longitude': experience.location.longitude,
+          'placeId': experience.location.placeId,
+          'rating': experience.location.rating,
+          'userRatingCount': experience.location.userRatingCount,
+        });
+      }
+    }
+
+    return matchingExperiences;
+  }
+
   Future<void> _searchPlaces(String query) async {
     if (_debounce?.isActive ?? false) _debounce!.cancel();
     _debounce = Timer(const Duration(milliseconds: 500), () async {
@@ -939,15 +1038,34 @@ class _MapScreenState extends State<MapScreen> {
           // This is a new user-initiated search or a map tap that cleared search, so clear previous details
           _tappedLocationDetails = null;
           _tappedLocationMarker = null;
+          _tappedExperience = null; // ADDED: Clear associated experience
+          _tappedExperienceCategory = null; // ADDED: Clear associated category
         });
       }
 
-      print("🗺️ MAP SCREEN: (_searchPlaces DEBOUNCED) Calling _mapsService.searchPlaces for query: '$query'");
       try {
-        final results = await _mapsService.searchPlaces(query);
-        print("🗺️ MAP SCREEN: (_searchPlaces DEBOUNCED) Received ${results.length} results from _mapsService for query: '$query'");
-        LatLng? mapCenter;
+        // MODIFIED: First search user's experiences
+        final experienceResults = _searchUserExperiences(query);
+        print("🗺️ MAP SCREEN: (_searchPlaces DEBOUNCED) Found ${experienceResults.length} matching user experiences for query: '$query'");
 
+        // Then search Google Maps
+        print("🗺️ MAP SCREEN: (_searchPlaces DEBOUNCED) Calling _mapsService.searchPlaces for query: '$query'");
+        final mapsResults = await _mapsService.searchPlaces(query);
+        print("🗺️ MAP SCREEN: (_searchPlaces DEBOUNCED) Received ${mapsResults.length} results from _mapsService for query: '$query'");
+        
+
+        // Mark Google Maps results as type 'place'
+        final markedMapsResults = mapsResults.map((result) {
+          return {
+            'type': 'place',
+            ...result,
+          };
+        }).toList();
+
+        // Combine results with experiences first (prioritized)
+        final allResults = [...experienceResults, ...markedMapsResults];
+
+        LatLng? mapCenter;
         if (_mapController != null) {
           try {
             if (mounted) {
@@ -960,10 +1078,17 @@ class _MapScreenState extends State<MapScreen> {
           }
         }
 
-        results.sort((a, b) {
+        allResults.sort((a, b) {
           final String nameA = (a['description'] ?? '').toString().toLowerCase();
           final String nameB = (b['description'] ?? '').toString().toLowerCase();
           final String queryLower = query.toLowerCase();
+
+          // Prioritize user experiences over Google Maps results
+          if (a['type'] == 'experience' && b['type'] == 'place') {
+            return -1; // a comes first
+          } else if (a['type'] == 'place' && b['type'] == 'experience') {
+            return 1; // b comes first
+          }
 
           // Simplified scoring from LocationPickerScreen (no businessNameHint)
           int getScore(String name, String currentQuery) {
@@ -1007,10 +1132,10 @@ class _MapScreenState extends State<MapScreen> {
 
         if (mounted) {
           setState(() {
-            _searchResults = results;
-            _showSearchResults = results.isNotEmpty;
+            _searchResults = allResults;
+            _showSearchResults = allResults.isNotEmpty;
             _isSearching = false;
-            print("🗺️ MAP SCREEN: (_searchPlaces DEBOUNCED) setState: _showSearchResults: $_showSearchResults, _isSearching: $_isSearching, results count: ${_searchResults.length}");
+            print("🗺️ MAP SCREEN: (_searchPlaces DEBOUNCED) setState: _showSearchResults: $_showSearchResults, _isSearching: $_isSearching, results count: ${_searchResults.length} (${experienceResults.length} experiences + ${mapsResults.length} places)");
           });
         }
       } catch (e) {
@@ -1038,6 +1163,84 @@ class _MapScreenState extends State<MapScreen> {
     _searchController.removeListener(_onSearchChanged);
     print("🗺️ MAP SCREEN: (_selectSearchResult) Listeners on _searchController AFTER remove: ${_searchController.hasListeners}");
 
+    // Check if this is a user's saved experience
+    if (result['type'] == 'experience') {
+      print("🗺️ MAP SCREEN: (_selectSearchResult) Selected result is a saved experience. Showing location details panel.");
+      
+      final Experience experience = result['experience'];
+      final UserCategory category = result['category'];
+      final LatLng targetLatLng = LatLng(experience.location.latitude, experience.location.longitude);
+
+      // Animate camera to the experience location
+      if (_mapController != null) {
+        _mapController!.animateCamera(
+          CameraUpdate.newLatLngZoom(targetLatLng, 16.0),
+        );
+      } else {
+        final GoogleMapController c = await _mapControllerCompleter.future;
+        c.animateCamera(
+          CameraUpdate.newLatLngZoom(targetLatLng, 16.0),
+        );
+      }
+
+      // --- REGENERATING ICON FOR SELECTED STATE ---
+      Color markerBackgroundColor = Colors.grey;
+      try {
+        if (experience.colorCategoryId != null) {
+          final colorCategory = _colorCategories.firstWhere((cc) => cc.id == experience.colorCategoryId);
+          markerBackgroundColor = _parseColor(colorCategory.colorHex);
+        }
+      } catch (e) { /* Use default grey color */ }
+
+      final selectedIcon = await _bitmapDescriptorFromText(
+        category.icon,
+        backgroundColor: markerBackgroundColor,
+        size: 88, // 125% of 70
+        backgroundOpacity: 1.0, // Fully opaque
+      );
+      // --- END ICON REGENERATION ---
+
+      // Create marker for the experience location
+      final tappedMarkerId = MarkerId('selected_experience_location');
+      final tappedMarker = Marker(
+        markerId: tappedMarkerId,
+        position: targetLatLng,
+        infoWindow: InfoWindow(
+          title: '${category.icon} ${experience.name}',
+          snippet: experience.location.getPlaceName(),
+        ),
+        icon: selectedIcon, // Use the new enlarged icon
+        zIndex: 1.0,
+      );
+
+      // Set search text to experience name
+      _searchController.text = experience.name;
+      
+      // Reset the flag immediately after the programmatic text update
+      _isProgrammaticTextUpdate = false;
+      print("🗺️ MAP SCREEN: (_selectSearchResult) Reset _isProgrammaticTextUpdate = false for experience.");
+
+      if (mounted) {
+        setState(() {
+          _mapWidgetInitialLocation = experience.location;
+          _tappedLocationDetails = experience.location;
+          _tappedLocationMarker = tappedMarker;
+          _tappedExperience = experience; // ADDED: Set associated experience
+          _tappedExperienceCategory = category; // ADDED: Set associated category
+          _isSearching = false;
+          _showSearchResults = false;
+        });
+      }
+
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _searchController.addListener(_onSearchChanged);
+        }
+      });
+      return;
+    }
+
+    // Handle Google Maps places (original logic)
     final placeId = result['placeId']; 
 
     // Show loading indicator immediately for this specific operation
@@ -1098,6 +1301,8 @@ class _MapScreenState extends State<MapScreen> {
           _mapWidgetInitialLocation = location; // Update map widget's initial location
           _tappedLocationDetails = location;
           _tappedLocationMarker = tappedMarker;
+          _tappedExperience = null; // ADDED: Clear associated experience for Google Maps places
+          _tappedExperienceCategory = null; // ADDED: Clear associated category for Google Maps places
           _isSearching = false; 
           _showSearchResults = false; 
         });
@@ -1150,6 +1355,14 @@ class _MapScreenState extends State<MapScreen> {
 
     // Combine experience markers and the tapped marker (if it exists)
     final Map<String, Marker> allMarkers = Map.from(_markers);
+
+    // If an experience is currently tapped, remove its original marker from the map
+    // so it can be replaced by the styled _tappedLocationMarker.
+    if (_tappedExperience != null) {
+      allMarkers.remove(_tappedExperience!.id);
+      print("🗺️ MAP SCREEN: Hiding original marker for '${_tappedExperience!.name}' to show selected marker.");
+    }
+    
     if (_tappedLocationMarker != null) {
       allMarkers[_tappedLocationMarker!.markerId.value] =
           _tappedLocationMarker!;
@@ -1177,6 +1390,8 @@ class _MapScreenState extends State<MapScreen> {
               setState(() {
                 _tappedLocationMarker = null;
                 _tappedLocationDetails = null;
+                _tappedExperience = null; // ADDED: Clear associated experience
+                _tappedExperienceCategory = null; // ADDED: Clear associated category
                 _searchController.clear();
                 _searchResults = [];
                 _showSearchResults = false;
@@ -1215,16 +1430,18 @@ class _MapScreenState extends State<MapScreen> {
                           : _searchController.text.isNotEmpty
                               ? IconButton(
                                   icon: Icon(Icons.clear),
-                                  onPressed: () {
-                                    setState(() {
-                                      _searchController.clear();
-                                      _searchResults = [];
-                                      _showSearchResults = false;
-                                      // Optionally, clear tapped location as well if search is cleared
-                                      // _tappedLocationDetails = null;
-                                      // _tappedLocationMarker = null;
-                                    });
-                                  },
+                                                      onPressed: () {
+                      setState(() {
+                        _searchController.clear();
+                        _searchResults = [];
+                        _showSearchResults = false;
+                        // Clear tapped location when search is cleared
+                        _tappedLocationDetails = null;
+                        _tappedLocationMarker = null;
+                        _tappedExperience = null;
+                        _tappedExperienceCategory = null;
+                      });
+                    },
                                 )
                               : null,
                     ),
@@ -1269,6 +1486,7 @@ class _MapScreenState extends State<MapScreen> {
                       Divider(height: 1, indent: 56, endIndent: 16),
                   itemBuilder: (context, index) {
                     final result = _searchResults[index];
+                    final bool isUserExperience = result['type'] == 'experience';
                     final bool hasRating = result['rating'] != null;
                     final double rating =
                         hasRating ? (result['rating'] as double) : 0.0;
@@ -1287,24 +1505,56 @@ class _MapScreenState extends State<MapScreen> {
                           padding: const EdgeInsets.symmetric(vertical: 4.0),
                           child: ListTile(
                             leading: CircleAvatar(
-                              backgroundColor: Theme.of(context)
-                                  .primaryColor
-                                  .withOpacity(0.1),
-                              child: Text(
-                                '${index + 1}', // Simple numbering for now
-                                style: TextStyle(
-                                  color: Theme.of(context).primaryColor,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 16,
-                                ),
-                              ),
+                              backgroundColor: isUserExperience 
+                                  ? Colors.green.withOpacity(0.1) 
+                                  : Theme.of(context).primaryColor.withOpacity(0.1),
+                              child: isUserExperience
+                                  ? Icon(
+                                      Icons.bookmark,
+                                      color: Colors.green,
+                                      size: 18,
+                                    )
+                                  : Text(
+                                      '${index + 1}',
+                                      style: TextStyle(
+                                        color: Theme.of(context).primaryColor,
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 16,
+                                      ),
+                                    ),
                             ),
-                            title: Text(
-                              result['description'] ?? 'Unknown Place',
-                              style: TextStyle(
-                                fontWeight: FontWeight.w500,
-                                fontSize: 15,
-                              ),
+                            title: Row(
+                              children: [
+                                if (isUserExperience) ...[
+                                  Container(
+                                    padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: Colors.green.withOpacity(0.1),
+                                      borderRadius: BorderRadius.circular(4),
+                                      border: Border.all(color: Colors.green.withOpacity(0.3)),
+                                    ),
+                                    child: Text(
+                                      'Saved',
+                                      style: TextStyle(
+                                        color: Colors.green[700],
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                  ),
+                                  SizedBox(width: 8),
+                                ],
+                                Expanded(
+                                  child: Text(
+                                    result['description'] ?? 'Unknown Place',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w500,
+                                      fontSize: 15,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
                             ),
                             subtitle: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1399,83 +1649,126 @@ class _MapScreenState extends State<MapScreen> {
 
             // --- ADDED: Tapped Location Details Panel (moved from bottomNavigationBar) ---
             if (_tappedLocationDetails != null && !isKeyboardVisible)
-              Container(
-                width: double.infinity, // ADDED: Make container fill screen width
-                padding: EdgeInsets.fromLTRB(
-                    16, 16, 16, 16 + MediaQuery.of(context).padding.bottom / 2),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.1),
-                      blurRadius: 8,
-                      offset: Offset(0, -3), // Shadow upwards as it's at the bottom of content
-                    ),
-                  ],
-                ),
-                child: Stack(
-                  clipBehavior: Clip.none, 
-                  children: [
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min, 
-                      children: [
-                        Text(
-                          'Selected Location',
-                          style: TextStyle(
-                            fontWeight: FontWeight.normal,
-                            fontSize: 14,
-                            color: Colors.grey[800],
+              // ADDED: Make entire panel tappable for experiences
+              GestureDetector(
+                onTap: _tappedExperience != null && _tappedExperienceCategory != null
+                    ? () {
+                        print("🗺️ MAP SCREEN: Experience location panel tapped. Navigating to experience page.");
+                        _navigateToExperience(_tappedExperience!, _tappedExperienceCategory!);
+                      }
+                    : null,
+                child: Container(
+                  width: double.infinity, // ADDED: Make container fill screen width
+                  padding: EdgeInsets.fromLTRB(
+                      16, 16, 16, 16 + MediaQuery.of(context).padding.bottom / 2),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.1),
+                        blurRadius: 8,
+                        offset: Offset(0, -3), // Shadow upwards as it's at the bottom of content
+                      ),
+                    ],
+                  ),
+                  child: Stack(
+                    clipBehavior: Clip.none, 
+                    children: [
+                      // ADDED: Positioned "Tap to view" text at the very top
+                      if (_tappedExperience != null)
+                        Positioned(
+                          top: -12, // Move it further up, closer to the edge
+                          left: 0,
+                          right: 0,
+                          child: Center(
+                            child: Text(
+                              'Tap to view experience',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey[500],
+                                fontStyle: FontStyle.italic,
+                              ),
+                            ),
                           ),
                         ),
-                        SizedBox(height: 12),
-                        Text(
-                          _tappedLocationDetails!.getPlaceName(),
-                          style: TextStyle(
-                            fontWeight: FontWeight.w500,
-                            fontSize: 16,
-                          ),
-                        ),
-                        SizedBox(height: 8),
-                        if (_tappedLocationDetails!.address != null &&
-                            _tappedLocationDetails!.address!.isNotEmpty) ...[
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min, 
+                        children: [
+                          // ADDED: Add space at the top for the positioned text
+                          if (_tappedExperience != null)
+                            SizedBox(height: 12),
+                          // Only show "Selected Location" for non-experience locations
+                          if (_tappedExperience == null) ...[
+                            Text(
+                              'Selected Location',
+                              style: TextStyle(
+                                fontWeight: FontWeight.normal,
+                                fontSize: 14,
+                                color: Colors.grey[800],
+                              ),
+                            ),
+                            SizedBox(height: 12),
+                          ],
                           Text(
-                            _tappedLocationDetails!.address!,
-                            style: TextStyle(color: Colors.grey[700]),
+                            _tappedExperience != null 
+                              ? '${_tappedExperienceCategory!.icon} ${_tappedExperience!.name}'
+                              : _tappedLocationDetails!.getPlaceName(),
+                            style: TextStyle(
+                              fontWeight: FontWeight.w500,
+                              fontSize: 16,
+                            ),
                           ),
+                          // if (_tappedExperience != null) ...[
+                          //   SizedBox(height: 4),
+                          //   Text(
+                          //     _tappedLocationDetails!.getPlaceName(),
+                          //     style: TextStyle(
+                          //       fontSize: 14,
+                          //       color: Colors.grey[600],
+                          //     ),
+                          //   ),
+                          // ],
                           SizedBox(height: 8),
-                        ],
-                        // ADDED: Star Rating
-                        if (_tappedLocationDetails!.rating != null) ...[
-                          Row(
-                            children: [
-                              ...List.generate(5, (i) {
-                                final ratingValue = _tappedLocationDetails!.rating!;
-                                return Icon(
-                                  i < ratingValue.floor()
-                                      ? Icons.star
-                                      : (i < ratingValue)
-                                          ? Icons.star_half
-                                          : Icons.star_border,
-                                  size: 18, 
-                                  color: Colors.amber,
-                                );
-                              }),
-                              SizedBox(width: 8),
-                              if (_tappedLocationDetails!.userRatingCount != null && _tappedLocationDetails!.userRatingCount! > 0)
-                                Text(
-                                  '(${_tappedLocationDetails!.userRatingCount})',
-                                  style: TextStyle(
-                                    color: Colors.grey[600],
-                                    fontSize: 13,
+                          if (_tappedLocationDetails!.address != null &&
+                              _tappedLocationDetails!.address!.isNotEmpty) ...[
+                            Text(
+                              _tappedLocationDetails!.address!,
+                              style: TextStyle(color: Colors.grey[700]),
+                            ),
+                            SizedBox(height: 8),
+                          ],
+                          // ADDED: Star Rating
+                          if (_tappedLocationDetails!.rating != null) ...[
+                            Row(
+                              children: [
+                                ...List.generate(5, (i) {
+                                  final ratingValue = _tappedLocationDetails!.rating!;
+                                  return Icon(
+                                    i < ratingValue.floor()
+                                        ? Icons.star
+                                        : (i < ratingValue)
+                                            ? Icons.star_half
+                                            : Icons.star_border,
+                                    size: 18, 
+                                    color: Colors.amber,
+                                  );
+                                }),
+                                SizedBox(width: 8),
+                                if (_tappedLocationDetails!.userRatingCount != null && _tappedLocationDetails!.userRatingCount! > 0)
+                                  Text(
+                                    '(${_tappedLocationDetails!.userRatingCount})',
+                                    style: TextStyle(
+                                      color: Colors.grey[600],
+                                      fontSize: 13,
+                                    ),
                                   ),
-                                ),
-                            ],
-                          ),
-                          SizedBox(height: 8), // Added SizedBox after rating like in location_picker_screen
+                              ],
+                            ),
+                            SizedBox(height: 8), // Added SizedBox after rating like in location_picker_screen
+                          ],
                         ],
-                      ],
-                    ),
+                      ),
                     Positioned(
                       top: -8,
                       right: -8,
@@ -1510,6 +1803,7 @@ class _MapScreenState extends State<MapScreen> {
                     ),
                   ],
                 ),
+              ),
               ),
             // --- END Tapped Location Details ---
           ],

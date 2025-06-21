@@ -1430,18 +1430,29 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
         isOperational ? Colors.green[700]! : Colors.red[700]!;
     List<String>? descriptions;
     String todayString = 'Hours details unavailable';
-    int currentWeekday = DateTime.now().weekday; // 1=Mon, 7=Sun
+    final now = DateTime.now(); // ADDED for debugging
+    int currentWeekday = now.weekday; // MODIFIED to use `now`
 
-    // Adjust to match Google's likely Sunday=0 or Sunday=start index
-    // This depends on the exact format in weekdayDescriptions.
-    // Assuming Sunday is the first entry:
-    int googleWeekdayIndex = (currentWeekday % 7); // Sun=0, Mon=1, ... Sat=6
+    // Adjust to match Google's Monday-first format in weekdayDescriptions
+    // Google API returns: [Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday]
+    // So we need: Mon(1)→0, Tue(2)→1, ..., Sat(6)→5, Sun(7)→6
+    int googleWeekdayIndex = (currentWeekday - 1); // Mon=0, Tue=1, ..., Sat=5, Sun=6
+
+    // --- ADDED: Debug Prints ---
+    print('--- DEBUG: Day Highlighting ---');
+    print('Current DateTime from device: $now');
+    print('Dart weekday from device (1=Mon, 7=Sun): $currentWeekday');
+    print('Calculated Google Index (0=Mon, ..., 6=Sun): $googleWeekdayIndex');
+    // --- END: Debug Prints ---
 
     if (hoursData is Map &&
         hoursData.containsKey('weekdayDescriptions') &&
         hoursData['weekdayDescriptions'] is List &&
         (hoursData['weekdayDescriptions'] as List).isNotEmpty) {
       descriptions = (hoursData['weekdayDescriptions'] as List).cast<String>();
+      // --- ADDED: Debug Print for API data ---
+      print('Weekday Descriptions from API: $descriptions');
+      // --- END: Debug Print ---
       if (descriptions.length > googleWeekdayIndex) {
         todayString = descriptions[googleWeekdayIndex];
       } else {
