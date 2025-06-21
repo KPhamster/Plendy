@@ -65,6 +65,7 @@ class _ExperienceCardsSection extends StatelessWidget {
   final List<SharedMediaFile> currentSharedFiles;
   final List<ExperienceCardData> experienceCards; // ADDED: To receive cards directly
   final GlobalKey? sectionKey; // ADDED for scrolling
+  final void Function(String cardId)? onYelpButtonTapped; // ADDED
 
   const _ExperienceCardsSection({
     super.key,
@@ -82,6 +83,7 @@ class _ExperienceCardsSection extends StatelessWidget {
     required this.currentSharedFiles,
     required this.experienceCards, // ADDED: To constructor
     this.sectionKey, // ADDED for scrolling
+    this.onYelpButtonTapped, // ADDED
   });
 
   @override
@@ -151,6 +153,7 @@ class _ExperienceCardsSection extends StatelessWidget {
                       );
                     },
                     formKey: card.formKey,
+                    onYelpButtonTapped: onYelpButtonTapped, // ADDED
                   );
                 }),
           if (!isSpecialUrl(currentSharedFiles.isNotEmpty
@@ -466,7 +469,14 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       
       print("ReceiveShareScreen: Received updated shared files. Processing...");
       
-      // Reset the provider with new content
+      // Check if this is a Yelp URL that should be added to existing card
+      String? yelpUrl = _extractYelpUrlFromSharedFiles(updatedFiles);
+      if (yelpUrl != null && _hasExistingCards()) {
+        _handleYelpUrlUpdate(yelpUrl, updatedFiles);
+        return;
+      }
+      
+      // If not a Yelp URL or no existing cards, proceed with normal reset logic
       final provider = context.read<ReceiveShareProvider>();
       provider.resetExperienceCards();
       
@@ -488,6 +498,90 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       if (a[i].path != b[i].path) return false;
     }
     return true;
+  }
+
+  // Check if there are existing experience cards
+  bool _hasExistingCards() {
+    final provider = context.read<ReceiveShareProvider>();
+    return provider.experienceCards.isNotEmpty;
+  }
+
+  // Extract Yelp URL from shared files
+  String? _extractYelpUrlFromSharedFiles(List<SharedMediaFile> files) {
+    for (final file in files) {
+      if (file.type == SharedMediaType.text || file.type == SharedMediaType.url) {
+        String? url = _extractFirstUrl(file.path);
+        if (url != null && _isYelpUrl(url)) {
+          return url;
+        }
+      }
+    }
+    return null;
+  }
+
+  // Check if a URL is a Yelp URL
+  bool _isYelpUrl(String url) {
+    String urlLower = url.toLowerCase();
+    return urlLower.contains('yelp.com/biz') || urlLower.contains('yelp.to/');
+  }
+
+  // Track which card's Yelp button was last tapped
+  String? _lastYelpButtonTappedCardId;
+
+  // Handle updating an existing card with a new Yelp URL
+  void _handleYelpUrlUpdate(String yelpUrl, List<SharedMediaFile> updatedFiles) {
+    final provider = context.read<ReceiveShareProvider>();
+    final experienceCards = provider.experienceCards;
+    
+    if (experienceCards.isEmpty) return;
+    
+    // Find the target card to populate with the Yelp URL
+    ExperienceCardData? targetCard;
+    
+    // First priority: If user recently tapped a Yelp button, update that card
+    if (_lastYelpButtonTappedCardId != null) {
+      try {
+        targetCard = experienceCards.firstWhere(
+          (card) => card.id == _lastYelpButtonTappedCardId
+        );
+        print("ReceiveShareScreen: Prioritizing card ${targetCard.id} that recently opened Yelp");
+        // Clear the tracking after use
+        _lastYelpButtonTappedCardId = null;
+      } catch (e) {
+        // Card not found, fall back to other logic
+        _lastYelpButtonTappedCardId = null;
+      }
+    }
+    
+    // Second priority: Use the bottom-most (last) experience card
+    targetCard ??= experienceCards.last;
+    
+    // Normalize the URL
+    String normalizedUrl = yelpUrl.trim();
+    if (!normalizedUrl.startsWith('http')) {
+      normalizedUrl = 'https://$normalizedUrl';
+    }
+    
+    // Update the card with the Yelp URL (replace existing if present)
+    final previousUrl = targetCard.yelpUrlController.text;
+    targetCard.yelpUrlController.text = normalizedUrl;
+    
+    // Trigger a rebuild to update the UI without adding new previews
+    setState(() {
+      // Just trigger rebuild without modifying shared files
+    });
+    
+    if (previousUrl.isNotEmpty) {
+      print("ReceiveShareScreen: Replaced Yelp URL in card ${targetCard.id}: '$previousUrl' -> '$normalizedUrl'");
+    } else {
+      print("ReceiveShareScreen: Added Yelp URL to card ${targetCard.id}: '$normalizedUrl'");
+    }
+  }
+
+  // Method to track when a Yelp button is tapped
+  void _trackYelpButtonTapped(String cardId) {
+    _lastYelpButtonTappedCardId = cardId;
+    print("ReceiveShareScreen: Tracked Yelp button tap for card: $cardId");
   }
 
   Future<void> _loadUserCategories() async {
@@ -2862,6 +2956,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                           currentSharedFiles: _currentSharedFiles,
                                           experienceCards: selectedExperienceCards, // Pass selected cards from Selector
                                           sectionKey: _experienceCardsSectionKey, // PASSING THE KEY
+                                          onYelpButtonTapped: _trackYelpButtonTapped, // ADDED
                                         );
                                       }
                                     ),

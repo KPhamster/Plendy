@@ -47,6 +47,7 @@ class ExperienceCardForm extends StatefulWidget {
   final OnSelectSavedExperienceCallback onSelectSavedExperience;
   final OnUpdateCallback onUpdate; // Callback to parent (signature updated)
   final GlobalKey<FormState> formKey; // Pass form key down
+  final void Function(String cardId)? onYelpButtonTapped; // ADDED
 
   const ExperienceCardForm({
     super.key,
@@ -60,6 +61,7 @@ class ExperienceCardForm extends StatefulWidget {
     required this.onSelectSavedExperience,
     required this.onUpdate, // Signature updated
     required this.formKey,
+    this.onYelpButtonTapped, // ADDED
   });
 
   @override
@@ -271,6 +273,9 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
 
   // Helper method to launch Yelp URLs or search Yelp
   Future<void> _launchYelpUrl() async {
+    // Notify parent that Yelp button was tapped for this card
+    widget.onYelpButtonTapped?.call(widget.cardData.id);
+    
     String yelpUrlString = widget.cardData.yelpUrlController.text.trim();
     Uri uri;
 

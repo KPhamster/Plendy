@@ -314,6 +314,8 @@ class ReceiveShareProvider extends ChangeNotifier {
       targetCard.selectedLocation =
           selectedExperience.location; // Assign the whole Location object
       targetCard.selectedCategoryId = selectedExperience.categoryId;
+      targetCard.selectedColorCategoryId = selectedExperience.colorCategoryId;
+      targetCard.selectedOtherCategoryIds = List<String>.from(selectedExperience.otherCategories);
       targetCard.yelpUrlController.text = selectedExperience.yelpUrl ?? '';
       targetCard.websiteController.text = selectedExperience.website ?? '';
       targetCard.notesController.text =
