@@ -307,7 +307,7 @@ class YouTubePreviewWidgetState extends State<YouTubePreviewWidget> {
   @override
   Widget build(BuildContext context) {
     // Calculate height based on video type if not provided
-    final double containerHeight = widget.height ?? (_isShort ? 600.0 : 350.0);
+    final double containerHeight = widget.height ?? (_isShort ? 600.0 : 220.0);
     
     return Column(
       children: [

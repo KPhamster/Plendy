@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:plendy/screens/receive_share_screen.dart'; // For ExperienceCardData
 import 'package:plendy/models/experience.dart'; // For Location
+import 'package:plendy/config/app_constants.dart'; // ADDED: For unified keys
 // TODO: Adjust these import paths if they are incorrect for your project structure
 import '../models/user_category.dart';
 import '../models/color_category.dart';
@@ -13,10 +14,6 @@ class ReceiveShareProvider extends ChangeNotifier {
   List<UserCategory> _userCategories = [];
   List<ColorCategory> _userColorCategories = [];
   SharedPreferences? _prefs; // ADDED: To store SharedPreferences instance
-
-  // SharedPreferences keys - should match ReceiveShareScreen
-  static const String _lastUsedCategoryNameKey = 'last_used_category_name';
-  static const String _lastUsedColorCategoryIdKey = 'last_used_color_category_id';
 
   List<ExperienceCardData> get experienceCards => _experienceCards;
 
@@ -89,8 +86,9 @@ class ReceiveShareProvider extends ChangeNotifier {
       return;
     }
     
-    String? lastUsedCategoryId = _prefs!.getString(_lastUsedCategoryNameKey);
-    String? lastUsedColorCategoryId = _prefs!.getString(_lastUsedColorCategoryIdKey);
+    String? lastUsedCategoryId = _prefs!.getString(AppConstants.lastUsedCategoryKey);
+    String? lastUsedColorCategoryId = _prefs!.getString(AppConstants.lastUsedColorCategoryKey);
+    List<String>? lastUsedOtherCategoryIds = _prefs!.getStringList(AppConstants.lastUsedOtherCategoriesKey);
 
     // --- Text Category Defaulting ---
     if (isFirstCard) {
@@ -113,7 +111,7 @@ class ReceiveShareProvider extends ChangeNotifier {
       }
     } else {
       // For subsequent cards: Copy from the previous card.
-      if (_experienceCards.isNotEmpty) { // Should always be true if !isFirstCard, but good check
+      if (_experienceCards.isNotEmpty) { // Should always be true if !isFirstCard
         cardData.selectedCategoryId = _experienceCards.last.selectedCategoryId;
         print("Provider (Subsequent Card): Copied category ID '${cardData.selectedCategoryId}' from previous card to card ${cardData.id.substring(cardData.id.length-4)}");
       } else {
@@ -149,8 +147,23 @@ class ReceiveShareProvider extends ChangeNotifier {
       if (_experienceCards.isNotEmpty) { // Should always be true if !isFirstCard
         cardData.selectedColorCategoryId = _experienceCards.last.selectedColorCategoryId;
         print("Provider (Subsequent Card): Copied color category ID '${cardData.selectedColorCategoryId}' from previous card to card ${cardData.id.substring(cardData.id.length-4)}");
+        
+        // ADDED: Copy 'Other Categories' as well
+        cardData.selectedOtherCategoryIds = List<String>.from(_experienceCards.last.selectedOtherCategoryIds);
+        print("Provider (Subsequent Card): Copied other category IDs from previous card to card ${cardData.id.substring(cardData.id.length-4)}");
       } 
       // No else needed here as the text category fallback above would have handled the unexpected case.
+    }
+
+    // --- Other Categories Defaulting (for first card) ---
+    if (isFirstCard) {
+      if (lastUsedOtherCategoryIds != null) {
+        final validOtherIds = lastUsedOtherCategoryIds
+            .where((id) => _userCategories.any((cat) => cat.id == id))
+            .toList();
+        cardData.selectedOtherCategoryIds = validOtherIds;
+        print("Provider (First Card): Applied PREFERRED other category IDs: $validOtherIds to card ${cardData.id.substring(cardData.id.length - 4)}");
+      }
     }
   }
 
