@@ -41,6 +41,7 @@ import 'main_screen.dart';
 import '../models/public_experience.dart';
 import '../services/auth_service.dart';
 import 'package:collection/collection.dart';
+import 'package:plendy/config/app_constants.dart';
 
 // Ensures _ExperienceCardsSection is defined at the top-level
 class _ExperienceCardsSection extends StatelessWidget {
@@ -294,10 +295,6 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
   // Add a field to track the current reload operation
   int _currentReloadOperationId = 0;
-
-  // SharedPreferences keys for last used category/color category
-  static const String _lastUsedCategoryNameKey = 'last_used_category_name';
-  static const String _lastUsedColorCategoryIdKey = 'last_used_color_category_id';
 
   // --- ADDED FOR SCROLLING FAB ---
   late ScrollController _scrollController;
@@ -2103,24 +2100,30 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         if (!mounted) return;
 
         if (lastProcessedCard.selectedCategoryId != null) {
-          await prefs.setString(_lastUsedCategoryNameKey, lastProcessedCard.selectedCategoryId!);
+          await prefs.setString(AppConstants.lastUsedCategoryKey, lastProcessedCard.selectedCategoryId!);
           if (!mounted) return;
           print("ReceiveShareScreen: Saved last used category: ${lastProcessedCard.selectedCategoryId}");
         } else {
-          await prefs.remove(_lastUsedCategoryNameKey);
+          await prefs.remove(AppConstants.lastUsedCategoryKey);
           if (!mounted) return;
           print("ReceiveShareScreen: Last used category was null, removed preference.");
         }
 
         if (lastProcessedCard.selectedColorCategoryId != null) {
-          await prefs.setString(_lastUsedColorCategoryIdKey, lastProcessedCard.selectedColorCategoryId!);
+          await prefs.setString(AppConstants.lastUsedColorCategoryKey, lastProcessedCard.selectedColorCategoryId!);
           if (!mounted) return;
           print("ReceiveShareScreen: Saved last used color category ID: ${lastProcessedCard.selectedColorCategoryId}");
         } else {
-          await prefs.remove(_lastUsedColorCategoryIdKey);
+          await prefs.remove(AppConstants.lastUsedColorCategoryKey);
           if (!mounted) return;
           print("ReceiveShareScreen: Last used color category ID was null, removed preference.");
         }
+
+        // ADDED: Save last used other categories
+        await prefs.setStringList(AppConstants.lastUsedOtherCategoriesKey, lastProcessedCard.selectedOtherCategoryIds);
+        if (!mounted) return;
+        print("ReceiveShareScreen: Saved last used other categories: ${lastProcessedCard.selectedOtherCategoryIds}");
+        // --- END ADDED ---
       }
 
       if (shouldAttemptNavigation) {
