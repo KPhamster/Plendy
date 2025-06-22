@@ -531,7 +531,8 @@ class _MapScreenState extends State<MapScreen> {
         // MODIFIED: Use exp.categoryId directly
         final bool categoryMatch = _selectedCategoryIds.isEmpty ||
             (exp.categoryId != null && // Check if categoryId exists
-                _selectedCategoryIds.contains(exp.categoryId)); // Check if it's in the selected set
+                _selectedCategoryIds.contains(exp.categoryId)) || // Check if it's in the selected set
+            (exp.otherCategories.any((catId) => _selectedCategoryIds.contains(catId))); // Check if any other category matches
 
         final bool colorMatch = _selectedColorCategoryIds.isEmpty ||
             (exp.colorCategoryId != null &&
@@ -828,14 +829,6 @@ class _MapScreenState extends State<MapScreen> {
                 "🗺️ MAP SCREEN: InfoWindow tapped for ${_tappedLocationDetails?.displayName}");
             if (_tappedLocationDetails != null) {
               _openDirectionsForLocation(_tappedLocationDetails!);
-            } else {
-              print(
-                  "🗺️ MAP SCREEN: Error - Tapped location details are null, cannot open directions.");
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                    content:
-                        Text('Could not get location details for directions.')),
-              );
             }
           },
         ),
@@ -1345,6 +1338,84 @@ class _MapScreenState extends State<MapScreen> {
     _searchPlaces(_searchController.text);
   }
 
+  // ADDED: Helper to build the "Other Categories" display
+  Widget _buildOtherCategoriesWidget() {
+    if (_tappedExperience == null || _tappedExperience!.otherCategories.isEmpty) {
+      return const SizedBox.shrink(); // Return empty space if no other categories
+    }
+
+    // Get the full UserCategory objects from the IDs
+    final otherCategoryObjects = _tappedExperience!.otherCategories
+        .map((id) {
+          try {
+            return _categories.firstWhere((cat) => cat.id == id);
+          } catch (e) {
+            return null; // Category not found
+          }
+        })
+        .whereType<UserCategory>() // Filter out nulls
+        .toList();
+
+    if (otherCategoryObjects.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    // MODIFIED: Display as a Wrap of icons, without the header
+    return Wrap(
+      spacing: 8.0,
+      runSpacing: 4.0,
+      children: otherCategoryObjects.map((category) {
+        return Text(
+          category.icon,
+          style: const TextStyle(fontSize: 16),
+        );
+      }).toList(),
+    );
+  }
+
+  // ADDED: Helper to build the Color Category display
+  Widget _buildColorCategoryWidget() {
+    if (_tappedExperience == null || _tappedExperience!.colorCategoryId == null) {
+      return const SizedBox.shrink();
+    }
+
+    ColorCategory? colorCategory;
+    try {
+      colorCategory = _colorCategories
+          .firstWhere((cc) => cc.id == _tappedExperience!.colorCategoryId);
+    } catch (e) {
+      return const SizedBox.shrink(); // Not found
+    }
+
+    // MODIFIED: Removed the Column and header text
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade100,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 12,
+            height: 12,
+            decoration: BoxDecoration(
+              color: _parseColor(colorCategory.colorHex),
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.grey.shade400, width: 0.5),
+            ),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            colorCategory.name,
+            style: const TextStyle(fontSize: 12),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     print("🗺️ MAP SCREEN: Building widget. isLoading: $_isLoading");
@@ -1660,7 +1731,7 @@ class _MapScreenState extends State<MapScreen> {
                 child: Container(
                   width: double.infinity, // ADDED: Make container fill screen width
                   padding: EdgeInsets.fromLTRB(
-                      16, 16, 16, 16 + MediaQuery.of(context).padding.bottom / 2),
+                      16, 16, 16, 8 + MediaQuery.of(context).padding.bottom / 2),
                   decoration: BoxDecoration(
                     color: Colors.white,
                     boxShadow: [
@@ -1710,25 +1781,24 @@ class _MapScreenState extends State<MapScreen> {
                             ),
                             SizedBox(height: 12),
                           ],
-                          Text(
-                            _tappedExperience != null 
-                              ? '${_tappedExperienceCategory!.icon} ${_tappedExperience!.name}'
-                              : _tappedLocationDetails!.getPlaceName(),
-                            style: TextStyle(
-                              fontWeight: FontWeight.w500,
-                              fontSize: 16,
-                            ),
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  _tappedExperience != null
+                                      ? '${_tappedExperienceCategory!.icon} ${_tappedExperience!.name}'
+                                      : _tappedLocationDetails!.getPlaceName(),
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w500,
+                                    fontSize: 16,
+                                  ),
+                                ),
+                              ),
+                              // Add spacing to prevent title from overlapping with the action buttons in the Stack
+                              const SizedBox(width: 96),
+                            ],
                           ),
-                          // if (_tappedExperience != null) ...[
-                          //   SizedBox(height: 4),
-                          //   Text(
-                          //     _tappedLocationDetails!.getPlaceName(),
-                          //     style: TextStyle(
-                          //       fontSize: 14,
-                          //       color: Colors.grey[600],
-                          //     ),
-                          //   ),
-                          // ],
                           SizedBox(height: 8),
                           if (_tappedLocationDetails!.address != null &&
                               _tappedLocationDetails!.address!.isNotEmpty) ...[
@@ -1767,6 +1837,19 @@ class _MapScreenState extends State<MapScreen> {
                             ),
                             SizedBox(height: 8), // Added SizedBox after rating like in location_picker_screen
                           ],
+
+                          const SizedBox(height: 12), // Spacer before the new row
+
+                          // ADDED: Row for Other Categories and Color Category
+                          if (_tappedExperience != null)
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(child: _buildOtherCategoriesWidget()),
+                                const SizedBox(width: 8),
+                                _buildColorCategoryWidget(),
+                              ],
+                            ),
                         ],
                       ),
                     Positioned(
