@@ -46,6 +46,7 @@ import 'package:collection/collection.dart';
 import 'package:plendy/config/app_constants.dart';
 // Import ApiSecrets conditionally
 import '../config/api_secrets.dart' if (dart.library.io) '../config/api_secrets.dart' if (dart.library.html) '../config/api_secrets.dart';
+import 'package:fluttertoast/fluttertoast.dart';
 
 // Ensures _ExperienceCardsSection is defined at the top-level
 class _ExperienceCardsSection extends StatelessWidget {
@@ -332,9 +333,6 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   // Loading state
   bool _isSaving = false;
 
-  // Snackbar controller to manage notifications
-  ScaffoldFeatureController<SnackBar, SnackBarClosedReason>? _activeSnackBar;
-
   // Add a map to cache futures for Yelp preview data
   final Map<String, Future<Map<String, dynamic>?>> _yelpPreviewFutures = {};
 
@@ -347,7 +345,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
 
     // Show new snackbar
-    _activeSnackBar = ScaffoldMessenger.of(context).showSnackBar(
+    ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
         duration: Duration(seconds: 1), // Set duration to 1 second
@@ -597,10 +595,17 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     final previousUrl = targetCard.yelpUrlController.text;
     targetCard.yelpUrlController.text = normalizedUrl;
     
-    // Trigger a rebuild to update the UI without adding new previews
-    setState(() {
-      // Just trigger rebuild without modifying shared files
-    });
+    // No notifications needed - the TextEditingController will handle its own listeners
+    // This prevents any rebuilds of the page or provider listeners
+    Fluttertoast.showToast(
+        msg: "Yelp URL added",
+        toastLength: Toast.LENGTH_SHORT,
+        gravity: ToastGravity.BOTTOM,
+        timeInSecForIosWeb: 1,
+        backgroundColor: Colors.black.withOpacity(0.7),
+        textColor: Colors.white,
+        fontSize: 16.0
+    );
     
     if (previousUrl.isNotEmpty) {
       print("ReceiveShareScreen: Replaced Yelp URL in card ${targetCard.id}: '$previousUrl' -> '$normalizedUrl'");

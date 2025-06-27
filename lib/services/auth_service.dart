@@ -9,9 +9,7 @@ import 'dart:async'; // For Timer
 
 class AuthService extends ChangeNotifier {
   final FirebaseAuth _auth = FirebaseAuth.instance;
-  final GoogleSignIn _googleSignIn = GoogleSignIn(
-    clientId: "449728842508-2o1dfbn37370v03t3qald1756iim4i4f.apps.googleusercontent.com", // Add your Web Client ID here
-  );
+  final GoogleSignIn _googleSignIn = GoogleSignIn();
   final UserService _userService = UserService();
   final ExperienceService _experienceService = ExperienceService();
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -189,6 +187,7 @@ class AuthService extends ChangeNotifier {
     //   await _deleteTokenFromFirestore(currentUser!.uid, token);
     // }
     await _auth.signOut();
+    await _googleSignIn.signOut();
     _currentUser = null;
     notifyListeners();
   }
@@ -220,7 +219,7 @@ class AuthService extends ChangeNotifier {
           const Duration(seconds: 10),
           onTimeout: () {
             print('FCM permission request timed out');
-            return NotificationSettings(
+            return const NotificationSettings(
               authorizationStatus: AuthorizationStatus.denied,
               alert: AppleNotificationSetting.disabled,
               announcement: AppleNotificationSetting.disabled,
@@ -232,6 +231,7 @@ class AuthService extends ChangeNotifier {
               timeSensitive: AppleNotificationSetting.disabled,
               criticalAlert: AppleNotificationSetting.disabled,
               sound: AppleNotificationSetting.disabled,
+              providesAppNotificationSettings: AppleNotificationSetting.disabled,
             );
           },
         );
