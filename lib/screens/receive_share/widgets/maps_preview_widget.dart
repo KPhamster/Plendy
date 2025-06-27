@@ -44,6 +44,9 @@ class _MapsPreviewWidgetState extends State<MapsPreviewWidget> {
         "🗺️ MAPS PREVIEW WIDGET: Extracted fallback place name: $fallbackPlaceName");
 
     // Get or create the future - prevents reloading when the experience card is expanded/collapsed
+    print("🗺️ MAPS PREVIEW WIDGET: Looking for URL key: ${widget.mapsUrl}");
+    print("🗺️ MAPS PREVIEW WIDGET: Available futures keys: ${widget.mapsPreviewFutures.keys.toList()}");
+    
     if (!widget.mapsPreviewFutures.containsKey(widget.mapsUrl)) {
       print(
           "🗺️ MAPS PREVIEW WIDGET: Creating new future for URL: ${widget.mapsUrl}");
@@ -66,6 +69,9 @@ class _MapsPreviewWidgetState extends State<MapsPreviewWidget> {
         // If we have data, build the complete preview
         if (snapshot.hasData && snapshot.data != null) {
           final data = snapshot.data!;
+          print("🗺️ MAPS PREVIEW WIDGET: Received data with keys: ${data.keys.toList()}");
+          print("🗺️ MAPS PREVIEW WIDGET: Data content: $data");
+          
           // Ensure location data is correctly cast
           if (data['location'] is Location) {
             final location = data['location'] as Location;
@@ -76,7 +82,7 @@ class _MapsPreviewWidgetState extends State<MapsPreviewWidget> {
             final website = data['website'] as String? ?? '';
 
             print(
-                "🗺️ MAPS PREVIEW WIDGET: Success! Building detailed preview");
+                "🗺️ MAPS PREVIEW WIDGET: ✅ Success! Building detailed preview");
             print("🗺️ MAPS PREVIEW WIDGET: Place name: $placeName");
             print(
                 "🗺️ MAPS PREVIEW WIDGET: Location data: lat=${location.latitude}, lng=${location.longitude}");
@@ -87,7 +93,8 @@ class _MapsPreviewWidgetState extends State<MapsPreviewWidget> {
                 websiteUrl: website);
           } else {
             print(
-                "🗺️ MAPS PREVIEW WIDGET ERROR: Invalid location data format in snapshot.");
+                "🗺️ MAPS PREVIEW WIDGET ERROR: ❌ Invalid location data format in snapshot.");
+            print("🗺️ MAPS PREVIEW WIDGET: Expected Location object, got: ${data['location']?.runtimeType}");
             print(
                 "🗺️ MAPS PREVIEW WIDGET: Using fallback preview due to data error.");
             return _buildMapsFallbackPreview(widget.mapsUrl, fallbackPlaceName);
@@ -96,14 +103,18 @@ class _MapsPreviewWidgetState extends State<MapsPreviewWidget> {
 
         // If snapshot has error, log it
         if (snapshot.hasError) {
-          print("🗺️ MAPS PREVIEW WIDGET ERROR: ${snapshot.error}");
+          print("🗺️ MAPS PREVIEW WIDGET ERROR: ❌ Future completed with error: ${snapshot.error}");
+          print("🗺️ MAPS PREVIEW WIDGET ERROR: Stack trace: ${snapshot.stackTrace}");
           print("🗺️ MAPS PREVIEW WIDGET: Using fallback preview due to error");
-        } else if (!snapshot.hasData || snapshot.data == null) {
+        } else if (!snapshot.hasData) {
           print(
-              "🗺️ MAPS PREVIEW WIDGET: No data received (snapshot.data is null), using fallback preview");
+              "🗺️ MAPS PREVIEW WIDGET: ⚠️ snapshot.hasData is false, using fallback preview");
+        } else if (snapshot.data == null) {
+          print(
+              "🗺️ MAPS PREVIEW WIDGET: ⚠️ snapshot.data is null (future resolved to null), using fallback preview");
         } else {
           print(
-              "🗺️ MAPS PREVIEW WIDGET: Unknown state, using fallback preview");
+              "🗺️ MAPS PREVIEW WIDGET: ⚠️ Unknown state - hasData: ${snapshot.hasData}, data: ${snapshot.data}, connectionState: ${snapshot.connectionState}");
         }
 
         // If we have an error or no data, build a fallback preview
@@ -114,12 +125,20 @@ class _MapsPreviewWidgetState extends State<MapsPreviewWidget> {
 
   // <<< START HELPER METHODS >>>
 
-  // Extract a location name from a Google Maps URL
+  // Extract a location name from a Google Maps URL or Knowledge Graph URL
   String _extractLocationNameFromMapsUrl(String url) {
     try {
       String locationName = "Shared Location";
 
-      // Try to extract a place name from query parameter
+      // Handle Knowledge Graph URLs (g.co/kgs/)
+      if (url.contains('g.co/kgs/')) {
+        print("🗺️ MAPS PREVIEW WIDGET: Knowledge Graph URL detected, extracting name from context");
+        // For Knowledge Graph URLs, we can't extract the name from the URL itself
+        // The name should be provided by the parent context, so we return a generic message
+        return "Shared Place";
+      }
+
+      // Try to extract a place name from query parameter for regular Maps URLs
       final Uri uri = Uri.parse(url);
       final queryParams = uri.queryParameters;
 
@@ -132,6 +151,7 @@ class _MapsPreviewWidgetState extends State<MapsPreviewWidget> {
 
       return locationName;
     } catch (e) {
+      print("🗺️ MAPS PREVIEW WIDGET: Error extracting location name: $e");
       return "Shared Location";
     }
   }
@@ -558,11 +578,13 @@ class _MapsPreviewWidgetState extends State<MapsPreviewWidget> {
                       size: 60, color: Colors.blue[700]), // Use outlined icon
                   SizedBox(height: 16),
 
-                  // Place Name
+                  // Place Name or loading message
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 16.0),
                     child: Text(
-                      'Failed to load location details. Try refreshing.',
+                      placeName != 'Shared Location' 
+                          ? placeName 
+                          : 'Location details not available',
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         fontSize: 18, // Slightly smaller font

@@ -3,6 +3,7 @@ import 'dart:math';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 import 'dart:io';
 import 'dart:convert';
+import 'dart:math';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
@@ -18,6 +19,7 @@ import '../models/color_category.dart';
 import '../models/shared_media_item.dart';
 import '../services/experience_service.dart';
 import '../services/google_maps_service.dart';
+import '../services/google_knowledge_graph_service.dart';
 import '../widgets/google_maps_widget.dart';
 import 'location_picker_screen.dart';
 import '../services/sharing_service.dart';
@@ -42,6 +44,8 @@ import '../models/public_experience.dart';
 import '../services/auth_service.dart';
 import 'package:collection/collection.dart';
 import 'package:plendy/config/app_constants.dart';
+// Import ApiSecrets conditionally
+import '../config/api_secrets.dart' if (dart.library.io) '../config/api_secrets.dart' if (dart.library.html) '../config/api_secrets.dart';
 
 // Ensures _ExperienceCardsSection is defined at the top-level
 class _ExperienceCardsSection extends StatelessWidget {
@@ -295,6 +299,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   final SharingService _sharingService = SharingService();
   // ADDED: AuthService instance
   final AuthService _authService = AuthService();
+  // ADDED: GoogleKnowledgeGraphService instance with optional API key
+  late final GoogleKnowledgeGraphService _knowledgeGraphService;
 
   // Add a field to track the current reload operation
   int _currentReloadOperationId = 0;
@@ -308,6 +314,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   Map<String, GlobalKey> _instagramPreviewKeys = {}; // To store keys for active Instagram previews
   String? _currentVisibleInstagramUrl; // To track which Instagram preview is potentially visible
   // --- END ADDED FOR SCROLLING FAB ---
+
+  // Track initialization state
+  bool _isFullyInitialized = false;
 
   // Remove local experience card list - managed by Provider now
   // List<ExperienceCardData> _experienceCards = [];
@@ -388,6 +397,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     // Initialize with the files passed to the widget
     _currentSharedFiles = widget.sharedFiles;
 
+    // Initialize Knowledge Graph service
+    _initializeKnowledgeGraphService();
+
     // Register observer for app lifecycle events
     WidgetsBinding.instance.addObserver(this);
 
@@ -456,6 +468,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // as the provider (conceptually) has what it needs for default categories.
       print("ReceiveShareScreen: Processing initial shared content.");
       _processSharedContent(_currentSharedFiles);
+      
+      // Mark as fully initialized
+      _isFullyInitialized = true;
+      print("ReceiveShareScreen: Marked as fully initialized");
     }
     print("ReceiveShareScreen: _initializeScreenDataAndProcessContent END");
   }
@@ -468,15 +484,30 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         !_areSharedFilesEqual(updatedFiles, _currentSharedFiles)) {
       
       print("ReceiveShareScreen: Received updated shared files. Processing...");
+      print("ReceiveShareScreen: Is fully initialized: $_isFullyInitialized");
+      
+      // If not fully initialized yet, wait for initialization to complete
+      if (!_isFullyInitialized) {
+        print("ReceiveShareScreen: Screen not fully initialized yet. Deferring share update.");
+        // Defer the update until after initialization
+        Future.delayed(const Duration(milliseconds: 500), () {
+          if (mounted && _isFullyInitialized) {
+            _handleSharedFilesUpdate();
+          }
+        });
+        return;
+      }
       
       // Check if this is a Yelp URL that should be added to existing card
       String? yelpUrl = _extractYelpUrlFromSharedFiles(updatedFiles);
       if (yelpUrl != null && _hasExistingCards()) {
+        print("ReceiveShareScreen: Detected Yelp URL with existing cards. Updating in-place.");
         _handleYelpUrlUpdate(yelpUrl, updatedFiles);
         return;
       }
       
       // If not a Yelp URL or no existing cards, proceed with normal reset logic
+      print("ReceiveShareScreen: Not a Yelp URL or no existing cards. Resetting.");
       final provider = context.read<ReceiveShareProvider>();
       provider.resetExperienceCards();
       
@@ -762,6 +793,20 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     // Intent listener setup is now handled by SharingService
   }
 
+  void _initializeKnowledgeGraphService() {
+    try {
+      // Try to get API key from ApiSecrets
+      // ignore: undefined_class, undefined_getter
+      String? apiKey = ApiSecrets.googleKnowledgeGraphApiKey;
+      _knowledgeGraphService = GoogleKnowledgeGraphService(apiKey: apiKey);
+      print('🔍 KNOWLEDGE GRAPH: Service initialized with API key: ${apiKey != null && apiKey.isNotEmpty ? 'configured' : 'not configured'}');
+    } catch (e) {
+      // ApiSecrets not available, initialize without API key
+      _knowledgeGraphService = GoogleKnowledgeGraphService();
+      print('🔍 KNOWLEDGE GRAPH: Service initialized without API key (ApiSecrets not found)');
+    }
+  }
+
   @override
   void dispose() {
     print("ReceiveShareScreen dispose: START - Instance ${this.hashCode}");
@@ -776,6 +821,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         _sharingService.markShareFlowAsInactive();
     }
     _currentReloadOperationId = -1;
+    _isFullyInitialized = false; // Reset initialization flag
     WidgetsBinding.instance.removeObserver(this);
     _sharingService.sharedFiles.removeListener(_handleSharedFilesUpdate);
     // Removed direct call to ReceiveSharingIntent.instance.reset() from here,
@@ -859,10 +905,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     final mapsPattern =
         RegExp(r'(google\.com/maps|maps\.app\.goo\.gl|goo\.gl/maps)');
     final facebookPattern = RegExp(r'(facebook\.com|fb\.com|fb\.watch)');
+    final googleKnowledgePattern = RegExp(r'g\.co/kgs/'); // Added pattern for Google Knowledge Graph URLs
 
     if (yelpPattern.hasMatch(urlLower) || 
         mapsPattern.hasMatch(urlLower) || 
-        facebookPattern.hasMatch(urlLower)) {
+        facebookPattern.hasMatch(urlLower) ||
+        googleKnowledgePattern.hasMatch(urlLower)) {
       print("DEBUG: _isSpecialUrl detected special pattern in URL: $url");
       return true;
     }
@@ -903,6 +951,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       firstCard.originalShareType = ShareType.maps; 
       _yelpPreviewFutures[normalizedUrl] =
           _getLocationFromMapsUrl(normalizedUrl);
+    } else if (normalizedUrl.contains('g.co/kgs/')) {
+      print("SHARE DEBUG: Processing as Google Knowledge Graph URL: $normalizedUrl");
+      // Handle Google Knowledge Graph URLs by attempting to resolve them
+      _processGoogleKnowledgeUrl(normalizedUrl, file);
     } else if (normalizedUrl.contains('facebook.com') ||
                normalizedUrl.contains('fb.com') ||
                normalizedUrl.contains('fb.watch')) {
@@ -3119,7 +3171,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     if (url.contains('google.com/maps') ||
         url.contains('maps.app.goo.gl') ||
-        url.contains('goo.gl/maps')) {
+        url.contains('goo.gl/maps') ||
+        url.contains('g.co/kgs/')) {
       return MapsPreviewWidget(
         mapsUrl: url,
         mapsPreviewFutures: _yelpPreviewFutures,
@@ -3210,6 +3263,623 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         ],
       ),
     );
+  }
+
+  Future<void> _processGoogleKnowledgeUrl(String url, SharedMediaFile file) async {
+    print('🔍 GOOGLE KG: Processing Google Knowledge Graph URL: $url');
+    
+    final provider = context.read<ReceiveShareProvider>();
+    final firstCard = provider.experienceCards.first;
+    
+    // Extract and clean entity name from shared text
+    String? entityName;
+    try {
+      final sharedText = file.path;
+      final urlIndex = sharedText.indexOf(url);
+      if (urlIndex > 0) {
+        entityName = sharedText.substring(0, urlIndex).trim();
+        // Remove any trailing newlines and clean up
+        entityName = _cleanEntityName(entityName);
+        print('🔍 GOOGLE KG: Extracted and cleaned entity name: "$entityName"');
+      }
+    } catch (e) {
+      print('🔍 GOOGLE KG: Error extracting entity name: $e');
+    }
+    
+    // First, try to use Knowledge Graph API to get entity information
+    if (entityName != null && entityName.isNotEmpty) {
+      print('🔍 GOOGLE KG: Searching Knowledge Graph for: "$entityName"');
+      final kgResults = await _knowledgeGraphService.searchEntities(entityName, limit: 10);
+      
+      if (kgResults.isNotEmpty) {
+        print('🔍 GOOGLE KG: Found ${kgResults.length} Knowledge Graph results');
+        
+        // Find the best place entity match
+        Map<String, dynamic>? bestPlaceEntity = _findBestPlaceEntity(kgResults, entityName);
+        
+        if (bestPlaceEntity != null) {
+          print('🔍 GOOGLE KG: Found best place entity: ${bestPlaceEntity['name']}');
+          print('🔍 GOOGLE KG: Entity types: ${bestPlaceEntity['types']}');
+          
+          // Extract useful information from Knowledge Graph
+          final kgName = bestPlaceEntity['name'] as String?;
+          final kgDescription = _knowledgeGraphService.extractDescription(bestPlaceEntity);
+          final kgImageUrl = _knowledgeGraphService.extractImageUrl(bestPlaceEntity);
+          final kgWebsite = bestPlaceEntity['url'] as String?;
+          
+          if (kgDescription != null) {
+            print('🔍 GOOGLE KG: Description: ${kgDescription.substring(0, min(100, kgDescription.length))}...');
+          }
+          if (kgWebsite != null) {
+            print('🔍 GOOGLE KG: Official website: $kgWebsite');
+          }
+          
+          // Store this information for potential use in the form
+          // For now, we'll still search for the place in Google Maps to get location data
+          firstCard.originalShareType = ShareType.maps;
+          _yelpPreviewFutures[url] = _searchForLocationByNameWithKGDataImproved(
+            kgName ?? entityName, 
+            url,
+            originalEntityName: entityName,
+            kgDescription: kgDescription,
+            kgImageUrl: kgImageUrl,
+            kgWebsite: kgWebsite,
+            kgEntity: bestPlaceEntity,
+          );
+          return;
+        } else {
+          print('🔍 GOOGLE KG: No suitable place entities found in Knowledge Graph results');
+          // Log what types were found instead
+          if (kgResults.isNotEmpty) {
+            print('🔍 GOOGLE KG: Available results: ${kgResults.map((r) => '${r['name']} (${r['types']})').join(', ')}');
+          }
+        }
+      }
+    }
+    
+    // If Knowledge Graph didn't help, fall back to original logic
+    // Try to resolve the shortened URL
+    try {
+      final resolvedUrl = await _resolveShortUrl(url);
+      print('🔍 GOOGLE KG: Resolved URL: $resolvedUrl');
+      
+      if (resolvedUrl != null && (
+          resolvedUrl.contains('google.com/maps') ||
+          resolvedUrl.contains('maps.app.goo.gl') ||
+          resolvedUrl.contains('goo.gl/maps'))) {
+        // It resolved to a Google Maps URL, process it as such
+        print('🔍 GOOGLE KG: Resolved to Google Maps URL, processing as Maps');
+        firstCard.originalShareType = ShareType.maps;
+        // FIXED: Store with original URL key, not resolved URL key
+        _yelpPreviewFutures[url] = _getLocationFromMapsUrl(resolvedUrl);
+      } else {
+        // Didn't resolve to Maps, try to search for the location by name
+        print('🔍 GOOGLE KG: Did not resolve to Maps URL, searching by location name');
+        if (entityName != null && entityName.isNotEmpty) {
+          firstCard.originalShareType = ShareType.maps;
+          // Create a future that searches for the location with improved logic
+          _yelpPreviewFutures[url] = _searchForLocationByNameImproved(entityName, url);
+        } else {
+          print('🔍 GOOGLE KG: No location name extracted, treating as generic URL');
+          firstCard.originalShareType = ShareType.genericUrl;
+        }
+      }
+    } catch (e) {
+      print('🔍 GOOGLE KG: Error processing Google Knowledge URL: $e');
+      // Fall back to searching by name if we have it
+      if (entityName != null && entityName.isNotEmpty) {
+        firstCard.originalShareType = ShareType.maps;
+        _yelpPreviewFutures[url] = _searchForLocationByNameImproved(entityName, url);
+      }
+    }
+  }
+
+  // ADDED: Clean entity name to improve search accuracy
+  String _cleanEntityName(String rawName) {
+    String cleaned = rawName;
+    
+    // Remove common prefixes that might be added by sharing
+    cleaned = cleaned.replaceAll(RegExp(r'^(Check out |Visit |About |)\s*', caseSensitive: false), '');
+    
+    // Remove trailing newlines and extra whitespace
+    cleaned = cleaned.replaceAll(RegExp(r'\s*\n.*$', multiLine: true), '');
+    cleaned = cleaned.trim();
+    
+    // Remove extra punctuation at the end
+    cleaned = cleaned.replaceAll(RegExp(r'[,.!?]+$'), '');
+    
+    print('🔍 GOOGLE KG: Cleaned "$rawName" -> "$cleaned"');
+    return cleaned;
+  }
+
+  // ADDED: Find the best place entity from Knowledge Graph results
+  Map<String, dynamic>? _findBestPlaceEntity(List<Map<String, dynamic>> entities, String originalQuery) {
+    Map<String, dynamic>? bestPlace;
+    double bestScore = 0.0;
+    
+    for (final entity in entities) {
+      final types = entity['types'] as List<dynamic>? ?? [];
+      final name = entity['name'] as String? ?? '';
+      final resultScore = (entity['resultScore'] as num?)?.toDouble() ?? 0.0;
+      
+      // Check if it's a place entity
+      if (!_knowledgeGraphService.isPlaceEntity(types)) continue;
+      
+      // Calculate a relevance score
+      double score = resultScore;
+      
+      // Boost score for exact name matches
+      if (name.toLowerCase() == originalQuery.toLowerCase()) {
+        score += 1000;
+      } else if (name.toLowerCase().contains(originalQuery.toLowerCase()) || 
+                 originalQuery.toLowerCase().contains(name.toLowerCase())) {
+        score += 500;
+      }
+      
+      // Boost score for more specific place types
+      if (types.contains('TouristAttraction') || types.contains('Museum') || 
+          types.contains('Park') || types.contains('LandmarksOrHistoricalBuildings')) {
+        score += 200;
+      } else if (types.contains('Place')) {
+        score += 100;
+      }
+      
+      print('🔍 GOOGLE KG: Entity "${entity['name']}" score: $score (types: $types)');
+      
+      if (score > bestScore) {
+        bestScore = score;
+        bestPlace = entity;
+      }
+    }
+    
+    if (bestPlace != null) {
+      print('🔍 GOOGLE KG: Selected best entity: "${bestPlace['name']}" with score: $bestScore');
+    }
+    
+    return bestPlace;
+  }
+
+  // IMPROVED: Search for location with better strategies and validation
+  Future<Map<String, dynamic>?> _searchForLocationByNameImproved(String locationName, String originalUrl) async {
+    print('🔍 GOOGLE KG SEARCH IMPROVED: Searching for location: "$locationName"');
+    
+    try {
+      // Try multiple search strategies
+      List<String> searchQueries = _generateSearchQueries(locationName);
+      
+      for (String query in searchQueries) {
+        print('🔍 GOOGLE KG SEARCH IMPROVED: Trying query: "$query"');
+        
+        // Search without location bias first for famous places
+        List<Map<String, dynamic>> results = await _mapsService.searchPlaces(query);
+        
+        if (results.isNotEmpty) {
+          // Find the best match from results
+          Map<String, dynamic>? bestResult = _findBestLocationMatch(results, locationName, query);
+          
+          if (bestResult != null) {
+            final placeId = bestResult['placeId'] as String?;
+            if (placeId != null && placeId.isNotEmpty) {
+              print('🔍 GOOGLE KG SEARCH IMPROVED: Getting details for best match place ID: $placeId');
+              final location = await _mapsService.getPlaceDetails(placeId);
+              
+              if (location != null) {
+                final Map<String, dynamic> result = {
+                  'location': location,
+                  'placeName': location.displayName ?? locationName,
+                  'website': location.website,
+                  'mapsUrl': originalUrl,
+                  'searchQuery': query,
+                  'confidence': 'high', // We found a good match
+                };
+                
+                // Fill the form with the found location data
+                _fillFormWithGoogleMapsData(
+                  location,
+                  location.displayName ?? locationName,
+                  location.website ?? '',
+                  originalUrl
+                );
+                
+                print('🔍 GOOGLE KG SEARCH IMPROVED: ✅ Successfully created result with location data');
+                print('🔍 GOOGLE KG SEARCH IMPROVED: Result structure: location=${location.displayName}, placeName=${location.displayName ?? locationName}');
+                return result;
+              } else {
+                print('🔍 GOOGLE KG SEARCH IMPROVED: ⚠️ getPlaceDetails returned null for placeId: $placeId');
+              }
+            } else {
+              print('🔍 GOOGLE KG SEARCH IMPROVED: ⚠️ bestResult missing placeId');
+            }
+          } else {
+            print('🔍 GOOGLE KG SEARCH IMPROVED: ⚠️ No best result found from ${results.length} results');
+          }
+        } else {
+          print('🔍 GOOGLE KG SEARCH IMPROVED: ⚠️ Empty result set for query "$query"');
+        }
+      }
+      
+      print('🔍 GOOGLE KG SEARCH IMPROVED: ❌ No suitable location found with any query');
+      return null;
+    } catch (e) {
+      print('🔍 GOOGLE KG SEARCH IMPROVED ERROR: ❌ Exception occurred: $e');
+      return null;
+    }
+  }
+
+  // ADDED: Generate multiple search query variations
+  List<String> _generateSearchQueries(String locationName) {
+    List<String> queries = [];
+    
+    // Primary query - exact name
+    queries.add(locationName);
+    
+    // Add variations for better matching
+    if (locationName.contains(',')) {
+      // Try without everything after the first comma
+      queries.add(locationName.split(',')[0].trim());
+    }
+    
+    // If it contains "The", try without it
+    if (locationName.toLowerCase().startsWith('the ')) {
+      queries.add(locationName.substring(4).trim());
+    }
+    
+    // Add "attraction" or "museum" for tourist spots
+    if (!locationName.toLowerCase().contains('museum') && 
+        !locationName.toLowerCase().contains('attraction') &&
+        !locationName.toLowerCase().contains('park')) {
+      queries.add('$locationName attraction');
+      queries.add('$locationName museum');
+    }
+    
+    return queries;
+  }
+
+  // ADDED: Find the best location match from search results
+  Map<String, dynamic>? _findBestLocationMatch(List<Map<String, dynamic>> results, String originalName, String searchQuery) {
+    if (results.isEmpty) return null;
+    if (results.length == 1) return results[0];
+    
+    Map<String, dynamic>? bestMatch;
+    double bestScore = 0.0;
+    
+    for (final result in results) {
+      final name = result['description'] as String? ?? result['name'] as String? ?? '';
+      final types = result['types'] as List<dynamic>? ?? [];
+      
+      double score = 0.0;
+      
+      // Exact name match gets highest score
+      if (name.toLowerCase() == originalName.toLowerCase()) {
+        score += 100.0;
+      } else if (name.toLowerCase().contains(originalName.toLowerCase()) || 
+                 originalName.toLowerCase().contains(name.toLowerCase())) {
+        score += 50.0;
+      }
+      
+      // Boost score for tourist attractions, museums, parks
+      if (types.any((type) => ['tourist_attraction', 'museum', 'park', 'establishment'].contains(type))) {
+        score += 25.0;
+      }
+      
+      // Prefer results that are not just addresses
+      if (!name.contains(RegExp(r'\d+.*\w+\s+(St|Ave|Rd|Dr|Blvd|Way)', caseSensitive: false))) {
+        score += 15.0;
+      }
+      
+      print('🔍 GOOGLE KG: Result "$name" score: $score (types: $types)');
+      
+      if (score > bestScore) {
+        bestScore = score;
+        bestMatch = result;
+      }
+    }
+    
+    // Only return if we have a reasonable confidence
+    if (bestScore >= 25.0) {
+      print('🔍 GOOGLE KG: Selected best result: "${bestMatch!['description']}" with score: $bestScore');
+      return bestMatch;
+    }
+    
+    print('🔍 GOOGLE KG: No result met minimum confidence threshold');
+    return null;
+  }
+
+  Future<Map<String, dynamic>?> _searchForLocationByNameWithKGDataImproved(
+    String locationName, 
+    String originalUrl, {
+    String? originalEntityName,
+    String? kgDescription,
+    String? kgImageUrl,
+    String? kgWebsite,
+    Map<String, dynamic>? kgEntity,
+  }) async {
+    print('🔍 GOOGLE KG SEARCH+: Searching for location with Knowledge Graph data: "$locationName"');
+    
+    try {
+      // Try multiple search strategies with the KG-enhanced name
+      List<String> searchQueries = _generateSearchQueriesWithKGData(
+        locationName, 
+        originalEntityName, 
+        kgEntity
+      );
+      
+      for (String query in searchQueries) {
+        print('🔍 GOOGLE KG SEARCH+: Trying query: "$query"');
+        
+        // Try without location bias first for famous places, then with bias
+        List<List<Map<String, dynamic>>> resultSets = [];
+        
+        // Get user position first for better search accuracy
+        Position? userPosition = await _getCurrentPosition();
+        
+        // First attempt: With location bias (prioritize local/regional results)
+        if (userPosition != null) {
+          print('🔍 GOOGLE KG SEARCH+: Searching with location bias first (user location: ${userPosition.latitude}, ${userPosition.longitude})');
+          List<Map<String, dynamic>> localResults = await _mapsService.searchPlaces(
+            query,
+            latitude: userPosition.latitude,
+            longitude: userPosition.longitude,
+            radius: 50000, // 50km radius
+          );
+          if (localResults.isNotEmpty) {
+            resultSets.add(localResults);
+          }
+        }
+        
+        // Second attempt: No location bias (for famous places that might be far away)
+        print('🔍 GOOGLE KG SEARCH+: Searching without location bias (global search)');
+        List<Map<String, dynamic>> globalResults = await _mapsService.searchPlaces(query);
+        if (globalResults.isNotEmpty) {
+          resultSets.add(globalResults);
+        }
+        
+        // Process both result sets
+        for (List<Map<String, dynamic>> results in resultSets) {
+          if (results.isNotEmpty) {
+            print('🔍 GOOGLE KG SEARCH+: Found ${results.length} results for query "$query"');
+            
+            // Find the best match using improved scoring
+            Map<String, dynamic>? bestResult = _findBestLocationMatchWithKGData(
+              results, 
+              locationName, 
+              originalEntityName ?? locationName,
+              kgEntity
+            );
+            
+            if (bestResult != null) {
+              final placeId = bestResult['placeId'] as String?;
+              if (placeId != null && placeId.isNotEmpty) {
+                print('🔍 GOOGLE KG SEARCH+: Getting details for best match place ID: $placeId');
+                final location = await _mapsService.getPlaceDetails(placeId);
+                
+                if (location != null) {
+                  // Use Knowledge Graph website if Maps doesn't have one
+                  String? finalWebsite = location.website;
+                  if ((finalWebsite == null || finalWebsite.isEmpty) && kgWebsite != null) {
+                    print('🔍 GOOGLE KG SEARCH+: Using Knowledge Graph website: $kgWebsite');
+                    finalWebsite = kgWebsite;
+                  }
+                  
+                  final Map<String, dynamic> result = {
+                    'location': location,
+                    'placeName': location.displayName ?? locationName,
+                    'website': finalWebsite,
+                    'mapsUrl': originalUrl,
+                    'kgDescription': kgDescription,
+                    'kgImageUrl': kgImageUrl,
+                    'kgEntity': kgEntity,
+                    'searchQuery': query,
+                    'confidence': 'high',
+                  };
+                  
+                  // Fill the form with the found location data
+                  _fillFormWithGoogleMapsData(
+                    location,
+                    location.displayName ?? locationName,
+                    finalWebsite ?? '',
+                    originalUrl
+                  );
+                  
+                  // If we have a KG description, store it in the notes field
+                  if (kgDescription != null && mounted) {
+                    final provider = context.read<ReceiveShareProvider>();
+                    final firstCard = provider.experienceCards.first;
+                    if (firstCard.notesController.text.isEmpty) {
+                      firstCard.notesController.text = kgDescription;
+                      print('🔍 GOOGLE KG SEARCH+: Added Knowledge Graph description to notes');
+                    }
+                  }
+                  
+                  print('🔍 GOOGLE KG SEARCH+: ✅ Successfully created result with location data');
+                  print('🔍 GOOGLE KG SEARCH+: Result structure: location=${location.displayName}, placeName=${location.displayName ?? locationName}, website=$finalWebsite');
+                  return result;
+                } else {
+                  print('🔍 GOOGLE KG SEARCH+: ⚠️ getPlaceDetails returned null for placeId: $placeId');
+                }
+              } else {
+                print('🔍 GOOGLE KG SEARCH+: ⚠️ bestResult missing placeId: $bestResult');
+              }
+            } else {
+              print('🔍 GOOGLE KG SEARCH+: ⚠️ No best result found from ${results.length} results');
+            }
+          } else {
+            print('🔍 GOOGLE KG SEARCH+: ⚠️ Empty result set received for query "$query"');
+          }
+        }
+      }
+      
+      print('🔍 GOOGLE KG SEARCH+: ❌ No suitable location found with any query or strategy');
+      return null;
+    } catch (e) {
+      print('🔍 GOOGLE KG SEARCH+ ERROR: ❌ Exception occurred: $e');
+      return null;
+    }
+  }
+
+  // ADDED: Generate search queries enhanced with Knowledge Graph data
+  List<String> _generateSearchQueriesWithKGData(
+    String kgName, 
+    String? originalEntityName, 
+    Map<String, dynamic>? kgEntity
+  ) {
+    List<String> queries = [];
+    
+    // Primary query - Knowledge Graph name
+    queries.add(kgName);
+    
+    // Original entity name if different
+    if (originalEntityName != null && originalEntityName != kgName) {
+      queries.add(originalEntityName);
+    }
+    
+    // Extract additional names from KG entity if available
+    if (kgEntity != null) {
+      final alternateName = kgEntity['alternateName'] as String?;
+      if (alternateName != null && !queries.contains(alternateName)) {
+        queries.add(alternateName);
+      }
+    }
+    
+    // Add variations
+    for (String baseQuery in List<String>.from(queries)) {
+      // Try without "The" prefix
+      if (baseQuery.toLowerCase().startsWith('the ')) {
+        String withoutThe = baseQuery.substring(4).trim();
+        if (!queries.contains(withoutThe)) {
+          queries.add(withoutThe);
+        }
+      }
+      
+      // Try without everything after comma
+      if (baseQuery.contains(',')) {
+        String beforeComma = baseQuery.split(',')[0].trim();
+        if (!queries.contains(beforeComma)) {
+          queries.add(beforeComma);
+        }
+      }
+      
+      // Try adding common location context if not already present
+      String baseLower = baseQuery.toLowerCase();
+      if (!baseLower.contains(' near ') && !baseLower.contains(' in ')) {
+        // Add "near me" variant for local searches
+        queries.add('$baseQuery near me');
+      }
+    }
+    
+    return queries;
+  }
+
+  // ADDED: Enhanced location matching with Knowledge Graph data
+  Map<String, dynamic>? _findBestLocationMatchWithKGData(
+    List<Map<String, dynamic>> results, 
+    String kgName,
+    String originalName, 
+    Map<String, dynamic>? kgEntity
+  ) {
+    if (results.isEmpty) return null;
+    if (results.length == 1) {
+      print('🔍 GOOGLE KG ENHANCED: Only one result found, using it by default');
+      return results[0];
+    }
+    
+    Map<String, dynamic>? bestMatch;
+    double bestScore = 0.0;
+    
+    // Get KG entity types for scoring
+    List<String> kgTypes = [];
+    if (kgEntity != null) {
+      final types = kgEntity['types'] as List<dynamic>? ?? [];
+      kgTypes = types.cast<String>();
+    }
+    
+    print('🔍 GOOGLE KG ENHANCED: Evaluating ${results.length} results for "$kgName"');
+    print('🔍 GOOGLE KG ENHANCED: Knowledge Graph types: $kgTypes');
+    
+    for (int i = 0; i < results.length; i++) {
+      final result = results[i];
+      final name = result['description'] as String? ?? result['name'] as String? ?? '';
+      final types = result['types'] as List<dynamic>? ?? [];
+      final address = result['vicinity'] as String? ?? result['formatted_address'] as String? ?? '';
+      
+      double score = 0.0;
+      List<String> scoreReasons = [];
+      
+      // Exact name matches get highest scores
+      if (name.toLowerCase() == kgName.toLowerCase() || 
+          name.toLowerCase() == originalName.toLowerCase()) {
+        score += 100.0;
+        scoreReasons.add('exact name match (+100)');
+      } else if (name.toLowerCase().contains(kgName.toLowerCase()) || 
+                 kgName.toLowerCase().contains(name.toLowerCase()) ||
+                 name.toLowerCase().contains(originalName.toLowerCase()) || 
+                 originalName.toLowerCase().contains(name.toLowerCase())) {
+        score += 60.0;
+        scoreReasons.add('partial name match (+60)');
+      }
+      
+      // Boost for specific place types that match KG types
+      if (kgTypes.contains('TouristAttraction') && 
+          types.any((type) => ['tourist_attraction', 'point_of_interest'].contains(type))) {
+        score += 40.0;
+        scoreReasons.add('tourist attraction type match (+40)');
+      } else if (kgTypes.contains('Museum') && 
+                 types.any((type) => ['museum', 'establishment'].contains(type))) {
+        score += 40.0;
+        scoreReasons.add('museum type match (+40)');
+      } else if (kgTypes.contains('Park') && 
+                 types.any((type) => ['park', 'natural_feature'].contains(type))) {
+        score += 40.0;
+        scoreReasons.add('park type match (+40)');
+      } else if (types.any((type) => ['tourist_attraction', 'museum', 'park', 'establishment'].contains(type))) {
+        score += 25.0;
+        scoreReasons.add('general place type match (+25)');
+      }
+      
+      // Prefer non-address results for tourist attractions
+      if (!name.contains(RegExp(r'\d+.*\w+\s+(St|Ave|Rd|Dr|Blvd|Way)', caseSensitive: false))) {
+        score += 20.0;
+        scoreReasons.add('not a street address (+20)');
+      }
+      
+      // Boost for establishment type (generally more reliable for places)
+      if (types.contains('establishment')) {
+        score += 15.0;
+        scoreReasons.add('establishment type (+15)');
+      }
+      
+      // Check if result has a rating (indicates it's a real place people visit)
+      if (result['rating'] != null) {
+        score += 10.0;
+        scoreReasons.add('has rating (+10)');
+      }
+      
+      print('🔍 GOOGLE KG ENHANCED [Result ${i+1}]:');
+      print('  Name: "$name"');
+      print('  Address: "$address"');
+      print('  Types: $types');
+      print('  Score: $score (${scoreReasons.join(', ')})');
+      
+      if (score > bestScore) {
+        bestScore = score;
+        bestMatch = result;
+      }
+    }
+    
+    // Require higher confidence for KG-enhanced results
+    if (bestScore >= 35.0) {
+      print('🔍 GOOGLE KG ENHANCED: ✓ Selected best result: "${bestMatch!['description']}" with score: $bestScore');
+      return bestMatch;
+    }
+    
+    print('🔍 GOOGLE KG ENHANCED: ⚠️ No result met minimum confidence threshold (35.0). Best score was: $bestScore');
+    // Return the best match anyway if we have one, but log the low confidence
+    if (bestMatch != null && bestScore > 0) {
+      print('🔍 GOOGLE KG ENHANCED: ⚠️ Returning best match despite low confidence');
+      return bestMatch;
+    }
+    
+    return null;
   }
 
   Future<Map<String, dynamic>?> _getLocationFromMapsUrl(String mapsUrl) async {
@@ -3397,6 +4067,59 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   bool _containsOnlyCoordinates(String text) {
     final coordRegex = RegExp(r'^-?[\d.]+, ?-?[\d.]+$');
     return coordRegex.hasMatch(text.trim());
+  }
+
+  // ADDED: Handle low confidence location results
+  Future<Location?> _handleLowConfidenceLocationResult(
+    List<Map<String, dynamic>> topResults, 
+    String entityName
+  ) async {
+    if (!mounted || topResults.isEmpty) return null;
+    
+    // Show a dialog with the top location options
+    final selectedResult = await showDialog<Map<String, dynamic>>(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          title: Text('Select Location for "$entityName"'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'Multiple locations found. Please select the correct one:',
+                style: TextStyle(fontSize: 14),
+              ),
+              const SizedBox(height: 16),
+              ...topResults.take(3).map((result) {
+                final name = result['description'] as String? ?? result['name'] as String? ?? '';
+                final address = result['vicinity'] as String? ?? result['formatted_address'] as String? ?? '';
+                return ListTile(
+                  title: Text(name),
+                  subtitle: Text(address, style: TextStyle(fontSize: 12)),
+                  onTap: () => Navigator.of(dialogContext).pop(result),
+                );
+              }).toList(),
+            ],
+          ),
+          actions: [
+            TextButton(
+              child: const Text('Search Manually'),
+              onPressed: () => Navigator.of(dialogContext).pop(null),
+            ),
+          ],
+        );
+      },
+    );
+    
+    if (selectedResult != null) {
+      final placeId = selectedResult['placeId'] as String?;
+      if (placeId != null && placeId.isNotEmpty) {
+        return await _mapsService.getPlaceDetails(placeId);
+      }
+    }
+    
+    return null;
   }
 
   Future<void> _loadUserColorCategories() async {
