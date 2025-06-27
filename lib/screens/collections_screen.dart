@@ -2726,10 +2726,11 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     print("🎨 COLLECTIONS SCREEN: Applying filters...");
     // Filter experiences
     final filteredExperiences = _experiences.where((exp) {
-      // MODIFIED: Directly use exp.categoryId for matching
+      // MODIFIED: Also check otherCategories for a match
       final bool categoryMatch = _selectedCategoryIds.isEmpty ||
           (exp.categoryId != null &&
-              _selectedCategoryIds.contains(exp.categoryId));
+              _selectedCategoryIds.contains(exp.categoryId)) ||
+          (exp.otherCategories.any((catId) => _selectedCategoryIds.contains(catId)));
 
       final bool colorMatch = _selectedColorCategoryIds.isEmpty ||
           (exp.colorCategoryId != null &&
@@ -2742,10 +2743,11 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     final filteredGroupedContent = _groupedContentItems.where((group) {
       // Include the group if ANY of its associated experiences match the filters
       return group.associatedExperiences.any((exp) {
-        // MODIFIED: Directly use exp.categoryId for matching
+        // MODIFIED: Also check otherCategories for a match
         final bool categoryMatch = _selectedCategoryIds.isEmpty ||
             (exp.categoryId != null &&
-                _selectedCategoryIds.contains(exp.categoryId));
+                _selectedCategoryIds.contains(exp.categoryId)) ||
+            (exp.otherCategories.any((catId) => _selectedCategoryIds.contains(catId)));
 
         final bool colorMatch = _selectedColorCategoryIds.isEmpty ||
             (exp.colorCategoryId != null &&

@@ -18,5 +18,8 @@ class ApiKeys {
     }
   }
   
+  // Google Knowledge Graph API Key
+  static const String googleKnowledgeGraphApiKey = 'YOUR_GOOGLE_KNOWLEDGE_GRAPH_API_KEY_HERE';
+  
   // Add other API keys as needed
 }
