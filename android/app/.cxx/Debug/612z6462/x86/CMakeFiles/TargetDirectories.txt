@@ -1,0 +1,2 @@
+C:/Users/Kevin/Documents/GitHub/Plendy/android/app/.cxx/Debug/612z6462/x86/CMakeFiles/edit_cache.dir
+C:/Users/Kevin/Documents/GitHub/Plendy/android/app/.cxx/Debug/612z6462/x86/CMakeFiles/rebuild_cache.dir
