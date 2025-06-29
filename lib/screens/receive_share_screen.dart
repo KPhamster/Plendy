@@ -2695,7 +2695,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
 
       if (_showUpArrowForFab != shouldShowUpArrow) {
-        // print("ScrollListener: Changing _showUpArrowForFab to $shouldShowUpArrow"); // DEBUG
+        print("ScrollListener: Changing _showUpArrowForFab to $shouldShowUpArrow"); // DEBUG
         setState(() {
           _showUpArrowForFab = shouldShowUpArrow;
         });
@@ -2768,20 +2768,54 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
          _scrollToMediaPreviewTop();
       }
     } else { // Scroll Down (_showUpArrowForFab is false)
-      print("FAB_DEBUG: Trying to scroll DOWN."); // DEBUG
-      final experienceCardsSectionContext = _experienceCardsSectionKey.currentContext;
-      print("FAB_DEBUG: Experience cards section context null? ${experienceCardsSectionContext == null}"); // DEBUG
-      if (experienceCardsSectionContext != null) {
-        // Reverting to Scrollable.ensureVisible with bottom alignment for the whole section
-        print("FAB_DEBUG: Scroll Down using ensureVisible to bottom of ExperienceCardsSection.");
-        Scrollable.ensureVisible(
-          experienceCardsSectionContext,
-          duration: const Duration(milliseconds: 500),
-          curve: Curves.easeInOut,
-          alignment: 1.0, // Align bottom of the section with bottom of viewport
-          alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
-        );
-        print("FAB_DEBUG: Called Scrollable.ensureVisible for experience cards section bottom.");
+      print("FAB_DEBUG: Trying to scroll DOWN to bottom-most experience card."); // DEBUG
+      print("FAB_DEBUG: Current scroll offset: ${_scrollController.offset}"); // DEBUG
+      
+      // Get the experience cards from provider
+      final provider = context.read<ReceiveShareProvider>();
+      final experienceCards = provider.experienceCards;
+      print("FAB_DEBUG: Number of experience cards: ${experienceCards.length}"); // DEBUG
+      
+      if (experienceCards.isNotEmpty) {
+        final experienceCardsSectionContext = _experienceCardsSectionKey.currentContext;
+        print("FAB_DEBUG: Experience cards section context null? ${experienceCardsSectionContext == null}"); // DEBUG
+        
+        if (experienceCardsSectionContext != null) {
+          // Get current position of experience cards section
+          final RenderBox experienceBox = experienceCardsSectionContext.findRenderObject() as RenderBox;
+          final double experienceBoxTopOffsetInViewport = experienceBox.localToGlobal(Offset.zero).dy;
+          final double sectionHeight = experienceBox.size.height;
+          print("FAB_DEBUG: Experience cards top offset: $experienceBoxTopOffsetInViewport, section height: $sectionHeight"); // DEBUG
+          
+          // Calculate position to scroll to show the top of the bottom-most experience card
+          // We want to position the last card's TOP at the top of the viewport (below app header)
+          final double screenHeight = MediaQuery.of(context).size.height;
+          final double appBarHeight = AppBar().preferredSize.height + MediaQuery.of(context).padding.top;
+          
+          // Estimate the height of each experience card (approximate)
+          final int cardCount = experienceCards.length;
+          final double estimatedCardHeight = cardCount > 0 ? sectionHeight / cardCount : 400.0;
+          
+          // Calculate offset to show the LAST card at the top of the visible area
+          final double lastCardStartPosition = experienceBoxTopOffsetInViewport + sectionHeight - estimatedCardHeight;
+          final double targetScrollOffset = _scrollController.offset + lastCardStartPosition - appBarHeight;
+          
+          final double clampedOffset = targetScrollOffset.clamp(0.0, _scrollController.position.maxScrollExtent);
+          
+          print("FAB_DEBUG: Card count: $cardCount, estimated card height: $estimatedCardHeight"); // DEBUG
+          print("FAB_DEBUG: Last card start position: $lastCardStartPosition, app bar height: $appBarHeight"); // DEBUG
+          
+          print("FAB_DEBUG: Target scroll offset: $targetScrollOffset, clamped: $clampedOffset, max: ${_scrollController.position.maxScrollExtent}"); // DEBUG
+          
+          _scrollController.animateTo(
+            clampedOffset,
+            duration: const Duration(milliseconds: 500),
+            curve: Curves.easeInOut,
+          );
+          print("FAB_DEBUG: Scrolling to show bottom-most experience card."); // DEBUG
+        }
+      } else {
+        print("FAB_DEBUG: No experience cards available."); // DEBUG
       }
     }
   }
