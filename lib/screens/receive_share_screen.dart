@@ -3,7 +3,6 @@ import 'dart:math';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 import 'dart:io';
 import 'dart:convert';
-import 'dart:math';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
@@ -465,7 +464,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // Now it's safe to process initial shared content,
       // as the provider (conceptually) has what it needs for default categories.
       print("ReceiveShareScreen: Processing initial shared content.");
-      _processSharedContent(_currentSharedFiles);
+      _processInitialSharedContent(_currentSharedFiles);
       
       // Mark as fully initialized
       _isFullyInitialized = true;
@@ -483,6 +482,16 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       
       print("ReceiveShareScreen: Received updated shared files. Processing...");
       print("ReceiveShareScreen: Is fully initialized: $_isFullyInitialized");
+      print("ReceiveShareScreen: Current files: ${_currentSharedFiles?.map((f) => f.path.substring(0, min(50, f.path.length))).join(", ") ?? "null"}");
+      print("ReceiveShareScreen: Updated files: ${updatedFiles.map((f) => f.path.substring(0, min(50, f.path.length))).join(", ")}");
+      
+      // Check if this is a Yelp URL and we already have content loaded
+      String? yelpUrl = _extractYelpUrlFromSharedFiles(updatedFiles);
+      if (yelpUrl != null && _currentSharedFiles != null && _currentSharedFiles!.isNotEmpty) {
+        print("ReceiveShareScreen: Yelp URL detected with existing content - updating URL field only, no preview processing");
+        _handleYelpUrlUpdate(yelpUrl, updatedFiles);
+        return;
+      }
       
       // If not fully initialized yet, wait for initialization to complete
       if (!_isFullyInitialized) {
@@ -496,8 +505,14 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         return;
       }
       
-      // Check if this is a Yelp URL that should be added to existing card
-      String? yelpUrl = _extractYelpUrlFromSharedFiles(updatedFiles);
+      // Check if this update is essentially the same as what we just processed during initialization
+      // This prevents double-processing during cold starts
+      if (_areSharedFilesEqual(updatedFiles, widget.sharedFiles)) {
+        print("ReceiveShareScreen: Updated files are same as initial widget.sharedFiles. Likely initialization echo - ignoring.");
+        return;
+      }
+      
+      // Check if this is a Yelp URL that should be added to existing card (reuse yelpUrl from above)
       if (yelpUrl != null && _hasExistingCards()) {
         print("ReceiveShareScreen: Detected Yelp URL with existing cards. Updating in-place.");
         _handleYelpUrlUpdate(yelpUrl, updatedFiles);
@@ -612,12 +627,19 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     } else {
       print("ReceiveShareScreen: Added Yelp URL to card ${targetCard.id}: '$normalizedUrl'");
     }
+
+    // DON'T update _currentSharedFiles for Yelp URLs - we want to preserve the original preview
+    // Only the Yelp URL field should be updated, not the shared files or preview content
   }
 
   // Method to track when a Yelp button is tapped
   void _trackYelpButtonTapped(String cardId) {
     _lastYelpButtonTappedCardId = cardId;
     print("ReceiveShareScreen: Tracked Yelp button tap for card: $cardId");
+    
+    // Inform SharingService that we're temporarily leaving for external app
+    // This preserves the share flow state instead of resetting it
+    _sharingService.temporarilyLeavingForExternalApp();
   }
 
   Future<void> _loadUserCategories() async {
@@ -861,6 +883,38 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         caseSensitive: false);
     final match = urlRegex.firstMatch(text);
     return match?.group(0);
+  }
+
+  // Process initial shared content on cold start - behaves like warm start logic
+  void _processInitialSharedContent(List<SharedMediaFile> files) {
+    print("ReceiveShareScreen: _processInitialSharedContent called with ${files.length} files");
+    
+    if (files.isEmpty) {
+      print("ReceiveShareScreen: No initial shared files to process");
+      return;
+    }
+
+    // Check if this is a Yelp URL and we're in a restore scenario
+    String? yelpUrl = _extractYelpUrlFromSharedFiles(files);
+    bool isRestoreScenario = _sharingService.isShareFlowActive;
+    
+    if (yelpUrl != null && isRestoreScenario) {
+      print("ReceiveShareScreen: Yelp URL detected in restore scenario - skipping preview creation");
+      // Don't process the content, just set the files to prevent double-processing
+      setState(() {
+        _currentSharedFiles = files;
+      });
+      print("ReceiveShareScreen: Blocked Yelp preview creation during restore");
+      return;
+    }
+
+    // For normal initial content, always use normal processing
+    // The key difference is we'll update _currentSharedFiles to prevent double-processing
+    setState(() {
+      _currentSharedFiles = files;
+    });
+    print("ReceiveShareScreen: Set _currentSharedFiles to prevent double-processing from SharingService listener");
+    _processSharedContent(files);
   }
 
   void _processSharedContent(List<SharedMediaFile> files) {

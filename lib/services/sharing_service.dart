@@ -11,6 +11,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import '../models/share_permission.dart';
 import '../models/enums/share_enums.dart';
 import '../screens/main_screen.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class SharingService {
   static final SharingService _instance = SharingService._internal();
@@ -33,9 +34,33 @@ class SharingService {
 
   // ADDED: Public getter for _navigatingAwayFromShare
   bool get isNavigatingAwayFromShare => _navigatingAwayFromShare;
+  
+  // ADDED: Public getter for _isReceiveShareScreenOpen
+  bool get isReceiveShareScreenOpen => _isReceiveShareScreenOpen;
+  
+  // ADDED: Public setter for _navigatingAwayFromShare (for MainScreen)
+  void setNavigatingAwayFromShare(bool value) {
+    _navigatingAwayFromShare = value;
+  }
+  
+  // Helper method to check if shared files contain a Yelp URL
+  bool _isYelpUrl(List<SharedMediaFile> files) {
+    for (final file in files) {
+      if (file.type == SharedMediaType.text || file.type == SharedMediaType.url) {
+        String content = file.path.toLowerCase();
+        if (content.contains('yelp.com/biz') || content.contains('yelp.to/')) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
 
   ValueListenable<List<SharedMediaFile>?> get sharedFiles =>
       _sharedFilesController;
+  
+  // ADDED: Public access to shared files controller for special cases
+  ValueNotifier<List<SharedMediaFile>?> get sharedFilesController => _sharedFilesController;
 
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
@@ -50,17 +75,100 @@ class SharingService {
   void init() {
     if (_isInitialized) {
       print("SHARE SERVICE: Already initialized, skipping");
+      print("SHARE SERVICE: Current state - isShareFlowActive=$isShareFlowActive, _isReceiveShareScreenOpen=$_isReceiveShareScreenOpen");
       return;
     }
 
     print("SHARE SERVICE: Initializing sharing service");
+    print("SHARE SERVICE: Initial state - isShareFlowActive=$isShareFlowActive, _isReceiveShareScreenOpen=$_isReceiveShareScreenOpen");
     _isInitialized = true;
+
+    // Restore state from persistent storage
+    _restoreShareFlowState();
 
     // Listen to media sharing coming from outside the app while the app is in the memory
     _setupIntentListener();
 
     // Check for initial intent immediately
     _checkInitialIntent();
+  }
+
+  // Restore share flow state from persistent storage
+  Future<void> _restoreShareFlowState() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final wasShareFlowActive = prefs.getBool('shareFlowActive') ?? false;
+      final wasReceiveShareScreenOpen = prefs.getBool('receiveShareScreenOpen') ?? false;
+      final wasNavigatingAway = prefs.getBool('navigatingAwayFromShare') ?? false;
+      
+      print("SHARE SERVICE: Restoring state - shareFlowActive=$wasShareFlowActive, receiveShareScreenOpen=$wasReceiveShareScreenOpen, navigatingAway=$wasNavigatingAway");
+      
+      if (wasShareFlowActive || wasReceiveShareScreenOpen) {
+        isShareFlowActive = wasShareFlowActive;
+        _isReceiveShareScreenOpen = wasReceiveShareScreenOpen;
+        _navigatingAwayFromShare = wasNavigatingAway;
+        print("SHARE SERVICE: Restored share flow state from persistent storage");
+      }
+    } catch (e) {
+      print("SHARE SERVICE: Error restoring share flow state: $e");
+    }
+  }
+
+  // Persist share flow state to storage
+  Future<void> _persistShareFlowState() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('shareFlowActive', isShareFlowActive);
+      await prefs.setBool('receiveShareScreenOpen', _isReceiveShareScreenOpen);
+      await prefs.setBool('navigatingAwayFromShare', _navigatingAwayFromShare);
+      print("SHARE SERVICE: Persisted share flow state");
+    } catch (e) {
+      print("SHARE SERVICE: Error persisting share flow state: $e");
+    }
+  }
+
+  // Clear persisted share flow state
+  Future<void> _clearPersistedShareFlowState() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('shareFlowActive');
+      await prefs.remove('receiveShareScreenOpen');
+      await prefs.remove('navigatingAwayFromShare');
+      await prefs.remove('originalSharedContent');
+      print("SHARE SERVICE: Cleared persisted share flow state");
+    } catch (e) {
+      print("SHARE SERVICE: Error clearing persisted share flow state: $e");
+    }
+  }
+
+  // Persist original shared content for restore scenarios
+  Future<void> _persistOriginalSharedContent() async {
+    try {
+      if (_sharedFilesController.value != null && _sharedFilesController.value!.isNotEmpty) {
+        final prefs = await SharedPreferences.getInstance();
+        // Convert shared files to a simple format we can persist
+        final contentList = _sharedFilesController.value!.map((file) => {
+          'path': file.path,
+          'type': file.type.toString(),
+        }).toList();
+        final contentJson = contentList.map((item) => '${item['type']}|||${item['path']}').join('###');
+        await prefs.setString('originalSharedContent', contentJson);
+        print("SHARE SERVICE: Persisted original shared content");
+      }
+    } catch (e) {
+      print("SHARE SERVICE: Error persisting original shared content: $e");
+    }
+  }
+
+  // Get persisted original shared content
+  List<SharedMediaFile>? getPersistedOriginalContent() {
+    try {
+      // This is synchronous, so we'll need to call this after SharedPreferences is loaded
+      return null; // Will implement async version if needed
+    } catch (e) {
+      print("SHARE SERVICE: Error getting persisted original content: $e");
+      return null;
+    }
   }
 
   void _setupIntentListener() {
@@ -173,8 +281,13 @@ class SharingService {
   // Show the receive share screen as a modal bottom sheet or full screen
   Future<void> showReceiveShareScreen(
       BuildContext context, List<SharedMediaFile> files) async {
+    print("SHARE SERVICE DEBUG: showReceiveShareScreen called with ${files.length} files");
+    print("SHARE SERVICE DEBUG: isShareFlowActive=$isShareFlowActive, _isReceiveShareScreenOpen=$_isReceiveShareScreenOpen");
+    
     if (isShareFlowActive && _isReceiveShareScreenOpen) { // Check if already active and screen is open
-      // print("SHARE SERVICE: showReceiveShareScreen called, but flow is active and screen is open. Updating files."); // COMMENTED OUT - Too noisy
+      // Check if this is a Yelp URL - if so, always update existing screen
+      bool isYelpUrl = _isYelpUrl(files);
+      print("SHARE SERVICE: Flow active and screen open. isYelpUrl=$isYelpUrl. Updating files in existing screen.");
       _sharedFilesController.value = List.from(files); // Update files for existing screen
       return;
     }
@@ -187,9 +300,13 @@ class SharingService {
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
 
     if (context.mounted) {
+      print("SHARE SERVICE DEBUG: Setting isShareFlowActive=true and _isReceiveShareScreenOpen=true");
       isShareFlowActive = true; // Set lock BEFORE navigating
       _isReceiveShareScreenOpen = true; // Set flag before push
       _isNavigatingToReceiveScreen = true;
+      
+      // Persist state so it survives app restarts
+      _persistShareFlowState();
       
       try {
         final receiveShareProvider = ReceiveShareProvider();
@@ -239,6 +356,9 @@ class SharingService {
     _isNavigatingToReceiveScreen = false;
     // _navigatingAwayFromShare should be false here, or reset by shareNavigationComplete
     resetSharedItems();
+    
+    // Clear persisted state since flow is ending
+    _clearPersistedShareFlowState();
   }
 
   // ADDED: Method to signal navigation away from share is starting
@@ -249,6 +369,18 @@ class SharingService {
     _isReceiveShareScreenOpen = false;
     _isNavigatingToReceiveScreen = false;
     resetSharedItems(); // Reset items as we are leaving the screen
+  }
+  
+  // ADDED: Method specifically for when user taps external button (like Yelp) but we want to preserve the flow
+  void temporarilyLeavingForExternalApp() {
+    print("SHARE SERVICE: Temporarily leaving for external app (e.g. Yelp button). Preserving flow state.");
+    _navigatingAwayFromShare = true;
+    // DON'T reset isShareFlowActive or _isReceiveShareScreenOpen - we want to preserve them
+    // DON'T reset shared items - we want to keep the existing state
+    
+    // Persist the current state AND original shared content so it survives app restart
+    _persistShareFlowState();
+    _persistOriginalSharedContent();
   }
 
   // ADDED: Method to signal navigation away from share is complete
