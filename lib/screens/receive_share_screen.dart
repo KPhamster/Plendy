@@ -1176,7 +1176,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         '🔄 GET YELP START: _getBusinessFromYelpUrl called for URL: $yelpUrl');
     if (sharedText != null) {
       print(
-          '🔄 GET YELP START: Shared text provided (first 100 chars): ${sharedText.substring(0, min(100, sharedText.length))}...');
+          '🔄 GET YELP START: Shared text provided (${sharedText.length} chars): ${sharedText.substring(0, min(100, sharedText.length))}${sharedText.length > 100 ? "..." : ""}');
     } else {
       print(
           '🔄 GET YELP START: No shared text provided (likely called from preview).');
@@ -1246,7 +1246,67 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
 
       bool extractedFromUrl = false;
-      if (url.contains('/biz/')) {
+      bool extractedFromSharedText = false;
+      
+      // First, try to extract business name from shared text if available
+      if (sharedText != null) {
+        print(
+            '📊 YELP DATA: Attempting name extraction from shared text first.');
+        try {
+          // Look for any Yelp URL pattern in the shared text (yelp.com or yelp.to)
+          RegExp yelpUrlPattern = RegExp(r'https?://(?:www\.)?yelp\.(?:com|to)/[^\s]+');
+          Match? urlMatch = yelpUrlPattern.firstMatch(sharedText);
+          
+          int urlIndex = -1;
+          if (urlMatch != null) {
+            urlIndex = urlMatch.start;
+            print('📊 YELP DATA: Found Yelp URL pattern at index $urlIndex');
+          } else {
+            // Fallback: look for the exact URL we received
+            urlIndex = sharedText.indexOf(yelpUrl);
+            if (urlIndex != -1) {
+              print('📊 YELP DATA: Found exact URL match at index $urlIndex');
+            }
+          }
+          
+          if (urlIndex != -1) {
+            String potentialName = sharedText.substring(0, urlIndex).trim();
+            
+            // Clean up common prefixes and suffixes
+            potentialName = potentialName.replaceAll(
+                RegExp(r'^Check out ', caseSensitive: false), '');
+            potentialName = potentialName.replaceAll(
+                RegExp(r'^See ', caseSensitive: false), '');
+            potentialName = potentialName.replaceAll(
+                RegExp(r'^Visit ', caseSensitive: false), '');
+            potentialName = potentialName.replaceAll(
+                RegExp(r'!+$'), ''); // Remove trailing exclamation marks
+            potentialName = potentialName.replaceAll(
+                RegExp(r'\s*\n.*$', multiLine: true),
+                ''); // Remove everything after newline
+            potentialName = potentialName.trim();
+
+            if (potentialName.isNotEmpty && potentialName.length < 100) {
+              businessName = potentialName;
+              extractedFromSharedText = true;
+              extractedFromUrl = true; // Mark as extracted so we don't use generic name
+              print(
+                  '📊 YELP DATA: Successfully extracted business name from shared text: "$businessName"');
+            } else {
+              print(
+                  '📊 YELP DATA: Failed to extract meaningful name from text preceding URL.');
+            }
+          } else {
+            print(
+                '📊 YELP DATA: Could not find any Yelp URL within the shared text to extract preceding name.');
+          }
+        } catch (e) {
+          print('📊 YELP DATA: Error during shared text name extraction: $e');
+        }
+      }
+      
+      // Only try URL parsing if we didn't get a good name from shared text
+      if (!extractedFromSharedText && url.contains('/biz/')) {
         final bizPath = url.split('/biz/')[1].split('?')[0];
         print('📊 YELP DATA: Extracting from biz URL path: $bizPath');
 
@@ -1350,36 +1410,6 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             true; 
       }
 
-      if (!extractedFromUrl && sharedText != null) {
-        print(
-            '📊 YELP DATA: URL extraction/resolution failed. Attempting name extraction from shared text.');
-        try {
-          int urlIndex = sharedText.indexOf(yelpUrl); 
-          if (urlIndex != -1) {
-            String potentialName = sharedText.substring(0, urlIndex).trim();
-            potentialName = potentialName.replaceAll(
-                RegExp(r'^Check out ', caseSensitive: false), '');
-            potentialName = potentialName.replaceAll(
-                RegExp(r'\s*\n.*$', multiLine: true),
-                ''); 
-            potentialName = potentialName.trim();
-
-            if (potentialName.isNotEmpty && potentialName.length < 100) {
-              businessName = potentialName;
-              print(
-                  '📊 YELP DATA: Extracted business name from shared text: "$businessName"');
-            } else {
-              print(
-                  '📊 YELP DATA: Failed to extract meaningful name from text preceding URL.');
-            }
-          } else {
-            print(
-                '📊 YELP DATA: Could not find the Yelp URL within the shared text to extract preceding name.');
-          }
-        } catch (e) {
-          print('📊 YELP DATA: Error during shared text name extraction: $e');
-        }
-      }
 
       bool isChainOrGeneric = _chainDetectedFromUrl;
       if (!isChainOrGeneric && businessName.isNotEmpty) {
@@ -1399,12 +1429,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
       print('📊 YELP DATA: Is chain or generic restaurant: $isChainOrGeneric');
 
-      if (isShortUrl) {
+      // Try web scraping for additional details if we have a short URL or need more info
+      if (isShortUrl || (!extractedFromSharedText && businessName.isEmpty)) {
         print(
-            '📊 YELP DATA: Short URL was not resolved, attempting scrape as fallback');
+            '📊 YELP DATA: Attempting web scraping for additional details');
         try {
-          final extraInfo = await _getLocationDetailsFromYelpPage(
-              yelpUrl); 
+          final extraInfo = await _getLocationDetailsFromYelpPage(yelpUrl);
           if (extraInfo != null) {
             if (businessCity.isEmpty &&
                 extraInfo['city'] != null &&
@@ -1417,6 +1447,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               businessState = extraInfo['state']!;
               print(
                   '📊 YELP DATA: Extracted state from Yelp page scrape: $businessState');
+            }
+            // Try to extract business name from scraped page if we still don't have it
+            if (businessName.isEmpty && extraInfo['businessName'] != null && extraInfo['businessName']!.isNotEmpty) {
+              businessName = extraInfo['businessName']!;
+              extractedFromUrl = true;
+              print(
+                  '📊 YELP DATA: Extracted business name from Yelp page scrape: $businessName');
             }
           }
         } catch (e) {
@@ -1431,15 +1468,24 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
 
       List<String> searchQueries = [];
-      if (businessName.isNotEmpty && businessCity.isNotEmpty) {
-        String query = '$businessName $businessCity';
-        searchQueries.add('"$query"'); 
-        searchQueries.add(query);
-      }
+      
+      // Prioritize exact business name searches when we have good data from shared text
       if (businessName.isNotEmpty) {
+        // Add exact quoted search first (most precise)
         searchQueries.add('"$businessName"');
+        
+        // Add business name with city if available
+        if (businessCity.isNotEmpty) {
+          String query = '$businessName $businessCity';
+          searchQueries.add('"$query"');
+          searchQueries.add(query);
+        }
+        
+        // Add plain business name search (less precise but broader)
         searchQueries.add(businessName);
       }
+      
+      // Remove duplicates while preserving order
       searchQueries = searchQueries.toSet().toList(); 
       print('📊 YELP DATA: Search strategies (in order): $searchQueries');
 
@@ -1514,13 +1560,37 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           if (businessName.isNotEmpty && foundLocation.displayName != null) {
             final googleNameLower = foundLocation.displayName!.toLowerCase();
             final yelpNameLower = businessName.toLowerCase();
-            if (!googleNameLower.contains(yelpNameLower) &&
-                !yelpNameLower.contains(googleNameLower.split(' ')[0])) {
+            
+            // Split names into words for better matching
+            final googleWords = googleNameLower.split(RegExp(r'\s+'));
+            final yelpWords = yelpNameLower.split(RegExp(r'\s+'));
+            
+            // Calculate word overlap
+            int matchingWords = 0;
+            for (String yelpWord in yelpWords) {
+              if (yelpWord.length > 2) { // Only consider meaningful words
+                for (String googleWord in googleWords) {
+                  if (googleWord.contains(yelpWord) || yelpWord.contains(googleWord)) {
+                    matchingWords++;
+                    break;
+                  }
+                }
+              }
+            }
+            
+            // Require at least 60% word overlap for extracted names from shared text
+            double matchRatio = matchingWords / yelpWords.length;
+            bool nameMatches = matchRatio >= 0.6 || 
+                              googleNameLower.contains(yelpNameLower) || 
+                              yelpNameLower.contains(googleNameLower.split(' ')[0]);
+            
+            if (!nameMatches) {
               print(
-                  '📊 YELP DATA: Name verification failed. Google name "${foundLocation.displayName}" doesn\'t align well with Yelp name "${businessName}"');
+                  '📊 YELP DATA: Name verification failed. Google name "${foundLocation.displayName}" doesn\'t align well with Yelp name "${businessName}" (match ratio: ${(matchRatio * 100).toStringAsFixed(1)}%)');
+              isCorrectBusiness = false;
             } else {
               print(
-                  '📊 YELP DATA: Name check passed (containment): Google="${foundLocation.displayName}", Yelp="$businessName"');
+                  '📊 YELP DATA: Name check passed: Google="${foundLocation.displayName}", Yelp="$businessName" (match ratio: ${(matchRatio * 100).toStringAsFixed(1)}%)');
             }
           }
 
@@ -1651,6 +1721,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       if (response.statusCode == 200) {
         final html = response.data.toString();
 
+        // Extract structured data
         final addressRegex = RegExp(r'address":"([^"]+)');
         final addressMatch = addressRegex.firstMatch(html);
 
@@ -1660,11 +1731,36 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         final stateRegex = RegExp(r'addressRegion":"([^"]+)');
         final stateMatch = stateRegex.firstMatch(html);
 
-        if (addressMatch != null || cityMatch != null || stateMatch != null) {
+        // Try to extract business name from various sources
+        String businessName = '';
+        
+        // Try JSON-LD structured data first
+        final nameRegex = RegExp(r'"name":"([^"]+)"');
+        final nameMatch = nameRegex.firstMatch(html);
+        if (nameMatch != null) {
+          businessName = nameMatch.group(1) ?? '';
+        }
+        
+        // Fallback: try page title
+        if (businessName.isEmpty) {
+          final titleRegex = RegExp(r'<title>([^<]+)</title>', caseSensitive: false);
+          final titleMatch = titleRegex.firstMatch(html);
+          if (titleMatch != null) {
+            String title = titleMatch.group(1) ?? '';
+            // Clean up title (Yelp titles often end with " - Yelp")
+            title = title.replaceAll(RegExp(r'\s*-\s*Yelp.*$'), '');
+            if (title.isNotEmpty && title.length < 100) {
+              businessName = title;
+            }
+          }
+        }
+
+        if (addressMatch != null || cityMatch != null || stateMatch != null || businessName.isNotEmpty) {
           return {
             'address': addressMatch?.group(1) ?? '',
             'city': cityMatch?.group(1) ?? '',
             'state': stateMatch?.group(1) ?? '',
+            'businessName': businessName,
           };
         }
       }
@@ -3344,7 +3440,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     String? extractedUrl = _extractFirstUrl(textContent);
 
     if (extractedUrl != null) {
-      return _buildUrlPreview(extractedUrl, card, index);
+      return _buildUrlPreview(extractedUrl, card, index, textContent);
     } else {
       return Container(
         padding: const EdgeInsets.all(16.0),
@@ -3357,11 +3453,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     }
   }
 
-  Widget _buildUrlPreview(String url, ExperienceCardData? card, int index) {
+  Widget _buildUrlPreview(String url, ExperienceCardData? card, int index, [String? sharedText]) {
     if (card != null &&
         (url.contains('yelp.com/biz') || url.contains('yelp.to/'))) {
       return YelpPreviewWidget(
         yelpUrl: url,
+        sharedText: sharedText,
         card: card, 
         yelpPreviewFutures: _yelpPreviewFutures,
         getBusinessFromYelpUrl: _getBusinessFromYelpUrl,
