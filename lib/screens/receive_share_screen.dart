@@ -297,6 +297,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   final ExperienceService _experienceService = ExperienceService();
   final GoogleMapsService _mapsService = GoogleMapsService();
   final SharingService _sharingService = SharingService();
+  
+  // Add flag to prevent double processing
+  bool _isProcessingUpdate = false;
   // ADDED: AuthService instance
   final AuthService _authService = AuthService();
   // ADDED: GoogleKnowledgeGraphService instance with optional API key
@@ -475,21 +478,55 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
   // Handle updates to the sharedFiles controller from SharingService
   void _handleSharedFilesUpdate() {
+    if (_isProcessingUpdate) {
+      Fluttertoast.showToast(
+        msg: "DEBUG: Already processing update, ignoring",
+        toastLength: Toast.LENGTH_SHORT,
+        gravity: ToastGravity.BOTTOM,
+        backgroundColor: Colors.grey.withOpacity(0.8),
+        textColor: Colors.white,
+      );
+      return;
+    }
+    
     final updatedFiles = _sharingService.sharedFiles.value;
     if (updatedFiles != null && 
         updatedFiles.isNotEmpty && 
         !_areSharedFilesEqual(updatedFiles, _currentSharedFiles)) {
+      
+      _isProcessingUpdate = true;
       
       print("ReceiveShareScreen: Received updated shared files. Processing...");
       print("ReceiveShareScreen: Is fully initialized: $_isFullyInitialized");
       print("ReceiveShareScreen: Current files: ${_currentSharedFiles?.map((f) => f.path.substring(0, min(50, f.path.length))).join(", ") ?? "null"}");
       print("ReceiveShareScreen: Updated files: ${updatedFiles.map((f) => f.path.substring(0, min(50, f.path.length))).join(", ")}");
       
-      // Check if this is a Yelp URL and we already have content loaded
+      Fluttertoast.showToast(
+        msg: "DEBUG: _handleSharedFilesUpdate called",
+        toastLength: Toast.LENGTH_LONG,
+        gravity: ToastGravity.BOTTOM,
+        backgroundColor: Colors.yellow.withOpacity(0.8),
+        textColor: Colors.black,
+      );
+      
+      // Check if this is a Yelp URL - if so, treat as update rather than full refresh
       String? yelpUrl = _extractYelpUrlFromSharedFiles(updatedFiles);
-      if (yelpUrl != null && _currentSharedFiles != null && _currentSharedFiles!.isNotEmpty) {
-        print("ReceiveShareScreen: Yelp URL detected with existing content - updating URL field only, no preview processing");
+      if (yelpUrl != null) {
+        print("ReceiveShareScreen: Yelp URL detected - treating as update rather than full refresh");
+        Fluttertoast.showToast(
+          msg: "DEBUG: Yelp URL in _handleSharedFilesUpdate - routing to update",
+          toastLength: Toast.LENGTH_LONG,
+          gravity: ToastGravity.BOTTOM,
+          backgroundColor: Colors.teal.withOpacity(0.8),
+          textColor: Colors.white,
+        );
+        // For Yelp URLs, always try to update existing cards instead of creating new content
         _handleYelpUrlUpdate(yelpUrl, updatedFiles);
+        
+        // Reset flag after a delay to allow for future updates
+        Future.delayed(const Duration(milliseconds: 1000), () {
+          _isProcessingUpdate = false;
+        });
         return;
       }
       
@@ -509,6 +546,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // This prevents double-processing during cold starts
       if (_areSharedFilesEqual(updatedFiles, widget.sharedFiles)) {
         print("ReceiveShareScreen: Updated files are same as initial widget.sharedFiles. Likely initialization echo - ignoring.");
+        _isProcessingUpdate = false;
         return;
       }
       
@@ -516,6 +554,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       if (yelpUrl != null && _hasExistingCards()) {
         print("ReceiveShareScreen: Detected Yelp URL with existing cards. Updating in-place.");
         _handleYelpUrlUpdate(yelpUrl, updatedFiles);
+        _isProcessingUpdate = false;
         return;
       }
       
@@ -532,6 +571,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       
       // Process the new content
       _processSharedContent(_currentSharedFiles);
+      _isProcessingUpdate = false;
     }
   }
   
@@ -577,7 +617,30 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     final provider = context.read<ReceiveShareProvider>();
     final experienceCards = provider.experienceCards;
     
-    if (experienceCards.isEmpty) return;
+    Fluttertoast.showToast(
+      msg: "DEBUG: _handleYelpUrlUpdate called, cards=${experienceCards.length}",
+      toastLength: Toast.LENGTH_LONG,
+      gravity: ToastGravity.CENTER,
+      backgroundColor: Colors.red.withOpacity(0.8),
+      textColor: Colors.white,
+    );
+    
+    if (experienceCards.isEmpty) {
+      print("ReceiveShareScreen: No experience cards yet for Yelp URL update - will retry in 500ms");
+      Fluttertoast.showToast(
+        msg: "DEBUG: No cards yet, retrying in 500ms",
+        toastLength: Toast.LENGTH_SHORT,
+        gravity: ToastGravity.CENTER,
+        backgroundColor: Colors.grey.withOpacity(0.8),
+        textColor: Colors.white,
+      );
+      Future.delayed(const Duration(milliseconds: 500), () {
+        if (mounted) {
+          _handleYelpUrlUpdate(yelpUrl, updatedFiles);
+        }
+      });
+      return;
+    }
     
     // Find the target card to populate with the Yelp URL
     ExperienceCardData? targetCard;
@@ -894,22 +957,20 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       return;
     }
 
-    // Check if this is a Yelp URL and we're in a restore scenario
+    // Check if this is a Yelp URL and add debug toast
     String? yelpUrl = _extractYelpUrlFromSharedFiles(files);
-    bool isRestoreScenario = _sharingService.isShareFlowActive;
-    
-    if (yelpUrl != null && isRestoreScenario) {
-      print("ReceiveShareScreen: Yelp URL detected in restore scenario - skipping preview creation");
-      // Don't process the content, just set the files to prevent double-processing
-      setState(() {
-        _currentSharedFiles = files;
-      });
-      print("ReceiveShareScreen: Blocked Yelp preview creation during restore");
-      return;
+    if (yelpUrl != null) {
+      Fluttertoast.showToast(
+        msg: "DEBUG: Initial processing Yelp URL",
+        toastLength: Toast.LENGTH_LONG,
+        gravity: ToastGravity.TOP,
+        backgroundColor: Colors.purple.withOpacity(0.8),
+        textColor: Colors.white,
+      );
     }
 
-    // For normal initial content, always use normal processing
-    // The key difference is we'll update _currentSharedFiles to prevent double-processing
+    // For all content, always use normal processing
+    // The Yelp URL handling complexity was causing more issues than it solved
     setState(() {
       _currentSharedFiles = files;
     });
@@ -939,6 +1000,52 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           // print('DEBUG: Extracted first URL: $foundUrl'); // CLEANED
           if (_isSpecialUrl(foundUrl)) {
             // print('DEBUG: Found special content URL: $foundUrl'); // CLEANED
+            
+            // SPECIAL CASE: If this is a Yelp URL and we already have cards, treat it as an update
+            String? yelpUrl = _extractYelpUrlFromSharedFiles(files);
+            if (yelpUrl != null) {
+              final provider = context.read<ReceiveShareProvider>();
+              
+              // Check if sharing service indicates this should be an update (from existing session)
+              bool hasActiveShareFlow = _sharingService.isShareFlowActive;
+              bool hasPersistedContent = false;
+              
+              // Quick async check for persisted content
+              _sharingService.getPersistedOriginalContent().then((content) {
+                hasPersistedContent = content != null && content.isNotEmpty;
+              });
+              
+              Fluttertoast.showToast(
+                msg: "DEBUG: Yelp in _processSharedContent, cards=${provider.experienceCards.length}, shareFlow=$hasActiveShareFlow",
+                toastLength: Toast.LENGTH_LONG,
+                gravity: ToastGravity.CENTER,
+                backgroundColor: Colors.blue.withOpacity(0.8),
+                textColor: Colors.white,
+              );
+              
+              // If we have existing cards OR there's evidence of a previous session, treat as update
+              if (provider.experienceCards.isNotEmpty || hasActiveShareFlow) {
+                print("ReceiveShareScreen: Yelp URL detected with existing cards or active session - updating instead of creating new preview");
+                Fluttertoast.showToast(
+                  msg: "DEBUG: Updating existing card with Yelp URL (cards=${provider.experienceCards.length})",
+                  toastLength: Toast.LENGTH_LONG,
+                  gravity: ToastGravity.CENTER,
+                  backgroundColor: Colors.green.withOpacity(0.8),
+                  textColor: Colors.white,
+                );
+                _handleYelpUrlUpdate(yelpUrl, files);
+                return;
+              } else {
+                Fluttertoast.showToast(
+                  msg: "DEBUG: No existing cards or session, creating new Yelp preview",
+                  toastLength: Toast.LENGTH_LONG,
+                  gravity: ToastGravity.CENTER,
+                  backgroundColor: Colors.orange.withOpacity(0.8),
+                  textColor: Colors.white,
+                );
+              }
+            }
+            
             _processSpecialUrl(
                 foundUrl, file); 
             return; 
@@ -2902,6 +3009,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   @override
   Widget build(BuildContext context) {
     print('ReceiveShareScreen build called. Current card count from provider: ${context.watch<ReceiveShareProvider>().experienceCards.length}'); // MODIFIED
+    print('ReceiveShareScreen BUILD DEBUG: _currentSharedFiles count=${_currentSharedFiles.length}, _isFullyInitialized=$_isFullyInitialized');
 
     return _wrapWithWillPopScope(Scaffold(
       appBar: AppBar(
