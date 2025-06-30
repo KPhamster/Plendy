@@ -55,6 +55,23 @@ class SharingService {
     }
     return false;
   }
+  
+  // Helper method to check if the new shared content is the same as current content
+  bool _isSameSharedContent(List<SharedMediaFile> newFiles) {
+    final currentFiles = _sharedFilesController.value;
+    if (currentFiles == null || currentFiles.length != newFiles.length) {
+      return false;
+    }
+    
+    for (int i = 0; i < currentFiles.length; i++) {
+      if (currentFiles[i].path != newFiles[i].path || 
+          currentFiles[i].type != newFiles[i].type) {
+        return false;
+      }
+    }
+    
+    return true;
+  }
 
   ValueListenable<List<SharedMediaFile>?> get sharedFiles =>
       _sharedFilesController;
@@ -91,6 +108,9 @@ class SharingService {
 
     // Check for initial intent immediately
     _checkInitialIntent();
+    
+    // Set up a delayed cleanup to handle any stale state that might remain
+    _scheduleStaleStateCleanup();
   }
 
   // Restore share flow state from persistent storage
@@ -103,15 +123,52 @@ class SharingService {
       
       print("SHARE SERVICE: Restoring state - shareFlowActive=$wasShareFlowActive, receiveShareScreenOpen=$wasReceiveShareScreenOpen, navigatingAway=$wasNavigatingAway");
       
-      if (wasShareFlowActive || wasReceiveShareScreenOpen) {
+      // Only restore state if we're launching from a fresh share intent
+      // Check if there's actually initial shared content to process
+      final hasInitialContent = await _hasInitialSharedContent();
+      
+      if ((wasShareFlowActive || wasReceiveShareScreenOpen) && hasInitialContent) {
         isShareFlowActive = wasShareFlowActive;
         _isReceiveShareScreenOpen = wasReceiveShareScreenOpen;
         _navigatingAwayFromShare = wasNavigatingAway;
-        print("SHARE SERVICE: Restored share flow state from persistent storage");
+        print("SHARE SERVICE: Restored share flow state from persistent storage (has initial content)");
+      } else {
+        // If no initial content, clear any stale persistent state
+        if (wasShareFlowActive || wasReceiveShareScreenOpen) {
+          print("SHARE SERVICE: Clearing stale persistent state (no initial content to process)");
+          await _clearPersistedShareFlowState();
+        }
+        print("SHARE SERVICE: No valid state to restore or no initial content");
       }
     } catch (e) {
       print("SHARE SERVICE: Error restoring share flow state: $e");
     }
+  }
+  
+  // Helper method to check if we have initial shared content to process
+  Future<bool> _hasInitialSharedContent() async {
+    try {
+      final initialMedia = await ReceiveSharingIntent.instance.getInitialMedia();
+      return initialMedia.isNotEmpty;
+    } catch (e) {
+      print("SHARE SERVICE: Error checking for initial content: $e");
+      return false;
+    }
+  }
+  
+  // Schedule a cleanup of stale state after app initialization
+  void _scheduleStaleStateCleanup() {
+    // Wait a few seconds after initialization to check for stale state
+    Timer(Duration(seconds: 3), () async {
+      if (isShareFlowActive || _isReceiveShareScreenOpen) {
+        // Check if we actually have content to process
+        final hasContent = await _hasInitialSharedContent();
+        if (!hasContent && _sharedFilesController.value == null) {
+          print("SHARE SERVICE: Cleaning up stale share flow state (no content found)");
+          markShareFlowAsInactive();
+        }
+      }
+    });
   }
 
   // Persist share flow state to storage
@@ -222,7 +279,26 @@ class SharingService {
           return;
         }
         if (isShareFlowActive) {
-          print("SHARE SERVICE: Share flow is currently active. New intent data stored. Existing screen should handle or ignore.");
+          print("SHARE SERVICE: Share flow is currently active. Checking content type and differences...");
+          
+          bool isSameContent = _isSameSharedContent(value);
+          bool isYelpUrl = _isYelpUrl(value);
+          
+          if (isSameContent) {
+            print("SHARE SERVICE: Same content - existing screen should handle.");
+            return;
+          } else if (isYelpUrl && _isReceiveShareScreenOpen) {
+            print("SHARE SERVICE: New Yelp URL while receive share screen is open. Updating existing screen.");
+            _sharedFilesController.value = List.from(value);
+            return;
+          } else if (!isYelpUrl) {
+            print("SHARE SERVICE: New non-Yelp content detected in stream. Attempting to show new share screen.");
+            if (_lastKnownContext != null) {
+              showReceiveShareScreen(_lastKnownContext!, value);
+            }
+          } else {
+            print("SHARE SERVICE: New Yelp URL but receive share screen not confirmed open. Proceeding with normal flow.");
+          }
           return;
         }
         if (_lastKnownContext != null && !_isReceiveShareScreenOpen && !_isNavigatingToReceiveScreen) {
@@ -318,12 +394,30 @@ class SharingService {
     print("SHARE SERVICE DEBUG: showReceiveShareScreen called with ${files.length} files");
     print("SHARE SERVICE DEBUG: isShareFlowActive=$isShareFlowActive, _isReceiveShareScreenOpen=$_isReceiveShareScreenOpen");
     
-    if (isShareFlowActive && _isReceiveShareScreenOpen) { // Check if already active and screen is open
-      // Check if this is a Yelp URL - if so, always update existing screen
+    // If we think a share flow is active but this is a new share intent,
+    // we should handle it appropriately based on the content type
+    if (isShareFlowActive && _isReceiveShareScreenOpen) {
+      print("SHARE SERVICE: Flow marked as active but received new share. Analyzing content...");
+      
+      bool isSameContent = _isSameSharedContent(files);
       bool isYelpUrl = _isYelpUrl(files);
-      print("SHARE SERVICE: Flow active and screen open. isYelpUrl=$isYelpUrl. Updating files in existing screen.");
-      _sharedFilesController.value = List.from(files); // Update files for existing screen
-      return;
+      
+      if (isSameContent) {
+        // Same content - just update existing screen
+        print("SHARE SERVICE: Same content detected. Flow active and screen open. isYelpUrl=$isYelpUrl. Updating files in existing screen.");
+        _sharedFilesController.value = List.from(files);
+        return;
+      } else if (isYelpUrl) {
+        // Different Yelp URL - update existing screen (don't open new one)
+        print("SHARE SERVICE: New Yelp URL detected while screen is open. Updating existing screen instead of opening new one.");
+        _sharedFilesController.value = List.from(files);
+        return;
+      } else {
+        // Different non-Yelp content - reset and open new screen
+        print("SHARE SERVICE: New non-Yelp content detected. Resetting share flow state and proceeding with new share.");
+        markShareFlowAsInactive();
+        // Allow the method to continue with the new share
+      }
     }
     if (_isNavigatingToReceiveScreen) { // Prevent re-entry if already navigating
         print("SHARE SERVICE: showReceiveShareScreen called, but already navigating. Ignoring.");
@@ -421,6 +515,10 @@ class SharingService {
   void shareNavigationComplete() {
     print("SHARE SERVICE: Navigation away from share flow complete.");
     _navigatingAwayFromShare = false;
+    
+    // Clear all persistent state now that we're done with the share flow
+    _clearPersistedShareFlowState();
+    
     // isShareFlowActive should be false already if prepareToNavigateAwayFromShare was called.
     // Try an additional reset here, now that MainScreen is active.
     print("SHARE SERVICE: Attempting final intent reset from shareNavigationComplete.");

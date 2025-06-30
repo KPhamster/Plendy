@@ -11,15 +11,17 @@ import '../../../services/google_maps_service.dart';
 
 class YelpPreviewWidget extends StatefulWidget {
   final String yelpUrl;
+  final String? sharedText;
   final ExperienceCardData card;
   final Map<String, Future<Map<String, dynamic>?>> yelpPreviewFutures;
-  final Future<Map<String, dynamic>?> Function(String) getBusinessFromYelpUrl;
+  final Future<Map<String, dynamic>?> Function(String, {String? sharedText}) getBusinessFromYelpUrl;
   final Future<void> Function(String) launchUrlCallback;
   final GoogleMapsService mapsService;
 
   const YelpPreviewWidget({
     super.key,
     required this.yelpUrl,
+    this.sharedText,
     required this.card,
     required this.yelpPreviewFutures,
     required this.getBusinessFromYelpUrl,
@@ -50,6 +52,12 @@ class _YelpPreviewWidgetState extends State<YelpPreviewWidget> {
     print(
         "🔍 YELP PREVIEW WIDGET: Using preview key (placeId or URL): $previewKey");
     print(
+        "🔍 YELP PREVIEW WIDGET: Shared text available: ${widget.sharedText != null ? "YES (${widget.sharedText!.length} chars)" : "NO"}");
+    if (widget.sharedText != null) {
+      print(
+          "🔍 YELP PREVIEW WIDGET: Shared text content: ${widget.sharedText!.length > 100 ? widget.sharedText!.substring(0, 100) + "..." : widget.sharedText!}");
+    }
+    print(
         "🔍 YELP PREVIEW WIDGET: Extracted fallback business name: $fallbackBusinessName");
 
     // Get or create the future using the previewKey
@@ -60,13 +68,13 @@ class _YelpPreviewWidgetState extends State<YelpPreviewWidget> {
       // was already populated by _showLocationPicker and log a warning if not.
       if (previewKey == widget.yelpUrl) {
         widget.yelpPreviewFutures[previewKey] =
-            widget.getBusinessFromYelpUrl(widget.yelpUrl);
+            widget.getBusinessFromYelpUrl(widget.yelpUrl, sharedText: widget.sharedText);
       } else {
         // This case should ideally not happen if _showLocationPicker updated the future map correctly
         print(
             "🔍 YELP PREVIEW WIDGET WARNING: Future not found for placeId key '$previewKey'. Re-fetching using original URL '${widget.yelpUrl}'.");
         widget.yelpPreviewFutures[previewKey] =
-            widget.getBusinessFromYelpUrl(widget.yelpUrl);
+            widget.getBusinessFromYelpUrl(widget.yelpUrl, sharedText: widget.sharedText);
       }
     } else {
       print("🔍 YELP PREVIEW WIDGET: Using cached future for key: $previewKey");
