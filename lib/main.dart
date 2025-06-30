@@ -253,6 +253,24 @@ class _MyAppState extends State<MyApp> {
           // );
           
           if (mounted) {
+            // Check if this is a Yelp URL during cold start - if so, check for existing session
+            bool isYelpUrl = false;
+            for (final file in value) {
+              if (file.type == SharedMediaType.text || file.type == SharedMediaType.url) {
+                String content = file.path.toLowerCase();
+                if (content.contains('yelp.com/biz') || content.contains('yelp.to/')) {
+                  isYelpUrl = true;
+                  break;
+                }
+              }
+            }
+            
+            // For Yelp URLs during cold start, always create ReceiveShareScreen
+            // but let it handle restoration internally
+            if (isYelpUrl) {
+              print("MAIN: Cold start Yelp URL detected - will create ReceiveShareScreen with restoration logic");
+            }
+            
             setState(() {
               _sharedFiles = value;
               _initialCheckComplete = true;

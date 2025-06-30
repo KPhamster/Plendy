@@ -160,11 +160,45 @@ class SharingService {
     }
   }
 
-  // Get persisted original shared content
-  List<SharedMediaFile>? getPersistedOriginalContent() {
+  // Get persisted original shared content (async version)
+  Future<List<SharedMediaFile>?> getPersistedOriginalContent() async {
     try {
-      // This is synchronous, so we'll need to call this after SharedPreferences is loaded
-      return null; // Will implement async version if needed
+      final prefs = await SharedPreferences.getInstance();
+      final contentJson = prefs.getString('originalSharedContent');
+      
+      if (contentJson != null && contentJson.isNotEmpty) {
+        print("SHARE SERVICE: Found persisted original content");
+        final contentList = contentJson.split('###');
+        final files = <SharedMediaFile>[];
+        
+        for (final item in contentList) {
+          final parts = item.split('|||');
+          if (parts.length == 2) {
+            final typeStr = parts[0];
+            final path = parts[1];
+            
+            SharedMediaType type = SharedMediaType.text;
+            if (typeStr.contains('url')) {
+              type = SharedMediaType.url;
+            } else if (typeStr.contains('image')) {
+              type = SharedMediaType.image;
+            } else if (typeStr.contains('video')) {
+              type = SharedMediaType.video;
+            }
+            
+            files.add(SharedMediaFile(
+              path: path,
+              thumbnail: null,
+              duration: null,
+              type: type,
+            ));
+          }
+        }
+        
+        return files.isNotEmpty ? files : null;
+      }
+      
+      return null;
     } catch (e) {
       print("SHARE SERVICE: Error getting persisted original content: $e");
       return null;
