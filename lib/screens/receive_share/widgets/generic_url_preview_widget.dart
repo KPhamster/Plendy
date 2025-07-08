@@ -37,6 +37,11 @@ class GenericUrlPreviewWidget extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(color: Colors.blue),
                   ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    "(Preview not available)",
+                    style: TextStyle(color: Colors.grey, fontSize: 12),
+                  ),
                 ],
               ),
             ),

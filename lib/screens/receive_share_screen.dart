@@ -27,6 +27,7 @@ import 'package:http/http.dart' as http;
 import 'receive_share/widgets/yelp_preview_widget.dart';
 import 'receive_share/widgets/maps_preview_widget.dart';
 import 'receive_share/widgets/generic_url_preview_widget.dart';
+import 'receive_share/widgets/google_knowledge_graph_preview_widget.dart';
 import 'receive_share/widgets/image_preview_widget.dart';
 import 'package:flutter/services.dart';
 import 'package:geocoding/geocoding.dart' as geocoding;
@@ -1072,11 +1073,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         RegExp(r'(google\.com/maps|maps\.app\.goo\.gl|goo\.gl/maps)');
     final facebookPattern = RegExp(r'(facebook\.com|fb\.com|fb\.watch)');
     final googleKnowledgePattern = RegExp(r'g\.co/kgs/'); // Added pattern for Google Knowledge Graph URLs
+    final shareGooglePattern = RegExp(r'share\.google/'); // Added pattern for share.google URLs
 
     if (yelpPattern.hasMatch(urlLower) || 
         mapsPattern.hasMatch(urlLower) || 
         facebookPattern.hasMatch(urlLower) ||
-        googleKnowledgePattern.hasMatch(urlLower)) {
+        googleKnowledgePattern.hasMatch(urlLower) ||
+        shareGooglePattern.hasMatch(urlLower)) {
       print("DEBUG: _isSpecialUrl detected special pattern in URL: $url");
       return true;
     }
@@ -1117,10 +1120,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       firstCard.originalShareType = ShareType.maps; 
       _yelpPreviewFutures[normalizedUrl] =
           _getLocationFromMapsUrl(normalizedUrl);
-    } else if (normalizedUrl.contains('g.co/kgs/')) {
-      print("SHARE DEBUG: Processing as Google Knowledge Graph URL: $normalizedUrl");
-      // Handle Google Knowledge Graph URLs by attempting to resolve them
-      _processGoogleKnowledgeUrl(normalizedUrl, file);
+    } else if (normalizedUrl.contains('g.co/kgs/') || normalizedUrl.contains('share.google/')) {
+      print("SHARE DEBUG: Processing as Google Knowledge Graph URL (showing web preview): $normalizedUrl");
+      // Google Knowledge Graph URLs are displayed as web previews using GenericUrlPreviewWidget
+      firstCard.originalShareType = ShareType.genericUrl;
+      // The URL will be displayed in the media preview section using AnyLinkPreview
     } else if (normalizedUrl.contains('facebook.com') ||
                normalizedUrl.contains('fb.com') ||
                normalizedUrl.contains('fb.watch')) {
@@ -3456,6 +3460,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   Widget _buildUrlPreview(String url, ExperienceCardData? card, int index, [String? sharedText]) {
     if (card != null &&
         (url.contains('yelp.com/biz') || url.contains('yelp.to/'))) {
+      
       return YelpPreviewWidget(
         yelpUrl: url,
         sharedText: sharedText,
@@ -3470,7 +3475,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     if (url.contains('google.com/maps') ||
         url.contains('maps.app.goo.gl') ||
         url.contains('goo.gl/maps') ||
-        url.contains('g.co/kgs/')) {
+        (url.contains('g.co/kgs/') && !url.contains('share.google/'))) {
       return MapsPreviewWidget(
         mapsUrl: url,
         mapsPreviewFutures: _yelpPreviewFutures,
@@ -3526,6 +3531,15 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     if (url.contains('youtube.com') || url.contains('youtu.be') || url.contains('youtube.com/shorts')) {
       return YouTubePreviewWidget(
+        url: url,
+        launchUrlCallback: _launchUrl,
+      );
+    }
+
+    // Google Knowledge Graph URLs - use WebView
+    if (url.contains('g.co/kgs/') || url.contains('share.google/')) {
+      print("🔍 URL PREVIEW: Using GoogleKnowledgeGraphPreviewWidget (WebView) for URL: $url");
+      return GoogleKnowledgeGraphPreviewWidget(
         url: url,
         launchUrlCallback: _launchUrl,
       );
@@ -3679,8 +3693,14 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     // Remove common prefixes that might be added by sharing
     cleaned = cleaned.replaceAll(RegExp(r'^(Check out |Visit |About |)\s*', caseSensitive: false), '');
     
-    // Remove trailing newlines and extra whitespace
-    cleaned = cleaned.replaceAll(RegExp(r'\s*\n.*$', multiLine: true), '');
+    // Remove URLs and content after blank lines while preserving entity names
+    // This handles cases like "Entity Name\n\n https://url" 
+    cleaned = cleaned.replaceAll(RegExp(r'\n\s*\n.*$', multiLine: true, dotAll: true), '');
+    
+    // Remove any remaining URLs that might be on the same line or after single newlines
+    cleaned = cleaned.replaceAll(RegExp(r'\n\s*https?://.*$', multiLine: true), '');
+    
+    // Clean up any remaining trailing whitespace and newlines
     cleaned = cleaned.trim();
     
     // Remove extra punctuation at the end
