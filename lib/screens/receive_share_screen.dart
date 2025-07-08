@@ -3391,10 +3391,44 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   }
 
   Future<void> _launchUrl(String urlString) async {
-    final Uri url = Uri.parse(urlString);
-    if (!await launchUrl(url, mode: LaunchMode.externalApplication)) {
-      print('Could not launch $urlString');
-      _showSnackBar(context, 'Could not open link');
+    Uri url = Uri.parse(urlString);
+    
+    // Add timestamp to Yelp search URLs to force new navigation
+    if (urlString.contains('yelp.com/search')) {
+      String timestamp = DateTime.now().millisecondsSinceEpoch.toString();
+      String separator = urlString.contains('?') ? '&' : '?';
+      url = Uri.parse('$urlString${separator}t=$timestamp');
+    }
+    
+    try {
+      // For Yelp URLs, try multiple approaches to force new navigation
+      bool launched = false;
+      
+      // First try externalApplication with webOnlyWindowName to force new window/tab
+      if (urlString.contains('yelp.com/search')) {
+        launched = await launchUrl(url, 
+          mode: LaunchMode.externalApplication,
+          webOnlyWindowName: '_blank'
+        );
+      }
+      
+      if (!launched) {
+        // Try platformDefault as fallback
+        launched = await launchUrl(url, mode: LaunchMode.platformDefault);
+      }
+      
+      if (!launched) {
+        // Final fallback to externalApplication
+        launched = await launchUrl(url, mode: LaunchMode.externalApplication);
+      }
+      
+      if (!launched) {
+        print('Could not launch $urlString');
+        _showSnackBar(context, 'Could not open link');
+      }
+    } catch (e) {
+      print('Error launching URL: $e');
+      _showSnackBar(context, 'Error opening link: $e');
     }
   }
 
