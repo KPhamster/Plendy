@@ -130,8 +130,8 @@ class _MapsPreviewWidgetState extends State<MapsPreviewWidget> {
     try {
       String locationName = "Shared Location";
 
-      // Handle Knowledge Graph URLs (g.co/kgs/)
-      if (url.contains('g.co/kgs/')) {
+      // Handle Knowledge Graph URLs (g.co/kgs/ and share.google/)
+      if (url.contains('g.co/kgs/') || url.contains('share.google/')) {
         print("🗺️ MAPS PREVIEW WIDGET: Knowledge Graph URL detected, extracting name from context");
         // For Knowledge Graph URLs, we can't extract the name from the URL itself
         // The name should be provided by the parent context, so we return a generic message
