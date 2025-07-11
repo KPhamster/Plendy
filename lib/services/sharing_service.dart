@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
@@ -192,6 +193,8 @@ class SharingService {
       await prefs.remove('receiveShareScreenOpen');
       await prefs.remove('navigatingAwayFromShare');
       await prefs.remove('originalSharedContent');
+      await prefs.remove('currentSharedContent');
+      await prefs.remove('experienceCardFormData');
       print("SHARE SERVICE: Cleared persisted share flow state");
     } catch (e) {
       print("SHARE SERVICE: Error clearing persisted share flow state: $e");
@@ -214,6 +217,104 @@ class SharingService {
       }
     } catch (e) {
       print("SHARE SERVICE: Error persisting original shared content: $e");
+    }
+  }
+  
+  // Persist current shared content (for preserving across app restarts)
+  Future<void> persistCurrentSharedContent(List<SharedMediaFile> files) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final contentList = files.map((file) => {
+        'path': file.path,
+        'type': file.type.toString(),
+      }).toList();
+      final contentJson = contentList.map((item) => '${item['type']}|||${item['path']}').join('###');
+      await prefs.setString('currentSharedContent', contentJson);
+      print("SHARE SERVICE: Persisted current shared content (${files.length} files)");
+    } catch (e) {
+      print("SHARE SERVICE: Error persisting current shared content: $e");
+    }
+  }
+
+  // Get persisted current shared content
+  Future<List<SharedMediaFile>?> getPersistedCurrentContent() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final contentJson = prefs.getString('currentSharedContent');
+      
+      if (contentJson != null && contentJson.isNotEmpty) {
+        print("SHARE SERVICE: Found persisted current content");
+        final contentList = contentJson.split('###');
+        final files = <SharedMediaFile>[];
+        
+        for (final item in contentList) {
+          final parts = item.split('|||');
+          if (parts.length == 2) {
+            final typeStr = parts[0];
+            final path = parts[1];
+            
+            SharedMediaType type = SharedMediaType.text;
+            if (typeStr.contains('url')) {
+              type = SharedMediaType.url;
+            } else if (typeStr.contains('image')) {
+              type = SharedMediaType.image;
+            } else if (typeStr.contains('video')) {
+              type = SharedMediaType.video;
+            }
+            
+            files.add(SharedMediaFile(
+              path: path,
+              thumbnail: null,
+              duration: null,
+              type: type,
+            ));
+          }
+        }
+        
+        return files;
+      }
+    } catch (e) {
+      print("SHARE SERVICE: Error getting persisted current content: $e");
+    }
+    return null;
+  }
+  
+  // Persist experience card form data when going to Yelp
+  Future<void> persistExperienceCardData(Map<String, dynamic> cardData) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final jsonData = json.encode(cardData);
+      await prefs.setString('experienceCardFormData', jsonData);
+      print("SHARE SERVICE: Persisted experience card form data");
+    } catch (e) {
+      print("SHARE SERVICE: Error persisting experience card form data: $e");
+    }
+  }
+  
+  // Get persisted experience card form data
+  Future<Map<String, dynamic>?> getPersistedExperienceCardData() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final jsonData = prefs.getString('experienceCardFormData');
+      
+      if (jsonData != null && jsonData.isNotEmpty) {
+        print("SHARE SERVICE: Found persisted experience card form data");
+        return json.decode(jsonData) as Map<String, dynamic>;
+      }
+    } catch (e) {
+      print("SHARE SERVICE: Error getting persisted experience card form data: $e");
+    }
+    return null;
+  }
+  
+  // Clear persisted experience card form data
+  Future<void> clearPersistedExperienceCardData() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('experienceCardFormData');
+      print("SHARE SERVICE: Cleared persisted experience card form data");
+    } catch (e) {
+      print("SHARE SERVICE: Error clearing persisted experience card form data: $e");
     }
   }
 
