@@ -93,3 +93,4 @@ build/
 google-services.json
 GoogleService-Info.plist
 web/index.html
+~/.zshenv

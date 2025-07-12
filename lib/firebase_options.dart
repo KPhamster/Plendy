@@ -73,7 +73,7 @@ class DefaultFirebaseOptions {
     androidClientId:
         '449728842508-19m6dlhaq2hlb1r1156icldrh6bueins.apps.googleusercontent.com',
     iosClientId:
-        '449728842508-44mr6jlmgm9the3l3rc4gb7upjgl1g33.apps.googleusercontent.com',
-    iosBundleId: 'com.example.plendy',
+        '449728842508-4mhaa8k2k4jipvsa7nesec5k2q5okhvu.apps.googleusercontent.com',
+    iosBundleId: 'com.plendy.app',
   );
 }
