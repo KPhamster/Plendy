@@ -41,8 +41,43 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) {
       print("MAIN SCREEN: App Resumed");
       if (_sharingService.isNavigatingAwayFromShare) {
-        _sharingService.shareNavigationComplete();
-        print("MAIN SCREEN: didChangeAppLifecycleState called shareNavigationComplete");
+        // Check if there are pending shared files before resetting
+        // This prevents resetting the intent when returning with new share data
+        Future.delayed(Duration(milliseconds: 100), () async {
+          try {
+            final pendingFiles = await ReceiveSharingIntent.instance.getInitialMedia();
+            print("MAIN SCREEN: Checking pending files. Found: ${pendingFiles.length}");
+            if (pendingFiles.isEmpty) {
+              print("MAIN SCREEN: No pending share files, safe to call shareNavigationComplete");
+              _sharingService.shareNavigationComplete();
+            } else {
+              print("MAIN SCREEN: Found pending share files (${pendingFiles.length}), checking if Yelp URL");
+              // Check if this is a Yelp URL - if so, don't reset anything
+              bool isYelpUrl = false;
+              for (final file in pendingFiles) {
+                if (file.type == SharedMediaType.text || file.type == SharedMediaType.url) {
+                  String content = file.path.toLowerCase();
+                  if (content.contains('yelp.com/biz') || content.contains('yelp.to/')) {
+                    isYelpUrl = true;
+                    break;
+                  }
+                }
+              }
+              
+              if (isYelpUrl && _sharingService.isShareFlowActive) {
+                print("MAIN SCREEN: Yelp URL with active share flow - preserving everything");
+                // Don't reset anything, let the active flow handle it
+                _sharingService.setNavigatingAwayFromShare(false);
+              } else {
+                print("MAIN SCREEN: Non-Yelp files or no active flow - standard preservation");
+                _sharingService.setNavigatingAwayFromShare(false);
+              }
+            }
+          } catch (e) {
+            print("MAIN SCREEN: Error checking pending files: $e, calling shareNavigationComplete anyway");
+            _sharingService.shareNavigationComplete();
+          }
+        });
       }
     }
   }

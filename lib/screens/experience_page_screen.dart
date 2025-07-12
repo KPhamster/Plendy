@@ -20,6 +20,7 @@ import 'receive_share/widgets/instagram_preview_widget.dart'
 import 'receive_share/widgets/tiktok_preview_widget.dart';
 import 'receive_share/widgets/facebook_preview_widget.dart';
 import 'receive_share/widgets/youtube_preview_widget.dart';
+import 'receive_share/widgets/generic_url_preview_widget.dart';
 // REMOVED: Dio import (no longer needed for thumbnail fetching)
 // import 'package:dio/dio.dart';
 // REMOVED: Dotenv import (no longer needed for credentials)
@@ -1429,18 +1430,29 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
         isOperational ? Colors.green[700]! : Colors.red[700]!;
     List<String>? descriptions;
     String todayString = 'Hours details unavailable';
-    int currentWeekday = DateTime.now().weekday; // 1=Mon, 7=Sun
+    final now = DateTime.now(); // ADDED for debugging
+    int currentWeekday = now.weekday; // MODIFIED to use `now`
 
-    // Adjust to match Google's likely Sunday=0 or Sunday=start index
-    // This depends on the exact format in weekdayDescriptions.
-    // Assuming Sunday is the first entry:
-    int googleWeekdayIndex = (currentWeekday % 7); // Sun=0, Mon=1, ... Sat=6
+    // Adjust to match Google's Monday-first format in weekdayDescriptions
+    // Google API returns: [Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday]
+    // So we need: Mon(1)→0, Tue(2)→1, ..., Sat(6)→5, Sun(7)→6
+    int googleWeekdayIndex = (currentWeekday - 1); // Mon=0, Tue=1, ..., Sat=5, Sun=6
+
+    // --- ADDED: Debug Prints ---
+    print('--- DEBUG: Day Highlighting ---');
+    print('Current DateTime from device: $now');
+    print('Dart weekday from device (1=Mon, 7=Sun): $currentWeekday');
+    print('Calculated Google Index (0=Mon, ..., 6=Sun): $googleWeekdayIndex');
+    // --- END: Debug Prints ---
 
     if (hoursData is Map &&
         hoursData.containsKey('weekdayDescriptions') &&
         hoursData['weekdayDescriptions'] is List &&
         (hoursData['weekdayDescriptions'] as List).isNotEmpty) {
       descriptions = (hoursData['weekdayDescriptions'] as List).cast<String>();
+      // --- ADDED: Debug Print for API data ---
+      print('Weekday Descriptions from API: $descriptions');
+      // --- END: Debug Print ---
       if (descriptions.length > googleWeekdayIndex) {
         todayString = descriptions[googleWeekdayIndex];
       } else {
@@ -1685,33 +1697,35 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
           padding: const EdgeInsets.only(top: 8.0, right: 16.0, left: 16.0),
           child: Align(
             alignment: Alignment.centerRight,
-            child: TextButton.icon(
-              icon: const Icon(Icons.fullscreen, size: 20.0),
-              label: const Text('View Fullscreen'),
-              style: TextButton.styleFrom(
-                padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                textStyle: TextStyle(fontSize: 13),
-              ),
-              onPressed: () async {
-                // --- Logic remains the same ---
-                final result = await Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => MediaFullscreenScreen(
-                      mediaItems: mediaItems,
-                      launchUrlCallback: _launchUrl,
-                      experience: _currentExperience,
-                      experienceService: _experienceService,
-                    ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton.icon(
+                  icon: const Icon(Icons.filter_list, size: 20.0),
+                  label: const Text('Filter'),
+                  style: TextButton.styleFrom(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    textStyle: const TextStyle(fontSize: 13),
                   ),
-                );
-                if (result == true && mounted) {
-                  await _refreshExperienceData();
-                  setState(() {
-                    _didDataChange = true;
-                  });
-                }
-              },
+                  onPressed: () {
+                    // TODO: Implement Filter functionality
+                  },
+                ),
+                const SizedBox(width: 8),
+                TextButton.icon(
+                  icon: const Icon(Icons.sort, size: 20.0),
+                  label: const Text('Sort'),
+                  style: TextButton.styleFrom(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    textStyle: const TextStyle(fontSize: 13),
+                  ),
+                  onPressed: () {
+                    // TODO: Implement Sort functionality
+                  },
+                ),
+              ],
             ),
           ),
         ),
@@ -1738,6 +1752,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
               final isYouTubeUrl = url.toLowerCase().contains('youtube.com') || 
                                    url.toLowerCase().contains('youtu.be') || 
                                    url.toLowerCase().contains('youtube.com/shorts');
+              final bool isGenericUrl = !isTikTokUrl && !isInstagramUrl && !isFacebookUrl && !isYouTubeUrl;
 
               if (isTikTokUrl) {
                 final key = GlobalKey<TikTokPreviewWidgetState>();
@@ -1797,12 +1812,49 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                   },
                 );
               } else {
-                mediaWidget = Image.network(
-                  url,
-                  fit: BoxFit.cover,
-                  errorBuilder: (context, error, stackTrace) =>
-                      Container(height: 200, color: Colors.grey[200], child: Center(child: Icon(Icons.broken_image)))
-                );
+                // Check if it's a network URL
+                final bool isNetworkUrl = url.startsWith('http') || url.startsWith('https');
+                
+                if (isNetworkUrl) {
+                  // Check if it's an image URL
+                  if (url.toLowerCase().endsWith('.jpg') ||
+                      url.toLowerCase().endsWith('.jpeg') ||
+                      url.toLowerCase().endsWith('.png') ||
+                      url.toLowerCase().endsWith('.gif') ||
+                      url.toLowerCase().endsWith('.webp')) {
+                    mediaWidget = Image.network(
+                      url,
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stackTrace) =>
+                          Container(height: 200, color: Colors.grey[200], child: Center(child: Icon(Icons.broken_image)))
+                    );
+                  } else {
+                    // Use generic URL preview for other network URLs
+                    mediaWidget = GenericUrlPreviewWidget(
+                      url: url,
+                      launchUrlCallback: _launchUrl,
+                    );
+                  }
+                } else {
+                  // Fallback for non-network URLs
+                  mediaWidget = Container(
+                    height: 200, 
+                    color: Colors.grey[200], 
+                    child: Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.description, color: Colors.grey[600], size: 40),
+                          const SizedBox(height: 8),
+                          Text(
+                            'Content Preview',
+                            style: TextStyle(color: Colors.grey[600]),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                }
               }
 
               // Keep the Column for layout *within* the list item
@@ -1989,27 +2041,28 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                         children: [
                           // Refresh Button
-                          IconButton(
-                            icon: const Icon(Icons.refresh),
-                            iconSize: 24,
-                            color: Colors.blue,
-                            tooltip: 'Refresh Preview',
-                            onPressed: () {
-                              if (isTikTokUrl) {
-                                _tiktokControllerKeys[url]?.currentState?.refreshWebView();
-                              } else if (isInstagramUrl) {
-                                _instagramControllerKeys[url]?.currentState?.refresh();
-                              } else if (isYouTubeUrl) {
-                                _youtubeControllerKeys[url]?.currentState?.refreshWebView();
-                              } else if (_webViewControllers.containsKey(url)) {
-                                _webViewControllers[url]!.reload();
-                              } else {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(content: Text('Cannot refresh this item.'))
-                                );
-                              }
-                            },
-                          ),
+                          if (!isGenericUrl)
+                            IconButton(
+                              icon: const Icon(Icons.refresh),
+                              iconSize: 24,
+                              color: Colors.blue,
+                              tooltip: 'Refresh Preview',
+                              onPressed: () {
+                                if (isTikTokUrl) {
+                                  _tiktokControllerKeys[url]?.currentState?.refreshWebView();
+                                } else if (isInstagramUrl) {
+                                  _instagramControllerKeys[url]?.currentState?.refresh();
+                                } else if (isYouTubeUrl) {
+                                  _youtubeControllerKeys[url]?.currentState?.refreshWebView();
+                                } else if (_webViewControllers.containsKey(url)) {
+                                  _webViewControllers[url]!.reload();
+                                } else {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(content: Text('Cannot refresh this item.'))
+                                  );
+                                }
+                              },
+                            ),
                           // Share Button
                           IconButton(
                               icon: const Icon(Icons.share_outlined),
@@ -2064,23 +2117,26 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                               onPressed: () => _launchUrl(url),
                             ),
                           // Expand/Collapse Button
-                          IconButton(
-                              icon: Icon(
-                                  (_mediaTabExpansionStates[url] ?? false)
-                                      ? Icons.fullscreen_exit
-                                      : Icons.fullscreen),
-                              iconSize: 24,
-                              color: Colors.blue,
-                              tooltip: (_mediaTabExpansionStates[url] ?? false)
-                                  ? 'Collapse'
-                                  : 'Expand',
-                              onPressed: () {
-                                setState(() {
-                                  _mediaTabExpansionStates[url] =
-                                      !(_mediaTabExpansionStates[url] ?? false);
-                                });
-                              },
-                            ),
+                          if (!isGenericUrl && !isYouTubeUrl)
+                            IconButton(
+                                icon: Icon(
+                                    (_mediaTabExpansionStates[url] ?? false)
+                                        ? Icons.fullscreen_exit
+                                        : Icons.fullscreen),
+                                iconSize: 24,
+                                color: Colors.blue,
+                                tooltip: (_mediaTabExpansionStates[url] ?? false)
+                                    ? 'Collapse'
+                                    : 'Expand',
+                                onPressed: () {
+                                  setState(() {
+                                    _mediaTabExpansionStates[url] =
+                                        !(_mediaTabExpansionStates[url] ?? false);
+                                  });
+                                },
+                              )
+                          else if (isYouTubeUrl)
+                            const SizedBox(width: 48.0), // Placeholder to keep alignment
                           // Delete button
                           IconButton(
                               icon: const Icon(Icons.delete_outline),

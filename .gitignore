@@ -94,3 +94,11 @@ google-services.json
 GoogleService-Info.plist
 web/index.html
 ~/.zshenv
+setup-claude-code.sh
+mcp-server-raygun/node_modules/typescript/bin/tsserver
+mcp-server-raygun/node_modules/typescript/bin/tsc
+mcp-server-raygun/node_modules/shx/lib/cli.js
+mcp-server-raygun/node_modules/shelljs/bin/shjs
+mcp-server-raygun/node_modules/resolve/bin/resolve
+get-pip.py
+.claude/settings.local.json

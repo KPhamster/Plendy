@@ -77,61 +77,108 @@ class InstagramWebViewState extends State<InstagramWebView> {
     controller!.runJavaScript('''
       (function() {
         try {
-          // First approach: Using a simulated click on known elements
           // Find any clickable elements in the Instagram embed
           var embedContainer = document.querySelector('.instagram-media');
           if (embedContainer) {
             console.log('Found Instagram embed container');
 
-            // Try to find the top level <a> tag which is usually clickable
-            var mainLink = document.querySelector('.instagram-media div a');
-            if (mainLink) {
-              console.log('Found main Instagram link, simulating click');
-              mainLink.click();
-              return;
-            }
-
-            // Try to find any Instagram link
-            var anyLink = document.querySelector('a[href*="instagram.com"]');
-            if (anyLink) {
-              console.log('Found Instagram link, simulating click');
-              anyLink.click();
-              return;
-            }
-
-            // If no specific element found, click near the center of the embed
+            // PRIMARY STRATEGY: Coordinate-based clicking with ±100 pixel randomization from center of top-half
             var rect = embedContainer.getBoundingClientRect();
             var baseCenterX = rect.left + rect.width / 2;
-            var baseCenterY = rect.top + rect.height / 2;
+            var baseCenterY = rect.top + rect.height / 4; // Center of top-half (1/4 from top)
 
-            // Generate random offset within a small range (e.g., +/- 5 pixels)
-            var offsetX = Math.random() * 10 - 5; // Range -5 to +5
-            var offsetY = Math.random() * 10 - 5; // Range -5 to +5
+            // Generate random offset within ±100 pixels range
+            var offsetX = Math.random() * 200 - 100; // Range -100 to +100
+            var offsetY = Math.random() * 200 - 100; // Range -100 to +100
             var clickX = baseCenterX + offsetX;
             var clickY = baseCenterY + offsetY;
 
-            console.log('Simulating click near center at:', clickX, clickY);
+            console.log('Primary strategy: Simulating click with randomization from top-half center at:', clickX, clickY);
 
-            // Create and dispatch click event using the offset coordinates
-            var clickEvent = new MouseEvent('click', {
-              view: window,
-              bubbles: true,
-              cancelable: true,
-              clientX: clickX, // Use coordinate with offset
-              clientY: clickY  // Use coordinate with offset
-            });
+            // Find the actual element at the calculated coordinates
+            var targetElement = document.elementFromPoint(clickX, clickY);
+            if (targetElement) {
+              console.log('Target element found at coordinates:', targetElement.tagName, targetElement.className);
+              
+              // Validate that we have a clickable element (prefer links and interactive elements)
+              var clickableElement = targetElement;
+              
+              // If we hit a non-interactive element, try to find a parent link or clickable element
+              var current = targetElement;
+              while (current && current !== embedContainer) {
+                if (current.tagName === 'A' || 
+                    current.onclick || 
+                    current.style.cursor === 'pointer' ||
+                    current.getAttribute('role') === 'button') {
+                  clickableElement = current;
+                  console.log('Found clickable parent element:', clickableElement.tagName, clickableElement.className);
+                  break;
+                }
+                current = current.parentElement;
+              }
+              
+              // Dispatch click event on the clickable element
+              var clickEvent = new MouseEvent('click', {
+                view: window,
+                bubbles: true,
+                cancelable: true,
+                clientX: clickX,
+                clientY: clickY
+              });
+              
+              // Try to dispatch touchstart event, but don't let it block the click event
+              try {
+                var touchEvent = new TouchEvent('touchstart', {
+                  bubbles: true,
+                  cancelable: true
+                });
+                clickableElement.dispatchEvent(touchEvent);
+                console.log('TouchEvent dispatched successfully');
+              } catch (touchError) {
+                console.log('TouchEvent failed, continuing with click:', touchError.message);
+              }
+              
+              // Always dispatch the click event
+              clickableElement.dispatchEvent(clickEvent);
+              console.log('Primary strategy: Dispatched click event on element:', clickableElement.tagName, clickableElement.className);
+              return;
+            } else {
+              console.log('No element found at coordinates, falling back to container click');
+              // Fallback to original container click if elementFromPoint fails
+              var clickEvent = new MouseEvent('click', {
+                view: window,
+                bubbles: true,
+                cancelable: true,
+                clientX: clickX,
+                clientY: clickY
+              });
+              embedContainer.dispatchEvent(clickEvent);
+              return;
+            }
+          }
 
-            embedContainer.dispatchEvent(clickEvent);
+          // FALLBACK STRATEGY 1: Try to find the top level <a> tag which is usually clickable
+          var mainLink = document.querySelector('.instagram-media div a');
+          if (mainLink) {
+            console.log('Fallback 1: Found main Instagram link, simulating click');
+            mainLink.click();
             return;
           }
 
-          // Second approach: Try to find a media player or embed
+          // FALLBACK STRATEGY 2: Try to find any Instagram link
+          var anyLink = document.querySelector('a[href*="instagram.com"]');
+          if (anyLink) {
+            console.log('Fallback 2: Found Instagram link, simulating click');
+            anyLink.click();
+            return;
+          }
+
+          // FALLBACK STRATEGY 3: Try to find a media player or embed
           var player = document.querySelector('iframe[src*="instagram.com"]');
           if (player) {
-            console.log('Found Instagram iframe, simulating click');
+            console.log('Fallback 3: Found Instagram iframe, simulating click');
             // Clicking the iframe itself might not work, better to target content within if possible
             // or stick to the embedContainer click simulation above.
-            // For simplicity, let's keep the embedContainer simulation as the main fallback.
              console.log('Skipping iframe click, relying on embedContainer fallback.');
             // player.click(); // This might be less effective
             return;

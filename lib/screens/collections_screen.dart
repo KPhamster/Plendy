@@ -9,6 +9,7 @@ import '../services/auth_service.dart';
 import '../services/experience_service.dart';
 import '../widgets/add_category_modal.dart';
 import '../widgets/edit_categories_modal.dart' show CategorySortType;
+import '../widgets/add_experience_modal.dart'; // ADDED: Import for AddExperienceModal
 import 'experience_page_screen.dart';
 import 'package:geolocator/geolocator.dart';
 import 'dart:async'; // <-- ADDED Import for TimeoutException
@@ -20,6 +21,7 @@ import 'receive_share/widgets/instagram_preview_widget.dart'
 import 'receive_share/widgets/tiktok_preview_widget.dart';
 import 'receive_share/widgets/facebook_preview_widget.dart';
 import 'receive_share/widgets/youtube_preview_widget.dart';
+import 'receive_share/widgets/generic_url_preview_widget.dart';
 import '../models/shared_media_item.dart'; // ADDED Import
 import 'package:collection/collection.dart'; // ADDED: Import for groupBy
 import 'map_screen.dart'; // ADDED: Import for MapScreen
@@ -274,6 +276,28 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       _loadData();
     } else {
       print("AddCategoryModal closed without adding.");
+    }
+  }
+
+  // ADDED: Method to show add experience modal
+  Future<void> _showAddExperienceModal() async {
+    final result = await showModalBottomSheet<Experience>(
+      context: context,
+      builder: (_) => AddExperienceModal(
+        userCategories: _categories,
+        userColorCategories: _colorCategories,
+      ),
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+    );
+
+    if (result != null) {
+      print("AddExperienceModal returned an experience, refreshing data...");
+      _loadData();
+    } else {
+      print("AddExperienceModal closed without adding.");
     }
   }
 
@@ -1239,7 +1263,13 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                   tooltip: 'Add Category',
                   child: const Icon(Icons.add),
                 )
-              : null, // No FAB for other tabs
+              : _currentTabIndex == 1 // ADDED: FAB for experiences tab
+                  ? FloatingActionButton(
+                      onPressed: _showAddExperienceModal,
+                      tooltip: 'Add Experience',
+                      child: const Icon(Icons.add),
+                    )
+                  : null, // No FAB for other tabs
     );
   }
 
@@ -1860,24 +1890,37 @@ class _CollectionsScreenState extends State<CollectionsScreen>
               launchUrlCallback: _launchUrl,
             );
           } else if (isNetworkUrl) {
-            mediaWidget = Image.network(
-              mediaPath,
-              fit: BoxFit.cover,
-              loadingBuilder: (context, child, loadingProgress) {
-                if (loadingProgress == null) return child;
-                return const Center(child: CircularProgressIndicator());
-              },
-              errorBuilder: (context, error, stackTrace) {
-                print("Error loading image $mediaPath: $error");
-                return Container(
-                  color: Colors.grey[200],
-                  height: 200, 
-                  child: Center(
-                      child: Icon(Icons.broken_image_outlined,
-                          color: Colors.grey[600], size: 40)),
-                );
-              },
-            );
+            // Check if it's an image URL
+            if (mediaPath.toLowerCase().endsWith('.jpg') ||
+                mediaPath.toLowerCase().endsWith('.jpeg') ||
+                mediaPath.toLowerCase().endsWith('.png') ||
+                mediaPath.toLowerCase().endsWith('.gif') ||
+                mediaPath.toLowerCase().endsWith('.webp')) {
+              mediaWidget = Image.network(
+                mediaPath,
+                fit: BoxFit.cover,
+                loadingBuilder: (context, child, loadingProgress) {
+                  if (loadingProgress == null) return child;
+                  return const Center(child: CircularProgressIndicator());
+                },
+                errorBuilder: (context, error, stackTrace) {
+                  print("Error loading image $mediaPath: $error");
+                  return Container(
+                    color: Colors.grey[200],
+                    height: 200, 
+                    child: Center(
+                        child: Icon(Icons.broken_image_outlined,
+                            color: Colors.grey[600], size: 40)),
+                  );
+                },
+              );
+            } else {
+              // Use generic URL preview for other network URLs
+              mediaWidget = GenericUrlPreviewWidget(
+                url: mediaPath,
+                launchUrlCallback: _launchUrl,
+              );
+            }
           } else {
             mediaWidget = Container(
               color: Colors.grey[300],
@@ -2683,10 +2726,11 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     print("🎨 COLLECTIONS SCREEN: Applying filters...");
     // Filter experiences
     final filteredExperiences = _experiences.where((exp) {
-      // MODIFIED: Directly use exp.categoryId for matching
+      // MODIFIED: Also check otherCategories for a match
       final bool categoryMatch = _selectedCategoryIds.isEmpty ||
           (exp.categoryId != null &&
-              _selectedCategoryIds.contains(exp.categoryId));
+              _selectedCategoryIds.contains(exp.categoryId)) ||
+          (exp.otherCategories.any((catId) => _selectedCategoryIds.contains(catId)));
 
       final bool colorMatch = _selectedColorCategoryIds.isEmpty ||
           (exp.colorCategoryId != null &&
@@ -2699,10 +2743,11 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     final filteredGroupedContent = _groupedContentItems.where((group) {
       // Include the group if ANY of its associated experiences match the filters
       return group.associatedExperiences.any((exp) {
-        // MODIFIED: Directly use exp.categoryId for matching
+        // MODIFIED: Also check otherCategories for a match
         final bool categoryMatch = _selectedCategoryIds.isEmpty ||
             (exp.categoryId != null &&
-                _selectedCategoryIds.contains(exp.categoryId));
+                _selectedCategoryIds.contains(exp.categoryId)) ||
+            (exp.otherCategories.any((catId) => _selectedCategoryIds.contains(catId)));
 
         final bool colorMatch = _selectedColorCategoryIds.isEmpty ||
             (exp.colorCategoryId != null &&
@@ -2831,21 +2876,37 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         launchUrlCallback: _launchUrl,
       );
     } else if (isNetworkUrl) {
-      mediaDisplayWidget = Image.network(
-        mediaPath,
-        fit: BoxFit.cover,
-        loadingBuilder: (context, child, loadingProgress) {
-          if (loadingProgress == null) return child;
-          return const Center(child: CircularProgressIndicator());
-        },
-        errorBuilder: (context, error, stackTrace) {
-          print("Error loading image for grid $mediaPath: $error");
-          return Container(
-            color: Colors.grey[200],
-            child: Center(child: Icon(Icons.broken_image_outlined, color: Colors.grey[600], size: 40)),
-          );
-        },
-      );
+      // Check if it's an image URL
+      if (mediaPath.toLowerCase().endsWith('.jpg') ||
+          mediaPath.toLowerCase().endsWith('.jpeg') ||
+          mediaPath.toLowerCase().endsWith('.png') ||
+          mediaPath.toLowerCase().endsWith('.gif') ||
+          mediaPath.toLowerCase().endsWith('.webp')) {
+        mediaDisplayWidget = Image.network(
+          mediaPath,
+          fit: BoxFit.cover,
+          loadingBuilder: (context, child, loadingProgress) {
+            if (loadingProgress == null) return child;
+            return const Center(child: CircularProgressIndicator());
+          },
+          errorBuilder: (context, error, stackTrace) {
+            print("Error loading image $mediaPath: $error");
+            return Container(
+              color: Colors.grey[200],
+              height: 200, 
+              child: Center(
+                  child: Icon(Icons.broken_image_outlined,
+                      color: Colors.grey[600], size: 40)),
+            );
+          },
+        );
+      } else {
+        // Use generic URL preview for other network URLs
+        mediaDisplayWidget = GenericUrlPreviewWidget(
+          url: mediaPath,
+          launchUrlCallback: _launchUrl,
+        );
+      }
     } else {
       mediaDisplayWidget = Container(
         color: Colors.grey[300],

@@ -47,6 +47,7 @@ class ExperienceCardForm extends StatefulWidget {
   final OnSelectSavedExperienceCallback onSelectSavedExperience;
   final OnUpdateCallback onUpdate; // Callback to parent (signature updated)
   final GlobalKey<FormState> formKey; // Pass form key down
+  final void Function(String cardId)? onYelpButtonTapped; // ADDED
 
   const ExperienceCardForm({
     super.key,
@@ -60,6 +61,7 @@ class ExperienceCardForm extends StatefulWidget {
     required this.onSelectSavedExperience,
     required this.onUpdate, // Signature updated
     required this.formKey,
+    this.onYelpButtonTapped, // ADDED
   });
 
   @override
@@ -271,7 +273,12 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
 
   // Helper method to launch Yelp URLs or search Yelp
   Future<void> _launchYelpUrl() async {
+    print('DEBUG YELP: _launchYelpUrl() called');
+    // Notify parent that Yelp button was tapped for this card
+    widget.onYelpButtonTapped?.call(widget.cardData.id);
+    
     String yelpUrlString = widget.cardData.yelpUrlController.text.trim();
+    print('DEBUG YELP: yelpUrlString = "$yelpUrlString"');
     Uri uri;
 
     if (yelpUrlString.isNotEmpty) {
@@ -293,37 +300,91 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
       String? addressString = currentLocation?.address?.trim();
 
       if (titleString.isNotEmpty) {
+        print('DEBUG YELP: Using title "$titleString" and address "$addressString"');
         String searchDesc = Uri.encodeComponent(titleString);
+        // Add timestamp to force new navigation even if app is already open
+        String timestamp = DateTime.now().millisecondsSinceEpoch.toString();
         if (addressString != null && addressString.isNotEmpty) {
           // Both title and address are available
           String searchLoc = Uri.encodeComponent(addressString);
           uri = Uri.parse(
-              'https://www.yelp.com/search?find_desc=$searchDesc&find_loc=$searchLoc');
+              'https://www.yelp.com/search?find_desc=$searchDesc&find_loc=$searchLoc&t=$timestamp');
+          print('DEBUG YELP: Created URL with both title and location: $uri');
         } else {
           // Only title is available, address is not
-          uri = Uri.parse('https://www.yelp.com/search?find_desc=$searchDesc');
+          uri = Uri.parse('https://www.yelp.com/search?find_desc=$searchDesc&t=$timestamp');
+          print('DEBUG YELP: Created URL with title only: $uri');
         }
       } else {
         // Title is empty. Fallback to Yelp homepage.
         // (If title is empty, searching "along with title" is not possible)
         uri = Uri.parse('https://www.yelp.com');
+        print('DEBUG YELP: Using fallback Yelp homepage: $uri');
       }
     }
 
     try {
-      bool launched =
-          await launchUrl(uri, mode: LaunchMode.externalApplication);
+      print('DEBUG YELP: About to launch URL: $uri');
+      // For Yelp URLs, try multiple approaches to force new navigation
+      bool launched = false;
+      
+      // For Yelp search URLs, try a special technique to force new navigation
+      if (uri.toString().contains('yelp.com/search')) {
+        print('DEBUG YELP: Trying special technique for search URL');
+        
+        // First, try to launch Yelp homepage to "reset" the app state
+        try {
+          final yelpHomepage = Uri.parse('https://www.yelp.com');
+          print('DEBUG YELP: Launching Yelp homepage first: $yelpHomepage');
+          await launchUrl(yelpHomepage, mode: LaunchMode.externalApplication);
+          
+          // Small delay to let the homepage load
+          await Future.delayed(Duration(milliseconds: 500));
+          
+          // Now launch the search URL
+          print('DEBUG YELP: Now launching search URL: $uri');
+          launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+          print('DEBUG YELP: Search URL launch result: $launched');
+        } catch (e) {
+          print('DEBUG YELP: Error in double-launch technique: $e');
+          // Fallback to direct launch
+          launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+          print('DEBUG YELP: Fallback direct launch result: $launched');
+        }
+      } else {
+        // For non-search URLs, use standard approach
+        print('DEBUG YELP: Using standard launch for non-search URL');
+        launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+        print('DEBUG YELP: Standard launch result: $launched');
+      }
+      
       if (!launched) {
-        // print('Could not launch $uri');
+        print('DEBUG YELP: Trying platformDefault');
+        // Try platformDefault as fallback
+        launched = await launchUrl(uri, mode: LaunchMode.platformDefault);
+        print('DEBUG YELP: platformDefault result: $launched');
+      }
+      
+      if (!launched) {
+        print('DEBUG YELP: Trying final externalApplication fallback');
+        // Final fallback to externalApplication
+        launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+        print('DEBUG YELP: final externalApplication result: $launched');
+      }
+      
+      if (!launched) {
+        print('DEBUG YELP: All launch attempts failed for $uri');
         // Optionally show a snackbar to the user
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('Could not open Yelp link/search')),
           );
         }
+      } else {
+        print('DEBUG YELP: Successfully launched URL: $uri');
       }
     } catch (e) {
-      // print('Error launching URL: $e');
+      print('DEBUG YELP: Error launching URL: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error opening link: $e')),
