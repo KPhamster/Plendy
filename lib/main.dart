@@ -46,18 +46,24 @@ Future<void> _configureLocalNotifications() async {
   const AndroidInitializationSettings initializationSettingsAndroid =
       AndroidInitializationSettings('@mipmap/ic_launcher'); 
   
-  // Add iOS and macOS settings if needed - requires more setup
-  // final DarwinInitializationSettings initializationSettingsIOS = DarwinInitializationSettings(
-  //   onDidReceiveLocalNotification: (id, title, body, payload) async {
-  //     // your execution code here
-  //   },
-  // );
-  // final DarwinInitializationSettings initializationSettingsMacOS = DarwinInitializationSettings(...);
+  // iOS settings
+  const DarwinInitializationSettings initializationSettingsIOS = DarwinInitializationSettings(
+    requestAlertPermission: true,
+    requestBadgePermission: true,
+    requestSoundPermission: true,
+  );
+  
+  // macOS settings
+  const DarwinInitializationSettings initializationSettingsMacOS = DarwinInitializationSettings(
+    requestAlertPermission: true,
+    requestBadgePermission: true,
+    requestSoundPermission: true,
+  );
 
   const InitializationSettings initializationSettings = InitializationSettings(
     android: initializationSettingsAndroid,
-    // iOS: initializationSettingsIOS,
-    // macOS: initializationSettingsMacOS,
+    iOS: initializationSettingsIOS,
+    macOS: initializationSettingsMacOS,
   );
   await flutterLocalNotificationsPlugin.initialize(
     initializationSettings,
@@ -131,7 +137,7 @@ void main() async {
               priority: Priority.high,
               icon: '@mipmap/ic_launcher', 
             ),
-            // iOS: DarwinNotificationDetails(), // Add if needed
+            iOS: DarwinNotificationDetails(), // iOS notification details
           ),
           payload: message.data['screen'] as String?, // Example: screen to navigate to
         );
