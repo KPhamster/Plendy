@@ -187,6 +187,7 @@ class AuthService extends ChangeNotifier {
     //   await _deleteTokenFromFirestore(currentUser!.uid, token);
     // }
     await _auth.signOut();
+    await _googleSignIn.signOut();
     _currentUser = null;
     notifyListeners();
   }
@@ -219,7 +220,7 @@ class AuthService extends ChangeNotifier {
           const Duration(seconds: 10),
           onTimeout: () {
             print('FCM permission request timed out');
-            return NotificationSettings(
+            return const NotificationSettings(
               authorizationStatus: AuthorizationStatus.denied,
               alert: AppleNotificationSetting.disabled,
               announcement: AppleNotificationSetting.disabled,

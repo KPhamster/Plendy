@@ -18,6 +18,7 @@ import '../models/color_category.dart';
 import '../models/shared_media_item.dart';
 import '../services/experience_service.dart';
 import '../services/google_maps_service.dart';
+import '../services/google_knowledge_graph_service.dart';
 import '../widgets/google_maps_widget.dart';
 import 'location_picker_screen.dart';
 import '../services/sharing_service.dart';
@@ -26,6 +27,7 @@ import 'package:http/http.dart' as http;
 import 'receive_share/widgets/yelp_preview_widget.dart';
 import 'receive_share/widgets/maps_preview_widget.dart';
 import 'receive_share/widgets/generic_url_preview_widget.dart';
+import 'receive_share/widgets/google_knowledge_graph_preview_widget.dart';
 import 'receive_share/widgets/image_preview_widget.dart';
 import 'package:flutter/services.dart';
 import 'package:geocoding/geocoding.dart' as geocoding;
@@ -41,6 +43,10 @@ import 'main_screen.dart';
 import '../models/public_experience.dart';
 import '../services/auth_service.dart';
 import 'package:collection/collection.dart';
+import 'package:plendy/config/app_constants.dart';
+// Import ApiSecrets conditionally
+import '../config/api_secrets.dart' if (dart.library.io) '../config/api_secrets.dart' if (dart.library.html) '../config/api_secrets.dart';
+import 'package:fluttertoast/fluttertoast.dart';
 
 // Ensures _ExperienceCardsSection is defined at the top-level
 class _ExperienceCardsSection extends StatelessWidget {
@@ -64,6 +70,7 @@ class _ExperienceCardsSection extends StatelessWidget {
   final List<SharedMediaFile> currentSharedFiles;
   final List<ExperienceCardData> experienceCards; // ADDED: To receive cards directly
   final GlobalKey? sectionKey; // ADDED for scrolling
+  final void Function(String cardId)? onYelpButtonTapped; // ADDED
 
   const _ExperienceCardsSection({
     super.key,
@@ -81,6 +88,7 @@ class _ExperienceCardsSection extends StatelessWidget {
     required this.currentSharedFiles,
     required this.experienceCards, // ADDED: To constructor
     this.sectionKey, // ADDED for scrolling
+    this.onYelpButtonTapped, // ADDED
   });
 
   @override
@@ -150,6 +158,7 @@ class _ExperienceCardsSection extends StatelessWidget {
                       );
                     },
                     formKey: card.formKey,
+                    onYelpButtonTapped: onYelpButtonTapped, // ADDED
                   );
                 }),
           if (!isSpecialUrl(currentSharedFiles.isNotEmpty
@@ -289,15 +298,22 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   final ExperienceService _experienceService = ExperienceService();
   final GoogleMapsService _mapsService = GoogleMapsService();
   final SharingService _sharingService = SharingService();
+  
+  // Add flag to prevent double processing
+  bool _isProcessingUpdate = false;
+  // Add timestamp to track last Yelp URL update
+  DateTime? _lastYelpUrlUpdateTime;
+  // Add flag to track if initial content has been processed
+  bool _hasProcessedInitialContent = false;
+  // Add flag to track if we're processing a Yelp-only update
+  bool _isProcessingYelpOnlyUpdate = false;
   // ADDED: AuthService instance
   final AuthService _authService = AuthService();
+  // ADDED: GoogleKnowledgeGraphService instance with optional API key
+  late final GoogleKnowledgeGraphService _knowledgeGraphService;
 
   // Add a field to track the current reload operation
   int _currentReloadOperationId = 0;
-
-  // SharedPreferences keys for last used category/color category
-  static const String _lastUsedCategoryNameKey = 'last_used_category_name';
-  static const String _lastUsedColorCategoryIdKey = 'last_used_color_category_id';
 
   // --- ADDED FOR SCROLLING FAB ---
   late ScrollController _scrollController;
@@ -308,6 +324,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   Map<String, GlobalKey> _instagramPreviewKeys = {}; // To store keys for active Instagram previews
   String? _currentVisibleInstagramUrl; // To track which Instagram preview is potentially visible
   // --- END ADDED FOR SCROLLING FAB ---
+
+  // Track initialization state
+  bool _isFullyInitialized = false;
 
   // Remove local experience card list - managed by Provider now
   // List<ExperienceCardData> _experienceCards = [];
@@ -323,9 +342,6 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   // Loading state
   bool _isSaving = false;
 
-  // Snackbar controller to manage notifications
-  ScaffoldFeatureController<SnackBar, SnackBarClosedReason>? _activeSnackBar;
-
   // Add a map to cache futures for Yelp preview data
   final Map<String, Future<Map<String, dynamic>?>> _yelpPreviewFutures = {};
 
@@ -338,7 +354,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
 
     // Show new snackbar
-    _activeSnackBar = ScaffoldMessenger.of(context).showSnackBar(
+    ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
         duration: Duration(seconds: 1), // Set duration to 1 second
@@ -348,6 +364,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
   // Initialize with the files passed to the widget
   List<SharedMediaFile> _currentSharedFiles = [];
+  // Track if we've restored from persisted content
+  bool _restoredFromPersisted = false;
 
   // Flag to track if a chain was detected from URL structure
   bool _chainDetectedFromUrl = false;
@@ -377,6 +395,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   @override
   void initState() {
     print("ReceiveShareScreen initState: START - Instance ${this.hashCode}");
+    print("DEBUG initState: widget.sharedFiles has ${widget.sharedFiles.length} items");
     super.initState();
     // _sharingService.isShareFlowActive = true; // REMOVED: This is now set by SharingService.showReceiveShareScreen
 
@@ -386,7 +405,27 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     // --- END ADDED FOR SCROLLING FAB ---
 
     // Initialize with the files passed to the widget
-    _currentSharedFiles = widget.sharedFiles;
+    _currentSharedFiles = List.from(widget.sharedFiles);
+    print("DEBUG initState: _currentSharedFiles initialized with ${_currentSharedFiles.length} items");
+    
+    // Check if this is a Yelp-only share during cold start
+    String? yelpUrl = _extractYelpUrlFromSharedFiles(widget.sharedFiles);
+    bool isYelpOnlyShare = yelpUrl != null && widget.sharedFiles.length == 1 && 
+                           (widget.sharedFiles[0].type == SharedMediaType.text || 
+                            widget.sharedFiles[0].type == SharedMediaType.url);
+    
+    if (isYelpOnlyShare) {
+      print("DEBUG initState: Detected Yelp-only share during cold start");
+      // Check if we're returning from Yelp (share flow is active)
+      if (_sharingService.isShareFlowActive) {
+        print("DEBUG initState: Share flow is active - likely returning from Yelp");
+        // Try to restore the persisted Instagram content
+        _restorePersistedCurrentContent();
+      }
+    }
+
+    // Initialize Knowledge Graph service
+    _initializeKnowledgeGraphService();
 
     // Register observer for app lifecycle events
     WidgetsBinding.instance.addObserver(this);
@@ -455,33 +494,222 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // Now it's safe to process initial shared content,
       // as the provider (conceptually) has what it needs for default categories.
       print("ReceiveShareScreen: Processing initial shared content.");
-      _processSharedContent(_currentSharedFiles);
+      // Process with the original widget.sharedFiles to ensure Yelp URLs are handled
+      _processInitialSharedContent(widget.sharedFiles);
+      
+      // Mark as fully initialized
+      _isFullyInitialized = true;
+      print("ReceiveShareScreen: Marked as fully initialized");
     }
     print("ReceiveShareScreen: _initializeScreenDataAndProcessContent END");
   }
 
   // Handle updates to the sharedFiles controller from SharingService
   void _handleSharedFilesUpdate() {
-    final updatedFiles = _sharingService.sharedFiles.value;
-    if (updatedFiles != null && 
-        updatedFiles.isNotEmpty && 
-        !_areSharedFilesEqual(updatedFiles, _currentSharedFiles)) {
-      
-      print("ReceiveShareScreen: Received updated shared files. Processing...");
-      
-      // Reset the provider with new content
-      final provider = context.read<ReceiveShareProvider>();
-      provider.resetExperienceCards();
-      
-      setState(() {
-        _currentSharedFiles = updatedFiles;
-        _businessDataCache.clear();
-        _yelpPreviewFutures.clear();
-      });
-      
-      // Process the new content
-      _processSharedContent(_currentSharedFiles);
+    if (_isProcessingUpdate) {
+      Fluttertoast.showToast(
+        msg: "DEBUG: Already processing update, ignoring",
+        toastLength: Toast.LENGTH_SHORT,
+        gravity: ToastGravity.BOTTOM,
+        backgroundColor: Colors.grey.withOpacity(0.8),
+        textColor: Colors.white,
+      );
+      return;
     }
+    
+    // Check if we just processed a Yelp URL update within the last 2 seconds
+    if (_lastYelpUrlUpdateTime != null &&
+        DateTime.now().difference(_lastYelpUrlUpdateTime!).inSeconds < 2) {
+      Fluttertoast.showToast(
+        msg: "DEBUG: Ignoring update after recent Yelp URL update",
+        toastLength: Toast.LENGTH_SHORT,
+        gravity: ToastGravity.BOTTOM,
+        backgroundColor: Colors.purple.withOpacity(0.8),
+        textColor: Colors.white,
+      );
+      return;
+    }
+    
+    final updatedFiles = _sharingService.sharedFiles.value;
+    
+    if (updatedFiles == null || updatedFiles.isEmpty) {
+      return;
+    }
+    
+    // Extract Yelp URL if present
+    String? yelpUrl = _extractYelpUrlFromSharedFiles(updatedFiles);
+    bool isYelpOnlyUpdate = yelpUrl != null && updatedFiles.length == 1 && 
+                            (updatedFiles[0].type == SharedMediaType.text || updatedFiles[0].type == SharedMediaType.url);
+    
+    print("DEBUG: yelpUrl=$yelpUrl, isYelpOnlyUpdate=$isYelpOnlyUpdate, _currentSharedFiles.length=${_currentSharedFiles.length}");
+    
+    // Special handling for Yelp-only updates - always process them separately
+    if (isYelpOnlyUpdate) {
+      print("ReceiveShareScreen: Yelp-only update detected - handling specially");
+      print("DEBUG: _currentSharedFiles has ${_currentSharedFiles.length} items before Yelp processing");
+      
+      // Skip all the normal processing and go directly to Yelp URL handling
+      _isProcessingUpdate = true;
+      
+      Fluttertoast.showToast(
+        msg: "DEBUG: _handleSharedFilesUpdate called",
+        toastLength: Toast.LENGTH_LONG,
+        gravity: ToastGravity.BOTTOM,
+        backgroundColor: Colors.yellow.withOpacity(0.8),
+        textColor: Colors.black,
+      );
+      
+      Fluttertoast.showToast(
+        msg: "DEBUG: Yelp URL in _handleSharedFilesUpdate - routing to update",
+        toastLength: Toast.LENGTH_LONG,
+        gravity: ToastGravity.BOTTOM,
+        backgroundColor: Colors.teal.withOpacity(0.8),
+        textColor: Colors.white,
+      );
+      
+      // Mark that we've processed this Yelp URL update
+      _lastYelpUrlUpdateTime = DateTime.now();
+      
+      // For Yelp URLs, always try to update existing cards instead of creating new content
+      _handleYelpUrlUpdate(yelpUrl, updatedFiles);
+      
+      // Reset flag immediately after processing
+      _isProcessingUpdate = false;
+      
+      Fluttertoast.showToast(
+        msg: "DEBUG: RETURNING from _handleSharedFilesUpdate after Yelp URL update",
+        toastLength: Toast.LENGTH_LONG,
+        gravity: ToastGravity.BOTTOM,
+        backgroundColor: Colors.green.withOpacity(0.8),
+        textColor: Colors.white,
+      );
+      return;
+    }
+    
+    // For all other cases, check if files are the same
+    if (_areSharedFilesEqual(updatedFiles, _currentSharedFiles)) {
+      return;
+    }
+    
+    // Check if this is the same content as the initial widget.sharedFiles
+    // This prevents duplicate processing during cold start
+    if (!_hasProcessedInitialContent && _areSharedFilesEqual(updatedFiles, widget.sharedFiles)) {
+      print("ReceiveShareScreen: Ignoring duplicate of initial shared files");
+      return;
+    }
+    
+    _isProcessingUpdate = true;
+    
+    print("ReceiveShareScreen: Received updated shared files. Processing...");
+    print("ReceiveShareScreen: Is fully initialized: $_isFullyInitialized");
+    print("ReceiveShareScreen: Current files: ${_currentSharedFiles?.map((f) => f.path.substring(0, min(50, f.path.length))).join(", ") ?? "null"}");
+    print("ReceiveShareScreen: Updated files: ${updatedFiles.map((f) => f.path.substring(0, min(50, f.path.length))).join(", ")}");
+    
+    Fluttertoast.showToast(
+      msg: "DEBUG: _handleSharedFilesUpdate called",
+      toastLength: Toast.LENGTH_LONG,
+      gravity: ToastGravity.BOTTOM,
+      backgroundColor: Colors.yellow.withOpacity(0.8),
+      textColor: Colors.black,
+    );
+    
+    // Re-check for Yelp URL (in case it wasn't a Yelp-only update)
+    // String? yelpUrl = _extractYelpUrlFromSharedFiles(updatedFiles); // Already extracted above
+    
+    // If not fully initialized yet, wait for initialization to complete
+    if (!_isFullyInitialized) {
+      print("ReceiveShareScreen: Screen not fully initialized yet. Deferring share update.");
+      // Defer the update until after initialization
+      Future.delayed(const Duration(milliseconds: 500), () {
+        if (mounted && _isFullyInitialized) {
+          _handleSharedFilesUpdate();
+        }
+      });
+      return;
+    }
+    
+    // Check if this is a Yelp URL that should be added to existing card
+    if (yelpUrl != null) {
+      print("ReceiveShareScreen: Yelp URL detected - treating as update rather than full refresh");
+      print("DEBUG: Before Yelp processing, _currentSharedFiles has ${_currentSharedFiles.length} items");
+      Fluttertoast.showToast(
+        msg: "DEBUG: Yelp URL in _handleSharedFilesUpdate - routing to update",
+        toastLength: Toast.LENGTH_LONG,
+        gravity: ToastGravity.BOTTOM,
+        backgroundColor: Colors.teal.withOpacity(0.8),
+        textColor: Colors.white,
+      );
+      
+      // Mark that we've processing a Yelp-only update
+      _isProcessingYelpOnlyUpdate = true;
+      
+      // Mark that we've processed this Yelp URL update
+      _lastYelpUrlUpdateTime = DateTime.now();
+      
+      // For Yelp URLs, always try to update existing cards instead of creating new content
+      _handleYelpUrlUpdate(yelpUrl, updatedFiles);
+      
+      // Reset flags immediately after processing
+      _isProcessingUpdate = false;
+      _isProcessingYelpOnlyUpdate = false;
+      
+      // IMPORTANT: Do NOT update _currentSharedFiles when adding Yelp URL to existing card
+      // This prevents the preview from changing to a Yelp preview
+      Fluttertoast.showToast(
+        msg: "DEBUG: RETURNING from _handleSharedFilesUpdate after Yelp URL update",
+        toastLength: Toast.LENGTH_LONG,
+        gravity: ToastGravity.BOTTOM,
+        backgroundColor: Colors.green.withOpacity(0.8),
+        textColor: Colors.white,
+      );
+      return;
+    }
+    
+    // Check if this update is essentially the same as what we just processed during initialization
+    // This prevents double-processing during cold starts
+    // NOTE: We check this AFTER Yelp URL handling to ensure Yelp URLs are always processed
+    if (_areSharedFilesEqual(updatedFiles, widget.sharedFiles)) {
+      print("ReceiveShareScreen: Updated files are same as initial widget.sharedFiles. Likely initialization echo - ignoring.");
+      _isProcessingUpdate = false;
+      return;
+    }
+    
+    // This should never be reached for Yelp-only updates
+    if (yelpUrl != null) {
+      print("ERROR: Reached reset logic for Yelp URL! This should not happen!");
+      print("DEBUG: yelpUrl=$yelpUrl, isYelpOnlyUpdate=$isYelpOnlyUpdate");
+    }
+    
+    // If not a Yelp URL or no existing cards, proceed with normal reset logic
+    print("ReceiveShareScreen: Not a Yelp URL or no existing cards. Resetting.");
+    print("DEBUG: Current _currentSharedFiles has ${_currentSharedFiles.length} items");
+    final provider = context.read<ReceiveShareProvider>();
+    provider.resetExperienceCards();
+    
+    setState(() {
+      // Check if this is a Yelp-only update - if so, don't update _currentSharedFiles
+      bool isYelpOnly = updatedFiles.length == 1 && 
+                        (updatedFiles[0].type == SharedMediaType.text || updatedFiles[0].type == SharedMediaType.url) &&
+                        _extractYelpUrlFromSharedFiles(updatedFiles) != null;
+      
+      if (isYelpOnly && _currentSharedFiles.isNotEmpty) {
+        // Don't update _currentSharedFiles - keep existing preview
+        print("DEBUG: Yelp-only update detected in setState - preserving existing _currentSharedFiles");
+      } else {
+        // For non-Yelp updates, use the new files
+        _currentSharedFiles = List.from(updatedFiles);
+        // Persist the updated content
+        _sharingService.persistCurrentSharedContent(_currentSharedFiles);
+      }
+      _businessDataCache.clear();
+      _yelpPreviewFutures.clear();
+    });
+    
+    // No longer needed - we don't update _currentSharedFiles for Yelp URLs
+    
+    // Process the new content
+    _processSharedContent(_currentSharedFiles);
+    _isProcessingUpdate = false;
   }
   
   // Helper method to compare shared files lists
@@ -491,6 +719,206 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       if (a[i].path != b[i].path) return false;
     }
     return true;
+  }
+
+  // Check if there are existing experience cards
+  bool _hasExistingCards() {
+    final provider = context.read<ReceiveShareProvider>();
+    return provider.experienceCards.isNotEmpty;
+  }
+
+  // Extract Yelp URL from shared files
+  String? _extractYelpUrlFromSharedFiles(List<SharedMediaFile> files) {
+    for (final file in files) {
+      if (file.type == SharedMediaType.text || file.type == SharedMediaType.url) {
+        String? url = _extractFirstUrl(file.path);
+        if (url != null && _isYelpUrl(url)) {
+          return url;
+        }
+      }
+    }
+    return null;
+  }
+
+  // Check if a URL is a Yelp URL
+  bool _isYelpUrl(String url) {
+    String urlLower = url.toLowerCase();
+    return urlLower.contains('yelp.com/biz') || urlLower.contains('yelp.to/');
+  }
+
+  // Track which card's Yelp button was last tapped
+  String? _lastYelpButtonTappedCardId;
+
+  // Handle updating an existing card with a new Yelp URL
+  void _handleYelpUrlUpdate(String yelpUrl, List<SharedMediaFile> updatedFiles) {
+    final provider = context.read<ReceiveShareProvider>();
+    final experienceCards = provider.experienceCards;
+    
+    print("DEBUG: _handleYelpUrlUpdate called with URL: $yelpUrl");
+    print("DEBUG: _lastYelpButtonTappedCardId = $_lastYelpButtonTappedCardId");
+    
+    Fluttertoast.showToast(
+      msg: "DEBUG: _handleYelpUrlUpdate called, cards=${experienceCards.length}",
+      toastLength: Toast.LENGTH_LONG,
+      gravity: ToastGravity.CENTER,
+      backgroundColor: Colors.red.withOpacity(0.8),
+      textColor: Colors.white,
+    );
+    
+    if (experienceCards.isEmpty) {
+      print("ReceiveShareScreen: No experience cards yet for Yelp URL update - will retry in 500ms");
+      Fluttertoast.showToast(
+        msg: "DEBUG: No cards yet, retrying in 500ms",
+        toastLength: Toast.LENGTH_SHORT,
+        gravity: ToastGravity.CENTER,
+        backgroundColor: Colors.grey.withOpacity(0.8),
+        textColor: Colors.white,
+      );
+      Future.delayed(const Duration(milliseconds: 500), () {
+        if (mounted) {
+          _handleYelpUrlUpdate(yelpUrl, updatedFiles);
+        }
+      });
+      return;
+    }
+    
+    // Find the target card to populate with the Yelp URL
+    ExperienceCardData? targetCard;
+    
+    // First priority: If user recently tapped a Yelp button, update that card
+    if (_lastYelpButtonTappedCardId != null) {
+      try {
+        targetCard = experienceCards.firstWhere(
+          (card) => card.id == _lastYelpButtonTappedCardId
+        );
+        print("ReceiveShareScreen: Prioritizing card ${targetCard.id} that recently opened Yelp");
+        // Clear the tracking after use
+        _lastYelpButtonTappedCardId = null;
+      } catch (e) {
+        // Card not found, fall back to other logic
+        _lastYelpButtonTappedCardId = null;
+      }
+    }
+    
+    // Second priority: Use the bottom-most (last) experience card
+    targetCard ??= experienceCards.last;
+    
+    print("DEBUG: Target card found: ${targetCard.id}");
+    print("DEBUG: Target card title: ${targetCard.titleController.text}");
+    print("DEBUG: Target card current Yelp URL: ${targetCard.yelpUrlController.text}");
+    
+    // Normalize the URL
+    String normalizedUrl = yelpUrl.trim();
+    if (!normalizedUrl.startsWith('http')) {
+      normalizedUrl = 'https://$normalizedUrl';
+    }
+    
+    // Update the card with the Yelp URL (replace existing if present)
+    final previousUrl = targetCard.yelpUrlController.text;
+    
+    // Update the text controller without triggering listeners
+    // This prevents the form from thinking the user manually updated the field
+    targetCard.yelpUrlController.value = targetCard.yelpUrlController.value.copyWith(
+      text: normalizedUrl,
+      selection: TextSelection.collapsed(offset: normalizedUrl.length),
+    );
+    
+    // Show exactly what happened to the URL field
+    Fluttertoast.showToast(
+      msg: "DEBUG: URL field changed from '${previousUrl.isEmpty ? "EMPTY" : previousUrl.substring(0, min(20, previousUrl.length))}...' to '${normalizedUrl.substring(0, min(20, normalizedUrl.length))}...'",
+      toastLength: Toast.LENGTH_LONG,
+      gravity: ToastGravity.CENTER,
+      backgroundColor: Colors.indigo.withOpacity(0.9),
+      textColor: Colors.white,
+    );
+    
+    // No notifications needed - the TextEditingController will handle its own listeners
+    // This prevents any rebuilds of the page or provider listeners
+    Fluttertoast.showToast(
+        msg: "Yelp URL added",
+        toastLength: Toast.LENGTH_SHORT,
+        gravity: ToastGravity.BOTTOM,
+        timeInSecForIosWeb: 1,
+        backgroundColor: Colors.black.withOpacity(0.7),
+        textColor: Colors.white,
+        fontSize: 16.0
+    );
+    
+    if (previousUrl.isNotEmpty) {
+      print("ReceiveShareScreen: Replaced Yelp URL in card ${targetCard.id}: '$previousUrl' -> '$normalizedUrl'");
+    } else {
+      print("ReceiveShareScreen: Added Yelp URL to card ${targetCard.id}: '$normalizedUrl'");
+    }
+
+    // DON'T update _currentSharedFiles for Yelp URLs - we want to preserve the original preview
+    // Only the Yelp URL field should be updated, not the shared files or preview content
+    
+    // Record the timestamp of this Yelp URL update
+    _lastYelpUrlUpdateTime = DateTime.now();
+    
+    // DEBUG: Print current shared files to ensure they're not being changed
+    print("ReceiveShareScreen: _currentSharedFiles after Yelp URL update: ${_currentSharedFiles.map((f) => f.path.substring(0, min(50, f.path.length))).join(", ")}");
+  }
+
+  // Method to track when a Yelp button is tapped
+  void _trackYelpButtonTapped(String cardId) async {
+    _lastYelpButtonTappedCardId = cardId;
+    print("ReceiveShareScreen: Tracked Yelp button tap for card: $cardId");
+    
+    // Save form data before going to Yelp
+    final provider = context.read<ReceiveShareProvider>();
+    final card = provider.experienceCards.firstWhere((c) => c.id == cardId);
+    
+    // Create a map of all the form data we need to persist
+    final formData = {
+      'cardId': cardId,
+      'title': card.titleController.text,
+      'yelpUrl': card.yelpUrlController.text,
+      'website': card.websiteController.text,
+      'search': card.searchController.text,
+      'location': card.locationController.text,
+      'notes': card.notesController.text,
+      'selectedCategoryId': card.selectedCategoryId,
+      'selectedColorCategoryId': card.selectedColorCategoryId,
+      'selectedOtherCategoryIds': card.selectedOtherCategoryIds,
+      'rating': card.rating,
+      // Save both location and selectedLocation with all fields
+      'location_lat': card.location?.latitude,
+      'location_lng': card.location?.longitude,
+      'location_address': card.location?.address,
+      'location_placeId': card.location?.placeId,
+      'location_displayName': card.location?.displayName,
+      'location_city': card.location?.city,
+      'location_state': card.location?.state,
+      'location_country': card.location?.country,
+      'location_zipCode': card.location?.zipCode,
+      'location_photoUrl': card.location?.photoUrl,
+      'location_website': card.location?.website,
+      'location_rating': card.location?.rating,
+      'location_userRatingCount': card.location?.userRatingCount,
+      'selectedLocation_lat': card.selectedLocation?.latitude,
+      'selectedLocation_lng': card.selectedLocation?.longitude,
+      'selectedLocation_address': card.selectedLocation?.address,
+      'selectedLocation_placeId': card.selectedLocation?.placeId,
+      'selectedLocation_displayName': card.selectedLocation?.displayName,
+      'selectedLocation_city': card.selectedLocation?.city,
+      'selectedLocation_state': card.selectedLocation?.state,
+      'selectedLocation_country': card.selectedLocation?.country,
+      'selectedLocation_zipCode': card.selectedLocation?.zipCode,
+      'selectedLocation_photoUrl': card.selectedLocation?.photoUrl,
+      'selectedLocation_website': card.selectedLocation?.website,
+      'selectedLocation_rating': card.selectedLocation?.rating,
+      'selectedLocation_userRatingCount': card.selectedLocation?.userRatingCount,
+      // Save the actual search query that was displayed
+      'searchQuery': card.searchController.text,
+    };
+    
+    // Persist the form data
+    await _sharingService.persistExperienceCardData(formData);
+    
+    // Inform SharingService that we're temporarily leaving for external app
+    // This preserves the share flow state instead of resetting it
+    _sharingService.temporarilyLeavingForExternalApp();
   }
 
   Future<void> _loadUserCategories() async {
@@ -570,9 +998,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
     print("SHARE DEBUG: App lifecycle state changed to $state");
+    print("DEBUG: _currentSharedFiles has ${_currentSharedFiles.length} items on lifecycle change");
 
     if (state == AppLifecycleState.resumed) {
       print("SHARE DEBUG: App resumed"); // Simplified log
+      print("DEBUG: _currentSharedFiles has ${_currentSharedFiles.length} items on resume");
       _conditionallyReloadCategories(); 
     }
   }
@@ -671,6 +1101,139 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     // Intent listener setup is now handled by SharingService
   }
 
+  Future<void> _restorePersistedCurrentContent() async {
+    try {
+      // First restore the shared files content
+      final persistedContent = await _sharingService.getPersistedCurrentContent();
+      if (persistedContent != null && persistedContent.isNotEmpty) {
+        print("DEBUG: Restored ${persistedContent.length} persisted current files");
+        setState(() {
+          _currentSharedFiles = persistedContent;
+          _restoredFromPersisted = true;
+        });
+        print("DEBUG: Successfully restored Instagram content from persistence");
+      } else {
+        print("DEBUG: No persisted content found to restore");
+      }
+      
+      // Then restore the form data
+      final persistedFormData = await _sharingService.getPersistedExperienceCardData();
+      if (persistedFormData != null && mounted) {
+        print("DEBUG: Found persisted form data - restoring...");
+        
+        // Wait a bit to ensure the provider has initialized the cards
+        await Future.delayed(const Duration(milliseconds: 1000));
+        
+        if (mounted) {
+          final provider = context.read<ReceiveShareProvider>();
+          final cardId = persistedFormData['cardId'] as String?;
+          
+          // If no cards exist yet, we need to wait for them to be created
+          if (provider.experienceCards.isEmpty) {
+            print("DEBUG: No cards exist yet, waiting for cards to be created...");
+            // Wait for cards to be created
+            await Future.delayed(const Duration(milliseconds: 1000));
+          }
+          
+          if (cardId != null && provider.experienceCards.isNotEmpty) {
+            // Store the cardId so we can use it when processing the Yelp URL
+            _lastYelpButtonTappedCardId = cardId;
+            
+            // Find the card by ID or use the first card
+            final card = provider.experienceCards.firstWhere(
+              (c) => c.id == cardId,
+              orElse: () => provider.experienceCards.first,
+            );
+            
+            // Restore all the form data
+            card.titleController.text = persistedFormData['title'] ?? '';
+            card.yelpUrlController.text = persistedFormData['yelpUrl'] ?? '';
+            card.websiteController.text = persistedFormData['website'] ?? '';
+            card.locationController.text = persistedFormData['location'] ?? '';
+            card.notesController.text = persistedFormData['notes'] ?? '';
+            card.selectedCategoryId = persistedFormData['selectedCategoryId'];
+            card.selectedColorCategoryId = persistedFormData['selectedColorCategoryId'];
+            card.selectedOtherCategoryIds = List<String>.from(persistedFormData['selectedOtherCategoryIds'] ?? []);
+            card.rating = persistedFormData['rating'] ?? 0.0;
+            
+            // Restore the search query (place name) separately
+            if (persistedFormData['searchQuery'] != null && persistedFormData['searchQuery'].toString().isNotEmpty) {
+              card.searchController.text = persistedFormData['searchQuery'];
+            } else if (persistedFormData['search'] != null && persistedFormData['search'].toString().isNotEmpty) {
+              card.searchController.text = persistedFormData['search'];
+            }
+            
+            // Restore location if available
+            if (persistedFormData['location_lat'] != null && persistedFormData['location_lng'] != null) {
+              card.location = Location(
+                latitude: persistedFormData['location_lat'],
+                longitude: persistedFormData['location_lng'],
+                address: persistedFormData['location_address'],
+                placeId: persistedFormData['location_placeId'],
+                displayName: persistedFormData['location_displayName'],
+                city: persistedFormData['location_city'],
+                state: persistedFormData['location_state'],
+                country: persistedFormData['location_country'],
+                zipCode: persistedFormData['location_zipCode'],
+                photoUrl: persistedFormData['location_photoUrl'],
+                website: persistedFormData['location_website'],
+                rating: persistedFormData['location_rating']?.toDouble(),
+                userRatingCount: persistedFormData['location_userRatingCount'],
+              );
+            }
+            
+            // Restore selectedLocation if available
+            if (persistedFormData['selectedLocation_lat'] != null && persistedFormData['selectedLocation_lng'] != null) {
+              card.selectedLocation = Location(
+                latitude: persistedFormData['selectedLocation_lat'],
+                longitude: persistedFormData['selectedLocation_lng'],
+                address: persistedFormData['selectedLocation_address'],
+                placeId: persistedFormData['selectedLocation_placeId'],
+                displayName: persistedFormData['selectedLocation_displayName'],
+                city: persistedFormData['selectedLocation_city'],
+                state: persistedFormData['selectedLocation_state'],
+                country: persistedFormData['selectedLocation_country'],
+                zipCode: persistedFormData['selectedLocation_zipCode'],
+                photoUrl: persistedFormData['selectedLocation_photoUrl'],
+                website: persistedFormData['selectedLocation_website'],
+                rating: persistedFormData['selectedLocation_rating']?.toDouble(),
+                userRatingCount: persistedFormData['selectedLocation_userRatingCount'],
+              );
+            }
+            
+            print("DEBUG: Successfully restored form data for card ${card.id}");
+            print("DEBUG: Restored location displayName: ${card.location?.displayName}");
+            print("DEBUG: Restored location address: ${card.location?.address}");
+            print("DEBUG: Restored selectedLocation displayName: ${card.selectedLocation?.displayName}");
+            print("DEBUG: Restored selectedLocation address: ${card.selectedLocation?.address}");
+            
+            // Clear the persisted form data now that it's been restored
+            await _sharingService.clearPersistedExperienceCardData();
+            
+            // Notify the UI to update
+            setState(() {});
+          }
+        }
+      }
+    } catch (e) {
+      print("DEBUG: Error restoring persisted content: $e");
+    }
+  }
+
+  void _initializeKnowledgeGraphService() {
+    try {
+      // Try to get API key from ApiSecrets
+      // ignore: undefined_class, undefined_getter
+      String? apiKey = ApiSecrets.googleKnowledgeGraphApiKey;
+      _knowledgeGraphService = GoogleKnowledgeGraphService(apiKey: apiKey);
+      print('🔍 KNOWLEDGE GRAPH: Service initialized with API key: ${apiKey != null && apiKey.isNotEmpty ? 'configured' : 'not configured'}');
+    } catch (e) {
+      // ApiSecrets not available, initialize without API key
+      _knowledgeGraphService = GoogleKnowledgeGraphService();
+      print('🔍 KNOWLEDGE GRAPH: Service initialized without API key (ApiSecrets not found)');
+    }
+  }
+
   @override
   void dispose() {
     print("ReceiveShareScreen dispose: START - Instance ${this.hashCode}");
@@ -685,6 +1248,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         _sharingService.markShareFlowAsInactive();
     }
     _currentReloadOperationId = -1;
+    _isFullyInitialized = false; // Reset initialization flag
     WidgetsBinding.instance.removeObserver(this);
     _sharingService.sharedFiles.removeListener(_handleSharedFilesUpdate);
     // Removed direct call to ReceiveSharingIntent.instance.reset() from here,
@@ -721,6 +1285,81 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     return match?.group(0);
   }
 
+  // Process initial shared content on cold start - behaves like warm start logic
+  void _processInitialSharedContent(List<SharedMediaFile> files) async {
+    print("ReceiveShareScreen: _processInitialSharedContent called with ${files.length} files");
+    
+    if (files.isEmpty) {
+      print("ReceiveShareScreen: No initial shared files to process");
+      _hasProcessedInitialContent = true;
+      return;
+    }
+    
+    // If _currentSharedFiles was cleared in initState due to Yelp-only share, don't process
+    if (_currentSharedFiles.isEmpty && files.length == 1) {
+      String? yelpUrl = _extractYelpUrlFromSharedFiles(files);
+      if (yelpUrl != null) {
+        print("ReceiveShareScreen: Skipping display of Yelp-only initial content");
+        
+        // Wait for form restoration to complete before processing Yelp URL
+        print("DEBUG: Waiting for form restoration before processing Yelp URL...");
+        await Future.delayed(const Duration(milliseconds: 2000));
+        
+        _handleYelpUrlUpdate(yelpUrl, files);
+        _hasProcessedInitialContent = true;
+        return;
+      }
+    }
+
+    // Check if this is a Yelp URL and if we have existing cards
+    String? yelpUrl = _extractYelpUrlFromSharedFiles(files);
+    if (yelpUrl != null && _hasExistingCards()) {
+      Fluttertoast.showToast(
+        msg: "DEBUG: Initial processing Yelp URL with existing cards - updating instead of creating new",
+        toastLength: Toast.LENGTH_LONG,
+        gravity: ToastGravity.TOP,
+        backgroundColor: Colors.purple.withOpacity(0.8),
+        textColor: Colors.white,
+      );
+      
+      // Wait for form restoration to complete before processing Yelp URL
+      print("DEBUG: Waiting for form restoration before processing Yelp URL with existing cards...");
+      await Future.delayed(const Duration(milliseconds: 2000));
+      
+      // Update existing cards instead of creating new content
+      _handleYelpUrlUpdate(yelpUrl, files);
+      _hasProcessedInitialContent = true;
+      return;
+    }
+
+    // For all other content, use the files as-is for initial processing
+    setState(() {
+      _currentSharedFiles = List.from(files);
+    });
+    
+    // Persist the content for cold start recovery
+    _sharingService.persistCurrentSharedContent(_currentSharedFiles);
+    
+    // Check if we're setting _currentSharedFiles to a Yelp URL
+    bool hasYelpUrl = files.any((file) => 
+      (file.type == SharedMediaType.text || file.type == SharedMediaType.url) &&
+      _extractYelpUrlFromSharedFiles([file]) != null
+    );
+    
+    if (hasYelpUrl) {
+      Fluttertoast.showToast(
+        msg: "DEBUG: _currentSharedFiles updated with Yelp URL in _processInitialSharedContent",
+        toastLength: Toast.LENGTH_LONG,
+        gravity: ToastGravity.CENTER,
+        backgroundColor: Colors.deepOrange.withOpacity(0.9),
+        textColor: Colors.white,
+      );
+    }
+    
+    _processSharedContent(files);
+    _hasProcessedInitialContent = true;
+  }
+
   void _processSharedContent(List<SharedMediaFile> files) {
     // print('🔄 PROCESSING START: _processSharedContent called with ${files.length} files.'); // CLEANED
     // print('DEBUG: Processing shared content'); // CLEANED
@@ -743,6 +1382,52 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           // print('DEBUG: Extracted first URL: $foundUrl'); // CLEANED
           if (_isSpecialUrl(foundUrl)) {
             // print('DEBUG: Found special content URL: $foundUrl'); // CLEANED
+            
+            // SPECIAL CASE: If this is a Yelp URL and we already have cards, treat it as an update
+            String? yelpUrl = _extractYelpUrlFromSharedFiles(files);
+            if (yelpUrl != null) {
+              final provider = context.read<ReceiveShareProvider>();
+              
+              // Check if sharing service indicates this should be an update (from existing session)
+              bool hasActiveShareFlow = _sharingService.isShareFlowActive;
+              bool hasPersistedContent = false;
+              
+              // Quick async check for persisted content
+              _sharingService.getPersistedOriginalContent().then((content) {
+                hasPersistedContent = content != null && content.isNotEmpty;
+              });
+              
+              Fluttertoast.showToast(
+                msg: "DEBUG: Yelp in _processSharedContent, cards=${provider.experienceCards.length}, shareFlow=$hasActiveShareFlow",
+                toastLength: Toast.LENGTH_LONG,
+                gravity: ToastGravity.CENTER,
+                backgroundColor: Colors.blue.withOpacity(0.8),
+                textColor: Colors.white,
+              );
+              
+              // If we have existing cards OR there's evidence of a previous session, treat as update
+              if (provider.experienceCards.isNotEmpty || hasActiveShareFlow) {
+                print("ReceiveShareScreen: Yelp URL detected with existing cards or active session - updating instead of creating new preview");
+                Fluttertoast.showToast(
+                  msg: "DEBUG: Updating existing card with Yelp URL (cards=${provider.experienceCards.length})",
+                  toastLength: Toast.LENGTH_LONG,
+                  gravity: ToastGravity.CENTER,
+                  backgroundColor: Colors.green.withOpacity(0.8),
+                  textColor: Colors.white,
+                );
+                _handleYelpUrlUpdate(yelpUrl, files);
+                return;
+              } else {
+                Fluttertoast.showToast(
+                  msg: "DEBUG: No existing cards or session, creating new Yelp preview",
+                  toastLength: Toast.LENGTH_LONG,
+                  gravity: ToastGravity.CENTER,
+                  backgroundColor: Colors.orange.withOpacity(0.8),
+                  textColor: Colors.white,
+                );
+              }
+            }
+            
             _processSpecialUrl(
                 foundUrl, file); 
             return; 
@@ -768,10 +1453,14 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     final mapsPattern =
         RegExp(r'(google\.com/maps|maps\.app\.goo\.gl|goo\.gl/maps)');
     final facebookPattern = RegExp(r'(facebook\.com|fb\.com|fb\.watch)');
+    final googleKnowledgePattern = RegExp(r'g\.co/kgs/'); // Added pattern for Google Knowledge Graph URLs
+    final shareGooglePattern = RegExp(r'share\.google/'); // Added pattern for share.google URLs
 
     if (yelpPattern.hasMatch(urlLower) || 
         mapsPattern.hasMatch(urlLower) || 
-        facebookPattern.hasMatch(urlLower)) {
+        facebookPattern.hasMatch(urlLower) ||
+        googleKnowledgePattern.hasMatch(urlLower) ||
+        shareGooglePattern.hasMatch(urlLower)) {
       print("DEBUG: _isSpecialUrl detected special pattern in URL: $url");
       return true;
     }
@@ -812,6 +1501,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       firstCard.originalShareType = ShareType.maps; 
       _yelpPreviewFutures[normalizedUrl] =
           _getLocationFromMapsUrl(normalizedUrl);
+    } else if (normalizedUrl.contains('g.co/kgs/') || normalizedUrl.contains('share.google/')) {
+      print("SHARE DEBUG: Processing as Google Knowledge Graph URL (showing web preview): $normalizedUrl");
+      // Google Knowledge Graph URLs are displayed as web previews using GenericUrlPreviewWidget
+      firstCard.originalShareType = ShareType.genericUrl;
+      // The URL will be displayed in the media preview section using AnyLinkPreview
     } else if (normalizedUrl.contains('facebook.com') ||
                normalizedUrl.contains('fb.com') ||
                normalizedUrl.contains('fb.watch')) {
@@ -867,7 +1561,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         '🔄 GET YELP START: _getBusinessFromYelpUrl called for URL: $yelpUrl');
     if (sharedText != null) {
       print(
-          '🔄 GET YELP START: Shared text provided (first 100 chars): ${sharedText.substring(0, min(100, sharedText.length))}...');
+          '🔄 GET YELP START: Shared text provided (${sharedText.length} chars): ${sharedText.substring(0, min(100, sharedText.length))}${sharedText.length > 100 ? "..." : ""}');
     } else {
       print(
           '🔄 GET YELP START: No shared text provided (likely called from preview).');
@@ -937,7 +1631,67 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
 
       bool extractedFromUrl = false;
-      if (url.contains('/biz/')) {
+      bool extractedFromSharedText = false;
+      
+      // First, try to extract business name from shared text if available
+      if (sharedText != null) {
+        print(
+            '📊 YELP DATA: Attempting name extraction from shared text first.');
+        try {
+          // Look for any Yelp URL pattern in the shared text (yelp.com or yelp.to)
+          RegExp yelpUrlPattern = RegExp(r'https?://(?:www\.)?yelp\.(?:com|to)/[^\s]+');
+          Match? urlMatch = yelpUrlPattern.firstMatch(sharedText);
+          
+          int urlIndex = -1;
+          if (urlMatch != null) {
+            urlIndex = urlMatch.start;
+            print('📊 YELP DATA: Found Yelp URL pattern at index $urlIndex');
+          } else {
+            // Fallback: look for the exact URL we received
+            urlIndex = sharedText.indexOf(yelpUrl);
+            if (urlIndex != -1) {
+              print('📊 YELP DATA: Found exact URL match at index $urlIndex');
+            }
+          }
+          
+          if (urlIndex != -1) {
+            String potentialName = sharedText.substring(0, urlIndex).trim();
+            
+            // Clean up common prefixes and suffixes
+            potentialName = potentialName.replaceAll(
+                RegExp(r'^Check out ', caseSensitive: false), '');
+            potentialName = potentialName.replaceAll(
+                RegExp(r'^See ', caseSensitive: false), '');
+            potentialName = potentialName.replaceAll(
+                RegExp(r'^Visit ', caseSensitive: false), '');
+            potentialName = potentialName.replaceAll(
+                RegExp(r'!+$'), ''); // Remove trailing exclamation marks
+            potentialName = potentialName.replaceAll(
+                RegExp(r'\s*\n.*$', multiLine: true),
+                ''); // Remove everything after newline
+            potentialName = potentialName.trim();
+
+            if (potentialName.isNotEmpty && potentialName.length < 100) {
+              businessName = potentialName;
+              extractedFromSharedText = true;
+              extractedFromUrl = true; // Mark as extracted so we don't use generic name
+              print(
+                  '📊 YELP DATA: Successfully extracted business name from shared text: "$businessName"');
+            } else {
+              print(
+                  '📊 YELP DATA: Failed to extract meaningful name from text preceding URL.');
+            }
+          } else {
+            print(
+                '📊 YELP DATA: Could not find any Yelp URL within the shared text to extract preceding name.');
+          }
+        } catch (e) {
+          print('📊 YELP DATA: Error during shared text name extraction: $e');
+        }
+      }
+      
+      // Only try URL parsing if we didn't get a good name from shared text
+      if (!extractedFromSharedText && url.contains('/biz/')) {
         final bizPath = url.split('/biz/')[1].split('?')[0];
         print('📊 YELP DATA: Extracting from biz URL path: $bizPath');
 
@@ -1041,36 +1795,6 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             true; 
       }
 
-      if (!extractedFromUrl && sharedText != null) {
-        print(
-            '📊 YELP DATA: URL extraction/resolution failed. Attempting name extraction from shared text.');
-        try {
-          int urlIndex = sharedText.indexOf(yelpUrl); 
-          if (urlIndex != -1) {
-            String potentialName = sharedText.substring(0, urlIndex).trim();
-            potentialName = potentialName.replaceAll(
-                RegExp(r'^Check out ', caseSensitive: false), '');
-            potentialName = potentialName.replaceAll(
-                RegExp(r'\s*\n.*$', multiLine: true),
-                ''); 
-            potentialName = potentialName.trim();
-
-            if (potentialName.isNotEmpty && potentialName.length < 100) {
-              businessName = potentialName;
-              print(
-                  '📊 YELP DATA: Extracted business name from shared text: "$businessName"');
-            } else {
-              print(
-                  '📊 YELP DATA: Failed to extract meaningful name from text preceding URL.');
-            }
-          } else {
-            print(
-                '📊 YELP DATA: Could not find the Yelp URL within the shared text to extract preceding name.');
-          }
-        } catch (e) {
-          print('📊 YELP DATA: Error during shared text name extraction: $e');
-        }
-      }
 
       bool isChainOrGeneric = _chainDetectedFromUrl;
       if (!isChainOrGeneric && businessName.isNotEmpty) {
@@ -1090,12 +1814,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
       print('📊 YELP DATA: Is chain or generic restaurant: $isChainOrGeneric');
 
-      if (isShortUrl) {
+      // Try web scraping for additional details if we have a short URL or need more info
+      if (isShortUrl || (!extractedFromSharedText && businessName.isEmpty)) {
         print(
-            '📊 YELP DATA: Short URL was not resolved, attempting scrape as fallback');
+            '📊 YELP DATA: Attempting web scraping for additional details');
         try {
-          final extraInfo = await _getLocationDetailsFromYelpPage(
-              yelpUrl); 
+          final extraInfo = await _getLocationDetailsFromYelpPage(yelpUrl);
           if (extraInfo != null) {
             if (businessCity.isEmpty &&
                 extraInfo['city'] != null &&
@@ -1108,6 +1832,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               businessState = extraInfo['state']!;
               print(
                   '📊 YELP DATA: Extracted state from Yelp page scrape: $businessState');
+            }
+            // Try to extract business name from scraped page if we still don't have it
+            if (businessName.isEmpty && extraInfo['businessName'] != null && extraInfo['businessName']!.isNotEmpty) {
+              businessName = extraInfo['businessName']!;
+              extractedFromUrl = true;
+              print(
+                  '📊 YELP DATA: Extracted business name from Yelp page scrape: $businessName');
             }
           }
         } catch (e) {
@@ -1122,15 +1853,24 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
 
       List<String> searchQueries = [];
-      if (businessName.isNotEmpty && businessCity.isNotEmpty) {
-        String query = '$businessName $businessCity';
-        searchQueries.add('"$query"'); 
-        searchQueries.add(query);
-      }
+      
+      // Prioritize exact business name searches when we have good data from shared text
       if (businessName.isNotEmpty) {
+        // Add exact quoted search first (most precise)
         searchQueries.add('"$businessName"');
+        
+        // Add business name with city if available
+        if (businessCity.isNotEmpty) {
+          String query = '$businessName $businessCity';
+          searchQueries.add('"$query"');
+          searchQueries.add(query);
+        }
+        
+        // Add plain business name search (less precise but broader)
         searchQueries.add(businessName);
       }
+      
+      // Remove duplicates while preserving order
       searchQueries = searchQueries.toSet().toList(); 
       print('📊 YELP DATA: Search strategies (in order): $searchQueries');
 
@@ -1205,13 +1945,37 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           if (businessName.isNotEmpty && foundLocation.displayName != null) {
             final googleNameLower = foundLocation.displayName!.toLowerCase();
             final yelpNameLower = businessName.toLowerCase();
-            if (!googleNameLower.contains(yelpNameLower) &&
-                !yelpNameLower.contains(googleNameLower.split(' ')[0])) {
+            
+            // Split names into words for better matching
+            final googleWords = googleNameLower.split(RegExp(r'\s+'));
+            final yelpWords = yelpNameLower.split(RegExp(r'\s+'));
+            
+            // Calculate word overlap
+            int matchingWords = 0;
+            for (String yelpWord in yelpWords) {
+              if (yelpWord.length > 2) { // Only consider meaningful words
+                for (String googleWord in googleWords) {
+                  if (googleWord.contains(yelpWord) || yelpWord.contains(googleWord)) {
+                    matchingWords++;
+                    break;
+                  }
+                }
+              }
+            }
+            
+            // Require at least 60% word overlap for extracted names from shared text
+            double matchRatio = matchingWords / yelpWords.length;
+            bool nameMatches = matchRatio >= 0.6 || 
+                              googleNameLower.contains(yelpNameLower) || 
+                              yelpNameLower.contains(googleNameLower.split(' ')[0]);
+            
+            if (!nameMatches) {
               print(
-                  '📊 YELP DATA: Name verification failed. Google name "${foundLocation.displayName}" doesn\'t align well with Yelp name "${businessName}"');
+                  '📊 YELP DATA: Name verification failed. Google name "${foundLocation.displayName}" doesn\'t align well with Yelp name "${businessName}" (match ratio: ${(matchRatio * 100).toStringAsFixed(1)}%)');
+              isCorrectBusiness = false;
             } else {
               print(
-                  '📊 YELP DATA: Name check passed (containment): Google="${foundLocation.displayName}", Yelp="$businessName"');
+                  '📊 YELP DATA: Name check passed: Google="${foundLocation.displayName}", Yelp="$businessName" (match ratio: ${(matchRatio * 100).toStringAsFixed(1)}%)');
             }
           }
 
@@ -1342,6 +2106,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       if (response.statusCode == 200) {
         final html = response.data.toString();
 
+        // Extract structured data
         final addressRegex = RegExp(r'address":"([^"]+)');
         final addressMatch = addressRegex.firstMatch(html);
 
@@ -1351,11 +2116,36 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         final stateRegex = RegExp(r'addressRegion":"([^"]+)');
         final stateMatch = stateRegex.firstMatch(html);
 
-        if (addressMatch != null || cityMatch != null || stateMatch != null) {
+        // Try to extract business name from various sources
+        String businessName = '';
+        
+        // Try JSON-LD structured data first
+        final nameRegex = RegExp(r'"name":"([^"]+)"');
+        final nameMatch = nameRegex.firstMatch(html);
+        if (nameMatch != null) {
+          businessName = nameMatch.group(1) ?? '';
+        }
+        
+        // Fallback: try page title
+        if (businessName.isEmpty) {
+          final titleRegex = RegExp(r'<title>([^<]+)</title>', caseSensitive: false);
+          final titleMatch = titleRegex.firstMatch(html);
+          if (titleMatch != null) {
+            String title = titleMatch.group(1) ?? '';
+            // Clean up title (Yelp titles often end with " - Yelp")
+            title = title.replaceAll(RegExp(r'\s*-\s*Yelp.*$'), '');
+            if (title.isNotEmpty && title.length < 100) {
+              businessName = title;
+            }
+          }
+        }
+
+        if (addressMatch != null || cityMatch != null || stateMatch != null || businessName.isNotEmpty) {
           return {
             'address': addressMatch?.group(1) ?? '',
             'city': cityMatch?.group(1) ?? '',
             'state': stateMatch?.group(1) ?? '',
+            'businessName': businessName,
           };
         }
       }
@@ -2103,24 +2893,30 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         if (!mounted) return;
 
         if (lastProcessedCard.selectedCategoryId != null) {
-          await prefs.setString(_lastUsedCategoryNameKey, lastProcessedCard.selectedCategoryId!);
+          await prefs.setString(AppConstants.lastUsedCategoryKey, lastProcessedCard.selectedCategoryId!);
           if (!mounted) return;
           print("ReceiveShareScreen: Saved last used category: ${lastProcessedCard.selectedCategoryId}");
         } else {
-          await prefs.remove(_lastUsedCategoryNameKey);
+          await prefs.remove(AppConstants.lastUsedCategoryKey);
           if (!mounted) return;
           print("ReceiveShareScreen: Last used category was null, removed preference.");
         }
 
         if (lastProcessedCard.selectedColorCategoryId != null) {
-          await prefs.setString(_lastUsedColorCategoryIdKey, lastProcessedCard.selectedColorCategoryId!);
+          await prefs.setString(AppConstants.lastUsedColorCategoryKey, lastProcessedCard.selectedColorCategoryId!);
           if (!mounted) return;
           print("ReceiveShareScreen: Saved last used color category ID: ${lastProcessedCard.selectedColorCategoryId}");
         } else {
-          await prefs.remove(_lastUsedColorCategoryIdKey);
+          await prefs.remove(AppConstants.lastUsedColorCategoryKey);
           if (!mounted) return;
           print("ReceiveShareScreen: Last used color category ID was null, removed preference.");
         }
+
+        // ADDED: Save last used other categories
+        await prefs.setStringList(AppConstants.lastUsedOtherCategoriesKey, lastProcessedCard.selectedOtherCategoryIds);
+        if (!mounted) return;
+        print("ReceiveShareScreen: Saved last used other categories: ${lastProcessedCard.selectedOtherCategoryIds}");
+        // --- END ADDED ---
       }
 
       if (shouldAttemptNavigation) {
@@ -2541,7 +3337,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
 
       if (_showUpArrowForFab != shouldShowUpArrow) {
-        // print("ScrollListener: Changing _showUpArrowForFab to $shouldShowUpArrow"); // DEBUG
+        print("ScrollListener: Changing _showUpArrowForFab to $shouldShowUpArrow"); // DEBUG
         setState(() {
           _showUpArrowForFab = shouldShowUpArrow;
         });
@@ -2614,20 +3410,54 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
          _scrollToMediaPreviewTop();
       }
     } else { // Scroll Down (_showUpArrowForFab is false)
-      print("FAB_DEBUG: Trying to scroll DOWN."); // DEBUG
-      final experienceCardsSectionContext = _experienceCardsSectionKey.currentContext;
-      print("FAB_DEBUG: Experience cards section context null? ${experienceCardsSectionContext == null}"); // DEBUG
-      if (experienceCardsSectionContext != null) {
-        // Reverting to Scrollable.ensureVisible with bottom alignment for the whole section
-        print("FAB_DEBUG: Scroll Down using ensureVisible to bottom of ExperienceCardsSection.");
-        Scrollable.ensureVisible(
-          experienceCardsSectionContext,
-          duration: const Duration(milliseconds: 500),
-          curve: Curves.easeInOut,
-          alignment: 1.0, // Align bottom of the section with bottom of viewport
-          alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
-        );
-        print("FAB_DEBUG: Called Scrollable.ensureVisible for experience cards section bottom.");
+      print("FAB_DEBUG: Trying to scroll DOWN to bottom-most experience card."); // DEBUG
+      print("FAB_DEBUG: Current scroll offset: ${_scrollController.offset}"); // DEBUG
+      
+      // Get the experience cards from provider
+      final provider = context.read<ReceiveShareProvider>();
+      final experienceCards = provider.experienceCards;
+      print("FAB_DEBUG: Number of experience cards: ${experienceCards.length}"); // DEBUG
+      
+      if (experienceCards.isNotEmpty) {
+        final experienceCardsSectionContext = _experienceCardsSectionKey.currentContext;
+        print("FAB_DEBUG: Experience cards section context null? ${experienceCardsSectionContext == null}"); // DEBUG
+        
+        if (experienceCardsSectionContext != null) {
+          // Get current position of experience cards section
+          final RenderBox experienceBox = experienceCardsSectionContext.findRenderObject() as RenderBox;
+          final double experienceBoxTopOffsetInViewport = experienceBox.localToGlobal(Offset.zero).dy;
+          final double sectionHeight = experienceBox.size.height;
+          print("FAB_DEBUG: Experience cards top offset: $experienceBoxTopOffsetInViewport, section height: $sectionHeight"); // DEBUG
+          
+          // Calculate position to scroll to show the top of the bottom-most experience card
+          // We want to position the last card's TOP at the top of the viewport (below app header)
+          final double screenHeight = MediaQuery.of(context).size.height;
+          final double appBarHeight = AppBar().preferredSize.height + MediaQuery.of(context).padding.top;
+          
+          // Estimate the height of each experience card (approximate)
+          final int cardCount = experienceCards.length;
+          final double estimatedCardHeight = cardCount > 0 ? sectionHeight / cardCount : 400.0;
+          
+          // Calculate offset to show the LAST card at the top of the visible area
+          final double lastCardStartPosition = experienceBoxTopOffsetInViewport + sectionHeight - estimatedCardHeight;
+          final double targetScrollOffset = _scrollController.offset + lastCardStartPosition - appBarHeight;
+          
+          final double clampedOffset = targetScrollOffset.clamp(0.0, _scrollController.position.maxScrollExtent);
+          
+          print("FAB_DEBUG: Card count: $cardCount, estimated card height: $estimatedCardHeight"); // DEBUG
+          print("FAB_DEBUG: Last card start position: $lastCardStartPosition, app bar height: $appBarHeight"); // DEBUG
+          
+          print("FAB_DEBUG: Target scroll offset: $targetScrollOffset, clamped: $clampedOffset, max: ${_scrollController.position.maxScrollExtent}"); // DEBUG
+          
+          _scrollController.animateTo(
+            clampedOffset,
+            duration: const Duration(milliseconds: 500),
+            curve: Curves.easeInOut,
+          );
+          print("FAB_DEBUG: Scrolling to show bottom-most experience card."); // DEBUG
+        }
+      } else {
+        print("FAB_DEBUG: No experience cards available."); // DEBUG
       }
     }
   }
@@ -2659,7 +3489,58 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
   @override
   Widget build(BuildContext context) {
-    print('ReceiveShareScreen build called. Current card count from provider: ${context.watch<ReceiveShareProvider>().experienceCards.length}'); // MODIFIED
+    final provider = context.watch<ReceiveShareProvider>();
+    
+    // Always show when build is called
+    Fluttertoast.showToast(
+      msg: "DEBUG: BUILD method called, _currentSharedFiles=${_currentSharedFiles.length}",
+      toastLength: Toast.LENGTH_SHORT,
+      gravity: ToastGravity.TOP,
+      backgroundColor: Colors.brown.withOpacity(0.8),
+      textColor: Colors.white,
+    );
+    
+    // Check if current shared files contain Yelp URL
+    bool hasYelpUrl = _currentSharedFiles.any((file) => 
+      (file.type == SharedMediaType.text || file.type == SharedMediaType.url) &&
+      _extractYelpUrlFromSharedFiles([file]) != null
+    );
+    
+    // Debug: Show what's in _currentSharedFiles
+    if (_currentSharedFiles.isNotEmpty) {
+      String filesInfo = _currentSharedFiles.map((f) => 
+        "${f.type}: ${f.path.length > 50 ? f.path.substring(0, 50) + '...' : f.path}"
+      ).join(", ");
+      print("DEBUG BUILD: _currentSharedFiles = [$filesInfo]");
+      print("DEBUG BUILD: hasYelpUrl = $hasYelpUrl");
+    }
+    
+    if (hasYelpUrl) {
+      Fluttertoast.showToast(
+        msg: "DEBUG: BUILD called with Yelp URL in _currentSharedFiles",
+        toastLength: Toast.LENGTH_SHORT,
+        gravity: ToastGravity.TOP,
+        backgroundColor: Colors.orange.withOpacity(0.8),
+        textColor: Colors.white,
+      );
+    } else {
+      // Check what URLs are actually in _currentSharedFiles
+      for (var file in _currentSharedFiles) {
+        if (file.type == SharedMediaType.text || file.type == SharedMediaType.url) {
+          String? extractedUrl = _extractFirstUrl(file.path);
+          if (extractedUrl != null && (extractedUrl.contains('yelp.com') || extractedUrl.contains('yelp.to'))) {
+            Fluttertoast.showToast(
+              msg: "DEBUG: BUILD - Found Yelp URL in original content: ${extractedUrl.substring(0, min(30, extractedUrl.length))}...",
+              toastLength: Toast.LENGTH_LONG,
+              gravity: ToastGravity.TOP,
+              backgroundColor: Colors.pink.withOpacity(0.9),
+              textColor: Colors.white,
+            );
+            break;
+          }
+        }
+      }
+    }
 
     return _wrapWithWillPopScope(Scaffold(
       appBar: AppBar(
@@ -2859,6 +3740,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                           currentSharedFiles: _currentSharedFiles,
                                           experienceCards: selectedExperienceCards, // Pass selected cards from Selector
                                           sectionKey: _experienceCardsSectionKey, // PASSING THE KEY
+                                          onYelpButtonTapped: _trackYelpButtonTapped, // ADDED
                                         );
                                       }
                                     ),
@@ -2940,10 +3822,44 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   }
 
   Future<void> _launchUrl(String urlString) async {
-    final Uri url = Uri.parse(urlString);
-    if (!await launchUrl(url, mode: LaunchMode.externalApplication)) {
-      print('Could not launch $urlString');
-      _showSnackBar(context, 'Could not open link');
+    Uri url = Uri.parse(urlString);
+    
+    // Add timestamp to Yelp search URLs to force new navigation
+    if (urlString.contains('yelp.com/search')) {
+      String timestamp = DateTime.now().millisecondsSinceEpoch.toString();
+      String separator = urlString.contains('?') ? '&' : '?';
+      url = Uri.parse('$urlString${separator}t=$timestamp');
+    }
+    
+    try {
+      // For Yelp URLs, try multiple approaches to force new navigation
+      bool launched = false;
+      
+      // First try externalApplication with webOnlyWindowName to force new window/tab
+      if (urlString.contains('yelp.com/search')) {
+        launched = await launchUrl(url, 
+          mode: LaunchMode.externalApplication,
+          webOnlyWindowName: '_blank'
+        );
+      }
+      
+      if (!launched) {
+        // Try platformDefault as fallback
+        launched = await launchUrl(url, mode: LaunchMode.platformDefault);
+      }
+      
+      if (!launched) {
+        // Final fallback to externalApplication
+        launched = await launchUrl(url, mode: LaunchMode.externalApplication);
+      }
+      
+      if (!launched) {
+        print('Could not launch $urlString');
+        _showSnackBar(context, 'Could not open link');
+      }
+    } catch (e) {
+      print('Error launching URL: $e');
+      _showSnackBar(context, 'Error opening link: $e');
     }
   }
 
@@ -2993,7 +3909,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     String? extractedUrl = _extractFirstUrl(textContent);
 
     if (extractedUrl != null) {
-      return _buildUrlPreview(extractedUrl, card, index);
+      return _buildUrlPreview(extractedUrl, card, index, textContent);
     } else {
       return Container(
         padding: const EdgeInsets.all(16.0),
@@ -3006,11 +3922,24 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     }
   }
 
-  Widget _buildUrlPreview(String url, ExperienceCardData? card, int index) {
+  Widget _buildUrlPreview(String url, ExperienceCardData? card, int index, [String? sharedText]) {
+    // Debug notification to track what URL is being processed for preview
+    if (url.contains('yelp.com/biz') || url.contains('yelp.to/')) {
+      Fluttertoast.showToast(
+        msg: "DEBUG: _buildUrlPreview processing Yelp URL: ${url.substring(0, min(30, url.length))}...",
+        toastLength: Toast.LENGTH_LONG,
+        gravity: ToastGravity.CENTER,
+        backgroundColor: Colors.cyan.withOpacity(0.9),
+        textColor: Colors.white,
+      );
+    }
+    
     if (card != null &&
         (url.contains('yelp.com/biz') || url.contains('yelp.to/'))) {
+      
       return YelpPreviewWidget(
         yelpUrl: url,
+        sharedText: sharedText,
         card: card, 
         yelpPreviewFutures: _yelpPreviewFutures,
         getBusinessFromYelpUrl: _getBusinessFromYelpUrl,
@@ -3021,7 +3950,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     if (url.contains('google.com/maps') ||
         url.contains('maps.app.goo.gl') ||
-        url.contains('goo.gl/maps')) {
+        url.contains('goo.gl/maps') ||
+        (url.contains('g.co/kgs/') && !url.contains('share.google/'))) {
       return MapsPreviewWidget(
         mapsUrl: url,
         mapsPreviewFutures: _yelpPreviewFutures,
@@ -3082,6 +4012,15 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       );
     }
 
+    // Google Knowledge Graph URLs - use WebView
+    if (url.contains('g.co/kgs/') || url.contains('share.google/')) {
+      print("🔍 URL PREVIEW: Using GoogleKnowledgeGraphPreviewWidget (WebView) for URL: $url");
+      return GoogleKnowledgeGraphPreviewWidget(
+        url: url,
+        launchUrlCallback: _launchUrl,
+      );
+    }
+
     return GenericUrlPreviewWidget(
       url: url,
       launchUrlCallback: _launchUrl,
@@ -3112,6 +4051,629 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         ],
       ),
     );
+  }
+
+  Future<void> _processGoogleKnowledgeUrl(String url, SharedMediaFile file) async {
+    print('🔍 GOOGLE KG: Processing Google Knowledge Graph URL: $url');
+    
+    final provider = context.read<ReceiveShareProvider>();
+    final firstCard = provider.experienceCards.first;
+    
+    // Extract and clean entity name from shared text
+    String? entityName;
+    try {
+      final sharedText = file.path;
+      final urlIndex = sharedText.indexOf(url);
+      if (urlIndex > 0) {
+        entityName = sharedText.substring(0, urlIndex).trim();
+        // Remove any trailing newlines and clean up
+        entityName = _cleanEntityName(entityName);
+        print('🔍 GOOGLE KG: Extracted and cleaned entity name: "$entityName"');
+      }
+    } catch (e) {
+      print('🔍 GOOGLE KG: Error extracting entity name: $e');
+    }
+    
+    // First, try to use Knowledge Graph API to get entity information
+    if (entityName != null && entityName.isNotEmpty) {
+      print('🔍 GOOGLE KG: Searching Knowledge Graph for: "$entityName"');
+      final kgResults = await _knowledgeGraphService.searchEntities(entityName, limit: 10);
+      
+      if (kgResults.isNotEmpty) {
+        print('🔍 GOOGLE KG: Found ${kgResults.length} Knowledge Graph results');
+        
+        // Find the best place entity match
+        Map<String, dynamic>? bestPlaceEntity = _findBestPlaceEntity(kgResults, entityName);
+        
+        if (bestPlaceEntity != null) {
+          print('🔍 GOOGLE KG: Found best place entity: ${bestPlaceEntity['name']}');
+          print('🔍 GOOGLE KG: Entity types: ${bestPlaceEntity['types']}');
+          
+          // Extract useful information from Knowledge Graph
+          final kgName = bestPlaceEntity['name'] as String?;
+          final kgDescription = _knowledgeGraphService.extractDescription(bestPlaceEntity);
+          final kgImageUrl = _knowledgeGraphService.extractImageUrl(bestPlaceEntity);
+          final kgWebsite = bestPlaceEntity['url'] as String?;
+          
+          if (kgDescription != null) {
+            print('🔍 GOOGLE KG: Description: ${kgDescription.substring(0, min(100, kgDescription.length))}...');
+          }
+          if (kgWebsite != null) {
+            print('🔍 GOOGLE KG: Official website: $kgWebsite');
+          }
+          
+          // Store this information for potential use in the form
+          // For now, we'll still search for the place in Google Maps to get location data
+          firstCard.originalShareType = ShareType.maps;
+          _yelpPreviewFutures[url] = _searchForLocationByNameWithKGDataImproved(
+            kgName ?? entityName, 
+            url,
+            originalEntityName: entityName,
+            kgDescription: kgDescription,
+            kgImageUrl: kgImageUrl,
+            kgWebsite: kgWebsite,
+            kgEntity: bestPlaceEntity,
+          );
+          return;
+        } else {
+          print('🔍 GOOGLE KG: No suitable place entities found in Knowledge Graph results');
+          // Log what types were found instead
+          if (kgResults.isNotEmpty) {
+            print('🔍 GOOGLE KG: Available results: ${kgResults.map((r) => '${r['name']} (${r['types']})').join(', ')}');
+          }
+        }
+      }
+    }
+    
+    // If Knowledge Graph didn't help, fall back to original logic
+    // Try to resolve the shortened URL
+    try {
+      final resolvedUrl = await _resolveShortUrl(url);
+      print('🔍 GOOGLE KG: Resolved URL: $resolvedUrl');
+      
+      if (resolvedUrl != null && (
+          resolvedUrl.contains('google.com/maps') ||
+          resolvedUrl.contains('maps.app.goo.gl') ||
+          resolvedUrl.contains('goo.gl/maps'))) {
+        // It resolved to a Google Maps URL, process it as such
+        print('🔍 GOOGLE KG: Resolved to Google Maps URL, processing as Maps');
+        firstCard.originalShareType = ShareType.maps;
+        // FIXED: Store with original URL key, not resolved URL key
+        _yelpPreviewFutures[url] = _getLocationFromMapsUrl(resolvedUrl);
+      } else {
+        // Didn't resolve to Maps, try to search for the location by name
+        print('🔍 GOOGLE KG: Did not resolve to Maps URL, searching by location name');
+        if (entityName != null && entityName.isNotEmpty) {
+          firstCard.originalShareType = ShareType.maps;
+          // Create a future that searches for the location with improved logic
+          _yelpPreviewFutures[url] = _searchForLocationByNameImproved(entityName, url);
+        } else {
+          print('🔍 GOOGLE KG: No location name extracted, treating as generic URL');
+          firstCard.originalShareType = ShareType.genericUrl;
+        }
+      }
+    } catch (e) {
+      print('🔍 GOOGLE KG: Error processing Google Knowledge URL: $e');
+      // Fall back to searching by name if we have it
+      if (entityName != null && entityName.isNotEmpty) {
+        firstCard.originalShareType = ShareType.maps;
+        _yelpPreviewFutures[url] = _searchForLocationByNameImproved(entityName, url);
+      }
+    }
+  }
+
+  // ADDED: Clean entity name to improve search accuracy
+  String _cleanEntityName(String rawName) {
+    String cleaned = rawName;
+    
+    // Remove common prefixes that might be added by sharing
+    cleaned = cleaned.replaceAll(RegExp(r'^(Check out |Visit |About |)\s*', caseSensitive: false), '');
+    
+    // Remove URLs and content after blank lines while preserving entity names
+    // This handles cases like "Entity Name\n\n https://url" 
+    cleaned = cleaned.replaceAll(RegExp(r'\n\s*\n.*$', multiLine: true, dotAll: true), '');
+    
+    // Remove any remaining URLs that might be on the same line or after single newlines
+    cleaned = cleaned.replaceAll(RegExp(r'\n\s*https?://.*$', multiLine: true), '');
+    
+    // Clean up any remaining trailing whitespace and newlines
+    cleaned = cleaned.trim();
+    
+    // Remove extra punctuation at the end
+    cleaned = cleaned.replaceAll(RegExp(r'[,.!?]+$'), '');
+    
+    print('🔍 GOOGLE KG: Cleaned "$rawName" -> "$cleaned"');
+    return cleaned;
+  }
+
+  // ADDED: Find the best place entity from Knowledge Graph results
+  Map<String, dynamic>? _findBestPlaceEntity(List<Map<String, dynamic>> entities, String originalQuery) {
+    Map<String, dynamic>? bestPlace;
+    double bestScore = 0.0;
+    
+    for (final entity in entities) {
+      final types = entity['types'] as List<dynamic>? ?? [];
+      final name = entity['name'] as String? ?? '';
+      final resultScore = (entity['resultScore'] as num?)?.toDouble() ?? 0.0;
+      
+      // Check if it's a place entity
+      if (!_knowledgeGraphService.isPlaceEntity(types)) continue;
+      
+      // Calculate a relevance score
+      double score = resultScore;
+      
+      // Boost score for exact name matches
+      if (name.toLowerCase() == originalQuery.toLowerCase()) {
+        score += 1000;
+      } else if (name.toLowerCase().contains(originalQuery.toLowerCase()) || 
+                 originalQuery.toLowerCase().contains(name.toLowerCase())) {
+        score += 500;
+      }
+      
+      // Boost score for more specific place types
+      if (types.contains('TouristAttraction') || types.contains('Museum') || 
+          types.contains('Park') || types.contains('LandmarksOrHistoricalBuildings')) {
+        score += 200;
+      } else if (types.contains('Place')) {
+        score += 100;
+      }
+      
+      print('🔍 GOOGLE KG: Entity "${entity['name']}" score: $score (types: $types)');
+      
+      if (score > bestScore) {
+        bestScore = score;
+        bestPlace = entity;
+      }
+    }
+    
+    if (bestPlace != null) {
+      print('🔍 GOOGLE KG: Selected best entity: "${bestPlace['name']}" with score: $bestScore');
+    }
+    
+    return bestPlace;
+  }
+
+  // IMPROVED: Search for location with better strategies and validation
+  Future<Map<String, dynamic>?> _searchForLocationByNameImproved(String locationName, String originalUrl) async {
+    print('🔍 GOOGLE KG SEARCH IMPROVED: Searching for location: "$locationName"');
+    
+    try {
+      // Try multiple search strategies
+      List<String> searchQueries = _generateSearchQueries(locationName);
+      
+      for (String query in searchQueries) {
+        print('🔍 GOOGLE KG SEARCH IMPROVED: Trying query: "$query"');
+        
+        // Search without location bias first for famous places
+        List<Map<String, dynamic>> results = await _mapsService.searchPlaces(query);
+        
+        if (results.isNotEmpty) {
+          // Find the best match from results
+          Map<String, dynamic>? bestResult = _findBestLocationMatch(results, locationName, query);
+          
+          if (bestResult != null) {
+            final placeId = bestResult['placeId'] as String?;
+            if (placeId != null && placeId.isNotEmpty) {
+              print('🔍 GOOGLE KG SEARCH IMPROVED: Getting details for best match place ID: $placeId');
+              final location = await _mapsService.getPlaceDetails(placeId);
+              
+              if (location != null) {
+                final Map<String, dynamic> result = {
+                  'location': location,
+                  'placeName': location.displayName ?? locationName,
+                  'website': location.website,
+                  'mapsUrl': originalUrl,
+                  'searchQuery': query,
+                  'confidence': 'high', // We found a good match
+                };
+                
+                // Fill the form with the found location data
+                _fillFormWithGoogleMapsData(
+                  location,
+                  location.displayName ?? locationName,
+                  location.website ?? '',
+                  originalUrl
+                );
+                
+                print('🔍 GOOGLE KG SEARCH IMPROVED: ✅ Successfully created result with location data');
+                print('🔍 GOOGLE KG SEARCH IMPROVED: Result structure: location=${location.displayName}, placeName=${location.displayName ?? locationName}');
+                return result;
+              } else {
+                print('🔍 GOOGLE KG SEARCH IMPROVED: ⚠️ getPlaceDetails returned null for placeId: $placeId');
+              }
+            } else {
+              print('🔍 GOOGLE KG SEARCH IMPROVED: ⚠️ bestResult missing placeId');
+            }
+          } else {
+            print('🔍 GOOGLE KG SEARCH IMPROVED: ⚠️ No best result found from ${results.length} results');
+          }
+        } else {
+          print('🔍 GOOGLE KG SEARCH IMPROVED: ⚠️ Empty result set for query "$query"');
+        }
+      }
+      
+      print('🔍 GOOGLE KG SEARCH IMPROVED: ❌ No suitable location found with any query');
+      return null;
+    } catch (e) {
+      print('🔍 GOOGLE KG SEARCH IMPROVED ERROR: ❌ Exception occurred: $e');
+      return null;
+    }
+  }
+
+  // ADDED: Generate multiple search query variations
+  List<String> _generateSearchQueries(String locationName) {
+    List<String> queries = [];
+    
+    // Primary query - exact name
+    queries.add(locationName);
+    
+    // Add variations for better matching
+    if (locationName.contains(',')) {
+      // Try without everything after the first comma
+      queries.add(locationName.split(',')[0].trim());
+    }
+    
+    // If it contains "The", try without it
+    if (locationName.toLowerCase().startsWith('the ')) {
+      queries.add(locationName.substring(4).trim());
+    }
+    
+    // Add "attraction" or "museum" for tourist spots
+    if (!locationName.toLowerCase().contains('museum') && 
+        !locationName.toLowerCase().contains('attraction') &&
+        !locationName.toLowerCase().contains('park')) {
+      queries.add('$locationName attraction');
+      queries.add('$locationName museum');
+    }
+    
+    return queries;
+  }
+
+  // ADDED: Find the best location match from search results
+  Map<String, dynamic>? _findBestLocationMatch(List<Map<String, dynamic>> results, String originalName, String searchQuery) {
+    if (results.isEmpty) return null;
+    if (results.length == 1) return results[0];
+    
+    Map<String, dynamic>? bestMatch;
+    double bestScore = 0.0;
+    
+    for (final result in results) {
+      final name = result['description'] as String? ?? result['name'] as String? ?? '';
+      final types = result['types'] as List<dynamic>? ?? [];
+      
+      double score = 0.0;
+      
+      // Exact name match gets highest score
+      if (name.toLowerCase() == originalName.toLowerCase()) {
+        score += 100.0;
+      } else if (name.toLowerCase().contains(originalName.toLowerCase()) || 
+                 originalName.toLowerCase().contains(name.toLowerCase())) {
+        score += 50.0;
+      }
+      
+      // Boost score for tourist attractions, museums, parks
+      if (types.any((type) => ['tourist_attraction', 'museum', 'park', 'establishment'].contains(type))) {
+        score += 25.0;
+      }
+      
+      // Prefer results that are not just addresses
+      if (!name.contains(RegExp(r'\d+.*\w+\s+(St|Ave|Rd|Dr|Blvd|Way)', caseSensitive: false))) {
+        score += 15.0;
+      }
+      
+      print('🔍 GOOGLE KG: Result "$name" score: $score (types: $types)');
+      
+      if (score > bestScore) {
+        bestScore = score;
+        bestMatch = result;
+      }
+    }
+    
+    // Only return if we have a reasonable confidence
+    if (bestScore >= 25.0) {
+      print('🔍 GOOGLE KG: Selected best result: "${bestMatch!['description']}" with score: $bestScore');
+      return bestMatch;
+    }
+    
+    print('🔍 GOOGLE KG: No result met minimum confidence threshold');
+    return null;
+  }
+
+  Future<Map<String, dynamic>?> _searchForLocationByNameWithKGDataImproved(
+    String locationName, 
+    String originalUrl, {
+    String? originalEntityName,
+    String? kgDescription,
+    String? kgImageUrl,
+    String? kgWebsite,
+    Map<String, dynamic>? kgEntity,
+  }) async {
+    print('🔍 GOOGLE KG SEARCH+: Searching for location with Knowledge Graph data: "$locationName"');
+    
+    try {
+      // Try multiple search strategies with the KG-enhanced name
+      List<String> searchQueries = _generateSearchQueriesWithKGData(
+        locationName, 
+        originalEntityName, 
+        kgEntity
+      );
+      
+      for (String query in searchQueries) {
+        print('🔍 GOOGLE KG SEARCH+: Trying query: "$query"');
+        
+        // Try without location bias first for famous places, then with bias
+        List<List<Map<String, dynamic>>> resultSets = [];
+        
+        // Get user position first for better search accuracy
+        Position? userPosition = await _getCurrentPosition();
+        
+        // First attempt: With location bias (prioritize local/regional results)
+        if (userPosition != null) {
+          print('🔍 GOOGLE KG SEARCH+: Searching with location bias first (user location: ${userPosition.latitude}, ${userPosition.longitude})');
+          List<Map<String, dynamic>> localResults = await _mapsService.searchPlaces(
+            query,
+            latitude: userPosition.latitude,
+            longitude: userPosition.longitude,
+            radius: 50000, // 50km radius
+          );
+          if (localResults.isNotEmpty) {
+            resultSets.add(localResults);
+          }
+        }
+        
+        // Second attempt: No location bias (for famous places that might be far away)
+        print('🔍 GOOGLE KG SEARCH+: Searching without location bias (global search)');
+        List<Map<String, dynamic>> globalResults = await _mapsService.searchPlaces(query);
+        if (globalResults.isNotEmpty) {
+          resultSets.add(globalResults);
+        }
+        
+        // Process both result sets
+        for (List<Map<String, dynamic>> results in resultSets) {
+          if (results.isNotEmpty) {
+            print('🔍 GOOGLE KG SEARCH+: Found ${results.length} results for query "$query"');
+            
+            // Find the best match using improved scoring
+            Map<String, dynamic>? bestResult = _findBestLocationMatchWithKGData(
+              results, 
+              locationName, 
+              originalEntityName ?? locationName,
+              kgEntity
+            );
+            
+            if (bestResult != null) {
+              final placeId = bestResult['placeId'] as String?;
+              if (placeId != null && placeId.isNotEmpty) {
+                print('🔍 GOOGLE KG SEARCH+: Getting details for best match place ID: $placeId');
+                final location = await _mapsService.getPlaceDetails(placeId);
+                
+                if (location != null) {
+                  // Use Knowledge Graph website if Maps doesn't have one
+                  String? finalWebsite = location.website;
+                  if ((finalWebsite == null || finalWebsite.isEmpty) && kgWebsite != null) {
+                    print('🔍 GOOGLE KG SEARCH+: Using Knowledge Graph website: $kgWebsite');
+                    finalWebsite = kgWebsite;
+                  }
+                  
+                  final Map<String, dynamic> result = {
+                    'location': location,
+                    'placeName': location.displayName ?? locationName,
+                    'website': finalWebsite,
+                    'mapsUrl': originalUrl,
+                    'kgDescription': kgDescription,
+                    'kgImageUrl': kgImageUrl,
+                    'kgEntity': kgEntity,
+                    'searchQuery': query,
+                    'confidence': 'high',
+                  };
+                  
+                  // Fill the form with the found location data
+                  _fillFormWithGoogleMapsData(
+                    location,
+                    location.displayName ?? locationName,
+                    finalWebsite ?? '',
+                    originalUrl
+                  );
+                  
+                  // If we have a KG description, store it in the notes field
+                  if (kgDescription != null && mounted) {
+                    final provider = context.read<ReceiveShareProvider>();
+                    final firstCard = provider.experienceCards.first;
+                    if (firstCard.notesController.text.isEmpty) {
+                      firstCard.notesController.text = kgDescription;
+                      print('🔍 GOOGLE KG SEARCH+: Added Knowledge Graph description to notes');
+                    }
+                  }
+                  
+                  print('🔍 GOOGLE KG SEARCH+: ✅ Successfully created result with location data');
+                  print('🔍 GOOGLE KG SEARCH+: Result structure: location=${location.displayName}, placeName=${location.displayName ?? locationName}, website=$finalWebsite');
+                  return result;
+                } else {
+                  print('🔍 GOOGLE KG SEARCH+: ⚠️ getPlaceDetails returned null for placeId: $placeId');
+                }
+              } else {
+                print('🔍 GOOGLE KG SEARCH+: ⚠️ bestResult missing placeId: $bestResult');
+              }
+            } else {
+              print('🔍 GOOGLE KG SEARCH+: ⚠️ No best result found from ${results.length} results');
+            }
+          } else {
+            print('🔍 GOOGLE KG SEARCH+: ⚠️ Empty result set received for query "$query"');
+          }
+        }
+      }
+      
+      print('🔍 GOOGLE KG SEARCH+: ❌ No suitable location found with any query or strategy');
+      return null;
+    } catch (e) {
+      print('🔍 GOOGLE KG SEARCH+ ERROR: ❌ Exception occurred: $e');
+      return null;
+    }
+  }
+
+  // ADDED: Generate search queries enhanced with Knowledge Graph data
+  List<String> _generateSearchQueriesWithKGData(
+    String kgName, 
+    String? originalEntityName, 
+    Map<String, dynamic>? kgEntity
+  ) {
+    List<String> queries = [];
+    
+    // Primary query - Knowledge Graph name
+    queries.add(kgName);
+    
+    // Original entity name if different
+    if (originalEntityName != null && originalEntityName != kgName) {
+      queries.add(originalEntityName);
+    }
+    
+    // Extract additional names from KG entity if available
+    if (kgEntity != null) {
+      final alternateName = kgEntity['alternateName'] as String?;
+      if (alternateName != null && !queries.contains(alternateName)) {
+        queries.add(alternateName);
+      }
+    }
+    
+    // Add variations
+    for (String baseQuery in List<String>.from(queries)) {
+      // Try without "The" prefix
+      if (baseQuery.toLowerCase().startsWith('the ')) {
+        String withoutThe = baseQuery.substring(4).trim();
+        if (!queries.contains(withoutThe)) {
+          queries.add(withoutThe);
+        }
+      }
+      
+      // Try without everything after comma
+      if (baseQuery.contains(',')) {
+        String beforeComma = baseQuery.split(',')[0].trim();
+        if (!queries.contains(beforeComma)) {
+          queries.add(beforeComma);
+        }
+      }
+      
+      // Try adding common location context if not already present
+      String baseLower = baseQuery.toLowerCase();
+      if (!baseLower.contains(' near ') && !baseLower.contains(' in ')) {
+        // Add "near me" variant for local searches
+        queries.add('$baseQuery near me');
+      }
+    }
+    
+    return queries;
+  }
+
+  // ADDED: Enhanced location matching with Knowledge Graph data
+  Map<String, dynamic>? _findBestLocationMatchWithKGData(
+    List<Map<String, dynamic>> results, 
+    String kgName,
+    String originalName, 
+    Map<String, dynamic>? kgEntity
+  ) {
+    if (results.isEmpty) return null;
+    if (results.length == 1) {
+      print('🔍 GOOGLE KG ENHANCED: Only one result found, using it by default');
+      return results[0];
+    }
+    
+    Map<String, dynamic>? bestMatch;
+    double bestScore = 0.0;
+    
+    // Get KG entity types for scoring
+    List<String> kgTypes = [];
+    if (kgEntity != null) {
+      final types = kgEntity['types'] as List<dynamic>? ?? [];
+      kgTypes = types.cast<String>();
+    }
+    
+    print('🔍 GOOGLE KG ENHANCED: Evaluating ${results.length} results for "$kgName"');
+    print('🔍 GOOGLE KG ENHANCED: Knowledge Graph types: $kgTypes');
+    
+    for (int i = 0; i < results.length; i++) {
+      final result = results[i];
+      final name = result['description'] as String? ?? result['name'] as String? ?? '';
+      final types = result['types'] as List<dynamic>? ?? [];
+      final address = result['vicinity'] as String? ?? result['formatted_address'] as String? ?? '';
+      
+      double score = 0.0;
+      List<String> scoreReasons = [];
+      
+      // Exact name matches get highest scores
+      if (name.toLowerCase() == kgName.toLowerCase() || 
+          name.toLowerCase() == originalName.toLowerCase()) {
+        score += 100.0;
+        scoreReasons.add('exact name match (+100)');
+      } else if (name.toLowerCase().contains(kgName.toLowerCase()) || 
+                 kgName.toLowerCase().contains(name.toLowerCase()) ||
+                 name.toLowerCase().contains(originalName.toLowerCase()) || 
+                 originalName.toLowerCase().contains(name.toLowerCase())) {
+        score += 60.0;
+        scoreReasons.add('partial name match (+60)');
+      }
+      
+      // Boost for specific place types that match KG types
+      if (kgTypes.contains('TouristAttraction') && 
+          types.any((type) => ['tourist_attraction', 'point_of_interest'].contains(type))) {
+        score += 40.0;
+        scoreReasons.add('tourist attraction type match (+40)');
+      } else if (kgTypes.contains('Museum') && 
+                 types.any((type) => ['museum', 'establishment'].contains(type))) {
+        score += 40.0;
+        scoreReasons.add('museum type match (+40)');
+      } else if (kgTypes.contains('Park') && 
+                 types.any((type) => ['park', 'natural_feature'].contains(type))) {
+        score += 40.0;
+        scoreReasons.add('park type match (+40)');
+      } else if (types.any((type) => ['tourist_attraction', 'museum', 'park', 'establishment'].contains(type))) {
+        score += 25.0;
+        scoreReasons.add('general place type match (+25)');
+      }
+      
+      // Prefer non-address results for tourist attractions
+      if (!name.contains(RegExp(r'\d+.*\w+\s+(St|Ave|Rd|Dr|Blvd|Way)', caseSensitive: false))) {
+        score += 20.0;
+        scoreReasons.add('not a street address (+20)');
+      }
+      
+      // Boost for establishment type (generally more reliable for places)
+      if (types.contains('establishment')) {
+        score += 15.0;
+        scoreReasons.add('establishment type (+15)');
+      }
+      
+      // Check if result has a rating (indicates it's a real place people visit)
+      if (result['rating'] != null) {
+        score += 10.0;
+        scoreReasons.add('has rating (+10)');
+      }
+      
+      print('🔍 GOOGLE KG ENHANCED [Result ${i+1}]:');
+      print('  Name: "$name"');
+      print('  Address: "$address"');
+      print('  Types: $types');
+      print('  Score: $score (${scoreReasons.join(', ')})');
+      
+      if (score > bestScore) {
+        bestScore = score;
+        bestMatch = result;
+      }
+    }
+    
+    // Require higher confidence for KG-enhanced results
+    if (bestScore >= 35.0) {
+      print('🔍 GOOGLE KG ENHANCED: ✓ Selected best result: "${bestMatch!['description']}" with score: $bestScore');
+      return bestMatch;
+    }
+    
+    print('🔍 GOOGLE KG ENHANCED: ⚠️ No result met minimum confidence threshold (35.0). Best score was: $bestScore');
+    // Return the best match anyway if we have one, but log the low confidence
+    if (bestMatch != null && bestScore > 0) {
+      print('🔍 GOOGLE KG ENHANCED: ⚠️ Returning best match despite low confidence');
+      return bestMatch;
+    }
+    
+    return null;
   }
 
   Future<Map<String, dynamic>?> _getLocationFromMapsUrl(String mapsUrl) async {
@@ -3299,6 +4861,59 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   bool _containsOnlyCoordinates(String text) {
     final coordRegex = RegExp(r'^-?[\d.]+, ?-?[\d.]+$');
     return coordRegex.hasMatch(text.trim());
+  }
+
+  // ADDED: Handle low confidence location results
+  Future<Location?> _handleLowConfidenceLocationResult(
+    List<Map<String, dynamic>> topResults, 
+    String entityName
+  ) async {
+    if (!mounted || topResults.isEmpty) return null;
+    
+    // Show a dialog with the top location options
+    final selectedResult = await showDialog<Map<String, dynamic>>(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          title: Text('Select Location for "$entityName"'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'Multiple locations found. Please select the correct one:',
+                style: TextStyle(fontSize: 14),
+              ),
+              const SizedBox(height: 16),
+              ...topResults.take(3).map((result) {
+                final name = result['description'] as String? ?? result['name'] as String? ?? '';
+                final address = result['vicinity'] as String? ?? result['formatted_address'] as String? ?? '';
+                return ListTile(
+                  title: Text(name),
+                  subtitle: Text(address, style: TextStyle(fontSize: 12)),
+                  onTap: () => Navigator.of(dialogContext).pop(result),
+                );
+              }).toList(),
+            ],
+          ),
+          actions: [
+            TextButton(
+              child: const Text('Search Manually'),
+              onPressed: () => Navigator.of(dialogContext).pop(null),
+            ),
+          ],
+        );
+      },
+    );
+    
+    if (selectedResult != null) {
+      final placeId = selectedResult['placeId'] as String?;
+      if (placeId != null && placeId.isNotEmpty) {
+        return await _mapsService.getPlaceDetails(placeId);
+      }
+    }
+    
+    return null;
   }
 
   Future<void> _loadUserColorCategories() async {

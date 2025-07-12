@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'dart:math' as math;
+import 'dart:io';
+import 'package:path_provider/path_provider.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
@@ -18,9 +21,22 @@ import 'dart:async'; // Import dart:async for StreamSubscription
 import 'services/google_maps_service.dart'; // ADDED: Import GoogleMapsService
 import 'firebase_options.dart'; // Import Firebase options
 import 'package:flutter/foundation.dart' show kIsWeb; // Import kIsWeb
+import 'package:fluttertoast/fluttertoast.dart';
 
 // Define a GlobalKey for the Navigator
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
+// Debug logging function for cold start issues
+Future<void> _writeDebugLog(String message) async {
+  try {
+    final directory = await getApplicationDocumentsDirectory();
+    final file = File('${directory.path}/plendy_debug.log');
+    final timestamp = DateTime.now().toIso8601String();
+    await file.writeAsString('$timestamp: $message\n', mode: FileMode.append);
+  } catch (e) {
+    print('Failed to write debug log: $e');
+  }
+}
 
 // Initialize FlutterLocalNotificationsPlugin (if you want to show foreground notifications)
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
@@ -203,12 +219,25 @@ class _MyAppState extends State<MyApp> {
   final SharingService _sharingService = SharingService();
   StreamSubscription? _intentSub;
   List<SharedMediaFile>? _sharedFiles;
+  bool _initialCheckComplete = false;
+  bool _shouldShowReceiveShare = false;
 
   @override
   void initState() {
     super.initState();
 
     print("MAIN: App initializing");
+    
+    // Add toast right at startup to confirm we're getting here
+    // WidgetsBinding.instance.addPostFrameCallback((_) {
+    //   Fluttertoast.showToast(
+    //     msg: "App Started - initState called",
+    //     toastLength: Toast.LENGTH_LONG,
+    //     gravity: ToastGravity.TOP,
+    //     backgroundColor: Colors.red.withOpacity(0.8),
+    //     textColor: Colors.white,
+    //   );
+    // });
 
     if (!kIsWeb) {
       // Check for initial shared files when app was closed
@@ -219,17 +248,67 @@ class _MyAppState extends State<MyApp> {
 
         if (value != null && value.isNotEmpty) {
           print("MAIN: Found initial shared files: ${value.length}");
+          
+          // Add toast when we detect shared files
+          // Fluttertoast.showToast(
+          //   msg: "Found ${value.length} shared files in initState",
+          //   toastLength: Toast.LENGTH_LONG,
+          //   gravity: ToastGravity.TOP,
+          //   backgroundColor: Colors.green.withOpacity(0.8),
+          //   textColor: Colors.white,
+          // );
+          
           if (mounted) {
+            // Check if this is a Yelp URL during cold start - if so, check for existing session
+            bool isYelpUrl = false;
+            for (final file in value) {
+              if (file.type == SharedMediaType.text || file.type == SharedMediaType.url) {
+                String content = file.path.toLowerCase();
+                if (content.contains('yelp.com/biz') || content.contains('yelp.to/')) {
+                  isYelpUrl = true;
+                  break;
+                }
+              }
+            }
+            
+            // For Yelp URLs during cold start, always create ReceiveShareScreen
+            // but let it handle restoration internally
+            if (isYelpUrl) {
+              print("MAIN: Cold start Yelp URL detected - will create ReceiveShareScreen with restoration logic");
+            }
+            
             setState(() {
               _sharedFiles = value;
+              _initialCheckComplete = true;
+              _shouldShowReceiveShare = true;
             });
           }
           print("MAIN: Stored initial share data for display");
         } else {
           print("MAIN: No initial shared files found");
+          
+          // Add toast when no files found
+          // Fluttertoast.showToast(
+          //   msg: "No shared files found in initState",
+          //   toastLength: Toast.LENGTH_LONG,
+          //   gravity: ToastGravity.TOP,
+          //   backgroundColor: Colors.orange.withOpacity(0.8),
+          //   textColor: Colors.white,
+          // );
+          
+          if (mounted) {
+            setState(() {
+              _initialCheckComplete = true;
+            });
+          }
         }
       }).catchError((err) {
         print("MAIN: Error getting initial media (expected on web): $err");
+        if (mounted) {
+          setState(() {
+            _initialCheckComplete = true;
+          });
+        }
       });
 
       // Listen for incoming shares while the app is running
@@ -238,6 +317,7 @@ class _MyAppState extends State<MyApp> {
         if (mounted) {
           setState(() {
             _sharedFiles = value;
+            _initialCheckComplete = true;
           });
         }
         // Optionally, navigate immediately if context is available
@@ -249,6 +329,13 @@ class _MyAppState extends State<MyApp> {
       }, onError: (err) {
         print("getIntentDataStream error (expected on web): $err");
       });
+    } else {
+      // On web, mark initial check as complete immediately
+      if (mounted) {
+        setState(() {
+          _initialCheckComplete = true;
+        });
+      }
     }
 
     // Listen for app going to foreground to reinitialize sharing capabilities
@@ -278,9 +365,52 @@ class _MyAppState extends State<MyApp> {
 
   @override
   Widget build(BuildContext context) {
-    // Check if launched from share AND there are files
-    // Only consider launchedFromShare if not on web and files are present
-    bool launchedFromShare = !kIsWeb && _sharedFiles != null && _sharedFiles!.isNotEmpty;
+    // Use the dedicated flag instead of calculating each time
+    bool launchedFromShare = !kIsWeb && _shouldShowReceiveShare && _sharedFiles != null && _sharedFiles!.isNotEmpty;
+    
+    print("MAIN BUILD DEBUG: Detailed calculation:");
+    print("  !kIsWeb = ${!kIsWeb}");
+    print("  _shouldShowReceiveShare = $_shouldShowReceiveShare");
+    print("  _sharedFiles != null = ${_sharedFiles != null}");
+    if (_sharedFiles != null) {
+      print("  _sharedFiles!.isNotEmpty = ${_sharedFiles!.isNotEmpty}");
+    }
+    print("  Final launchedFromShare = $launchedFromShare");
+    
+    print("MAIN BUILD DEBUG: _initialCheckComplete=$_initialCheckComplete, kIsWeb=$kIsWeb, _sharedFiles is null? ${_sharedFiles == null}");
+    print("MAIN BUILD DEBUG: _shouldShowReceiveShare=$_shouldShowReceiveShare");
+    if (_sharedFiles != null) {
+      print("MAIN BUILD DEBUG: _sharedFiles count=${_sharedFiles!.length}");
+      if (_sharedFiles!.isNotEmpty) {
+        print("MAIN BUILD DEBUG: first file=${_sharedFiles!.first.path.substring(0, math.min(100, _sharedFiles!.first.path.length))}");
+      }
+    }
+    print("MAIN BUILD DEBUG: launchedFromShare=$launchedFromShare, _initialCheckComplete=$_initialCheckComplete");
+    
+    // Add visual debugging for cold start
+    // if (!kIsWeb) {
+    //   WidgetsBinding.instance.addPostFrameCallback((_) {
+    //     final message = "Cold Start Debug: launchedFromShare=$launchedFromShare, files=${_sharedFiles?.length ?? 0}, shouldShow=$_shouldShowReceiveShare, kIsWeb=$kIsWeb";
+    //     print(message);
+    //     _writeDebugLog(message);
+    //     // Visual toast debugging:
+    //     Fluttertoast.showToast(
+    //       msg: message,
+    //       toastLength: Toast.LENGTH_LONG,
+    //       gravity: ToastGravity.CENTER,
+    //       backgroundColor: Colors.black.withOpacity(0.8),
+    //       textColor: Colors.white,
+    //     );
+    //   });
+    // }
+    
+    // For cold start with shared files, we simply proceed to show ReceiveShareScreen
+    // The complex flow checking is only needed for warm app scenarios
+    if (launchedFromShare) {
+      print("MAIN: Cold start with shared files - will create ReceiveShareScreen");
+    } else {
+      print("MAIN: No shared files or not cold start - proceeding to normal auth flow");
+    }
 
     // --- ADDED: Get AuthService from Provider ---
     final authService = Provider.of<AuthService>(context, listen: false);
@@ -291,78 +421,81 @@ class _MyAppState extends State<MyApp> {
       theme: ThemeData(
         primarySwatch: Colors.blue,
       ),
-      home: launchedFromShare
-          // If launched from share, show ReceiveShareScreen directly, wrapped in Provider
-          ? ChangeNotifierProvider(
-              create: (_) => ReceiveShareProvider(),
-              child: ReceiveShareScreen(
-                  sharedFiles: _sharedFiles!,
-                  onCancel: () {
-                    // Logic to navigate back or close app
-                    // Maybe SystemNavigator.pop() or navigate to MainScreen
-                    print("MyApp: Closing share screen launched initially");
-                    if (mounted) {
-                      setState(() {
-                        // Use setState to trigger rebuild
-                        _sharedFiles = null; // Clear shared files
-                      });
-                    }
-                    if (!kIsWeb) {
-                      ReceiveSharingIntent.instance.reset(); // Reset intent
-                    }
-                    // No explicit navigation needed here, the StreamBuilder below will handle it
-                  }),
-            )
-          // Otherwise, proceed with normal auth flow
-          : StreamBuilder<User?>(
-              // --- MODIFIED: Use provided AuthService instance ---
-              stream: authService.authStateChanges,
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
-                }
+      home: _buildHomeWidget(authService, launchedFromShare),
+    );
+  }
 
-                // Initialize/cleanup NotificationStateService based on auth state
-                final notificationService = Provider.of<NotificationStateService>(context, listen: false);
-                if (snapshot.hasData && snapshot.data?.uid != null) {
-                  // User is logged in - initialize notification service
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    notificationService.initializeForUser(snapshot.data!.uid);
-                  });
-                } else {
-                  // User is logged out - clean up notification service
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    notificationService.cleanup();
-                  });
-                }
+  Widget _buildHomeWidget(AuthService authService, bool launchedFromShare) {
+    print("MAIN BUILD DEBUG: _buildHomeWidget called with launchedFromShare=$launchedFromShare");
+    
+    // If we have shared files, show ReceiveShareScreen
+    if (launchedFromShare && _sharedFiles != null && _sharedFiles!.isNotEmpty) {
+      print("MAIN BUILD DEBUG: Creating ReceiveShareScreen with ${_sharedFiles!.length} files");
+      return ChangeNotifierProvider(
+        create: (_) => ReceiveShareProvider(),
+        child: ReceiveShareScreen(
+          sharedFiles: _sharedFiles!,
+          onCancel: () {
+            print("MyApp: Closing share screen launched initially");
+            if (mounted) {
+              setState(() {
+                _sharedFiles = null; // Clear shared files
+                _shouldShowReceiveShare = false; // Reset flag
+              });
+            }
+            if (!kIsWeb) {
+              ReceiveSharingIntent.instance.reset(); // Reset intent
+            }
+          }),
+      );
+    }
 
-                // Print debug info
-                print(
-                    'Auth state changed: ${snapshot.hasData ? 'Logged in' : 'Logged out'}');
+    // Otherwise, proceed with normal auth flow
+    print("MAIN BUILD DEBUG: Going to auth flow instead of ReceiveShareScreen");
+    return StreamBuilder<User?>(
+      stream: authService.authStateChanges,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
 
-                // --- ADDED: Reset share data on logout ---
-                if (!snapshot.hasData && _sharedFiles != null) {
-                  // If user logs out while share data is present, clear it
-                  // Use a post-frame callback to avoid calling setState during build
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    if (mounted) {
-                      // Check if still mounted
-                      setState(() {
-                        _sharedFiles = null;
-                      });
-                      if (!kIsWeb) {
-                        ReceiveSharingIntent.instance.reset();
-                      }
-                      print("MyApp: Cleared share data due to logout.");
-                    }
-                  });
-                }
+        // Initialize/cleanup NotificationStateService based on auth state
+        final notificationService = Provider.of<NotificationStateService>(context, listen: false);
+        if (snapshot.hasData && snapshot.data?.uid != null) {
+          // User is logged in - initialize notification service
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            notificationService.initializeForUser(snapshot.data!.uid);
+          });
+        } else {
+          // User is logged out - clean up notification service
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            notificationService.cleanup();
+          });
+        }
 
-                return snapshot.hasData
-                    ? const MainScreen()
-                    : const AuthScreen();
-              },
-            ),
+        // Print debug info
+        print('Auth state changed: ${snapshot.hasData ? 'Logged in' : 'Logged out'}');
+
+        // --- ADDED: Reset share data on logout ---
+        if (!snapshot.hasData && _sharedFiles != null) {
+          // If user logs out while share data is present, clear it
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) {
+              setState(() {
+                _sharedFiles = null;
+              });
+              if (!kIsWeb) {
+                ReceiveSharingIntent.instance.reset();
+              }
+              print("MyApp: Cleared share data due to logout.");
+            }
+          });
+        }
+
+        return snapshot.hasData
+            ? const MainScreen()
+            : const AuthScreen();
+      },
     );
   }
 }
