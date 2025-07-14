@@ -11,7 +11,7 @@ class UserSearchDelegate extends SearchDelegate<UserProfile?> {
   // Map to store follow status for each user ID in search results
   Map<String, bool> _isFollowingStatus = {};
   // Map to store loading status for each button in search results
-  Map<String, bool> _isButtonLoading = {};
+  final Map<String, bool> _isButtonLoading = {};
   // To ensure we only load follow status once per buildResults/Suggestions
   String _lastQueryForFollowStatus = ""; 
 
@@ -139,7 +139,7 @@ class UserSearchDelegate extends SearchDelegate<UserProfile?> {
                             );
                           } finally {
                              _isButtonLoading[userProfile.id] = false;
-                             (context as Element).markNeedsBuild(); // Force rebuild
+                             (context).markNeedsBuild(); // Force rebuild
                           }
                         },
                         child: Text(isCurrentlyFollowing ? 'Unfollow' : 'Follow'),

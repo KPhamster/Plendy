@@ -4,6 +4,8 @@ import 'package:webview_flutter/webview_flutter.dart';
 import 'dart:async'; // For cancellation
 import 'dart:io' show Platform; // For iOS detection
 import 'package:flutter/foundation.dart' show kIsWeb; // Import kIsWeb
+import 'package:url_launcher/url_launcher.dart'; // For launching URLs
+// For Instagram Icon
 
 // Conditional imports for web-specific embedding
 import 'instagram_web_logic_stub.dart' 
@@ -31,8 +33,8 @@ class InstagramWebView extends StatefulWidget {
 }
 
 class InstagramWebViewState extends State<InstagramWebView> {
-  // Mobile-only controller (only for Android)
-  WebViewController? controller;
+  // Mobile-only controller
+  late final WebViewController controller;
   bool isLoading = true; // Still manage internal loading indicator
   
   // Add cancellation tokens for operations
@@ -59,8 +61,7 @@ class InstagramWebViewState extends State<InstagramWebView> {
         _generateInstagramEmbedHtml(widget.url), // HTML includes embed.js script call
       );
     } else {
-      // Initialize WebView for both iOS and Android, but with different configurations
-      _initWebViewController();
+      _initWebViewController(); // Mobile: Initialize WebView controller
     }
   }
   
@@ -72,9 +73,9 @@ class InstagramWebViewState extends State<InstagramWebView> {
 
   // Method to simulate a tap (might still be useful for auto-play)
   void _simulateEmbedTap() {
-    if (!mounted || _isDisposed || kIsWeb || Platform.isIOS) return; // Safety check and web/iOS check
+    if (!mounted || _isDisposed || kIsWeb) return; // Safety check and web check
     
-    controller!.runJavaScript('''
+    controller.runJavaScript('''
       (function() {
         try {
           // Find any clickable elements in the Instagram embed
@@ -196,178 +197,98 @@ class InstagramWebViewState extends State<InstagramWebView> {
   }
 
   void _initWebViewController() {
-    // Initialize WebView for both iOS and Android
+    // This should only be called if !kIsWeb, but double-check.
     if (kIsWeb) return;
 
     controller = WebViewController();
     
     if (!mounted || _isDisposed) return; // Safety check
     
-    widget.onWebViewCreated(controller!); // Pass controller to parent
+    widget.onWebViewCreated(controller); // Pass controller to parent
 
-    if (Platform.isIOS) {
-      // iOS: Use direct WebView navigation like browser sign-in screen
-      controller!
-        ..setJavaScriptMode(JavaScriptMode.unrestricted)
-        ..setBackgroundColor(const Color(0x00000000))
-        ..setNavigationDelegate(
-          NavigationDelegate(
-            onProgress: (int progress) {},
-            onPageStarted: (String url) {
-              if (!mounted || _isDisposed) return;
+    controller
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setBackgroundColor(const Color(0x00000000))
+      ..setUserAgent(
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+      ..setNavigationDelegate(
+        NavigationDelegate(
+          onProgress: (int progress) {},
+          onPageStarted: (String url) {
+            if (!mounted || _isDisposed) return; // Safety check
+            
+            setState(() {
+              isLoading = true;
+            });
+          },
+          onPageFinished: (String url) {
+            if (!mounted || _isDisposed) return; // Safety check
+            
+            // Safely call the callback
+            try {
+              widget.onPageFinished(url); // Notify parent
+            } catch (e) {
+              print("Error in onPageFinished callback: $e");
+            }
+            
+            // Set loading to false after a short delay to allow rendering
+            // Use cancellation approach
+            final currentLoadingOperationId = ++_loadingDelayOperationId;
+            
+            Future.delayed(const Duration(milliseconds: 0), () {
+              // Check if this is still the current operation and widget is still mounted
+              if (!mounted || _isDisposed || _loadingDelayOperationId != currentLoadingOperationId) return;
               
-              setState(() {
-                isLoading = true;
-              });
-            },
-            onPageFinished: (String url) {
-              if (!mounted || _isDisposed) return;
-              
-              // Safely call the callback
-              try {
-                widget.onPageFinished(url);
-              } catch (e) {
-                print("Error in onPageFinished callback: $e");
-              }
-              
-              // Set loading to false after page loads
               setState(() {
                 isLoading = false;
               });
-            },
-            onWebResourceError: (WebResourceError error) {
-              print("WebView Error: ${error.description}");
               
-              if (!mounted || _isDisposed) return;
+              // RE-ADD: Simulate tap after loading with cancellation
+              final currentTapOperationId = ++_simulateTapOperationId;
               
-              setState(() {
-                isLoading = false;
+              Future.delayed(const Duration(milliseconds: 0), () {
+                // Check again before executing
+                if (!mounted || _isDisposed || _simulateTapOperationId != currentTapOperationId) return;
+                _simulateEmbedTap();
               });
-            },
-            onNavigationRequest: (NavigationRequest request) {
-              // Handle custom URL schemes (like Instagram's app links)
-              final url = request.url;
+            });
+          },
+          onWebResourceError: (WebResourceError error) {
+            print("WebView Error: ${error.description}");
+            
+            if (!mounted || _isDisposed) return; // Safety check
+            
+            setState(() {
+              isLoading = false; // Stop loading on error
+            });
+          },
+          onNavigationRequest: (NavigationRequest request) {
+            // Intercept navigation to external links
+            if (!request.url.contains('instagram.com') &&
+                !request.url.contains('cdn.instagram.com') &&
+                !request.url.contains('cdninstagram.com')) {
               
-              // List of custom schemes to block
-              final customSchemes = ['instagram', 'fb', 'intent'];
-              final uri = Uri.tryParse(url);
-              
-              if (uri != null && customSchemes.any((scheme) => url.startsWith('$scheme:'))) {
-                // Block the custom scheme navigation
-                return NavigationDecision.prevent;
-              }
-              
-              // Allow regular http/https URLs for Instagram and Facebook (for login sync)
-              if ((url.startsWith('http://') || url.startsWith('https://')) &&
-                  (url.contains('instagram.com') || 
-                   url.contains('cdninstagram.com') || 
-                   url.contains('fbcdn.net') ||
-                   (url.contains('facebook.com') && url.contains('/instagram/')))) {
-                return NavigationDecision.navigate;
-              }
-              
-              // Open external links in system browser (but not Facebook Instagram login sync)
-              if (mounted && !_isDisposed && 
-                  !url.contains('instagram.com') && 
-                  !(url.contains('facebook.com') && url.contains('/instagram/'))) {
+              // Check if mounted before attempting callback
+              if (mounted && !_isDisposed) {
+                // Use a try-catch for the callback
                 try {
-                  widget.launchUrlCallback(url);
+                  widget.launchUrlCallback(request.url);
                 } catch (e) {
                   print("Error in launchUrlCallback: $e");
                 }
-                return NavigationDecision.prevent;
               }
               
-              return NavigationDecision.navigate;
-            },
-          ),
-        )
-        // Load Instagram URL directly (like browser sign-in screen does)
-        ..loadRequest(Uri.parse(widget.url));
-    } else {
-      // Android: Keep existing complex configuration with JavaScript enabled
-      controller!
-        ..setJavaScriptMode(JavaScriptMode.unrestricted)
-        ..setBackgroundColor(const Color(0x00000000))
-        ..setUserAgent(
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
-        ..setNavigationDelegate(
-          NavigationDelegate(
-            onProgress: (int progress) {},
-            onPageStarted: (String url) {
-              if (!mounted || _isDisposed) return; // Safety check
-              
-              setState(() {
-                isLoading = true;
-              });
-            },
-            onPageFinished: (String url) {
-              if (!mounted || _isDisposed) return; // Safety check
-              
-              // Safely call the callback
-              try {
-                widget.onPageFinished(url); // Notify parent
-              } catch (e) {
-                print("Error in onPageFinished callback: $e");
-              }
-              
-              // Set loading to false after a short delay to allow rendering
-              // Use cancellation approach
-              final currentLoadingOperationId = ++_loadingDelayOperationId;
-              
-              Future.delayed(const Duration(milliseconds: 0), () {
-                // Check if this is still the current operation and widget is still mounted
-                if (!mounted || _isDisposed || _loadingDelayOperationId != currentLoadingOperationId) return;
-                
-                setState(() {
-                  isLoading = false;
-                });
-                
-                // RE-ADD: Simulate tap after loading with cancellation
-                final currentTapOperationId = ++_simulateTapOperationId;
-                
-                Future.delayed(const Duration(milliseconds: 0), () {
-                  // Check again before executing
-                  if (!mounted || _isDisposed || _simulateTapOperationId != currentTapOperationId) return;
-                  _simulateEmbedTap();
-                });
-              });
-            },
-            onWebResourceError: (WebResourceError error) {
-              print("WebView Error: ${error.description}");
-              
-              if (!mounted || _isDisposed) return; // Safety check
-              
-              setState(() {
-                isLoading = false; // Stop loading on error
-              });
-            },
-            onNavigationRequest: (NavigationRequest request) {
-              // Intercept navigation to external links
-              if (!request.url.contains('instagram.com') &&
-                  !request.url.contains('cdn.instagram.com') &&
-                  !request.url.contains('cdninstagram.com')) {
-                
-                // Check if mounted before attempting callback
-                if (mounted && !_isDisposed) {
-                  // Use a try-catch for the callback
-                  try {
-                    widget.launchUrlCallback(request.url);
-                  } catch (e) {
-                    print("Error in launchUrlCallback: $e");
-                  }
-                }
-                
-                return NavigationDecision.prevent;
-              }
-              return NavigationDecision.navigate;
-            },
-          ),
-        );
-        
-      // Load complex HTML with embed.js for Android
-      controller!.loadHtmlString(_generateInstagramEmbedHtml(widget.url));
-    }
+              return NavigationDecision.prevent;
+            }
+            return NavigationDecision.navigate;
+          },
+        ),
+      );
+      
+    // Final check before loading HTML
+    if (!mounted || _isDisposed) return;
+    
+    controller.loadHtmlString(_generateInstagramEmbedHtml(widget.url));
   }
 
   void refresh() {
@@ -375,13 +296,7 @@ class InstagramWebViewState extends State<InstagramWebView> {
       // Web logic would go here if needed
     } else {
       if (mounted && !_isDisposed) {
-        if (Platform.isIOS) {
-          // iOS: Load Instagram URL directly
-          controller?.loadRequest(Uri.parse(widget.url));
-        } else {
-          // Android: Load complex HTML with embed.js
-          controller?.loadHtmlString(_generateInstagramEmbedHtml(widget.url));
-        }
+        controller.loadHtmlString(_generateInstagramEmbedHtml(widget.url));
       }
     }
   }
@@ -533,6 +448,21 @@ class InstagramWebViewState extends State<InstagramWebView> {
     ''';
   }
 
+  Future<void> _launchInstagramUrl() async {
+    final Uri uri = Uri.parse(widget.url);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } else {
+      // Handle error or show a message
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open Instagram link: ${widget.url}')),
+        );
+      }
+      print('Could not launch ${widget.url}');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (kIsWeb) {
@@ -548,8 +478,8 @@ class InstagramWebViewState extends State<InstagramWebView> {
       return instagram_web.buildInstagramWebViewForWeb(_webEmbedViewType!);
     }
 
-    // Both iOS and Android: Use WebView implementation
-    final double containerHeight = widget.height;
+    // Mobile specific WebViewWidget implementation
+    final double containerHeight = widget.height; // Use widget.height for mobile
     return Stack(
       alignment: Alignment.center,
       children: [
@@ -560,13 +490,13 @@ class InstagramWebViewState extends State<InstagramWebView> {
             border: Border.all(color: Colors.grey[300]!),
             borderRadius: BorderRadius.circular(8),
           ),
-          child: WebViewWidget(controller: controller!),
+          child: WebViewWidget(controller: controller), // controller is initialized only for mobile
         ),
-        if (isLoading)
+        if (isLoading) // isLoading is managed by mobile path
           Container(
             width: double.infinity,
             height: containerHeight,
-            color: Colors.white.withValues(alpha: 0.7),
+            color: Colors.white.withOpacity(0.7),
             child: Center(
               child: Column(
                 mainAxisSize: MainAxisSize.min,

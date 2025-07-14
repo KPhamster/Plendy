@@ -25,7 +25,7 @@ class _FollowRequestsScreenState extends State<FollowRequestsScreen> {
   StreamSubscription? _requestsSubscription;
 
   // Keep track of loading state for individual buttons
-  Map<String, bool> _isProcessingRequest = {}; 
+  final Map<String, bool> _isProcessingRequest = {}; 
 
   @override
   void initState() {
@@ -57,7 +57,7 @@ class _FollowRequestsScreenState extends State<FollowRequestsScreen> {
   void _subscribeToFollowRequests() {
     _requestsSubscription?.cancel(); // Cancel previous subscription if any
     if (_currentUserId == null) {
-      if (mounted) setState(() => {_followRequests = [], _isLoadingInitial = false});
+      if (mounted) setState(() {_followRequests = []; _isLoadingInitial = false;});
       return;
     }
     if (mounted) setState(() => _isLoadingInitial = true);

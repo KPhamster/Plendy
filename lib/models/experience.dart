@@ -1,9 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:flutter/foundation.dart';
 import 'package:equatable/equatable.dart';
-import 'review.dart';
-import 'comment.dart';
-import 'reel.dart';
 
 /// Represents a geographic location with latitude and longitude
 class Location extends Equatable {

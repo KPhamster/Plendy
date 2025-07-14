@@ -195,9 +195,7 @@ class _MapScreenState extends State<MapScreen> {
       print("🗺️ MAP SCREEN: Waiting for map controller...");
       // final GoogleMapController controller = // Commented out, will use _mapController
       //     await _mapControllerCompleter.future;
-      if (_mapController == null) {
-        _mapController = await _mapControllerCompleter.future;
-      }
+      _mapController ??= await _mapControllerCompleter.future;
       print("🗺️ MAP SCREEN: Map controller ready. Fetching user location...");
 
       // Get current location
@@ -554,9 +552,7 @@ class _MapScreenState extends State<MapScreen> {
       // if (bounds != null) {
       //   controller.animateCamera(CameraUpdate.newLatLngBounds(bounds, 50.0));
       // }
-      if (_mapController == null) {
-        _mapController = await _mapControllerCompleter.future;
-      }
+      _mapController ??= await _mapControllerCompleter.future;
       final bounds = _calculateBoundsFromMarkers(_markers);
       if (bounds != null && _mapController != null) {
         _mapController!.animateCamera(CameraUpdate.newLatLngBounds(bounds, 50.0));

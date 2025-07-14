@@ -215,7 +215,7 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
       }
 
       // Update parent with selected location
-      widget.onLocationSelected!(_selectedLocation!);
+      widget.onLocationSelected(_selectedLocation!);
     
       // Update the marker on the map
       _updateSelectedLocationMarker();

@@ -1411,7 +1411,7 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
               .where((id) => _currentUserCategories.any((cat) => cat.id == id))
               .toList();
           _cardData.selectedOtherCategoryIds = validOtherIds;
-          print("ADD_MODAL_LOAD: Setting other categories in setState: ${validOtherIds}");
+          print("ADD_MODAL_LOAD: Setting other categories in setState: $validOtherIds");
         }
       });
     }

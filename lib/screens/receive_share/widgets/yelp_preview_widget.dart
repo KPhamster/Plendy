@@ -55,7 +55,7 @@ class _YelpPreviewWidgetState extends State<YelpPreviewWidget> {
         "🔍 YELP PREVIEW WIDGET: Shared text available: ${widget.sharedText != null ? "YES (${widget.sharedText!.length} chars)" : "NO"}");
     if (widget.sharedText != null) {
       print(
-          "🔍 YELP PREVIEW WIDGET: Shared text content: ${widget.sharedText!.length > 100 ? widget.sharedText!.substring(0, 100) + "..." : widget.sharedText!}");
+          "🔍 YELP PREVIEW WIDGET: Shared text content: ${widget.sharedText!.length > 100 ? "${widget.sharedText!.substring(0, 100)}..." : widget.sharedText!}");
     }
     print(
         "🔍 YELP PREVIEW WIDGET: Extracted fallback business name: $fallbackBusinessName");
@@ -640,12 +640,10 @@ class _YelpPreviewWidgetState extends State<YelpPreviewWidget> {
   // Generate a seed for consistent photo selection
   String _createPhotoSeed(String businessName, Location location) {
     String seed = businessName;
-    if (location.longitude != null) {
-      String locationStr =
-          '${location.latitude.toStringAsFixed(3)}_${location.longitude.toStringAsFixed(3)}';
-      seed = '$seed-$locationStr';
-    }
-    return seed.hashCode.abs().toString();
+    String locationStr =
+        '${location.latitude.toStringAsFixed(3)}_${location.longitude.toStringAsFixed(3)}';
+    seed = '$seed-$locationStr';
+      return seed.hashCode.abs().toString();
   }
 
   // Get a photo URL based on business type

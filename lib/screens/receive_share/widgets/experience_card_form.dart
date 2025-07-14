@@ -3,10 +3,10 @@ import 'package:plendy/screens/receive_share_screen.dart'; // For ExperienceCard
 import 'package:plendy/models/experience.dart'
     show Location; // ONLY import Location
 import 'package:plendy/models/user_category.dart'; // RENAMED Import
-import 'package:plendy/screens/location_picker_screen.dart'; // For Location Picker
+// For Location Picker
 import 'package:plendy/services/experience_service.dart'; // ADDED for adding category
 import 'package:plendy/services/google_maps_service.dart'; // If needed for location updates
-import 'package:plendy/widgets/google_maps_widget.dart'; // If needed
+// If needed
 import 'package:url_launcher/url_launcher.dart'; // Import url_launcher
 import 'package:font_awesome_flutter/font_awesome_flutter.dart'; // Import FontAwesome
 // UPDATED: Import the modal
