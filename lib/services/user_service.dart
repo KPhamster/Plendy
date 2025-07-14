@@ -494,14 +494,14 @@ class UserService {
       final usernameSnapshot = await _firestore
           .collection('users')
           .where('lowercaseUsername', isGreaterThanOrEqualTo: lowercaseQuery)
-          .where('lowercaseUsername', isLessThanOrEqualTo: '${lowercaseQuery}\uf8ff')
+          .where('lowercaseUsername', isLessThanOrEqualTo: '$lowercaseQuery\uf8ff')
           .limit(10) // Limit results for performance
           .get();
 
       for (var doc in usernameSnapshot.docs) {
-        if (doc.data() != null && !userIds.contains(doc.id)) {
+        if (!userIds.contains(doc.id)) {
           // Safely cast the data to Map<String, dynamic> to avoid type casting errors
-          final data = Map<String, dynamic>.from(doc.data()!);
+          final data = Map<String, dynamic>.from(doc.data());
           users.add(UserProfile.fromMap(doc.id, data));
           userIds.add(doc.id);
         }
@@ -511,14 +511,14 @@ class UserService {
       final displayNameSnapshot = await _firestore
           .collection('users')
           .where('lowercaseDisplayName', isGreaterThanOrEqualTo: lowercaseQuery)
-          .where('lowercaseDisplayName', isLessThanOrEqualTo: '${lowercaseQuery}\uf8ff')
+          .where('lowercaseDisplayName', isLessThanOrEqualTo: '$lowercaseQuery\uf8ff')
           .limit(10) // Limit results
           .get();
 
       for (var doc in displayNameSnapshot.docs) {
-        if (doc.data() != null && !userIds.contains(doc.id)) {
+        if (!userIds.contains(doc.id)) {
           // Safely cast the data to Map<String, dynamic> to avoid type casting errors
-          final data = Map<String, dynamic>.from(doc.data()!);
+          final data = Map<String, dynamic>.from(doc.data());
           users.add(UserProfile.fromMap(doc.id, data));
           userIds.add(doc.id);
         }
@@ -538,14 +538,14 @@ class UserService {
         final originalDisplayNameSnapshot = await _firestore
             .collection('users')
             .where('displayName', isGreaterThanOrEqualTo: searchQuery)
-            .where('displayName', isLessThanOrEqualTo: '${searchQuery}\uf8ff')
+            .where('displayName', isLessThanOrEqualTo: '$searchQuery\uf8ff')
             .limit(5) // Smaller limit since we're doing multiple queries
             .get();
 
         for (var doc in originalDisplayNameSnapshot.docs) {
-          if (doc.data() != null && !userIds.contains(doc.id)) {
+          if (!userIds.contains(doc.id)) {
             // Safely cast the data to Map<String, dynamic> to avoid type casting errors
-            final data = Map<String, dynamic>.from(doc.data()!);
+            final data = Map<String, dynamic>.from(doc.data());
             // Check if displayName contains the query (case-insensitive)
             final displayName = data['displayName'] as String?;
             if (displayName != null && displayName.toLowerCase().contains(lowercaseQuery)) {

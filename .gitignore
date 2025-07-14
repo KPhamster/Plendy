@@ -102,3 +102,4 @@ mcp-server-raygun/node_modules/shelljs/bin/shjs
 mcp-server-raygun/node_modules/resolve/bin/resolve
 get-pip.py
 .claude/settings.local.json
+android-mcp-server/

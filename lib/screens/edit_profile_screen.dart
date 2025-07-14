@@ -7,8 +7,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import '../services/auth_service.dart';
 import '../services/user_service.dart';
-import '../models/user_profile.dart'; // Import UserProfile model
-import 'auth_screen.dart';
+// Import UserProfile model
 
 class EditProfileScreen extends StatefulWidget {
   const EditProfileScreen({super.key});

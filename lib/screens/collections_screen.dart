@@ -92,6 +92,9 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   ExperienceSortType _experienceSortType = ExperienceSortType.mostRecent;
   // ADDED: State variable for content sort type
   ContentSortType _contentSortType = ContentSortType.mostRecent;
+    // ADDED: State variables for category sort types
+  CategorySortType _categorySortType = CategorySortType.mostRecent;
+  ColorCategorySortType _colorCategorySortType = ColorCategorySortType.mostRecent;
   String? _userEmail;
   // ADDED: State variable to track the selected category in the first tab
   UserCategory? _selectedCategory;
@@ -248,6 +251,9 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         _applyExperienceSort(_experienceSortType);
         await _applyContentSort(
             _contentSortType); // Apply initial content sort (await for distance)
+        // Also apply to filtered lists to ensure UI displays correctly sorted data
+        _applyExperienceSort(_experienceSortType, applyToFiltered: true);
+        await _applyContentSort(_contentSortType, applyToFiltered: true);
       }
     } catch (e) {
       if (mounted) {
@@ -743,8 +749,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       if (exp.location.latitude != 0.0 || exp.location.longitude != 0.0) {
         try {
           distance = Geolocator.distanceBetween(
-            currentPosition!.latitude,
-            currentPosition!.longitude,
+            currentPosition.latitude,
+            currentPosition.longitude,
             exp.location.latitude,
             exp.location.longitude,
           );
@@ -800,13 +806,48 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     // Determine which list to sort
     List<GroupedContentItem> listToSort =
         applyToFiltered ? _filteredGroupedContentItems : _groupedContentItems;
+    
+    print("SORT DEBUG: listToSort.length = ${listToSort.length}");
+    print("SORT DEBUG: _groupedContentItems.length = ${_groupedContentItems.length}");
+    print("SORT DEBUG: _filteredGroupedContentItems.length = ${_filteredGroupedContentItems.length}");
 
     try {
       if (sortType == ContentSortType.mostRecent) {
         // Sort by media item creation date (descending)
+        print("SORT DEBUG: Starting mostRecent sort with ${listToSort.length} items");
         listToSort.sort((a, b) {
-          return b.mediaItem.createdAt.compareTo(a.mediaItem.createdAt);
+          final comparison = b.mediaItem.createdAt.compareTo(a.mediaItem.createdAt);
+          // Show first few comparisons for debugging
+          if (listToSort.indexOf(a) < 5 || listToSort.indexOf(b) < 5) {
+            final aPath = a.mediaItem.path.length > 30 ? a.mediaItem.path.substring(0, 30) + "..." : a.mediaItem.path;
+            final bPath = b.mediaItem.path.length > 30 ? b.mediaItem.path.substring(0, 30) + "..." : b.mediaItem.path;
+            print('SORT DEBUG: Comparing $aPath (${a.mediaItem.createdAt}) vs $bPath (${b.mediaItem.createdAt}) = $comparison');
+          }
+          return comparison;
         });
+        
+        // Debug logging to show final sort order with more detail
+        print('SORT DEBUG: Final order after sorting (showing first 20 items):');
+        for (int i = 0; i < listToSort.length && i < 20; i++) {
+          final item = listToSort[i];
+          final expNames = item.associatedExperiences.map((e) => e.name).join(', ');
+          print('  [$i] ${item.mediaItem.path.length > 50 ? item.mediaItem.path.substring(0, 50) + "..." : item.mediaItem.path}');
+          print('      createdAt: ${item.mediaItem.createdAt}');
+          print('      experiences: $expNames');
+        }
+        
+        // Also search for specific items we're interested in
+        for (int i = 0; i < listToSort.length; i++) {
+          final item = listToSort[i];
+          if (item.mediaItem.createdAt.toString().contains('23:53:15') || 
+              item.mediaItem.createdAt.toString().contains('23:52:19')) {
+            final expNames = item.associatedExperiences.map((e) => e.name).join(', ');
+            print('SORT DEBUG: Found target item at position [$i]:');
+            print('  Path: ${item.mediaItem.path}');
+            print('  CreatedAt: ${item.mediaItem.createdAt}');
+            print('  Experiences: $expNames');
+          }
+        }
       } else if (sortType == ContentSortType.alphabetical) {
         // Sort by the name of the *first* associated experience (ascending)
         listToSort.sort((a, b) {
@@ -849,6 +890,16 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       setState(() {});
     }
     print("Content items sorted.");
+    
+    // Debug: Check if the sorted list matches what's being displayed
+    print("SORT DEBUG: After setState, checking display list:");
+    final displayList = applyToFiltered ? _filteredGroupedContentItems : _groupedContentItems;
+    print("SORT DEBUG: Display list length = ${displayList.length}");
+    for (int i = 0; i < displayList.length && i < 10; i++) {
+      final item = displayList[i];
+      final expNames = item.associatedExperiences.map((e) => e.name).join(', ');
+      print("  Display[$i]: ${expNames} - ${item.mediaItem.createdAt}");
+    }
   }
 
   // --- REFACTORED: Method to sort grouped content items by distance --- ///
@@ -947,8 +998,9 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       final distA = a.minDistance;
       final distB = b.minDistance;
 
-      if (distA == null && distB == null)
+      if (distA == null && distB == null) {
         return 0; // Keep relative order if both unknown
+      }
       if (distA == null) return 1; // Nulls (unknown distances) go to the end
       if (distB == null) return -1; // Nulls go to the end
 
@@ -988,13 +1040,15 @@ class _CollectionsScreenState extends State<CollectionsScreen>
               },
               itemBuilder: (BuildContext context) =>
                   <PopupMenuEntry<CategorySortType>>[
-                const PopupMenuItem<CategorySortType>(
+                _buildPopupMenuItem<CategorySortType>(
                   value: CategorySortType.mostRecent,
-                  child: Text('Sort by Most Recent'),
+                  text: 'Sort by Most Recent',
+                  currentValue: _categorySortType,
                 ),
-                const PopupMenuItem<CategorySortType>(
+                _buildPopupMenuItem<CategorySortType>(
                   value: CategorySortType.alphabetical,
-                  child: Text('Sort Alphabetically'),
+                  text: 'Sort Alphabetically',
+                  currentValue: _categorySortType,
                 ),
               ],
             ),
@@ -1010,13 +1064,15 @@ class _CollectionsScreenState extends State<CollectionsScreen>
               },
               itemBuilder: (BuildContext context) =>
                   <PopupMenuEntry<ColorCategorySortType>>[
-                const PopupMenuItem<ColorCategorySortType>(
+                _buildPopupMenuItem<ColorCategorySortType>(
                   value: ColorCategorySortType.mostRecent,
-                  child: Text('Sort by Most Recent'),
+                  text: 'Sort by Most Recent',
+                  currentValue: _colorCategorySortType,
                 ),
-                const PopupMenuItem<ColorCategorySortType>(
+                _buildPopupMenuItem<ColorCategorySortType>(
                   value: ColorCategorySortType.alphabetical,
-                  child: Text('Sort Alphabetically'),
+                  text: 'Sort Alphabetically',
+                  currentValue: _colorCategorySortType,
                 ),
               ],
             ),
@@ -1030,17 +1086,20 @@ class _CollectionsScreenState extends State<CollectionsScreen>
               },
               itemBuilder: (BuildContext context) =>
                   <PopupMenuEntry<ExperienceSortType>>[
-                const PopupMenuItem<ExperienceSortType>(
+                _buildPopupMenuItem<ExperienceSortType>(
                   value: ExperienceSortType.mostRecent,
-                  child: Text('Sort by Most Recent'),
+                  text: 'Sort by Most Recent',
+                  currentValue: _experienceSortType,
                 ),
-                const PopupMenuItem<ExperienceSortType>(
+                _buildPopupMenuItem<ExperienceSortType>(
                   value: ExperienceSortType.alphabetical,
-                  child: Text('Sort Alphabetically'),
+                  text: 'Sort Alphabetically',
+                  currentValue: _experienceSortType,
                 ),
-                const PopupMenuItem<ExperienceSortType>(
+                _buildPopupMenuItem<ExperienceSortType>(
                   value: ExperienceSortType.distanceFromMe,
-                  child: Text('Sort by Distance'),
+                  text: 'Sort by Distance',
+                  currentValue: _experienceSortType,
                 ),
               ],
             ),
@@ -1053,19 +1112,20 @@ class _CollectionsScreenState extends State<CollectionsScreen>
               },
               itemBuilder: (BuildContext context) =>
                   <PopupMenuEntry<ContentSortType>>[
-                const PopupMenuItem<ContentSortType>(
+                _buildPopupMenuItem<ContentSortType>(
                   value: ContentSortType.mostRecent,
-                  child: Text('Sort by Most Recent Added'), // Clarified label
+                  text: 'Sort by Most Recent Added',
+                  currentValue: _contentSortType,
                 ),
-                const PopupMenuItem<ContentSortType>(
+                _buildPopupMenuItem<ContentSortType>(
                   value: ContentSortType.alphabetical,
-                  child: Text(
-                      'Sort Alphabetically (by Experience)'), // Clarified label
+                  text: 'Sort Alphabetically (by Experience)',
+                  currentValue: _contentSortType,
                 ),
-                const PopupMenuItem<ContentSortType>(
+                _buildPopupMenuItem<ContentSortType>(
                   value: ContentSortType.distanceFromMe,
-                  child: Text(
-                      'Sort by Distance (from Experience)'), // Clarified label
+                  text: 'Sort by Distance (from Experience)',
+                  currentValue: _contentSortType,
                 ),
               ],
             ),
@@ -2037,7 +2097,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                                   ),
                                 ),
                               );
-                            }).toList(),
+                            }),
                             if (associatedExperiences.isEmpty)
                               const Text('No linked experiences.',
                                   style: TextStyle(fontStyle: FontStyle.italic)),
@@ -2582,6 +2642,37 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     );
   }
   // --- ADDED: Widget to display experiences for a specific color category --- END ---
+
+  // ADDED: Helper function to build popup menu items with visual indicators
+  PopupMenuItem<T> _buildPopupMenuItem<T>({
+    required T value,
+    required String text,
+    required T currentValue,
+  }) {
+    final bool isSelected = value == currentValue;
+    return PopupMenuItem<T>(
+      value: value,
+      child: Row(
+        children: [
+          Icon(
+            isSelected ? Icons.check : Icons.radio_button_off,
+            color: isSelected ? Theme.of(context).primaryColor : Colors.grey,
+            size: 20,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              text,
+              style: TextStyle(
+                fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                color: isSelected ? Theme.of(context).primaryColor : null,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   // --- ADDED: Filter Dialog & Logic (Adapted from map_screen) --- START ---
   Future<void> _showFilterDialog() async {

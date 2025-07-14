@@ -42,7 +42,7 @@ class _MediaFullscreenScreenState extends State<MediaFullscreenScreen> {
   Map<String, UserCategory> _fetchedCategories = {}; // Cache for category icons
   // --- ADDED: State for Color Categories --- START ---
   List<ColorCategory> _userColorCategories = [];
-  bool _isLoadingColorCategories = true;
+  final bool _isLoadingColorCategories = true;
   // --- ADDED: State for Color Categories --- END ---
 
   @override

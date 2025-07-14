@@ -162,8 +162,8 @@ class _UserListTabState extends State<UserListTab> {
     if (widget.listType == "friends") {
       return ElevatedButton(
         onPressed: () => _toggleFollow(userProfile.id, true),
-        child: const Text("Remove"),
         style: ElevatedButton.styleFrom(backgroundColor: Colors.grey[300], foregroundColor: Colors.black),
+        child: const Text("Remove"),
       );
     } else if (widget.listType == "followers") {
       if (isCurrentlyFollowing) {
@@ -174,8 +174,8 @@ class _UserListTabState extends State<UserListTab> {
       } else {
         return ElevatedButton(
           onPressed: () => _toggleFollow(userProfile.id, false),
-          child: const Text("Follow Back"),
           style: ElevatedButton.styleFrom(backgroundColor: Colors.blue),
+          child: const Text("Follow Back"),
         );
       }
     } else if (widget.listType == "following") {

@@ -6,7 +6,6 @@ import '../models/user_category.dart'; // Import UserCategory
 // import '../models/place_details.dart';
 // ADDED: Import GoogleMapsService
 import '../services/google_maps_service.dart';
-import 'dart:convert';
 import 'package:url_launcher/url_launcher.dart'; // ADDED: Import url_launcher
 // TODO: Import Review/Comment models if needed for display
 import '../models/review.dart';
@@ -26,7 +25,6 @@ import 'receive_share/widgets/generic_url_preview_widget.dart';
 // REMOVED: Dotenv import (no longer needed for credentials)
 // import 'package:flutter_dotenv/flutter_dotenv.dart';
 // ADDED: Import the new fullscreen screen
-import 'media_fullscreen_screen.dart';
 // UPDATED: Import the renamed widget
 // ADDED: Import for FontAwesomeIcons
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';

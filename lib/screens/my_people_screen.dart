@@ -5,10 +5,10 @@ import '../services/auth_service.dart';
 import '../services/user_service.dart'; // Assuming UserService will provide these counts
 import '../services/notification_state_service.dart'; // Import NotificationStateService
 import '../widgets/user_list_tab.dart';
-import '../widgets/user_search_delegate.dart'; // Import the search delegate
+// Import the search delegate
 import '../widgets/notification_dot.dart'; // Import NotificationDot
 import '../models/user_profile.dart';      // Import UserProfile for search result type
-import '../widgets/user_list_tab.dart'; // Reusing for action button logic for now
+// Reusing for action button logic for now
 import 'follow_requests_screen.dart'; // Import FollowRequestsScreen
 
 class MyPeopleScreen extends StatefulWidget {

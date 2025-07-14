@@ -301,12 +301,6 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   
   // Add flag to prevent double processing
   bool _isProcessingUpdate = false;
-  // Add timestamp to track last Yelp URL update
-  DateTime? _lastYelpUrlUpdateTime;
-  // Add flag to track if initial content has been processed
-  bool _hasProcessedInitialContent = false;
-  // Add flag to track if we're processing a Yelp-only update
-  bool _isProcessingYelpOnlyUpdate = false;
   // ADDED: AuthService instance
   final AuthService _authService = AuthService();
   // ADDED: GoogleKnowledgeGraphService instance with optional API key
@@ -321,7 +315,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   final GlobalKey _experienceCardsSectionKey = GlobalKey();
   bool _showUpArrowForFab = false;
   bool _isInstagramPreviewExpanded = false;
-  Map<String, GlobalKey> _instagramPreviewKeys = {}; // To store keys for active Instagram previews
+  final Map<String, GlobalKey> _instagramPreviewKeys = {}; // To store keys for active Instagram previews
   String? _currentVisibleInstagramUrl; // To track which Instagram preview is potentially visible
   // --- END ADDED FOR SCROLLING FAB ---
 
@@ -364,8 +358,6 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
   // Initialize with the files passed to the widget
   List<SharedMediaFile> _currentSharedFiles = [];
-  // Track if we've restored from persisted content
-  bool _restoredFromPersisted = false;
 
   // Flag to track if a chain was detected from URL structure
   bool _chainDetectedFromUrl = false;
@@ -394,8 +386,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
   @override
   void initState() {
-    print("ReceiveShareScreen initState: START - Instance ${this.hashCode}");
-    print("DEBUG initState: widget.sharedFiles has ${widget.sharedFiles.length} items");
+    print("ReceiveShareScreen initState: START - Instance ${hashCode}");
     super.initState();
     // _sharingService.isShareFlowActive = true; // REMOVED: This is now set by SharingService.showReceiveShareScreen
 
@@ -405,22 +396,15 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     // --- END ADDED FOR SCROLLING FAB ---
 
     // Initialize with the files passed to the widget
-    _currentSharedFiles = List.from(widget.sharedFiles);
-    print("DEBUG initState: _currentSharedFiles initialized with ${_currentSharedFiles.length} items");
+    _currentSharedFiles = widget.sharedFiles;
     
-    // Check if this is a Yelp-only share during cold start
-    String? yelpUrl = _extractYelpUrlFromSharedFiles(widget.sharedFiles);
-    bool isYelpOnlyShare = yelpUrl != null && widget.sharedFiles.length == 1 && 
-                           (widget.sharedFiles[0].type == SharedMediaType.text || 
-                            widget.sharedFiles[0].type == SharedMediaType.url);
-    
-    if (isYelpOnlyShare) {
-      print("DEBUG initState: Detected Yelp-only share during cold start");
-      // Check if we're returning from Yelp (share flow is active)
-      if (_sharingService.isShareFlowActive) {
-        print("DEBUG initState: Share flow is active - likely returning from Yelp");
-        // Try to restore the persisted Instagram content
-        _restorePersistedCurrentContent();
+    // Check if this is a cold start with only a Yelp URL
+    bool isColdStartWithYelpOnly = false;
+    if (widget.sharedFiles.length == 1) {
+      String? yelpUrl = _extractYelpUrlFromSharedFiles(widget.sharedFiles);
+      if (yelpUrl != null) {
+        isColdStartWithYelpOnly = true;
+        print("ReceiveShareScreen: Cold start detected with only Yelp URL");
       }
     }
 
@@ -436,8 +420,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         ValueNotifier<List<ColorCategory>>(_userColorCategories);
     // --- END ADDED ---
 
-    // IMPORTANT: Asynchronously load dependencies and then process content
-    _initializeScreenDataAndProcessContent();
+    // If cold start with only Yelp URL, try to restore previous content
+    if (isColdStartWithYelpOnly) {
+      _restoreContentForYelpColdStart();
+    } else {
+      // Normal initialization
+      _initializeScreenDataAndProcessContent();
+    }
 
     // Listen for changes to the sharedFiles controller in SharingService
     _sharingService.sharedFiles.addListener(_handleSharedFilesUpdate);
@@ -494,14 +483,142 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // Now it's safe to process initial shared content,
       // as the provider (conceptually) has what it needs for default categories.
       print("ReceiveShareScreen: Processing initial shared content.");
-      // Process with the original widget.sharedFiles to ensure Yelp URLs are handled
-      _processInitialSharedContent(widget.sharedFiles);
+      _processInitialSharedContent(_currentSharedFiles);
       
       // Mark as fully initialized
       _isFullyInitialized = true;
       print("ReceiveShareScreen: Marked as fully initialized");
     }
     print("ReceiveShareScreen: _initializeScreenDataAndProcessContent END");
+  }
+  
+  // Restore content for cold start with only Yelp URL
+  Future<void> _restoreContentForYelpColdStart() async {
+    print("ReceiveShareScreen: _restoreContentForYelpColdStart START");
+    
+    // First, get the Yelp URL from the current share
+    String? yelpUrl = _extractYelpUrlFromSharedFiles(widget.sharedFiles);
+    if (yelpUrl == null) {
+      print("ReceiveShareScreen: No Yelp URL found in cold start - falling back to normal init");
+      _initializeScreenDataAndProcessContent();
+      return;
+    }
+    
+    // Try to restore previous content from persistence
+    final restoredContent = await _sharingService.getPersistedCurrentContent();
+    if (restoredContent != null && restoredContent.isNotEmpty) {
+      print("ReceiveShareScreen: Restored ${restoredContent.length} files from persistence");
+      
+      // Use the restored content as our current files instead of the Yelp-only content
+      _currentSharedFiles = restoredContent;
+      
+      // Persist the Instagram content again to keep it fresh
+      await _sharingService.persistCurrentSharedContent(restoredContent);
+      
+      // Now initialize normally with the restored content
+      await _initializeScreenDataAndProcessContent();
+      
+      // Try to restore form data
+      await _restoreFormData();
+      
+      // After initialization and form restoration, handle the Yelp URL update
+      // Wait a bit to ensure cards are created and form data is restored
+      await Future.delayed(const Duration(milliseconds: 700));
+      if (mounted) {
+        _handleYelpUrlUpdate(yelpUrl, widget.sharedFiles);
+      }
+    } else {
+      print("ReceiveShareScreen: No persisted content found - proceeding with Yelp-only content");
+      _initializeScreenDataAndProcessContent();
+    }
+    
+    print("ReceiveShareScreen: _restoreContentForYelpColdStart END");
+  }
+  
+  // Restore form data from persistence
+  Future<void> _restoreFormData() async {
+    final formData = await _sharingService.getPersistedExperienceCardData();
+    if (formData == null || formData['cards'] == null) {
+      print("ReceiveShareScreen: No persisted form data found");
+      return;
+    }
+    
+    final provider = context.read<ReceiveShareProvider>();
+    final List<dynamic> savedCards = formData['cards'];
+    print("ReceiveShareScreen: Found persisted form data for ${savedCards.length} cards");
+    
+    // Wait a bit to ensure provider cards are initialized
+    await Future.delayed(const Duration(milliseconds: 200));
+    
+    final currentCards = provider.experienceCards;
+    if (currentCards.isEmpty) {
+      print("ReceiveShareScreen: No experience cards to restore data to");
+      return;
+    }
+    
+    // Restore data to matching cards
+    for (final savedCardData in savedCards) {
+      final Map<String, dynamic> cardData = savedCardData as Map<String, dynamic>;
+      final String savedId = cardData['id'] ?? '';
+      
+      // Try to find matching card by ID or use index-based matching
+      ExperienceCardData? targetCard;
+      final cardIndex = savedCards.indexOf(savedCardData);
+      
+      // First try to match by ID
+      try {
+        targetCard = currentCards.firstWhere((card) => card.id == savedId);
+      } catch (e) {
+        // If no ID match, use index-based matching
+        if (cardIndex < currentCards.length) {
+          targetCard = currentCards[cardIndex];
+        }
+      }
+      
+      if (targetCard != null) {
+        // Restore form fields
+        targetCard.titleController.text = cardData['title'] ?? '';
+        targetCard.yelpUrlController.text = cardData['yelpUrl'] ?? '';
+        targetCard.websiteController.text = cardData['website'] ?? '';
+        targetCard.notesController.text = cardData['notes'] ?? '';
+        targetCard.selectedCategoryId = cardData['selectedCategoryId'];
+        targetCard.selectedColorCategoryId = cardData['selectedColorCategoryId'];
+        targetCard.selectedOtherCategoryIds = List<String>.from(cardData['selectedOtherCategoryIds'] ?? []);
+        targetCard.locationController.text = cardData['locationController'] ?? '';
+        targetCard.searchController.text = cardData['searchController'] ?? '';
+        targetCard.locationEnabled.value = cardData['locationEnabled'] ?? true;
+        targetCard.rating = (cardData['rating'] ?? 0.0).toDouble();
+        targetCard.placeIdForPreview = cardData['placeIdForPreview'];
+        targetCard.existingExperienceId = cardData['existingExperienceId'];
+        
+        // Restore location if present
+        if (cardData['selectedLocation'] != null) {
+          final locData = cardData['selectedLocation'] as Map<String, dynamic>;
+          targetCard.selectedLocation = Location(
+            latitude: (locData['latitude'] ?? 0.0).toDouble(),
+            longitude: (locData['longitude'] ?? 0.0).toDouble(),
+            displayName: locData['displayName'],
+            address: locData['address'],
+            city: locData['city'],
+            state: locData['state'],
+            country: locData['country'],
+            zipCode: locData['zipCode'],
+            placeId: locData['placeId'],
+          );
+          targetCard.location = targetCard.selectedLocation;
+        }
+        
+        print("ReceiveShareScreen: Restored form data for card ${targetCard.id}");
+      }
+    }
+    
+    // Clear the persisted data after restoration
+    await _sharingService.clearPersistedExperienceCardData();
+    
+    // Force a rebuild to show the restored data
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   // Handle updates to the sharedFiles controller from SharingService
@@ -517,39 +634,58 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       return;
     }
     
-    // Check if we just processed a Yelp URL update within the last 2 seconds
-    if (_lastYelpUrlUpdateTime != null &&
-        DateTime.now().difference(_lastYelpUrlUpdateTime!).inSeconds < 2) {
-      Fluttertoast.showToast(
-        msg: "DEBUG: Ignoring update after recent Yelp URL update",
-        toastLength: Toast.LENGTH_SHORT,
-        gravity: ToastGravity.BOTTOM,
-        backgroundColor: Colors.purple.withOpacity(0.8),
-        textColor: Colors.white,
-      );
-      return;
-    }
-    
     final updatedFiles = _sharingService.sharedFiles.value;
-    
-    if (updatedFiles == null || updatedFiles.isEmpty) {
-      return;
-    }
-    
-    // Extract Yelp URL if present
-    String? yelpUrl = _extractYelpUrlFromSharedFiles(updatedFiles);
-    bool isYelpOnlyUpdate = yelpUrl != null && updatedFiles.length == 1 && 
-                            (updatedFiles[0].type == SharedMediaType.text || updatedFiles[0].type == SharedMediaType.url);
-    
-    print("DEBUG: yelpUrl=$yelpUrl, isYelpOnlyUpdate=$isYelpOnlyUpdate, _currentSharedFiles.length=${_currentSharedFiles.length}");
-    
-    // Special handling for Yelp-only updates - always process them separately
-    if (isYelpOnlyUpdate) {
-      print("ReceiveShareScreen: Yelp-only update detected - handling specially");
-      print("DEBUG: _currentSharedFiles has ${_currentSharedFiles.length} items before Yelp processing");
+    if (updatedFiles != null && 
+        updatedFiles.isNotEmpty && 
+        !_areSharedFilesEqual(updatedFiles, _currentSharedFiles)) {
       
-      // Skip all the normal processing and go directly to Yelp URL handling
+      // Check if this is a Yelp-only update (only Yelp URL, no other content)
+      bool isYelpOnlyUpdate = false;
+      String? yelpUrl = _extractYelpUrlFromSharedFiles(updatedFiles);
+      if (yelpUrl != null && updatedFiles.length == 1 && _currentSharedFiles.isNotEmpty) {
+        // This is a Yelp-only share while we already have content
+        isYelpOnlyUpdate = true;
+      }
+      
+      // Special handling for Yelp-only updates - always process them separately
+      if (isYelpOnlyUpdate) {
+        print("ReceiveShareScreen: Yelp-only update detected - handling specially");
+        print("DEBUG: _currentSharedFiles has ${_currentSharedFiles.length} items before Yelp processing");
+        // Skip all the normal processing and go directly to Yelp URL handling
+        _isProcessingUpdate = true;
+        
+        Fluttertoast.showToast(
+          msg: "DEBUG: _handleSharedFilesUpdate called",
+          toastLength: Toast.LENGTH_LONG,
+          gravity: ToastGravity.BOTTOM,
+          backgroundColor: Colors.yellow.withOpacity(0.8),
+          textColor: Colors.black,
+        );
+        
+        Fluttertoast.showToast(
+          msg: "DEBUG: Yelp-only update - preserving existing content",
+          toastLength: Toast.LENGTH_LONG,
+          gravity: ToastGravity.BOTTOM,
+          backgroundColor: Colors.teal.withOpacity(0.8),
+          textColor: Colors.white,
+        );
+        
+        // Handle the Yelp URL update WITHOUT modifying _currentSharedFiles
+        _handleYelpUrlUpdate(yelpUrl!, updatedFiles);
+        
+        // Reset flag after a delay to allow for future updates
+        Future.delayed(const Duration(milliseconds: 1000), () {
+          _isProcessingUpdate = false;
+        });
+        return;
+      }
+      
       _isProcessingUpdate = true;
+      
+      print("ReceiveShareScreen: Received updated shared files. Processing...");
+      print("ReceiveShareScreen: Is fully initialized: $_isFullyInitialized");
+      print("ReceiveShareScreen: Current files: ${_currentSharedFiles.map((f) => f.path.substring(0, min(50, f.path.length))).join(", ") ?? "null"}");
+      print("ReceiveShareScreen: Updated files: ${updatedFiles.map((f) => f.path.substring(0, min(50, f.path.length))).join(", ")}");
       
       Fluttertoast.showToast(
         msg: "DEBUG: _handleSharedFilesUpdate called",
@@ -559,157 +695,69 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         textColor: Colors.black,
       );
       
-      Fluttertoast.showToast(
-        msg: "DEBUG: Yelp URL in _handleSharedFilesUpdate - routing to update",
-        toastLength: Toast.LENGTH_LONG,
-        gravity: ToastGravity.BOTTOM,
-        backgroundColor: Colors.teal.withOpacity(0.8),
-        textColor: Colors.white,
-      );
-      
-      // Mark that we've processed this Yelp URL update
-      _lastYelpUrlUpdateTime = DateTime.now();
-      
-      // For Yelp URLs, always try to update existing cards instead of creating new content
-      _handleYelpUrlUpdate(yelpUrl, updatedFiles);
-      
-      // Reset flag immediately after processing
-      _isProcessingUpdate = false;
-      
-      Fluttertoast.showToast(
-        msg: "DEBUG: RETURNING from _handleSharedFilesUpdate after Yelp URL update",
-        toastLength: Toast.LENGTH_LONG,
-        gravity: ToastGravity.BOTTOM,
-        backgroundColor: Colors.green.withOpacity(0.8),
-        textColor: Colors.white,
-      );
-      return;
-    }
-    
-    // For all other cases, check if files are the same
-    if (_areSharedFilesEqual(updatedFiles, _currentSharedFiles)) {
-      return;
-    }
-    
-    // Check if this is the same content as the initial widget.sharedFiles
-    // This prevents duplicate processing during cold start
-    if (!_hasProcessedInitialContent && _areSharedFilesEqual(updatedFiles, widget.sharedFiles)) {
-      print("ReceiveShareScreen: Ignoring duplicate of initial shared files");
-      return;
-    }
-    
-    _isProcessingUpdate = true;
-    
-    print("ReceiveShareScreen: Received updated shared files. Processing...");
-    print("ReceiveShareScreen: Is fully initialized: $_isFullyInitialized");
-    print("ReceiveShareScreen: Current files: ${_currentSharedFiles?.map((f) => f.path.substring(0, min(50, f.path.length))).join(", ") ?? "null"}");
-    print("ReceiveShareScreen: Updated files: ${updatedFiles.map((f) => f.path.substring(0, min(50, f.path.length))).join(", ")}");
-    
-    Fluttertoast.showToast(
-      msg: "DEBUG: _handleSharedFilesUpdate called",
-      toastLength: Toast.LENGTH_LONG,
-      gravity: ToastGravity.BOTTOM,
-      backgroundColor: Colors.yellow.withOpacity(0.8),
-      textColor: Colors.black,
-    );
-    
-    // Re-check for Yelp URL (in case it wasn't a Yelp-only update)
-    // String? yelpUrl = _extractYelpUrlFromSharedFiles(updatedFiles); // Already extracted above
-    
-    // If not fully initialized yet, wait for initialization to complete
-    if (!_isFullyInitialized) {
-      print("ReceiveShareScreen: Screen not fully initialized yet. Deferring share update.");
-      // Defer the update until after initialization
-      Future.delayed(const Duration(milliseconds: 500), () {
-        if (mounted && _isFullyInitialized) {
-          _handleSharedFilesUpdate();
-        }
-      });
-      return;
-    }
-    
-    // Check if this is a Yelp URL that should be added to existing card
-    if (yelpUrl != null) {
-      print("ReceiveShareScreen: Yelp URL detected - treating as update rather than full refresh");
-      print("DEBUG: Before Yelp processing, _currentSharedFiles has ${_currentSharedFiles.length} items");
-      Fluttertoast.showToast(
-        msg: "DEBUG: Yelp URL in _handleSharedFilesUpdate - routing to update",
-        toastLength: Toast.LENGTH_LONG,
-        gravity: ToastGravity.BOTTOM,
-        backgroundColor: Colors.teal.withOpacity(0.8),
-        textColor: Colors.white,
-      );
-      
-      // Mark that we've processing a Yelp-only update
-      _isProcessingYelpOnlyUpdate = true;
-      
-      // Mark that we've processed this Yelp URL update
-      _lastYelpUrlUpdateTime = DateTime.now();
-      
-      // For Yelp URLs, always try to update existing cards instead of creating new content
-      _handleYelpUrlUpdate(yelpUrl, updatedFiles);
-      
-      // Reset flags immediately after processing
-      _isProcessingUpdate = false;
-      _isProcessingYelpOnlyUpdate = false;
-      
-      // IMPORTANT: Do NOT update _currentSharedFiles when adding Yelp URL to existing card
-      // This prevents the preview from changing to a Yelp preview
-      Fluttertoast.showToast(
-        msg: "DEBUG: RETURNING from _handleSharedFilesUpdate after Yelp URL update",
-        toastLength: Toast.LENGTH_LONG,
-        gravity: ToastGravity.BOTTOM,
-        backgroundColor: Colors.green.withOpacity(0.8),
-        textColor: Colors.white,
-      );
-      return;
-    }
-    
-    // Check if this update is essentially the same as what we just processed during initialization
-    // This prevents double-processing during cold starts
-    // NOTE: We check this AFTER Yelp URL handling to ensure Yelp URLs are always processed
-    if (_areSharedFilesEqual(updatedFiles, widget.sharedFiles)) {
-      print("ReceiveShareScreen: Updated files are same as initial widget.sharedFiles. Likely initialization echo - ignoring.");
-      _isProcessingUpdate = false;
-      return;
-    }
-    
-    // This should never be reached for Yelp-only updates
-    if (yelpUrl != null) {
-      print("ERROR: Reached reset logic for Yelp URL! This should not happen!");
-      print("DEBUG: yelpUrl=$yelpUrl, isYelpOnlyUpdate=$isYelpOnlyUpdate");
-    }
-    
-    // If not a Yelp URL or no existing cards, proceed with normal reset logic
-    print("ReceiveShareScreen: Not a Yelp URL or no existing cards. Resetting.");
-    print("DEBUG: Current _currentSharedFiles has ${_currentSharedFiles.length} items");
-    final provider = context.read<ReceiveShareProvider>();
-    provider.resetExperienceCards();
-    
-    setState(() {
-      // Check if this is a Yelp-only update - if so, don't update _currentSharedFiles
-      bool isYelpOnly = updatedFiles.length == 1 && 
-                        (updatedFiles[0].type == SharedMediaType.text || updatedFiles[0].type == SharedMediaType.url) &&
-                        _extractYelpUrlFromSharedFiles(updatedFiles) != null;
-      
-      if (isYelpOnly && _currentSharedFiles.isNotEmpty) {
-        // Don't update _currentSharedFiles - keep existing preview
-        print("DEBUG: Yelp-only update detected in setState - preserving existing _currentSharedFiles");
-      } else {
-        // For non-Yelp updates, use the new files
-        _currentSharedFiles = List.from(updatedFiles);
-        // Persist the updated content
-        _sharingService.persistCurrentSharedContent(_currentSharedFiles);
+      // Check if this is a Yelp URL - if so, treat as update rather than full refresh
+      if (yelpUrl != null) {
+        print("ReceiveShareScreen: Yelp URL detected - treating as update rather than full refresh");
+        Fluttertoast.showToast(
+          msg: "DEBUG: Yelp URL in _handleSharedFilesUpdate - routing to update",
+          toastLength: Toast.LENGTH_LONG,
+          gravity: ToastGravity.BOTTOM,
+          backgroundColor: Colors.teal.withOpacity(0.8),
+          textColor: Colors.white,
+        );
+        // For Yelp URLs, always try to update existing cards instead of creating new content
+        _handleYelpUrlUpdate(yelpUrl, updatedFiles);
+        
+        // Reset flag after a delay to allow for future updates
+        Future.delayed(const Duration(milliseconds: 1000), () {
+          _isProcessingUpdate = false;
+        });
+        return;
       }
-      _businessDataCache.clear();
-      _yelpPreviewFutures.clear();
-    });
-    
-    // No longer needed - we don't update _currentSharedFiles for Yelp URLs
-    
-    // Process the new content
-    _processSharedContent(_currentSharedFiles);
-    _isProcessingUpdate = false;
+      
+      // If not fully initialized yet, wait for initialization to complete
+      if (!_isFullyInitialized) {
+        print("ReceiveShareScreen: Screen not fully initialized yet. Deferring share update.");
+        // Defer the update until after initialization
+        Future.delayed(const Duration(milliseconds: 500), () {
+          if (mounted && _isFullyInitialized) {
+            _handleSharedFilesUpdate();
+          }
+        });
+        return;
+      }
+      
+      // Check if this update is essentially the same as what we just processed during initialization
+      // This prevents double-processing during cold starts
+      if (_areSharedFilesEqual(updatedFiles, widget.sharedFiles)) {
+        print("ReceiveShareScreen: Updated files are same as initial widget.sharedFiles. Likely initialization echo - ignoring.");
+        _isProcessingUpdate = false;
+        return;
+      }
+      
+      // Check if this is a Yelp URL that should be added to existing card (reuse yelpUrl from above)
+      if (yelpUrl != null && _hasExistingCards()) {
+        print("ReceiveShareScreen: Detected Yelp URL with existing cards. Updating in-place.");
+        _handleYelpUrlUpdate(yelpUrl, updatedFiles);
+        _isProcessingUpdate = false;
+        return;
+      }
+      
+      // If not a Yelp URL or no existing cards, proceed with normal reset logic
+      print("ReceiveShareScreen: Not a Yelp URL or no existing cards. Resetting.");
+      final provider = context.read<ReceiveShareProvider>();
+      provider.resetExperienceCards();
+      
+      setState(() {
+        _currentSharedFiles = updatedFiles;
+        _businessDataCache.clear();
+        _yelpPreviewFutures.clear();
+      });
+      
+      // Process the new content
+      _processSharedContent(_currentSharedFiles);
+      _isProcessingUpdate = false;
+    }
   }
   
   // Helper method to compare shared files lists
@@ -753,9 +801,6 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   void _handleYelpUrlUpdate(String yelpUrl, List<SharedMediaFile> updatedFiles) {
     final provider = context.read<ReceiveShareProvider>();
     final experienceCards = provider.experienceCards;
-    
-    print("DEBUG: _handleYelpUrlUpdate called with URL: $yelpUrl");
-    print("DEBUG: _lastYelpButtonTappedCardId = $_lastYelpButtonTappedCardId");
     
     Fluttertoast.showToast(
       msg: "DEBUG: _handleYelpUrlUpdate called, cards=${experienceCards.length}",
@@ -803,10 +848,6 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     // Second priority: Use the bottom-most (last) experience card
     targetCard ??= experienceCards.last;
     
-    print("DEBUG: Target card found: ${targetCard.id}");
-    print("DEBUG: Target card title: ${targetCard.titleController.text}");
-    print("DEBUG: Target card current Yelp URL: ${targetCard.yelpUrlController.text}");
-    
     // Normalize the URL
     String normalizedUrl = yelpUrl.trim();
     if (!normalizedUrl.startsWith('http')) {
@@ -815,22 +856,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     
     // Update the card with the Yelp URL (replace existing if present)
     final previousUrl = targetCard.yelpUrlController.text;
-    
-    // Update the text controller without triggering listeners
-    // This prevents the form from thinking the user manually updated the field
-    targetCard.yelpUrlController.value = targetCard.yelpUrlController.value.copyWith(
-      text: normalizedUrl,
-      selection: TextSelection.collapsed(offset: normalizedUrl.length),
-    );
-    
-    // Show exactly what happened to the URL field
-    Fluttertoast.showToast(
-      msg: "DEBUG: URL field changed from '${previousUrl.isEmpty ? "EMPTY" : previousUrl.substring(0, min(20, previousUrl.length))}...' to '${normalizedUrl.substring(0, min(20, normalizedUrl.length))}...'",
-      toastLength: Toast.LENGTH_LONG,
-      gravity: ToastGravity.CENTER,
-      backgroundColor: Colors.indigo.withOpacity(0.9),
-      textColor: Colors.white,
-    );
+    targetCard.yelpUrlController.text = normalizedUrl;
     
     // No notifications needed - the TextEditingController will handle its own listeners
     // This prevents any rebuilds of the page or provider listeners
@@ -852,12 +878,6 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     // DON'T update _currentSharedFiles for Yelp URLs - we want to preserve the original preview
     // Only the Yelp URL field should be updated, not the shared files or preview content
-    
-    // Record the timestamp of this Yelp URL update
-    _lastYelpUrlUpdateTime = DateTime.now();
-    
-    // DEBUG: Print current shared files to ensure they're not being changed
-    print("ReceiveShareScreen: _currentSharedFiles after Yelp URL update: ${_currentSharedFiles.map((f) => f.path.substring(0, min(50, f.path.length))).join(", ")}");
   }
 
   // Method to track when a Yelp button is tapped
@@ -865,60 +885,67 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     _lastYelpButtonTappedCardId = cardId;
     print("ReceiveShareScreen: Tracked Yelp button tap for card: $cardId");
     
-    // Save form data before going to Yelp
-    final provider = context.read<ReceiveShareProvider>();
-    final card = provider.experienceCards.firstWhere((c) => c.id == cardId);
-    
-    // Create a map of all the form data we need to persist
-    final formData = {
-      'cardId': cardId,
-      'title': card.titleController.text,
-      'yelpUrl': card.yelpUrlController.text,
-      'website': card.websiteController.text,
-      'search': card.searchController.text,
-      'location': card.locationController.text,
-      'notes': card.notesController.text,
-      'selectedCategoryId': card.selectedCategoryId,
-      'selectedColorCategoryId': card.selectedColorCategoryId,
-      'selectedOtherCategoryIds': card.selectedOtherCategoryIds,
-      'rating': card.rating,
-      // Save both location and selectedLocation with all fields
-      'location_lat': card.location?.latitude,
-      'location_lng': card.location?.longitude,
-      'location_address': card.location?.address,
-      'location_placeId': card.location?.placeId,
-      'location_displayName': card.location?.displayName,
-      'location_city': card.location?.city,
-      'location_state': card.location?.state,
-      'location_country': card.location?.country,
-      'location_zipCode': card.location?.zipCode,
-      'location_photoUrl': card.location?.photoUrl,
-      'location_website': card.location?.website,
-      'location_rating': card.location?.rating,
-      'location_userRatingCount': card.location?.userRatingCount,
-      'selectedLocation_lat': card.selectedLocation?.latitude,
-      'selectedLocation_lng': card.selectedLocation?.longitude,
-      'selectedLocation_address': card.selectedLocation?.address,
-      'selectedLocation_placeId': card.selectedLocation?.placeId,
-      'selectedLocation_displayName': card.selectedLocation?.displayName,
-      'selectedLocation_city': card.selectedLocation?.city,
-      'selectedLocation_state': card.selectedLocation?.state,
-      'selectedLocation_country': card.selectedLocation?.country,
-      'selectedLocation_zipCode': card.selectedLocation?.zipCode,
-      'selectedLocation_photoUrl': card.selectedLocation?.photoUrl,
-      'selectedLocation_website': card.selectedLocation?.website,
-      'selectedLocation_rating': card.selectedLocation?.rating,
-      'selectedLocation_userRatingCount': card.selectedLocation?.userRatingCount,
-      // Save the actual search query that was displayed
-      'searchQuery': card.searchController.text,
-    };
-    
-    // Persist the form data
-    await _sharingService.persistExperienceCardData(formData);
+    // Save form data before navigating to Yelp
+    await _saveAllFormData();
     
     // Inform SharingService that we're temporarily leaving for external app
     // This preserves the share flow state instead of resetting it
     _sharingService.temporarilyLeavingForExternalApp();
+  }
+  
+  // Save all form data from all experience cards
+  Future<void> _saveAllFormData() async {
+    final provider = context.read<ReceiveShareProvider>();
+    final experienceCards = provider.experienceCards;
+    
+    if (experienceCards.isEmpty) return;
+    
+    // Collect all form data
+    final List<Map<String, dynamic>> allCardsData = [];
+    
+    for (final card in experienceCards) {
+      final cardData = {
+        'id': card.id,
+        'title': card.titleController.text,
+        'yelpUrl': card.yelpUrlController.text,
+        'website': card.websiteController.text,
+        'notes': card.notesController.text,
+        'selectedCategoryId': card.selectedCategoryId,
+        'selectedColorCategoryId': card.selectedColorCategoryId,
+        'selectedOtherCategoryIds': card.selectedOtherCategoryIds,
+        'locationController': card.locationController.text,
+        'searchController': card.searchController.text,
+        'locationEnabled': card.locationEnabled.value,
+        'rating': card.rating,
+        'placeIdForPreview': card.placeIdForPreview,
+        'existingExperienceId': card.existingExperienceId,
+      };
+      
+      // Save location if available
+      if (card.selectedLocation != null) {
+        cardData['selectedLocation'] = {
+          'latitude': card.selectedLocation!.latitude,
+          'longitude': card.selectedLocation!.longitude,
+          'displayName': card.selectedLocation!.displayName,
+          'address': card.selectedLocation!.address,
+          'city': card.selectedLocation!.city,
+          'state': card.selectedLocation!.state,
+          'country': card.selectedLocation!.country,
+          'zipCode': card.selectedLocation!.zipCode,
+          'placeId': card.selectedLocation!.placeId,
+        };
+      }
+      
+      allCardsData.add(cardData);
+    }
+    
+    // Persist all cards data
+    await _sharingService.persistExperienceCardData({
+      'cards': allCardsData,
+      'timestamp': DateTime.now().toIso8601String(),
+    });
+    
+    print("ReceiveShareScreen: Saved form data for ${allCardsData.length} cards");
   }
 
   Future<void> _loadUserCategories() async {
@@ -998,11 +1025,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
     print("SHARE DEBUG: App lifecycle state changed to $state");
-    print("DEBUG: _currentSharedFiles has ${_currentSharedFiles.length} items on lifecycle change");
 
     if (state == AppLifecycleState.resumed) {
       print("SHARE DEBUG: App resumed"); // Simplified log
-      print("DEBUG: _currentSharedFiles has ${_currentSharedFiles.length} items on resume");
       _conditionallyReloadCategories(); 
     }
   }
@@ -1101,132 +1126,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     // Intent listener setup is now handled by SharingService
   }
 
-  Future<void> _restorePersistedCurrentContent() async {
-    try {
-      // First restore the shared files content
-      final persistedContent = await _sharingService.getPersistedCurrentContent();
-      if (persistedContent != null && persistedContent.isNotEmpty) {
-        print("DEBUG: Restored ${persistedContent.length} persisted current files");
-        setState(() {
-          _currentSharedFiles = persistedContent;
-          _restoredFromPersisted = true;
-        });
-        print("DEBUG: Successfully restored Instagram content from persistence");
-      } else {
-        print("DEBUG: No persisted content found to restore");
-      }
-      
-      // Then restore the form data
-      final persistedFormData = await _sharingService.getPersistedExperienceCardData();
-      if (persistedFormData != null && mounted) {
-        print("DEBUG: Found persisted form data - restoring...");
-        
-        // Wait a bit to ensure the provider has initialized the cards
-        await Future.delayed(const Duration(milliseconds: 1000));
-        
-        if (mounted) {
-          final provider = context.read<ReceiveShareProvider>();
-          final cardId = persistedFormData['cardId'] as String?;
-          
-          // If no cards exist yet, we need to wait for them to be created
-          if (provider.experienceCards.isEmpty) {
-            print("DEBUG: No cards exist yet, waiting for cards to be created...");
-            // Wait for cards to be created
-            await Future.delayed(const Duration(milliseconds: 1000));
-          }
-          
-          if (cardId != null && provider.experienceCards.isNotEmpty) {
-            // Store the cardId so we can use it when processing the Yelp URL
-            _lastYelpButtonTappedCardId = cardId;
-            
-            // Find the card by ID or use the first card
-            final card = provider.experienceCards.firstWhere(
-              (c) => c.id == cardId,
-              orElse: () => provider.experienceCards.first,
-            );
-            
-            // Restore all the form data
-            card.titleController.text = persistedFormData['title'] ?? '';
-            card.yelpUrlController.text = persistedFormData['yelpUrl'] ?? '';
-            card.websiteController.text = persistedFormData['website'] ?? '';
-            card.locationController.text = persistedFormData['location'] ?? '';
-            card.notesController.text = persistedFormData['notes'] ?? '';
-            card.selectedCategoryId = persistedFormData['selectedCategoryId'];
-            card.selectedColorCategoryId = persistedFormData['selectedColorCategoryId'];
-            card.selectedOtherCategoryIds = List<String>.from(persistedFormData['selectedOtherCategoryIds'] ?? []);
-            card.rating = persistedFormData['rating'] ?? 0.0;
-            
-            // Restore the search query (place name) separately
-            if (persistedFormData['searchQuery'] != null && persistedFormData['searchQuery'].toString().isNotEmpty) {
-              card.searchController.text = persistedFormData['searchQuery'];
-            } else if (persistedFormData['search'] != null && persistedFormData['search'].toString().isNotEmpty) {
-              card.searchController.text = persistedFormData['search'];
-            }
-            
-            // Restore location if available
-            if (persistedFormData['location_lat'] != null && persistedFormData['location_lng'] != null) {
-              card.location = Location(
-                latitude: persistedFormData['location_lat'],
-                longitude: persistedFormData['location_lng'],
-                address: persistedFormData['location_address'],
-                placeId: persistedFormData['location_placeId'],
-                displayName: persistedFormData['location_displayName'],
-                city: persistedFormData['location_city'],
-                state: persistedFormData['location_state'],
-                country: persistedFormData['location_country'],
-                zipCode: persistedFormData['location_zipCode'],
-                photoUrl: persistedFormData['location_photoUrl'],
-                website: persistedFormData['location_website'],
-                rating: persistedFormData['location_rating']?.toDouble(),
-                userRatingCount: persistedFormData['location_userRatingCount'],
-              );
-            }
-            
-            // Restore selectedLocation if available
-            if (persistedFormData['selectedLocation_lat'] != null && persistedFormData['selectedLocation_lng'] != null) {
-              card.selectedLocation = Location(
-                latitude: persistedFormData['selectedLocation_lat'],
-                longitude: persistedFormData['selectedLocation_lng'],
-                address: persistedFormData['selectedLocation_address'],
-                placeId: persistedFormData['selectedLocation_placeId'],
-                displayName: persistedFormData['selectedLocation_displayName'],
-                city: persistedFormData['selectedLocation_city'],
-                state: persistedFormData['selectedLocation_state'],
-                country: persistedFormData['selectedLocation_country'],
-                zipCode: persistedFormData['selectedLocation_zipCode'],
-                photoUrl: persistedFormData['selectedLocation_photoUrl'],
-                website: persistedFormData['selectedLocation_website'],
-                rating: persistedFormData['selectedLocation_rating']?.toDouble(),
-                userRatingCount: persistedFormData['selectedLocation_userRatingCount'],
-              );
-            }
-            
-            print("DEBUG: Successfully restored form data for card ${card.id}");
-            print("DEBUG: Restored location displayName: ${card.location?.displayName}");
-            print("DEBUG: Restored location address: ${card.location?.address}");
-            print("DEBUG: Restored selectedLocation displayName: ${card.selectedLocation?.displayName}");
-            print("DEBUG: Restored selectedLocation address: ${card.selectedLocation?.address}");
-            
-            // Clear the persisted form data now that it's been restored
-            await _sharingService.clearPersistedExperienceCardData();
-            
-            // Notify the UI to update
-            setState(() {});
-          }
-        }
-      }
-    } catch (e) {
-      print("DEBUG: Error restoring persisted content: $e");
-    }
-  }
-
   void _initializeKnowledgeGraphService() {
     try {
       // Try to get API key from ApiSecrets
       // ignore: undefined_class, undefined_getter
       String? apiKey = ApiSecrets.googleKnowledgeGraphApiKey;
       _knowledgeGraphService = GoogleKnowledgeGraphService(apiKey: apiKey);
-      print('🔍 KNOWLEDGE GRAPH: Service initialized with API key: ${apiKey != null && apiKey.isNotEmpty ? 'configured' : 'not configured'}');
+      print('🔍 KNOWLEDGE GRAPH: Service initialized with API key: ${apiKey.isNotEmpty ? 'configured' : 'not configured'}');
     } catch (e) {
       // ApiSecrets not available, initialize without API key
       _knowledgeGraphService = GoogleKnowledgeGraphService();
@@ -1236,7 +1142,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
   @override
   void dispose() {
-    print("ReceiveShareScreen dispose: START - Instance ${this.hashCode}");
+    print("ReceiveShareScreen dispose: START - Instance ${hashCode}");
     // If _saveExperience initiated navigation, prepareToNavigateAwayFromShare already handled things.
     // This call to markShareFlowAsInactive is mainly for cases where dispose is called due to
     // other reasons (like system back if not fully handled, or unexpected unmount).
@@ -1286,78 +1192,33 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   }
 
   // Process initial shared content on cold start - behaves like warm start logic
-  void _processInitialSharedContent(List<SharedMediaFile> files) async {
+  void _processInitialSharedContent(List<SharedMediaFile> files) {
     print("ReceiveShareScreen: _processInitialSharedContent called with ${files.length} files");
     
     if (files.isEmpty) {
       print("ReceiveShareScreen: No initial shared files to process");
-      _hasProcessedInitialContent = true;
       return;
     }
-    
-    // If _currentSharedFiles was cleared in initState due to Yelp-only share, don't process
-    if (_currentSharedFiles.isEmpty && files.length == 1) {
-      String? yelpUrl = _extractYelpUrlFromSharedFiles(files);
-      if (yelpUrl != null) {
-        print("ReceiveShareScreen: Skipping display of Yelp-only initial content");
-        
-        // Wait for form restoration to complete before processing Yelp URL
-        print("DEBUG: Waiting for form restoration before processing Yelp URL...");
-        await Future.delayed(const Duration(milliseconds: 2000));
-        
-        _handleYelpUrlUpdate(yelpUrl, files);
-        _hasProcessedInitialContent = true;
-        return;
-      }
-    }
 
-    // Check if this is a Yelp URL and if we have existing cards
+    // Check if this is a Yelp URL and add debug toast
     String? yelpUrl = _extractYelpUrlFromSharedFiles(files);
-    if (yelpUrl != null && _hasExistingCards()) {
+    if (yelpUrl != null) {
       Fluttertoast.showToast(
-        msg: "DEBUG: Initial processing Yelp URL with existing cards - updating instead of creating new",
+        msg: "DEBUG: Initial processing Yelp URL",
         toastLength: Toast.LENGTH_LONG,
         gravity: ToastGravity.TOP,
         backgroundColor: Colors.purple.withOpacity(0.8),
         textColor: Colors.white,
       );
-      
-      // Wait for form restoration to complete before processing Yelp URL
-      print("DEBUG: Waiting for form restoration before processing Yelp URL with existing cards...");
-      await Future.delayed(const Duration(milliseconds: 2000));
-      
-      // Update existing cards instead of creating new content
-      _handleYelpUrlUpdate(yelpUrl, files);
-      _hasProcessedInitialContent = true;
-      return;
     }
 
-    // For all other content, use the files as-is for initial processing
+    // For all content, always use normal processing
+    // The Yelp URL handling complexity was causing more issues than it solved
     setState(() {
-      _currentSharedFiles = List.from(files);
+      _currentSharedFiles = files;
     });
-    
-    // Persist the content for cold start recovery
-    _sharingService.persistCurrentSharedContent(_currentSharedFiles);
-    
-    // Check if we're setting _currentSharedFiles to a Yelp URL
-    bool hasYelpUrl = files.any((file) => 
-      (file.type == SharedMediaType.text || file.type == SharedMediaType.url) &&
-      _extractYelpUrlFromSharedFiles([file]) != null
-    );
-    
-    if (hasYelpUrl) {
-      Fluttertoast.showToast(
-        msg: "DEBUG: _currentSharedFiles updated with Yelp URL in _processInitialSharedContent",
-        toastLength: Toast.LENGTH_LONG,
-        gravity: ToastGravity.CENTER,
-        backgroundColor: Colors.deepOrange.withOpacity(0.9),
-        textColor: Colors.white,
-      );
-    }
-    
+    print("ReceiveShareScreen: Set _currentSharedFiles to prevent double-processing from SharingService listener");
     _processSharedContent(files);
-    _hasProcessedInitialContent = true;
   }
 
   void _processSharedContent(List<SharedMediaFile> files) {
@@ -1366,6 +1227,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     if (files.isEmpty) {
       // print('🔄 PROCESSING END: No files to process.'); // CLEANED
       return;
+    }
+    
+    // Persist the content for potential future restoration (e.g., when returning from Yelp)
+    if (!_isYelpUrl(_extractFirstUrl(files.first.path) ?? '')) {
+      _sharingService.persistCurrentSharedContent(files);
+      print("ReceiveShareScreen: Persisted non-Yelp content for future restoration");
     }
 
     final fileFirst = files.first; 
@@ -1971,7 +1838,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             
             if (!nameMatches) {
               print(
-                  '📊 YELP DATA: Name verification failed. Google name "${foundLocation.displayName}" doesn\'t align well with Yelp name "${businessName}" (match ratio: ${(matchRatio * 100).toStringAsFixed(1)}%)');
+                  '📊 YELP DATA: Name verification failed. Google name "${foundLocation.displayName}" doesn\'t align well with Yelp name "$businessName" (match ratio: ${(matchRatio * 100).toStringAsFixed(1)}%)');
               isCorrectBusiness = false;
             } else {
               print(
@@ -1986,7 +1853,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               if (!googleCityLower.contains(yelpCityLower) &&
                   !yelpCityLower.contains(googleCityLower)) {
                 print(
-                    '📊 YELP DATA: City verification failed for chain. Google city "${foundLocation.city}" doesn\'t match Yelp city "${businessCity}"');
+                    '📊 YELP DATA: City verification failed for chain. Google city "${foundLocation.city}" doesn\'t match Yelp city "$businessCity"');
                 isCorrectBusiness = false;
                 print('📊 YELP DATA: Will try next search strategy');
               } else {
@@ -3489,58 +3356,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
   @override
   Widget build(BuildContext context) {
-    final provider = context.watch<ReceiveShareProvider>();
-    
-    // Always show when build is called
-    Fluttertoast.showToast(
-      msg: "DEBUG: BUILD method called, _currentSharedFiles=${_currentSharedFiles.length}",
-      toastLength: Toast.LENGTH_SHORT,
-      gravity: ToastGravity.TOP,
-      backgroundColor: Colors.brown.withOpacity(0.8),
-      textColor: Colors.white,
-    );
-    
-    // Check if current shared files contain Yelp URL
-    bool hasYelpUrl = _currentSharedFiles.any((file) => 
-      (file.type == SharedMediaType.text || file.type == SharedMediaType.url) &&
-      _extractYelpUrlFromSharedFiles([file]) != null
-    );
-    
-    // Debug: Show what's in _currentSharedFiles
-    if (_currentSharedFiles.isNotEmpty) {
-      String filesInfo = _currentSharedFiles.map((f) => 
-        "${f.type}: ${f.path.length > 50 ? f.path.substring(0, 50) + '...' : f.path}"
-      ).join(", ");
-      print("DEBUG BUILD: _currentSharedFiles = [$filesInfo]");
-      print("DEBUG BUILD: hasYelpUrl = $hasYelpUrl");
-    }
-    
-    if (hasYelpUrl) {
-      Fluttertoast.showToast(
-        msg: "DEBUG: BUILD called with Yelp URL in _currentSharedFiles",
-        toastLength: Toast.LENGTH_SHORT,
-        gravity: ToastGravity.TOP,
-        backgroundColor: Colors.orange.withOpacity(0.8),
-        textColor: Colors.white,
-      );
-    } else {
-      // Check what URLs are actually in _currentSharedFiles
-      for (var file in _currentSharedFiles) {
-        if (file.type == SharedMediaType.text || file.type == SharedMediaType.url) {
-          String? extractedUrl = _extractFirstUrl(file.path);
-          if (extractedUrl != null && (extractedUrl.contains('yelp.com') || extractedUrl.contains('yelp.to'))) {
-            Fluttertoast.showToast(
-              msg: "DEBUG: BUILD - Found Yelp URL in original content: ${extractedUrl.substring(0, min(30, extractedUrl.length))}...",
-              toastLength: Toast.LENGTH_LONG,
-              gravity: ToastGravity.TOP,
-              backgroundColor: Colors.pink.withOpacity(0.9),
-              textColor: Colors.white,
-            );
-            break;
-          }
-        }
-      }
-    }
+    print('ReceiveShareScreen build called. Current card count from provider: ${context.watch<ReceiveShareProvider>().experienceCards.length}'); // MODIFIED
+    print('ReceiveShareScreen BUILD DEBUG: _currentSharedFiles count=${_currentSharedFiles.length}, _isFullyInitialized=$_isFullyInitialized');
 
     return _wrapWithWillPopScope(Scaffold(
       appBar: AppBar(
@@ -3923,17 +3740,6 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   }
 
   Widget _buildUrlPreview(String url, ExperienceCardData? card, int index, [String? sharedText]) {
-    // Debug notification to track what URL is being processed for preview
-    if (url.contains('yelp.com/biz') || url.contains('yelp.to/')) {
-      Fluttertoast.showToast(
-        msg: "DEBUG: _buildUrlPreview processing Yelp URL: ${url.substring(0, min(30, url.length))}...",
-        toastLength: Toast.LENGTH_LONG,
-        gravity: ToastGravity.CENTER,
-        backgroundColor: Colors.cyan.withOpacity(0.9),
-        textColor: Colors.white,
-      );
-    }
-    
     if (card != null &&
         (url.contains('yelp.com/biz') || url.contains('yelp.to/'))) {
       
@@ -4257,31 +4063,27 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               print('🔍 GOOGLE KG SEARCH IMPROVED: Getting details for best match place ID: $placeId');
               final location = await _mapsService.getPlaceDetails(placeId);
               
-              if (location != null) {
-                final Map<String, dynamic> result = {
-                  'location': location,
-                  'placeName': location.displayName ?? locationName,
-                  'website': location.website,
-                  'mapsUrl': originalUrl,
-                  'searchQuery': query,
-                  'confidence': 'high', // We found a good match
-                };
-                
-                // Fill the form with the found location data
-                _fillFormWithGoogleMapsData(
-                  location,
-                  location.displayName ?? locationName,
-                  location.website ?? '',
-                  originalUrl
-                );
-                
-                print('🔍 GOOGLE KG SEARCH IMPROVED: ✅ Successfully created result with location data');
-                print('🔍 GOOGLE KG SEARCH IMPROVED: Result structure: location=${location.displayName}, placeName=${location.displayName ?? locationName}');
-                return result;
-              } else {
-                print('🔍 GOOGLE KG SEARCH IMPROVED: ⚠️ getPlaceDetails returned null for placeId: $placeId');
-              }
-            } else {
+              final Map<String, dynamic> result = {
+                'location': location,
+                'placeName': location.displayName ?? locationName,
+                'website': location.website,
+                'mapsUrl': originalUrl,
+                'searchQuery': query,
+                'confidence': 'high', // We found a good match
+              };
+              
+              // Fill the form with the found location data
+              _fillFormWithGoogleMapsData(
+                location,
+                location.displayName ?? locationName,
+                location.website ?? '',
+                originalUrl
+              );
+              
+              print('🔍 GOOGLE KG SEARCH IMPROVED: ✅ Successfully created result with location data');
+              print('🔍 GOOGLE KG SEARCH IMPROVED: Result structure: location=${location.displayName}, placeName=${location.displayName ?? locationName}');
+              return result;
+                        } else {
               print('🔍 GOOGLE KG SEARCH IMPROVED: ⚠️ bestResult missing placeId');
             }
           } else {
@@ -4447,51 +4249,47 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                 print('🔍 GOOGLE KG SEARCH+: Getting details for best match place ID: $placeId');
                 final location = await _mapsService.getPlaceDetails(placeId);
                 
-                if (location != null) {
-                  // Use Knowledge Graph website if Maps doesn't have one
-                  String? finalWebsite = location.website;
-                  if ((finalWebsite == null || finalWebsite.isEmpty) && kgWebsite != null) {
-                    print('🔍 GOOGLE KG SEARCH+: Using Knowledge Graph website: $kgWebsite');
-                    finalWebsite = kgWebsite;
-                  }
-                  
-                  final Map<String, dynamic> result = {
-                    'location': location,
-                    'placeName': location.displayName ?? locationName,
-                    'website': finalWebsite,
-                    'mapsUrl': originalUrl,
-                    'kgDescription': kgDescription,
-                    'kgImageUrl': kgImageUrl,
-                    'kgEntity': kgEntity,
-                    'searchQuery': query,
-                    'confidence': 'high',
-                  };
-                  
-                  // Fill the form with the found location data
-                  _fillFormWithGoogleMapsData(
-                    location,
-                    location.displayName ?? locationName,
-                    finalWebsite ?? '',
-                    originalUrl
-                  );
-                  
-                  // If we have a KG description, store it in the notes field
-                  if (kgDescription != null && mounted) {
-                    final provider = context.read<ReceiveShareProvider>();
-                    final firstCard = provider.experienceCards.first;
-                    if (firstCard.notesController.text.isEmpty) {
-                      firstCard.notesController.text = kgDescription;
-                      print('🔍 GOOGLE KG SEARCH+: Added Knowledge Graph description to notes');
-                    }
-                  }
-                  
-                  print('🔍 GOOGLE KG SEARCH+: ✅ Successfully created result with location data');
-                  print('🔍 GOOGLE KG SEARCH+: Result structure: location=${location.displayName}, placeName=${location.displayName ?? locationName}, website=$finalWebsite');
-                  return result;
-                } else {
-                  print('🔍 GOOGLE KG SEARCH+: ⚠️ getPlaceDetails returned null for placeId: $placeId');
+                // Use Knowledge Graph website if Maps doesn't have one
+                String? finalWebsite = location.website;
+                if ((finalWebsite == null || finalWebsite.isEmpty) && kgWebsite != null) {
+                  print('🔍 GOOGLE KG SEARCH+: Using Knowledge Graph website: $kgWebsite');
+                  finalWebsite = kgWebsite;
                 }
-              } else {
+                
+                final Map<String, dynamic> result = {
+                  'location': location,
+                  'placeName': location.displayName ?? locationName,
+                  'website': finalWebsite,
+                  'mapsUrl': originalUrl,
+                  'kgDescription': kgDescription,
+                  'kgImageUrl': kgImageUrl,
+                  'kgEntity': kgEntity,
+                  'searchQuery': query,
+                  'confidence': 'high',
+                };
+                
+                // Fill the form with the found location data
+                _fillFormWithGoogleMapsData(
+                  location,
+                  location.displayName ?? locationName,
+                  finalWebsite ?? '',
+                  originalUrl
+                );
+                
+                // If we have a KG description, store it in the notes field
+                if (kgDescription != null && mounted) {
+                  final provider = context.read<ReceiveShareProvider>();
+                  final firstCard = provider.experienceCards.first;
+                  if (firstCard.notesController.text.isEmpty) {
+                    firstCard.notesController.text = kgDescription;
+                    print('🔍 GOOGLE KG SEARCH+: Added Knowledge Graph description to notes');
+                  }
+                }
+                
+                print('🔍 GOOGLE KG SEARCH+: ✅ Successfully created result with location data');
+                print('🔍 GOOGLE KG SEARCH+: Result structure: location=${location.displayName}, placeName=${location.displayName ?? locationName}, website=$finalWebsite');
+                return result;
+                            } else {
                 print('🔍 GOOGLE KG SEARCH+: ⚠️ bestResult missing placeId: $bestResult');
               }
             } else {
@@ -4893,7 +4691,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                   subtitle: Text(address, style: TextStyle(fontSize: 12)),
                   onTap: () => Navigator.of(dialogContext).pop(result),
                 );
-              }).toList(),
+              }),
             ],
           ),
           actions: [
