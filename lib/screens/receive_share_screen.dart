@@ -624,13 +624,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   // Handle updates to the sharedFiles controller from SharingService
   void _handleSharedFilesUpdate() {
     if (_isProcessingUpdate) {
-      Fluttertoast.showToast(
-        msg: "DEBUG: Already processing update, ignoring",
-        toastLength: Toast.LENGTH_SHORT,
-        gravity: ToastGravity.BOTTOM,
-        backgroundColor: Colors.grey.withOpacity(0.8),
-        textColor: Colors.white,
-      );
+      // Fluttertoast.showToast(
+      //   msg: "DEBUG: Already processing update, ignoring",
+      //   toastLength: Toast.LENGTH_SHORT,
+      //   gravity: ToastGravity.BOTTOM,
+      //   backgroundColor: Colors.grey.withOpacity(0.8),
+      //   textColor: Colors.white,
+      // );
       return;
     }
     
@@ -654,21 +654,21 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         // Skip all the normal processing and go directly to Yelp URL handling
         _isProcessingUpdate = true;
         
-        Fluttertoast.showToast(
-          msg: "DEBUG: _handleSharedFilesUpdate called",
-          toastLength: Toast.LENGTH_LONG,
-          gravity: ToastGravity.BOTTOM,
-          backgroundColor: Colors.yellow.withOpacity(0.8),
-          textColor: Colors.black,
-        );
+        // Fluttertoast.showToast(
+        //   msg: "DEBUG: _handleSharedFilesUpdate called",
+        //   toastLength: Toast.LENGTH_LONG,
+        //   gravity: ToastGravity.BOTTOM,
+        //   backgroundColor: Colors.yellow.withOpacity(0.8),
+        //   textColor: Colors.black,
+        // );
         
-        Fluttertoast.showToast(
-          msg: "DEBUG: Yelp-only update - preserving existing content",
-          toastLength: Toast.LENGTH_LONG,
-          gravity: ToastGravity.BOTTOM,
-          backgroundColor: Colors.teal.withOpacity(0.8),
-          textColor: Colors.white,
-        );
+        // Fluttertoast.showToast(
+        //   msg: "DEBUG: Yelp-only update - preserving existing content",
+        //   toastLength: Toast.LENGTH_LONG,
+        //   gravity: ToastGravity.BOTTOM,
+        //   backgroundColor: Colors.teal.withOpacity(0.8),
+        //   textColor: Colors.white,
+        // );
         
         // Handle the Yelp URL update WITHOUT modifying _currentSharedFiles
         _handleYelpUrlUpdate(yelpUrl!, updatedFiles);
@@ -687,24 +687,24 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       print("ReceiveShareScreen: Current files: ${_currentSharedFiles.map((f) => f.path.substring(0, min(50, f.path.length))).join(", ") ?? "null"}");
       print("ReceiveShareScreen: Updated files: ${updatedFiles.map((f) => f.path.substring(0, min(50, f.path.length))).join(", ")}");
       
-      Fluttertoast.showToast(
-        msg: "DEBUG: _handleSharedFilesUpdate called",
-        toastLength: Toast.LENGTH_LONG,
-        gravity: ToastGravity.BOTTOM,
-        backgroundColor: Colors.yellow.withOpacity(0.8),
-        textColor: Colors.black,
-      );
+      // Fluttertoast.showToast(
+      //   msg: "DEBUG: _handleSharedFilesUpdate called",
+      //   toastLength: Toast.LENGTH_LONG,
+      //   gravity: ToastGravity.BOTTOM,
+      //   backgroundColor: Colors.yellow.withOpacity(0.8),
+      //   textColor: Colors.black,
+      // );
       
       // Check if this is a Yelp URL - if so, treat as update rather than full refresh
       if (yelpUrl != null) {
         print("ReceiveShareScreen: Yelp URL detected - treating as update rather than full refresh");
-        Fluttertoast.showToast(
-          msg: "DEBUG: Yelp URL in _handleSharedFilesUpdate - routing to update",
-          toastLength: Toast.LENGTH_LONG,
-          gravity: ToastGravity.BOTTOM,
-          backgroundColor: Colors.teal.withOpacity(0.8),
-          textColor: Colors.white,
-        );
+        // Fluttertoast.showToast(
+        //   msg: "DEBUG: Yelp URL in _handleSharedFilesUpdate - routing to update",
+        //   toastLength: Toast.LENGTH_LONG,
+        //   gravity: ToastGravity.BOTTOM,
+        //   backgroundColor: Colors.teal.withOpacity(0.8),
+        //   textColor: Colors.white,
+        // );
         // For Yelp URLs, always try to update existing cards instead of creating new content
         _handleYelpUrlUpdate(yelpUrl, updatedFiles);
         
@@ -802,23 +802,23 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     final provider = context.read<ReceiveShareProvider>();
     final experienceCards = provider.experienceCards;
     
-    Fluttertoast.showToast(
-      msg: "DEBUG: _handleYelpUrlUpdate called, cards=${experienceCards.length}",
-      toastLength: Toast.LENGTH_LONG,
-      gravity: ToastGravity.CENTER,
-      backgroundColor: Colors.red.withOpacity(0.8),
-      textColor: Colors.white,
-    );
+    // Fluttertoast.showToast(
+    //   msg: "DEBUG: _handleYelpUrlUpdate called, cards=${experienceCards.length}",
+    //   toastLength: Toast.LENGTH_LONG,
+    //   gravity: ToastGravity.CENTER,
+    //   backgroundColor: Colors.red.withOpacity(0.8),
+    //   textColor: Colors.white,
+    // );
     
     if (experienceCards.isEmpty) {
       print("ReceiveShareScreen: No experience cards yet for Yelp URL update - will retry in 500ms");
-      Fluttertoast.showToast(
-        msg: "DEBUG: No cards yet, retrying in 500ms",
-        toastLength: Toast.LENGTH_SHORT,
-        gravity: ToastGravity.CENTER,
-        backgroundColor: Colors.grey.withOpacity(0.8),
-        textColor: Colors.white,
-      );
+      // Fluttertoast.showToast(
+      //   msg: "DEBUG: No cards yet, retrying in 500ms",
+      //   toastLength: Toast.LENGTH_SHORT,
+      //   gravity: ToastGravity.CENTER,
+      //   backgroundColor: Colors.grey.withOpacity(0.8),
+      //   textColor: Colors.white,
+      // );
       Future.delayed(const Duration(milliseconds: 500), () {
         if (mounted) {
           _handleYelpUrlUpdate(yelpUrl, updatedFiles);
@@ -860,15 +860,15 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     
     // No notifications needed - the TextEditingController will handle its own listeners
     // This prevents any rebuilds of the page or provider listeners
-    Fluttertoast.showToast(
-        msg: "Yelp URL added",
-        toastLength: Toast.LENGTH_SHORT,
-        gravity: ToastGravity.BOTTOM,
-        timeInSecForIosWeb: 1,
-        backgroundColor: Colors.black.withOpacity(0.7),
-        textColor: Colors.white,
-        fontSize: 16.0
-    );
+    // Fluttertoast.showToast(
+    //     msg: "Yelp URL added",
+    //     toastLength: Toast.LENGTH_SHORT,
+    //     gravity: ToastGravity.BOTTOM,
+    //     timeInSecForIosWeb: 1,
+    //     backgroundColor: Colors.black.withOpacity(0.7),
+    //     textColor: Colors.white,
+    //     fontSize: 16.0
+    // );
     
     if (previousUrl.isNotEmpty) {
       print("ReceiveShareScreen: Replaced Yelp URL in card ${targetCard.id}: '$previousUrl' -> '$normalizedUrl'");
@@ -1203,13 +1203,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     // Check if this is a Yelp URL and add debug toast
     String? yelpUrl = _extractYelpUrlFromSharedFiles(files);
     if (yelpUrl != null) {
-      Fluttertoast.showToast(
-        msg: "DEBUG: Initial processing Yelp URL",
-        toastLength: Toast.LENGTH_LONG,
-        gravity: ToastGravity.TOP,
-        backgroundColor: Colors.purple.withOpacity(0.8),
-        textColor: Colors.white,
-      );
+      // Fluttertoast.showToast(
+      //   msg: "DEBUG: Initial processing Yelp URL",
+      //   toastLength: Toast.LENGTH_LONG,
+      //   gravity: ToastGravity.TOP,
+      //   backgroundColor: Colors.purple.withOpacity(0.8),
+      //   textColor: Colors.white,
+      // );
     }
 
     // For all content, always use normal processing
@@ -1264,34 +1264,34 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                 hasPersistedContent = content != null && content.isNotEmpty;
               });
               
-              Fluttertoast.showToast(
-                msg: "DEBUG: Yelp in _processSharedContent, cards=${provider.experienceCards.length}, shareFlow=$hasActiveShareFlow",
-                toastLength: Toast.LENGTH_LONG,
-                gravity: ToastGravity.CENTER,
-                backgroundColor: Colors.blue.withOpacity(0.8),
-                textColor: Colors.white,
-              );
+              // Fluttertoast.showToast(
+              //   msg: "DEBUG: Yelp in _processSharedContent, cards=${provider.experienceCards.length}, shareFlow=$hasActiveShareFlow",
+              //   toastLength: Toast.LENGTH_LONG,
+              //   gravity: ToastGravity.CENTER,
+              //   backgroundColor: Colors.blue.withOpacity(0.8),
+              //   textColor: Colors.white,
+              // );
               
               // If we have existing cards OR there's evidence of a previous session, treat as update
               if (provider.experienceCards.isNotEmpty || hasActiveShareFlow) {
                 print("ReceiveShareScreen: Yelp URL detected with existing cards or active session - updating instead of creating new preview");
-                Fluttertoast.showToast(
-                  msg: "DEBUG: Updating existing card with Yelp URL (cards=${provider.experienceCards.length})",
-                  toastLength: Toast.LENGTH_LONG,
-                  gravity: ToastGravity.CENTER,
-                  backgroundColor: Colors.green.withOpacity(0.8),
-                  textColor: Colors.white,
-                );
+                // Fluttertoast.showToast(
+                //   msg: "DEBUG: Updating existing card with Yelp URL (cards=${provider.experienceCards.length})",
+                //   toastLength: Toast.LENGTH_LONG,
+                //   gravity: ToastGravity.CENTER,
+                //   backgroundColor: Colors.green.withOpacity(0.8),
+                //   textColor: Colors.white,
+                // );
                 _handleYelpUrlUpdate(yelpUrl, files);
                 return;
               } else {
-                Fluttertoast.showToast(
-                  msg: "DEBUG: No existing cards or session, creating new Yelp preview",
-                  toastLength: Toast.LENGTH_LONG,
-                  gravity: ToastGravity.CENTER,
-                  backgroundColor: Colors.orange.withOpacity(0.8),
-                  textColor: Colors.white,
-                );
+                // Fluttertoast.showToast(
+                //   msg: "DEBUG: No existing cards or session, creating new Yelp preview",
+                //   toastLength: Toast.LENGTH_LONG,
+                //   gravity: ToastGravity.CENTER,
+                //   backgroundColor: Colors.orange.withOpacity(0.8),
+                //   textColor: Colors.white,
+                // );
               }
             }
             
