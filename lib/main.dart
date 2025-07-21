@@ -62,18 +62,23 @@ Future<void> _configureLocalNotifications() async {
   const AndroidInitializationSettings initializationSettingsAndroid =
       AndroidInitializationSettings('@mipmap/ic_launcher'); 
   
-  // Add iOS and macOS settings if needed - requires more setup
-  // final DarwinInitializationSettings initializationSettingsIOS = DarwinInitializationSettings(
-  //   onDidReceiveLocalNotification: (id, title, body, payload) async {
-  //     // your execution code here
-  //   },
-  // );
-  // final DarwinInitializationSettings initializationSettingsMacOS = DarwinInitializationSettings(...);
+  // Add iOS and macOS settings
+  const DarwinInitializationSettings initializationSettingsIOS = DarwinInitializationSettings(
+    requestSoundPermission: false,
+    requestBadgePermission: false,
+    requestAlertPermission: false,
+  );
+  
+  const DarwinInitializationSettings initializationSettingsMacOS = DarwinInitializationSettings(
+    requestSoundPermission: false,
+    requestBadgePermission: false,
+    requestAlertPermission: false,
+  );
 
   const InitializationSettings initializationSettings = InitializationSettings(
     android: initializationSettingsAndroid,
-    // iOS: initializationSettingsIOS,
-    // macOS: initializationSettingsMacOS,
+    iOS: initializationSettingsIOS,
+    macOS: initializationSettingsMacOS,
   );
   await flutterLocalNotificationsPlugin.initialize(
     initializationSettings,
@@ -100,8 +105,12 @@ Future<void> _configureLocalNotifications() async {
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Load environment variables
-  await dotenv.load(fileName: ".env");
+  // Load environment variables (if .env file exists)
+  try {
+    await dotenv.load(fileName: ".env");
+  } catch (e) {
+    print('No .env file found - using API keys from config files instead: $e');
+  }
 
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
