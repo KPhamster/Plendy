@@ -2763,6 +2763,14 @@ _saveColorCategoryOrder();
 
   // --- ADDED: Helper method for launching URLs (restored) ---
   Future<void> _launchUrl(String urlString) async {
+    // Skip invalid URLs
+    if (urlString.isEmpty || 
+        urlString == 'about:blank' || 
+        urlString == 'https://about:blank') {
+      print('Skipping invalid URL: $urlString');
+      return;
+    }
+    
     // Ensure URL starts with http/https for launchUrl
     String launchableUrl = urlString;
     if (!launchableUrl.startsWith('http://') &&
@@ -2771,11 +2779,21 @@ _saveColorCategoryOrder();
       launchableUrl = 'https://$launchableUrl';
 }
 
-    final Uri uri = Uri.parse(launchableUrl);
-    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
-if (mounted) {
+    try {
+      final Uri uri = Uri.parse(launchableUrl);
+      if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+        print('Could not launch $uri');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Could not open link: $urlString')),
+          );
+        }
+      }
+    } catch (e) {
+      print('Error parsing URL: $urlString - $e');
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not open link: $urlString')),
+          SnackBar(content: Text('Invalid URL: $urlString')),
         );
       }
     }
