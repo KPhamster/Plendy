@@ -39,12 +39,10 @@ Color _parseColor(String hexColor) {
     try {
       return Color(int.parse("0x$hexColor"));
     } catch (e) {
-      print("🎨 COLLECTIONS SCREEN: Error parsing color '$hexColor': $e");
-      return Colors.grey; // Default color on parsing error
+return Colors.grey; // Default color on parsing error
     }
   }
-  print("🎨 COLLECTIONS SCREEN: Invalid hex color format: '$hexColor'");
-  return Colors.grey; // Default color on invalid format
+return Colors.grey; // Default color on invalid format
 }
 
 // ADDED: Enum for experience sort types
@@ -199,9 +197,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                   'experience': exp,
                 });
               } else {
-                print(
-                    "Warning: Could not find SharedMediaItem for ID $mediaId referenced by Experience ${exp.id}");
-              }
+}
             }
           }
 
@@ -278,11 +274,9 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     );
 
     if (result != null) {
-      print("AddCategoryModal returned a category, refreshing data...");
-      _loadData();
+_loadData();
     } else {
-      print("AddCategoryModal closed without adding.");
-    }
+}
   }
 
   // ADDED: Method to show add experience modal
@@ -300,11 +294,9 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     );
 
     if (result != null) {
-      print("AddExperienceModal returned an experience, refreshing data...");
-      _loadData();
+_loadData();
     } else {
-      print("AddExperienceModal closed without adding.");
-    }
+}
   }
 
   Future<void> _showEditSingleCategoryModal(UserCategory category) async {
@@ -318,11 +310,9 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     );
 
     if (result != null) {
-      print("AddCategoryModal (for edit) returned, refreshing data...");
-      _loadData();
+_loadData();
     } else {
-      print("AddCategoryModal (for edit) closed without saving.");
-    }
+}
   }
 
   Future<void> _showDeleteCategoryConfirmation(UserCategory category) async {
@@ -348,16 +338,14 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     if (confirm == true && mounted) {
       try {
         await _experienceService.deleteUserCategory(category.id);
-        print('Category "${category.name}" deleted successfully.');
-        if (mounted) {
+if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('"${category.name}" category deleted.')),
           );
           _loadData();
         }
       } catch (e) {
-        print("Error deleting category: $e");
-        if (mounted) {
+if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('Error deleting category: $e')),
           );
@@ -374,8 +362,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       // if UserCategory relies on equatable/identity.
       _categories[i] = _categories[i].copyWith(orderIndex: i);
     }
-    print("Updated local category order indices.");
-  }
+}
 
   // ADDED: Method to save the new category order to Firestore
   Future<void> _saveCategoryOrder() async {
@@ -392,22 +379,17 @@ class _CollectionsScreenState extends State<CollectionsScreen>
           'orderIndex': category.orderIndex!,
         });
       } else {
-        print(
-            "Warning: Skipping category in save order with missing id or index: ${category.name}");
-      }
+}
     }
 
     if (updates.isEmpty) {
-      print("No valid category updates to save.");
-      setState(() => _isLoading = false);
+setState(() => _isLoading = false);
       return;
     }
 
     try {
-      print("Attempting to save order for ${updates.length} categories.");
-      await _experienceService.updateCategoryOrder(updates);
-      print("Category order saved successfully.");
-      if (mounted) {
+await _experienceService.updateCategoryOrder(updates);
+if (mounted) {
         // Optionally show a success message (might be too noisy)
         // ScaffoldMessenger.of(context).showSnackBar(
         //   const SnackBar(content: Text('Category order saved.'), duration: Duration(seconds: 1)),
@@ -417,8 +399,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         setState(() => _isLoading = false);
       }
     } catch (e) {
-      print("Error saving category order: $e");
-      if (mounted) {
+if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text("Error saving category order: $e")),
         );
@@ -571,8 +552,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                 _showingColorCategories = false; 
                 _selectedColorCategory = null; 
               });
-              print('Tapped on ${category.name}, showing experiences.');
-            },
+},
           );
         },
         onReorder: (int oldIndex, int newIndex) {
@@ -584,8 +564,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
             _categories.insert(newIndex, item);
 
             _updateLocalOrderIndices();
-            print("Categories reordered locally. Triggering save.");
-            _saveCategoryOrder();
+_saveCategoryOrder();
           });
         },
       );
@@ -594,8 +573,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
 
   // ADDED: Method to apply sorting and save the new order
   Future<void> _applySortAndSave(CategorySortType sortType) async {
-    print("Applying sort: $sortType");
-    setState(() {
+setState(() {
       if (sortType == CategorySortType.alphabetical) {
         _categories.sort(
             (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
@@ -627,9 +605,6 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   // ADDED: Optional parameter to apply sort to the filtered list
   Future<void> _applyExperienceSort(ExperienceSortType sortType,
       {bool applyToFiltered = false}) async {
-    print(
-        "Applying experience sort: $sortType (applyToFiltered: $applyToFiltered)");
-    // Set the internal state first, so UI reflects the choice while processing
     setState(() {
       _experienceSortType = sortType;
       // Only show loading indicator if sorting the main list by distance
@@ -657,8 +632,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       }
       // Add other sort types here if needed
     } catch (e) {
-      print("Error applying sort: $e");
-      if (mounted) {
+if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error sorting experiences: $e')),
         );
@@ -671,15 +645,13 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         });
       }
     }
-    print("Experiences sorted.");
-  }
+}
 
   // --- ADDED: Method to sort experiences by distance ---
   // MODIFIED: Takes the list to sort as a parameter
   Future<void> _sortExperiencesByDistance(
       List<Experience> experiencesToSort) async {
-    print("Attempting to sort by distance...");
-    Position? currentPosition;
+Position? currentPosition;
     bool locationPermissionGranted = false;
 
     try {
@@ -711,17 +683,13 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       locationPermissionGranted = true;
 
       // 3. Get Current Location (with timeout)
-      print("Getting current location...");
-      currentPosition = await Geolocator.getCurrentPosition(
+currentPosition = await Geolocator.getCurrentPosition(
         desiredAccuracy:
             LocationAccuracy.medium, // Medium accuracy is often faster
         timeLimit: Duration(seconds: 10), // Add a timeout
       );
-      print(
-          "Current location obtained: ${currentPosition.latitude}, ${currentPosition.longitude}");
-    } catch (e) {
-      print("Error getting current location: $e");
-      if (mounted) {
+} catch (e) {
+if (mounted) {
         String message = 'Could not get current location.';
         if (e is TimeoutException) {
           message = 'Could not get current location: Request timed out.';
@@ -755,12 +723,10 @@ class _CollectionsScreenState extends State<CollectionsScreen>
             exp.location.longitude,
           );
         } catch (e) {
-          print("Error calculating distance for ${exp.name}: $e");
-          distance = null; // Treat calculation error as unknown distance
+distance = null; // Treat calculation error as unknown distance
         }
       } else {
-        print("Experience ${exp.name} has no valid coordinates.");
-        distance = null; // No coordinates, unknown distance
+distance = null; // No coordinates, unknown distance
       }
       experiencesWithDistance.add({'experience': exp, 'distance': distance});
     }
@@ -785,17 +751,14 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         .map((item) => item['experience'] as Experience)
         .toList());
 
-    print("Experiences sorted by distance successfully.");
-    }
+}
   // --- END ADDED ---
 
   // --- REFACTORED: Method to apply sorting to the grouped content items list ---
   // ADDED: Optional parameter to apply sort to the filtered list
   Future<void> _applyContentSort(ContentSortType sortType,
       {bool applyToFiltered = false}) async {
-    print(
-        "Applying content sort: $sortType (applyToFiltered: $applyToFiltered)");
-    setState(() {
+setState(() {
       _contentSortType = sortType;
       // Show loading only for distance sort on the main list
       if (sortType == ContentSortType.distanceFromMe && !applyToFiltered) {
@@ -807,34 +770,24 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     List<GroupedContentItem> listToSort =
         applyToFiltered ? _filteredGroupedContentItems : _groupedContentItems;
     
-    print("SORT DEBUG: listToSort.length = ${listToSort.length}");
-    print("SORT DEBUG: _groupedContentItems.length = ${_groupedContentItems.length}");
-    print("SORT DEBUG: _filteredGroupedContentItems.length = ${_filteredGroupedContentItems.length}");
-
-    try {
+try {
       if (sortType == ContentSortType.mostRecent) {
         // Sort by media item creation date (descending)
-        print("SORT DEBUG: Starting mostRecent sort with ${listToSort.length} items");
-        listToSort.sort((a, b) {
+listToSort.sort((a, b) {
           final comparison = b.mediaItem.createdAt.compareTo(a.mediaItem.createdAt);
           // Show first few comparisons for debugging
           if (listToSort.indexOf(a) < 5 || listToSort.indexOf(b) < 5) {
             final aPath = a.mediaItem.path.length > 30 ? a.mediaItem.path.substring(0, 30) + "..." : a.mediaItem.path;
             final bPath = b.mediaItem.path.length > 30 ? b.mediaItem.path.substring(0, 30) + "..." : b.mediaItem.path;
-            print('SORT DEBUG: Comparing $aPath (${a.mediaItem.createdAt}) vs $bPath (${b.mediaItem.createdAt}) = $comparison');
-          }
+}
           return comparison;
         });
         
         // Debug logging to show final sort order with more detail
-        print('SORT DEBUG: Final order after sorting (showing first 20 items):');
-        for (int i = 0; i < listToSort.length && i < 20; i++) {
+for (int i = 0; i < listToSort.length && i < 20; i++) {
           final item = listToSort[i];
           final expNames = item.associatedExperiences.map((e) => e.name).join(', ');
-          print('  [$i] ${item.mediaItem.path.length > 50 ? item.mediaItem.path.substring(0, 50) + "..." : item.mediaItem.path}');
-          print('      createdAt: ${item.mediaItem.createdAt}');
-          print('      experiences: $expNames');
-        }
+}
         
         // Also search for specific items we're interested in
         for (int i = 0; i < listToSort.length; i++) {
@@ -842,11 +795,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
           if (item.mediaItem.createdAt.toString().contains('23:53:15') || 
               item.mediaItem.createdAt.toString().contains('23:52:19')) {
             final expNames = item.associatedExperiences.map((e) => e.name).join(', ');
-            print('SORT DEBUG: Found target item at position [$i]:');
-            print('  Path: ${item.mediaItem.path}');
-            print('  CreatedAt: ${item.mediaItem.createdAt}');
-            print('  Experiences: $expNames');
-          }
+}
         }
       } else if (sortType == ContentSortType.alphabetical) {
         // Sort by the name of the *first* associated experience (ascending)
@@ -870,9 +819,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         // --- END MODIFIED ---
       }
     } catch (e, stackTrace) {
-      print("Error applying content sort: $e");
-      print(stackTrace);
-      if (mounted) {
+if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error sorting content: $e')),
         );
@@ -889,25 +836,18 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     if (mounted && sortType != ContentSortType.distanceFromMe) {
       setState(() {});
     }
-    print("Content items sorted.");
-    
-    // Debug: Check if the sorted list matches what's being displayed
-    print("SORT DEBUG: After setState, checking display list:");
-    final displayList = applyToFiltered ? _filteredGroupedContentItems : _groupedContentItems;
-    print("SORT DEBUG: Display list length = ${displayList.length}");
-    for (int i = 0; i < displayList.length && i < 10; i++) {
+final displayList = applyToFiltered ? _filteredGroupedContentItems : _groupedContentItems;
+for (int i = 0; i < displayList.length && i < 10; i++) {
       final item = displayList[i];
       final expNames = item.associatedExperiences.map((e) => e.name).join(', ');
-      print("  Display[$i]: ${expNames} - ${item.mediaItem.createdAt}");
-    }
+}
   }
 
   // --- REFACTORED: Method to sort grouped content items by distance --- ///
   // MODIFIED: Takes the list to sort as a parameter
   Future<void> _sortContentByDistance(
       List<GroupedContentItem> contentToSort) async {
-    print("Attempting to sort content by distance...");
-    Position? currentPosition;
+Position? currentPosition;
     bool locationPermissionGranted = false;
 
     // Much of this logic is duplicated from _sortExperiencesByDistance
@@ -938,16 +878,12 @@ class _CollectionsScreenState extends State<CollectionsScreen>
 
       locationPermissionGranted = true;
 
-      print("Getting current location for content sort...");
-      currentPosition = await Geolocator.getCurrentPosition(
+currentPosition = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.medium,
         timeLimit: Duration(seconds: 10),
       );
-      print(
-          "Current location obtained: ${currentPosition.latitude}, ${currentPosition.longitude}");
-    } catch (e) {
-      print("Error getting current location: $e");
-      if (mounted) {
+} catch (e) {
+if (mounted) {
         String message = 'Could not get current location.';
         if (e is TimeoutException) {
           message = 'Could not get current location: Request timed out.';
@@ -981,13 +917,9 @@ class _CollectionsScreenState extends State<CollectionsScreen>
               minGroupDistance = distance;
             }
           } catch (e) {
-            print("Error calculating distance for ${exp.name}: $e");
-            // Distance remains null or the previous minGroupDistance
           }
         } else {
-          print(
-              "Experience ${exp.name} in group ${group.mediaItem.path} has no valid coordinates.");
-        }
+}
       }
       // Store the calculated minimum distance in the object
       group.minDistance = minGroupDistance;
@@ -1007,8 +939,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       return distA.compareTo(distB); // Sort by distance ascending
     });
 
-    print("Grouped content items sorted by distance successfully.");
-    }
+}
   // --- END REFACTORED ---
 
   @override
@@ -1188,8 +1119,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                           );
                         },
                         onSelected: (suggestion) async {
-                          print('Selected experience: ${suggestion.name}');
-                          final category = _categories.firstWhere(
+final category = _categories.firstWhere(
                               (cat) => cat.id == suggestion.categoryId, 
                               orElse: () => UserCategory(
                                   id: '', 
@@ -1494,8 +1424,6 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       ),
       onTap: () async {
         // Make onTap async
-        print('Tapped on Experience: ${experience.name}');
-        // ADDED: Navigation logic to the ExperiencePageScreen
 
         // Find the matching category for the tapped experience using categoryId
         final UserCategory resolvedCategory = _categories.firstWhere(
@@ -1964,8 +1892,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                   return const Center(child: CircularProgressIndicator());
                 },
                 errorBuilder: (context, error, stackTrace) {
-                  print("Error loading image $mediaPath: $error");
-                  return Container(
+return Container(
                     color: Colors.grey[200],
                     height: 200, 
                     child: Center(
@@ -2228,13 +2155,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
           mediaItem.id,
           associatedExperiences.map((e) => e.id).toList(),
         );
-        print('Deletion confirmed for: ${mediaItem.path}');
-        print(
-            'Associated Experience IDs: ${associatedExperiences.map((e) => e.id).toList()}');
-        // --- END Call ---
 
-        print('Content "${mediaItem.path}" deleted and unlinked successfully.');
-        if (mounted) {
+if (mounted) {
           // Hide loading indicator
           setState(() => _isLoading = false);
           ScaffoldMessenger.of(context).showSnackBar(
@@ -2243,8 +2165,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
           _loadData(); // Refresh the screen
         }
       } catch (e) {
-        print("Error deleting content: $e");
-        if (mounted) {
+if (mounted) {
           // Hide loading indicator
           setState(() => _isLoading = false);
           ScaffoldMessenger.of(context).showSnackBar(
@@ -2269,8 +2190,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     );
 
     if (result != null) {
-      print("AddColorCategoryModal returned, refreshing data...");
-      _loadData(); // Refresh both lists
+_loadData(); // Refresh both lists
     }
   }
 
@@ -2285,13 +2205,9 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     );
 
     if (result != null) {
-      print(
-          "🎨 COLLECTIONS_SCREEN: EditColorCategoryModal returned result: ${result.id} - ${result.name}, refreshing data...");
-      _loadData();
+_loadData();
     } else {
-      print(
-          "🎨 COLLECTIONS_SCREEN: EditColorCategoryModal closed without saving.");
-    }
+}
   }
 
   Future<void> _showDeleteColorCategoryConfirmation(
@@ -2318,16 +2234,14 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     if (confirm == true && mounted) {
       try {
         await _experienceService.deleteColorCategory(category.id);
-        print('Color Category "${category.name}" deleted successfully.');
-        if (mounted) {
+if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('"${category.name}" category deleted.')),
           );
           _loadData(); // Refresh data
         }
       } catch (e) {
-        print("Error deleting color category: $e");
-        if (mounted) {
+if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('Error deleting color category: $e')),
           );
@@ -2340,8 +2254,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     for (int i = 0; i < _colorCategories.length; i++) {
       _colorCategories[i] = _colorCategories[i].copyWith(orderIndex: i);
     }
-    print("Updated local color category order indices.");
-  }
+}
 
   Future<void> _saveColorCategoryOrder() async {
     setState(() => _isLoading = true);
@@ -2353,27 +2266,21 @@ class _CollectionsScreenState extends State<CollectionsScreen>
           'orderIndex': category.orderIndex!,
         });
       } else {
-        print(
-            "Warning: Skipping color category in save order with missing id or index: ${category.name}");
-      }
+}
     }
 
     if (updates.isEmpty) {
-      print("No valid color category updates to save.");
-      setState(() => _isLoading = false);
+setState(() => _isLoading = false);
       return;
     }
 
     try {
-      print("Attempting to save order for ${updates.length} color categories.");
-      await _experienceService.updateColorCategoryOrder(updates);
-      print("Color category order saved successfully.");
-      if (mounted) {
+await _experienceService.updateColorCategoryOrder(updates);
+if (mounted) {
         setState(() => _isLoading = false);
       }
     } catch (e) {
-      print("Error saving color category order: $e");
-      if (mounted) {
+if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text("Error saving color category order: $e")),
         );
@@ -2384,8 +2291,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   }
 
   Future<void> _applyColorSortAndSave(ColorCategorySortType sortType) async {
-    print("Applying color category sort: $sortType");
-    setState(() {
+setState(() {
       if (sortType == ColorCategorySortType.alphabetical) {
         _colorCategories.sort(
             (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
@@ -2546,9 +2452,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                 _showingColorCategories = true; 
                 _selectedCategory = null;
               });
-              print(
-                  'Tapped on color category: ${category.name}, showing experiences.');
-            },
+},
           );
         },
         onReorder: (int oldIndex, int newIndex) {
@@ -2559,8 +2463,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
             final ColorCategory item = _colorCategories.removeAt(oldIndex);
             _colorCategories.insert(newIndex, item);
             _updateLocalColorOrderIndices();
-            print("Color categories reordered locally. Triggering save.");
-            _saveColorCategoryOrder();
+_saveColorCategoryOrder();
           });
         },
       );
@@ -2814,8 +2717,6 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   }
 
   void _applyFiltersAndUpdateLists() {
-    print("🎨 COLLECTIONS SCREEN: Applying filters...");
-    // Filter experiences
     final filteredExperiences = _experiences.where((exp) {
       // MODIFIED: Also check otherCategories for a match
       final bool categoryMatch = _selectedCategoryIds.isEmpty ||
@@ -2848,12 +2749,6 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       });
     }).toList();
 
-    print(
-        "🎨 COLLECTIONS SCREEN: Experiences filtered to ${filteredExperiences.length}");
-    print(
-        "🎨 COLLECTIONS SCREEN: Content groups filtered to ${filteredGroupedContent.length}");
-
-    // Update the state with the filtered lists
     setState(() {
       _filteredExperiences = filteredExperiences;
       _filteredGroupedContentItems = filteredGroupedContent;
@@ -2874,13 +2769,11 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         !launchableUrl.startsWith('https://')) {
       // Assume https if no scheme provided
       launchableUrl = 'https://$launchableUrl';
-      print("Prepended 'https://' to URL: $launchableUrl");
-    }
+}
 
     final Uri uri = Uri.parse(launchableUrl);
     if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
-      print('Could not launch $uri');
-      if (mounted) {
+if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Could not open link: $urlString')),
         );
@@ -2981,8 +2874,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
             return const Center(child: CircularProgressIndicator());
           },
           errorBuilder: (context, error, stackTrace) {
-            print("Error loading image $mediaPath: $error");
-            return Container(
+return Container(
               color: Colors.grey[200],
               height: 200, 
               child: Center(
