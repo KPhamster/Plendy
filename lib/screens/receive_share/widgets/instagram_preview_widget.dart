@@ -249,6 +249,11 @@ class InstagramWebViewState extends State<InstagramWebView> {
             // Handle custom URL schemes (like Instagram app deep links)
             final url = request.url;
             
+            // Handle about:blank URLs
+            if (url == 'about:blank' || url == 'https://about:blank') {
+              return NavigationDecision.prevent;
+            }
+            
             // List of custom schemes to block
             final customSchemes = ['instagram', 'fb', 'intent'];
             final uri = Uri.tryParse(url);
@@ -258,16 +263,19 @@ class InstagramWebViewState extends State<InstagramWebView> {
               return NavigationDecision.prevent;
             }
             
-            // Allow Instagram domains and CDN
+            // Allow Instagram domains, CDN, and Facebook authentication
             if (url.contains('instagram.com') || 
                 url.contains('cdn.instagram.com') ||
                 url.contains('cdninstagram.com') ||
-                url.contains('fbcdn.net')) {
+                url.contains('fbcdn.net') ||
+                url.contains('facebook.com/instagram/') ||  // Allow Facebook-Instagram auth flows
+                url.contains('facebook.com/login/') ||      // Allow Facebook login
+                url.contains('accounts.instagram.com')) {   // Allow Instagram accounts
               return NavigationDecision.navigate;
             }
             
-            // For external links, use callback
-            if (mounted && !_isDisposed) {
+            // For external links, use callback only if it's a valid HTTP/HTTPS URL
+            if (mounted && !_isDisposed && url.startsWith('http')) {
               try {
                 widget.launchUrlCallback(url);
               } catch (e) {
