@@ -3113,39 +3113,27 @@ _sharingService.markShareFlowAsInactive();
                                           );
                                         }
                                       ),
-                                    Selector<ReceiveShareProvider, List<ExperienceCardData>>(
-                                      key: const ValueKey('experience_cards_selector'), // Keep this key or change if you prefer
+                                    Selector<ReceiveShareProvider, List<String>>(
+                                      key: const ValueKey('experience_cards_selector'),
                                       selector: (_, provider) {
-                                        // print("ReceiveShareScreen: Selector retrieving cards. Provider HASH: ${provider.hashCode}"); // Can be removed
-                                        return provider.experienceCards;
+                                        final cards = provider.experienceCards;
+                                        // Build immutable signatures so Selector can detect in-place mutations
+                                        return List<String>.generate(cards.length, (i) {
+                                          final c = cards[i];
+                                          final id = c.id;
+                                          final title = c.titleController.text;
+                                          final cat = c.selectedCategoryId ?? '';
+                                          final colorCat = c.selectedColorCategoryId ?? '';
+                                          final existingId = c.existingExperienceId ?? '';
+                                          final previewId = c.placeIdForPreview ?? '';
+                                          final locId = c.selectedLocation?.placeId ?? '';
+                                          final search = c.searchController.text;
+                                          return '$id|$title|$cat|$colorCat|$existingId|$previewId|$locId|$search';
+                                        });
                                       },
-                                      shouldRebuild: (previous, next) {
-                                        if (previous.length != next.length) {
-                                          // print("ReceiveShareScreen: Selector WILL REBUILD (list lengths different).");
-                                          return true;
-                                        }
-                                        for (int i = 0; i < previous.length; i++) {
-                                          final pCard = previous[i];
-                                          final nCard = next[i];
-                                          // Compare relevant fields that determine if UI for a card should change
-                                          if (pCard.id != nCard.id ||
-                                              pCard.titleController.text != nCard.titleController.text ||
-                                              pCard.selectedCategoryId != nCard.selectedCategoryId ||
-                                              pCard.selectedColorCategoryId != nCard.selectedColorCategoryId ||
-                                              pCard.existingExperienceId != nCard.existingExperienceId || // If it's linked/unlinked
-                                              pCard.placeIdForPreview != nCard.placeIdForPreview || // If preview should change
-                                              pCard.selectedLocation?.placeId != nCard.selectedLocation?.placeId || // If location changed
-                                              pCard.searchController.text != nCard.searchController.text // If search text/displayed location changed
-                                              ) {
-                                            // print("ReceiveShareScreen: Selector WILL REBUILD (card data different at index $i).");
-                                            return true;
-                                          }
-                                        }
-                                        // print("ReceiveShareScreen: Selector WILL NOT REBUILD (lists appear identical by check).");
-                                        return false;
-                                      },
-                                      builder: (context, selectedExperienceCards, child) {
-return _ExperienceCardsSection(
+                                      builder: (context, _signatures, child) {
+                                        final selectedExperienceCards = context.read<ReceiveShareProvider>().experienceCards;
+                                        return _ExperienceCardsSection(
                                           userCategories: _userCategories,
                                           userColorCategories: _userColorCategories,
                                           userCategoriesNotifier: _userCategoriesNotifier,
@@ -3158,11 +3146,11 @@ return _ExperienceCardsSection(
                                           isSpecialUrl: _isSpecialUrl,
                                           extractFirstUrl: _extractFirstUrl,
                                           currentSharedFiles: _currentSharedFiles,
-                                          experienceCards: selectedExperienceCards, // Pass selected cards from Selector
-                                          sectionKey: _experienceCardsSectionKey, // PASSING THE KEY
-                                          onYelpButtonTapped: _trackYelpButtonTapped, // ADDED
+                                          experienceCards: selectedExperienceCards,
+                                          sectionKey: _experienceCardsSectionKey,
+                                          onYelpButtonTapped: _trackYelpButtonTapped,
                                         );
-                                      }
+                                      },
                                     ),
                                   ],
                                 ),

@@ -576,8 +576,6 @@ class ExperienceService {
       if (chunk.isEmpty) continue;
 
       try {
-        print(
-            "getSharedMediaItems: Fetching chunk ${i ~/ chunkSize + 1} with ${chunk.length} IDs.");
         final snapshot = await _sharedMediaItemsCollection
             .where(FieldPath.documentId, whereIn: chunk)
             .get();
