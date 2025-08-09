@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'dart:math';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 import 'dart:io';
@@ -296,6 +297,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   final ExperienceService _experienceService = ExperienceService();
   final GoogleMapsService _mapsService = GoogleMapsService();
   final SharingService _sharingService = SharingService();
+  // URL bar controller and focus node
+  late final TextEditingController _sharedUrlController;
+  late final FocusNode _sharedUrlFocusNode;
+  String? _lastProcessedUrl;
   
   // Add flag to prevent double processing
   bool _isProcessingUpdate = false;
@@ -385,6 +390,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   @override
   void initState() {
     super.initState();
+    // Initialize URL bar controller and focus
+    _sharedUrlController = TextEditingController();
+    _sharedUrlFocusNode = FocusNode();
     // _sharingService.isShareFlowActive = true; // REMOVED: This is now set by SharingService.showReceiveShareScreen
 
     // --- ADDED FOR SCROLLING FAB ---
@@ -469,6 +477,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // Now it's safe to process initial shared content,
       // as the provider (conceptually) has what it needs for default categories.
       _processInitialSharedContent(_currentSharedFiles);
+      _syncSharedUrlControllerFromContent();
       
       // Mark as fully initialized
       _isFullyInitialized = true;
@@ -719,6 +728,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       
       // Process the new content
       _processSharedContent(_currentSharedFiles);
+      _syncSharedUrlControllerFromContent();
       _isProcessingUpdate = false;
     }
   }
@@ -736,6 +746,82 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   bool _hasExistingCards() {
     final provider = context.read<ReceiveShareProvider>();
     return provider.experienceCards.isNotEmpty;
+  }
+
+  // Sync URL bar from current content
+  void _syncSharedUrlControllerFromContent() {
+    String initial = '';
+    if (_currentSharedFiles.isNotEmpty) {
+      final first = _currentSharedFiles.first;
+      if (first.type == SharedMediaType.url || first.type == SharedMediaType.text) {
+        final extracted = _extractFirstUrl(first.path);
+        if (extracted != null && extracted.isNotEmpty) {
+          initial = extracted;
+        }
+      }
+    }
+    if (_sharedUrlController.text != initial) {
+      _sharedUrlController.text = initial;
+    }
+  }
+
+  // Paste from clipboard, like Yelp field
+  Future<void> _pasteSharedUrlFromClipboard() async {
+    final clipboardData = await Clipboard.getData(Clipboard.kTextPlain);
+    final text = clipboardData?.text;
+    if (text == null || text.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Clipboard is empty.')),
+        );
+      }
+      return;
+    }
+    final url = _extractFirstUrl(text) ?? text.trim();
+    _sharedUrlController.text = url;
+    setState(() {});
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Pasted from clipboard.'), duration: Duration(seconds: 1)),
+      );
+    }
+  }
+
+  // Handle submit: normalize URL and refresh preview
+  void _handleSharedUrlSubmit() {
+    final raw = _sharedUrlController.text.trim();
+    if (raw.isEmpty) {
+      _showSnackBar(context, 'Enter a URL');
+      return;
+    }
+    String url = _extractFirstUrl(raw) ?? raw;
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      url = 'https://$url';
+    }
+    final parsed = Uri.tryParse(url);
+    if (parsed == null || (!parsed.isScheme('http') && !parsed.isScheme('https'))) {
+      _showSnackBar(context, 'Invalid URL');
+      return;
+    }
+
+    _lastProcessedUrl = url;
+
+    // Update shared files to drive preview
+    final updated = List<SharedMediaFile>.from(_currentSharedFiles);
+    if (updated.isNotEmpty &&
+        (updated.first.type == SharedMediaType.url || updated.first.type == SharedMediaType.text)) {
+      updated[0] = SharedMediaFile(path: url, thumbnail: null, duration: null, type: SharedMediaType.url);
+    } else {
+      updated.insert(0, SharedMediaFile(path: url, thumbnail: null, duration: null, type: SharedMediaType.url));
+    }
+
+    setState(() {
+      _currentSharedFiles = updated;
+      _businessDataCache.clear();
+      _yelpPreviewFutures.clear();
+    });
+    _processSharedContent(updated);
+    FocusScope.of(context).unfocus();
   }
 
   // Extract Yelp URL from shared files
@@ -1101,6 +1187,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     // it's now part of _sharingService.resetSharedItems()
     _userCategoriesNotifier.dispose();
     _userColorCategoriesNotifier.dispose();
+    _sharedUrlController.dispose();
+    _sharedUrlFocusNode.dispose();
     super.dispose();
   }
 
@@ -1155,6 +1243,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       _currentSharedFiles = files;
     });
     _processSharedContent(files);
+    _syncSharedUrlControllerFromContent();
   }
 
   void _processSharedContent(List<SharedMediaFile> files) {
@@ -3027,6 +3116,69 @@ _sharingService.markShareFlowAsInactive();
                     // Proceed with the main UI build
                     return Column(
                       children: [
+                        // Shared URL bar
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                          child: TextField(
+                            controller: _sharedUrlController,
+                            focusNode: _sharedUrlFocusNode,
+                            keyboardType: TextInputType.url,
+                            decoration: InputDecoration(
+                              labelText: 'Shared URL',
+                              hintText: 'https://... or paste content with a URL',
+                              border: const OutlineInputBorder(),
+                              prefixIcon: const Icon(Icons.link),
+                              suffixIconConstraints: const BoxConstraints.tightFor(
+                                width: 120,
+                                height: 48,
+                              ),
+                              suffixIcon: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                mainAxisAlignment: MainAxisAlignment.end,
+                                children: [
+                                  if (_sharedUrlController.text.isNotEmpty)
+                                    InkWell(
+                                      onTap: () {
+                                        _sharedUrlController.clear();
+                                        setState(() {});
+                                      },
+                                      borderRadius: BorderRadius.circular(16),
+                                      child: const Padding(
+                                        padding: EdgeInsets.all(4.0),
+                                        child: Icon(Icons.clear, size: 22),
+                                      ),
+                                    ),
+                                  if (_sharedUrlController.text.isNotEmpty)
+                                    const SizedBox(width: 4),
+                                  InkWell(
+                                    onTap: _pasteSharedUrlFromClipboard,
+                                    borderRadius: BorderRadius.circular(16),
+                                    child: Padding(
+                                      padding: const EdgeInsets.all(4.0),
+                                      child: Icon(Icons.content_paste,
+                                          size: 22, color: Colors.blue[700]),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 4),
+                                  InkWell(
+                                    onTap: _handleSharedUrlSubmit,
+                                    borderRadius: BorderRadius.circular(16),
+                                    child: const Padding(
+                                      padding: EdgeInsets.fromLTRB(4, 4, 8, 4),
+                                      child: Icon(Icons.arrow_circle_right, size: 22, color: Colors.blue),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            onSubmitted: (_) => _handleSharedUrlSubmit(),
+                            onChanged: (_) {
+                              // Update suffix icons visibility
+                              setState(() {});
+                            },
+                          ),
+                        ),
+                        const SizedBox(height: 8),
                         Expanded(
                           child: Stack( // WRAPPED IN STACK FOR FAB
                             children: [
