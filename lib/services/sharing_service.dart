@@ -489,6 +489,17 @@ class SharingService {
     print("SHARE SERVICE: Context updated");
   }
 
+  // ADDED: Explicitly mark that a ReceiveShareScreen is open (e.g., when opened manually as a modal)
+  void markReceiveShareScreenOpen({BuildContext? context}) {
+    if (context != null) {
+      setContext(context);
+    }
+    isShareFlowActive = true;
+    _isReceiveShareScreenOpen = true;
+    _persistShareFlowState();
+    print("SHARE SERVICE: markReceiveShareScreenOpen called. isShareFlowActive=$isShareFlowActive, _isReceiveShareScreenOpen=$_isReceiveShareScreenOpen");
+  }
+
   // Show the receive share screen as a modal bottom sheet or full screen
   Future<void> showReceiveShareScreen(
       BuildContext context, List<SharedMediaFile> files) async {
