@@ -280,11 +280,13 @@ class ExperienceCardData {
 class ReceiveShareScreen extends StatefulWidget {
   final List<SharedMediaFile> sharedFiles;
   final VoidCallback onCancel; // Callback to handle closing/canceling
+  final bool requireUrlFirst; // When true, disable content until URL submitted
 
   const ReceiveShareScreen({
     super.key,
     required this.sharedFiles,
     required this.onCancel,
+    this.requireUrlFirst = false,
   });
 
   @override
@@ -321,6 +323,83 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   final Map<String, GlobalKey> _instagramPreviewKeys = {}; // To store keys for active Instagram previews
   String? _currentVisibleInstagramUrl; // To track which Instagram preview is potentially visible
   // --- END ADDED FOR SCROLLING FAB ---
+
+  // Gate content until URL submitted when required by caller
+  bool _urlGateOpen = true;
+  bool _didDeferredInit = false;
+
+  Widget _buildSharedUrlBar() {
+    // Rebuilds show suffix icons immediately based on controller text
+    return StatefulBuilder(
+      builder: (context, setInnerState) {
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+          child: TextField(
+            controller: _sharedUrlController,
+            focusNode: _sharedUrlFocusNode,
+            autofocus: widget.requireUrlFirst && !_didDeferredInit,
+            keyboardType: TextInputType.url,
+            decoration: InputDecoration(
+              labelText: 'Shared URL',
+              hintText: 'https://... or paste content with a URL',
+              border: const OutlineInputBorder(),
+              prefixIcon: const Icon(Icons.link),
+              suffixIconConstraints: const BoxConstraints.tightFor(
+                width: 120,
+                height: 48,
+              ),
+              suffixIcon: Row(
+                mainAxisSize: MainAxisSize.min,
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  if (_sharedUrlController.text.isNotEmpty)
+                    InkWell(
+                      onTap: () {
+                        _sharedUrlController.clear();
+                        setInnerState(() {});
+                      },
+                      borderRadius: BorderRadius.circular(16),
+                      child: const Padding(
+                        padding: EdgeInsets.all(4.0),
+                        child: Icon(Icons.clear, size: 22),
+                      ),
+                    ),
+                  if (_sharedUrlController.text.isNotEmpty)
+                    const SizedBox(width: 4),
+                  InkWell(
+                    onTap: () async {
+                      await _pasteSharedUrlFromClipboard();
+                      setInnerState(() {});
+                    },
+                    borderRadius: BorderRadius.circular(16),
+                    child: Padding(
+                      padding: const EdgeInsets.all(4.0),
+                      child: Icon(Icons.content_paste,
+                          size: 22, color: Colors.blue[700]),
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  InkWell(
+                    onTap: _handleSharedUrlSubmit,
+                    borderRadius: BorderRadius.circular(16),
+                    child: const Padding(
+                      padding: EdgeInsets.fromLTRB(4, 4, 8, 4),
+                      child:
+                          Icon(Icons.arrow_circle_right, size: 22, color: Colors.blue),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            onSubmitted: (_) => _handleSharedUrlSubmit(),
+            onChanged: (_) {
+              setInnerState(() {});
+            },
+          ),
+        );
+      },
+    );
+  }
 
   // Track initialization state
   bool _isFullyInitialized = false;
@@ -399,9 +478,20 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     _scrollController = ScrollController();
     _scrollController.addListener(_scrollListener);
     // --- END ADDED FOR SCROLLING FAB ---
+    // Initialize URL gate
+    _urlGateOpen = !widget.requireUrlFirst;
 
     // Initialize with the files passed to the widget
     _currentSharedFiles = widget.sharedFiles;
+    
+    // If URL-first mode, auto-focus the URL field on first open
+    if (widget.requireUrlFirst) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && !_didDeferredInit) {
+          _sharedUrlFocusNode.requestFocus();
+        }
+      });
+    }
     
     // Check if this is a cold start with only a Yelp URL
     bool isColdStartWithYelpOnly = false;
@@ -424,12 +514,19 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         ValueNotifier<List<ColorCategory>>(_userColorCategories);
     // --- END ADDED ---
 
-    // If cold start with only Yelp URL, try to restore previous content
-    if (isColdStartWithYelpOnly) {
-      _restoreContentForYelpColdStart();
+    // If URL-first mode, defer init until URL is provided
+
+    // If URL-first mode, defer heavy initialization until URL is provided
+    if (widget.requireUrlFirst) {
+      // Do not call restore/init here; user will unlock by entering a URL
     } else {
-      // Normal initialization
-      _initializeScreenDataAndProcessContent();
+      // If cold start with only Yelp URL, try to restore previous content
+      if (isColdStartWithYelpOnly) {
+        _restoreContentForYelpColdStart();
+      } else {
+        // Normal initialization
+        _initializeScreenDataAndProcessContent();
+      }
     }
 
     // Listen for changes to the sharedFiles controller in SharingService
@@ -785,6 +882,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         const SnackBar(content: Text('Pasted from clipboard.'), duration: Duration(seconds: 1)),
       );
     }
+    // Automatically submit after paste
+    _handleSharedUrlSubmit();
   }
 
   // Handle submit: normalize URL and refresh preview
@@ -819,8 +918,23 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       _currentSharedFiles = updated;
       _businessDataCache.clear();
       _yelpPreviewFutures.clear();
+      _urlGateOpen = true; // Unlock UI if it was gated
     });
+
+    // On first URL submit in URL-first mode, perform deferred initialization
+    if (widget.requireUrlFirst && !_didDeferredInit) {
+      _didDeferredInit = true;
+      // Immediately dismiss keyboard before kicking heavy init
+      _sharedUrlFocusNode.unfocus();
+      FocusScope.of(context).unfocus();
+      _initializeScreenDataAndProcessContent();
+      return; // _initializeScreenDataAndProcessContent will process content
+    }
+
     _processSharedContent(updated);
+    
+    // Unfocus the text field and hide keyboard
+    _sharedUrlFocusNode.unfocus();
     FocusScope.of(context).unfocus();
   }
 
@@ -3093,9 +3207,18 @@ _sharingService.markShareFlowAsInactive();
                 future: _combinedCategoriesFuture, // MODIFIED: Use stable combined future
                 builder: (context, AsyncSnapshot<List<dynamic>> snapshot) {
                   // Primary Loading State: Show spinner if the future is null (early init) or still running.
-                  if (_combinedCategoriesFuture == null || snapshot.connectionState == ConnectionState.waiting) {
+    if (_combinedCategoriesFuture == null || snapshot.connectionState == ConnectionState.waiting) {
                     // print("FutureBuilder: STATE_WAITING (Future is null or connection is waiting)");
-                    return const Center(child: CircularProgressIndicator());
+                      // In URL-first mode, show the UI with URL bar so user can proceed
+                      if (widget.requireUrlFirst) {
+                        return Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            _buildSharedUrlBar(),
+                          ],
+                        );
+                      }
+                      return const Center(child: CircularProgressIndicator());
                   }
 
                   // Error State: If the future completed with an error.
@@ -3116,72 +3239,16 @@ _sharingService.markShareFlowAsInactive();
                     // Proceed with the main UI build
                     return Column(
                       children: [
-                        // Shared URL bar
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                          child: TextField(
-                            controller: _sharedUrlController,
-                            focusNode: _sharedUrlFocusNode,
-                            keyboardType: TextInputType.url,
-                            decoration: InputDecoration(
-                              labelText: 'Shared URL',
-                              hintText: 'https://... or paste content with a URL',
-                              border: const OutlineInputBorder(),
-                              prefixIcon: const Icon(Icons.link),
-                              suffixIconConstraints: const BoxConstraints.tightFor(
-                                width: 120,
-                                height: 48,
-                              ),
-                              suffixIcon: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                mainAxisAlignment: MainAxisAlignment.end,
-                                children: [
-                                  if (_sharedUrlController.text.isNotEmpty)
-                                    InkWell(
-                                      onTap: () {
-                                        _sharedUrlController.clear();
-                                        setState(() {});
-                                      },
-                                      borderRadius: BorderRadius.circular(16),
-                                      child: const Padding(
-                                        padding: EdgeInsets.all(4.0),
-                                        child: Icon(Icons.clear, size: 22),
-                                      ),
-                                    ),
-                                  if (_sharedUrlController.text.isNotEmpty)
-                                    const SizedBox(width: 4),
-                                  InkWell(
-                                    onTap: _pasteSharedUrlFromClipboard,
-                                    borderRadius: BorderRadius.circular(16),
-                                    child: Padding(
-                                      padding: const EdgeInsets.all(4.0),
-                                      child: Icon(Icons.content_paste,
-                                          size: 22, color: Colors.blue[700]),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 4),
-                                  InkWell(
-                                    onTap: _handleSharedUrlSubmit,
-                                    borderRadius: BorderRadius.circular(16),
-                                    child: const Padding(
-                                      padding: EdgeInsets.fromLTRB(4, 4, 8, 4),
-                                      child: Icon(Icons.arrow_circle_right, size: 22, color: Colors.blue),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            onSubmitted: (_) => _handleSharedUrlSubmit(),
-                            onChanged: (_) {
-                              // Update suffix icons visibility
-                              setState(() {});
-                            },
-                          ),
-                        ),
+                        _buildSharedUrlBar(),
                         const SizedBox(height: 8),
+                        // Gate the rest of content when required
                         Expanded(
-                          child: Stack( // WRAPPED IN STACK FOR FAB
-                            children: [
+                          child: AbsorbPointer(
+                            absorbing: !_urlGateOpen,
+                            child: Opacity(
+                              opacity: _urlGateOpen ? 1.0 : 0.4,
+                              child: Stack( // WRAPPED IN STACK FOR FAB
+                                children: [
                               SingleChildScrollView(
                                 controller: _scrollController, // ATTACHED SCROLL CONTROLLER
                                 padding: const EdgeInsets.only(bottom: 80),
@@ -3317,8 +3384,10 @@ _sharingService.markShareFlowAsInactive();
                                   child: Icon(_showUpArrowForFab ? Icons.arrow_upward : Icons.arrow_downward),
                                 ),
                               ),
-                              // --- END ADDED FAB ---
-                            ],
+                                  // --- END ADDED FAB ---
+                                ],
+                              ),
+                            ),
                           ),
                         ),
                         Container(

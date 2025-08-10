@@ -18,6 +18,9 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart'; // ADDED for ic
 // ADDED: Import Instagram Preview Widget (adjust alias if needed)
 import 'receive_share/widgets/instagram_preview_widget.dart'
     as instagram_widget;
+import 'receive_share_screen.dart';
+import 'package:provider/provider.dart';
+import '../providers/receive_share_provider.dart';
 import 'receive_share/widgets/tiktok_preview_widget.dart';
 import 'receive_share/widgets/facebook_preview_widget.dart';
 import 'receive_share/widgets/youtube_preview_widget.dart';
@@ -1241,25 +1244,85 @@ final category = _categories.firstWhere(
                 ),
               ],
             ),
-      floatingActionButton: _showingColorCategories
-          ? FloatingActionButton(
-              onPressed: _showAddColorCategoryModal, // Call new modal func
-              tooltip: 'Add Color Category',
-              child: const Icon(Icons.add),
-            )
-          : _currentTabIndex == 0 && _selectedCategory == null
-              ? FloatingActionButton(
-                  onPressed: _showAddCategoryModal, // Original action
-                  tooltip: 'Add Category',
-                  child: const Icon(Icons.add),
-                )
-              : _currentTabIndex == 1 // ADDED: FAB for experiences tab
-                  ? FloatingActionButton(
-                      onPressed: _showAddExperienceModal,
-                      tooltip: 'Add Experience',
-                      child: const Icon(Icons.add),
-                    )
-                  : null, // No FAB for other tabs
+      floatingActionButton: FloatingActionButton(
+        onPressed: _showAddMenu,
+        tooltip: 'Add',
+        child: const Icon(Icons.add),
+      ),
+    );
+  }
+
+  void _showAddMenu() {
+    showModalBottomSheet<void>(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Wrap(
+            children: [
+              ListTile(
+                leading: const Icon(Icons.category_outlined),
+                title: const Text('Add Category'),
+                onTap: () async {
+                  Navigator.of(ctx).pop();
+                  await _showAddCategoryModal();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.add_circle_outline),
+                title: const Text('Add Experience'),
+                onTap: () async {
+                  Navigator.of(ctx).pop();
+                  await _showAddExperienceModal();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.link),
+                title: const Text('Add Content'),
+                onTap: () async {
+                  Navigator.of(ctx).pop();
+                  await _showAddContentModal();
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _showAddContentModal() async {
+    // Open ReceiveShareScreen as a modal, with UI disabled until URL entered
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) {
+        return DraggableScrollableSheet(
+          expand: false,
+          initialChildSize: 0.95,
+          minChildSize: 0.5,
+          maxChildSize: 0.95,
+          builder: (context, scrollController) {
+            return ChangeNotifierProvider(
+              create: (_) => ReceiveShareProvider(),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Theme.of(context).scaffoldBackgroundColor,
+                  borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+                ),
+                child: ReceiveShareScreen(
+                  sharedFiles: const [],
+                  onCancel: () => Navigator.of(context).pop(),
+                  requireUrlFirst: true,
+                ),
+              ),
+            );
+          },
+        );
+      },
     );
   }
 
