@@ -35,6 +35,8 @@
 		<dict>
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>Google</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>com.googleusercontent.apps.449728842508-4mhaa8k2k4jipvsa7nesec5k2q5okhvu</string>
@@ -52,10 +54,12 @@
 		<key>NSAllowsArbitraryLoads</key>
 		<true/>
 	</dict>
-	<key>NSLocationAlwaysUsageDescription</key>
-	<string>This app needs access to location when in the background to show you nearby experiences.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>This app needs access to location when open to show you nearby experiences and help you navigate to them.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>This app uses your location to show nearby experiences and provide relevant suggestions, including when the app is in the background.</string>
+	<key>NSLocationAlwaysUsageDescription</key>
+	<string>This app uses your location to show nearby experiences and provide relevant suggestions, including when the app is in the background.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>We need access to photo library for profile picture selection</string>
 	<key>UIApplicationSupportsIndirectInputEvents</key>

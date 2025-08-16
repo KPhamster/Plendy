@@ -1,5 +1,5 @@
 # Uncomment this line to define a global platform for your project
-platform :ios, '14.0'
+platform :ios, '15.0'
 
 # CocoaPods analytics sends network stats synchronously affecting flutter build latency.
 ENV['COCOAPODS_DISABLE_STATS'] = 'true'
@@ -40,7 +40,7 @@ post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)
     target.build_configurations.each do |config|
-      config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '14.0'
+      config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
       
       # Specifically fix BoringSSL-GRPC and gRPC-Core compiler flags
       if target.name == 'BoringSSL-GRPC' || target.name == 'gRPC-Core' || target.name == 'gRPC-C++'
@@ -97,11 +97,27 @@ post_install do |installer|
       config.build_settings.delete('ARCHS[sdk=iphonesimulator*]')
       config.build_settings.delete('EXCLUDED_ARCHS[sdk=iphoneos*]')
     end
+
+    # Suppress deprecation warnings from cloud_firestore Obj-C sources only
+    if target.name == 'cloud_firestore'
+      target.build_configurations.each do |config|
+        existing_flags = config.build_settings['WARNING_CFLAGS']
+        if existing_flags.is_a?(Array)
+          config.build_settings['WARNING_CFLAGS'] = (existing_flags + ['-Wno-deprecated-declarations']).uniq
+        elsif existing_flags.is_a?(String)
+          unless existing_flags.include?('-Wno-deprecated-declarations')
+            config.build_settings['WARNING_CFLAGS'] = "#{existing_flags} -Wno-deprecated-declarations"
+          end
+        else
+          config.build_settings['WARNING_CFLAGS'] = ['-Wno-deprecated-declarations']
+        end
+      end
+    end
   end
   
   # Also fix the pods project itself
   installer.pods_project.build_configurations.each do |config|
-    config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '14.0'
+    config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
   end
   
   # Fix problematic compiler flags in the project file
