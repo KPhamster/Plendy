@@ -64,6 +64,8 @@ class _MapScreenState extends State<MapScreen> {
   Location? _tappedLocationDetails;
   Experience? _tappedExperience; // ADDED: Track associated experience
   UserCategory? _tappedExperienceCategory; // ADDED: Track associated category
+  String? _tappedLocationBusinessStatus; // ADDED: Track business status for tapped location
+  bool? _tappedLocationOpenNow; // ADDED: Track open-now status
 
   // ADDED: State for search functionality
   final TextEditingController _searchController = TextEditingController();
@@ -295,6 +297,8 @@ class _MapScreenState extends State<MapScreen> {
       _tappedLocationDetails = null;
       _tappedExperience = null; // ADDED: Clear associated experience
       _tappedExperienceCategory = null; // ADDED: Clear associated category
+      _tappedLocationBusinessStatus = null; // ADDED: Clear business status
+      _tappedLocationOpenNow = null; // ADDED: Clear open-now status
     });
     Navigator.push(
       context,
@@ -711,12 +715,28 @@ class _MapScreenState extends State<MapScreen> {
             zIndex: 1.0,
           );
 
+          // Fetch business and open-now status for the experience location if possible
+          String? businessStatus;
+          bool? openNow;
+          try {
+            if (experience.location.placeId != null && experience.location.placeId!.isNotEmpty) {
+              final detailsMap = await _mapsService.fetchPlaceDetailsData(experience.location.placeId!);
+              businessStatus = detailsMap?['businessStatus'] as String?;
+              openNow = (detailsMap?['currentOpeningHours']?['openNow']) as bool?;
+            }
+          } catch (e) {
+            businessStatus = null;
+            openNow = null;
+          }
+
           setState(() {
             _mapWidgetInitialLocation = experience.location;
             _tappedLocationDetails = experience.location;
             _tappedLocationMarker = tappedMarker;
             _tappedExperience = experience; // Set associated experience
             _tappedExperienceCategory = category; // Set associated category
+            _tappedLocationBusinessStatus = businessStatus; // Set business status
+            _tappedLocationOpenNow = openNow; // Set open-now status
             _searchController.clear();
             _searchResults = [];
             _showSearchResults = false;
@@ -792,6 +812,19 @@ class _MapScreenState extends State<MapScreen> {
 
       print(
           "🗺️ MAP SCREEN: Selected location details: Name='${finalLocationDetails.displayName}', Address='${finalLocationDetails.address}', PlaceID='${finalLocationDetails.placeId}'");
+      // Fetch business/open-now status using Places API v1 details
+      String? businessStatus;
+      bool? openNow;
+      try {
+        if (finalLocationDetails.placeId != null && finalLocationDetails.placeId!.isNotEmpty) {
+          final detailsMap = await _mapsService.fetchPlaceDetailsData(finalLocationDetails.placeId!);
+          businessStatus = detailsMap?['businessStatus'] as String?;
+          openNow = (detailsMap?['currentOpeningHours']?['openNow']) as bool?;
+        }
+      } catch (e) {
+        businessStatus = null;
+        openNow = null;
+      }
       
       final LatLng targetLatLng = LatLng(finalLocationDetails.latitude, finalLocationDetails.longitude);
 
@@ -841,6 +874,8 @@ class _MapScreenState extends State<MapScreen> {
           _tappedLocationMarker = tappedMarker;
           _tappedExperience = null; // ADDED: Clear associated experience for map-tapped locations
           _tappedExperienceCategory = null; // ADDED: Clear associated category for map-tapped locations
+          _tappedLocationBusinessStatus = businessStatus; // ADDED: Set business status
+          _tappedLocationOpenNow = openNow; // ADDED: Set open-now status
           _isLoading = false; 
         });
         print("🗺️ MAP SCREEN: (_handleLocationSelected) Updated state with new tapped location and map initial location: ${finalLocationDetails.getPlaceName()}");
@@ -880,6 +915,8 @@ class _MapScreenState extends State<MapScreen> {
           setState(() {
             _tappedLocationMarker = null;
             _tappedLocationDetails = null;
+            _tappedLocationBusinessStatus = null;
+            _tappedLocationOpenNow = null;
           });
         }
       } catch (e) {
@@ -936,6 +973,8 @@ class _MapScreenState extends State<MapScreen> {
       setState(() {
         _tappedLocationMarker = null;
         _tappedLocationDetails = null;
+        _tappedLocationBusinessStatus = null;
+        _tappedLocationOpenNow = null;
       });
     }
   }
@@ -1029,6 +1068,8 @@ class _MapScreenState extends State<MapScreen> {
           _tappedLocationMarker = null;
           _tappedExperience = null; // ADDED: Clear associated experience
           _tappedExperienceCategory = null; // ADDED: Clear associated category
+          _tappedLocationBusinessStatus = null; // ADDED: Clear business status
+          _tappedLocationOpenNow = null; // ADDED: Clear open-now status
         });
       }
 
@@ -1202,6 +1243,20 @@ class _MapScreenState extends State<MapScreen> {
         zIndex: 1.0,
       );
 
+      // Fetch business/open-now status for the experience location if possible
+      String? businessStatus;
+      bool? openNow;
+      try {
+        if (experience.location.placeId != null && experience.location.placeId!.isNotEmpty) {
+          final detailsMap = await _mapsService.fetchPlaceDetailsData(experience.location.placeId!);
+          businessStatus = detailsMap?['businessStatus'] as String?;
+          openNow = (detailsMap?['currentOpeningHours']?['openNow']) as bool?;
+        }
+      } catch (e) {
+        businessStatus = null;
+        openNow = null;
+      }
+
       // Set search text to experience name
       _searchController.text = experience.name;
       
@@ -1216,6 +1271,8 @@ class _MapScreenState extends State<MapScreen> {
           _tappedLocationMarker = tappedMarker;
           _tappedExperience = experience; // ADDED: Set associated experience
           _tappedExperienceCategory = category; // ADDED: Set associated category
+          _tappedLocationBusinessStatus = businessStatus; // ADDED: Set business status
+          _tappedLocationOpenNow = openNow; // ADDED: Set open-now status
           _isSearching = false;
           _showSearchResults = false;
         });
@@ -1242,6 +1299,17 @@ class _MapScreenState extends State<MapScreen> {
     try {
       final location = await _mapsService.getPlaceDetails(placeId);
       final LatLng targetLatLng = LatLng(location.latitude, location.longitude);
+      // Fetch business/open-now status for the selected place
+      String? businessStatus;
+      bool? openNow;
+      try {
+        final detailsMap = await _mapsService.fetchPlaceDetailsData(placeId);
+        businessStatus = detailsMap?['businessStatus'] as String?;
+        openNow = (detailsMap?['currentOpeningHours']?['openNow']) as bool?;
+      } catch (e) {
+        businessStatus = null;
+        openNow = null;
+      }
 
       // Animate camera BEFORE setState that updates markers/details
       if (_mapController != null) {
@@ -1292,6 +1360,8 @@ class _MapScreenState extends State<MapScreen> {
           _tappedLocationMarker = tappedMarker;
           _tappedExperience = null; // ADDED: Clear associated experience for Google Maps places
           _tappedExperienceCategory = null; // ADDED: Clear associated category for Google Maps places
+          _tappedLocationBusinessStatus = businessStatus; // ADDED: Set business status
+          _tappedLocationOpenNow = openNow; // ADDED: Set open-now status
           _isSearching = false; 
           _showSearchResults = false; 
         });
@@ -1332,6 +1402,52 @@ class _MapScreenState extends State<MapScreen> {
   void _onSearchChanged() {
     print("🗺️ MAP SCREEN: (_onSearchChanged) Text: '${_searchController.text}', _isProgrammaticTextUpdate: $_isProgrammaticTextUpdate");
     _searchPlaces(_searchController.text);
+  }
+
+  // ADDED: Helper to build a business/open-now status row similar to ExperiencePage
+  Widget _buildBusinessStatusWidget() {
+    // Prefer current open/closed status when available; fall back to businessStatus
+    String? statusText;
+    Color statusColor = Colors.grey;
+    if (_tappedLocationBusinessStatus == 'CLOSED_PERMANENTLY') {
+      statusText = 'Closed Permanently';
+      statusColor = Colors.red;
+    } else if (_tappedLocationBusinessStatus == 'CLOSED_TEMPORARILY') {
+      statusText = 'Closed Temporarily';
+      statusColor = Colors.red;
+    } else if (_tappedLocationOpenNow != null) {
+      if (_tappedLocationOpenNow == true) {
+        statusText = 'Open now';
+        statusColor = Colors.green;
+      } else {
+        statusText = 'Closed now';
+        statusColor = Colors.red;
+      }
+    } else if (_tappedLocationBusinessStatus == 'OPERATIONAL') {
+      // If we only know it's operational but not openNow, show neutral 'Operational'
+      statusText = 'Operational';
+      statusColor = Colors.grey;
+    }
+    if (statusText == null) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8.0),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.info_outline, size: 18.0, color: Colors.black54),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              statusText,
+              style: TextStyle(
+                color: statusColor,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   // ADDED: Helper to build the "Other Categories" display
@@ -1459,6 +1575,8 @@ class _MapScreenState extends State<MapScreen> {
                 _tappedLocationDetails = null;
                 _tappedExperience = null; // ADDED: Clear associated experience
                 _tappedExperienceCategory = null; // ADDED: Clear associated category
+                _tappedLocationBusinessStatus = null; // ADDED: Clear business status
+                _tappedLocationOpenNow = null; // ADDED: Clear open-now status
                 _searchController.clear();
                 _searchResults = [];
                 _showSearchResults = false;
@@ -1507,6 +1625,8 @@ class _MapScreenState extends State<MapScreen> {
                         _tappedLocationMarker = null;
                         _tappedExperience = null;
                         _tappedExperienceCategory = null;
+                        _tappedLocationBusinessStatus = null;
+                        _tappedLocationOpenNow = null;
                       });
                     },
                                 )
@@ -1833,6 +1953,9 @@ class _MapScreenState extends State<MapScreen> {
                             ),
                             SizedBox(height: 8), // Added SizedBox after rating like in location_picker_screen
                           ],
+
+                          // ADDED: Business Status row below star rating
+                          _buildBusinessStatusWidget(),
 
                           const SizedBox(height: 12), // Spacer before the new row
 

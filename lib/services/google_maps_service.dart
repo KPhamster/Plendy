@@ -1399,7 +1399,7 @@ class GoogleMapsService {
 
     // Define the fields to request using FieldMask syntax
     const String fieldMask =
-        'id,displayName,formattedAddress,addressComponents,location,websiteUri,nationalPhoneNumber,regularOpeningHours,businessStatus,reservable,parkingOptions,editorialSummary,rating,userRatingCount,priceLevel,photos';
+        'id,displayName,formattedAddress,addressComponents,location,websiteUri,nationalPhoneNumber,regularOpeningHours,currentOpeningHours,businessStatus,reservable,parkingOptions,editorialSummary,rating,userRatingCount,priceLevel,photos';
 
     final url = 'https://places.googleapis.com/v1/places/$placeId';
 
