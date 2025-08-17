@@ -76,6 +76,25 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   String? _errorLoadingDetails;
   Map<String, dynamic>? _placeDetailsData;
   String? _headerPhotoUrl; // ADDED: State variable for header photo
+  
+  // ADDED: Helper to build DecorationImage using photo resource name with caching
+  DecorationImage? _buildHeaderDecorationImage(Experience experience) {
+    final String? resourceName = experience.location.photoResourceName;
+    String? url;
+    if (resourceName != null && resourceName.isNotEmpty) {
+      url = GoogleMapsService.buildPlacePhotoUrlFromResourceName(
+        resourceName,
+        maxWidthPx: 800,
+        maxHeightPx: 600,
+      );
+    }
+    url ??= experience.location.photoUrl;
+    if (url == null || url.isEmpty) return null;
+    return DecorationImage(
+      image: NetworkImage(url, headers: const {}),
+      fit: BoxFit.cover,
+    );
+  }
 
   // Tab Controller State
   late TabController _tabController;
@@ -218,7 +237,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
 
       if (mounted) {
         if (fetchedDetailsMap != null) {
-          String? newConstructedPhotoUrl;
+          String? newConstructedPhotoUrl; // legacy immediate use (not persisted)
+          String? newPhotoResourceName; // ADDED: persistable resource name
 
           // Try to get photo resource name from fetchedDetailsMap
           if (fetchedDetailsMap['photos'] != null &&
@@ -229,15 +249,13 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
             final String? photoResourceName = firstPhotoData?['name'] as String?;
 
             if (photoResourceName != null && photoResourceName.isNotEmpty) {
-              final apiKey = GoogleMapsService.apiKey; // Get API key
-              if (apiKey.isNotEmpty) {
-                // Construct URL using Places API v1 format
-                // Assuming default max width/height, adjust as needed for header
-                newConstructedPhotoUrl = 
-                    'https://places.googleapis.com/v1/$photoResourceName/media?key=$apiKey&maxWidthPx=800&maxHeightPx=600';
-                print("ExperiencePageScreen: Constructed photo URL: $newConstructedPhotoUrl");
-              } else {
-                print("ExperiencePageScreen: API key is empty, cannot construct photo URL.");
+              newPhotoResourceName = photoResourceName; // store for persistence
+              // Optionally build a transient URL for immediate UI use
+              newConstructedPhotoUrl = GoogleMapsService
+                  .buildPlacePhotoUrlFromResourceName(photoResourceName,
+                      maxWidthPx: 800, maxHeightPx: 600);
+              if (newConstructedPhotoUrl != null) {
+                print("ExperiencePageScreen: Constructed transient photo URL: $newConstructedPhotoUrl");
               }
             } else {
               print("ExperiencePageScreen: No photo resource name found in fetched details.");
@@ -249,13 +267,10 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
           setState(() {
             _placeDetailsData = fetchedDetailsMap; // Store the raw details map
 
-            String? finalPhotoUrlToSet;
-            if (newConstructedPhotoUrl != null && newConstructedPhotoUrl.isNotEmpty) {
-              finalPhotoUrlToSet = newConstructedPhotoUrl;
-            }
+            String? finalPhotoUrlToSet = newConstructedPhotoUrl; // transient only
 
             if (kIsWeb) { // Apply only for web (desktop and mobile)
-              _headerPhotoUrl = finalPhotoUrlToSet;
+              _headerPhotoUrl = finalPhotoUrlToSet; // retained for legacy; not used in build
 
               final originalLocation = _currentExperience.location;
               final updatedLocation = Location(
@@ -268,28 +283,28 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                 country: originalLocation.country,
                 zipCode: originalLocation.zipCode,
                 displayName: originalLocation.displayName,
-                photoUrl: finalPhotoUrlToSet, 
+                // Do NOT persist constructed URL. Persist resource name instead.
+                photoUrl: originalLocation.photoUrl, 
+                photoResourceName: newPhotoResourceName ?? originalLocation.photoResourceName,
                 website: originalLocation.website,
                 rating: originalLocation.rating,
                 userRatingCount: originalLocation.userRatingCount,
               );
               final newExperienceData = _currentExperience.copyWith(location: updatedLocation);
-              bool photoUrlChanged = _currentExperience.location.photoUrl != newExperienceData.location.photoUrl;
+              final bool resourceNameChanged =
+                  _currentExperience.location.photoResourceName != newExperienceData.location.photoResourceName;
               _currentExperience = newExperienceData;
               
               if (finalPhotoUrlToSet != null) {
-                print("ExperiencePageScreen: Successfully updated _headerPhotoUrl (Web Specific) to: $finalPhotoUrlToSet");
-                if (photoUrlChanged) {
-                  // Save the updated experience to Firestore if the photoUrl actually changed
-                  _experienceService.updateExperience(_currentExperience).then((_) {
-                    print("ExperiencePageScreen: Saved updated experience with new photoUrl to Firestore.");
-                    _didDataChange = true; // Signal that data changed for pop result
-                  }).catchError((e) {
-                    print("ExperiencePageScreen: Error saving updated experience to Firestore: $e");
-                  });
-                }
-              } else {
-                print("ExperiencePageScreen: No new photo URL constructed. _headerPhotoUrl will be null (Web Specific).");
+                print("ExperiencePageScreen: Updated transient _headerPhotoUrl (Web Specific) to: $finalPhotoUrlToSet");
+              }
+              if (resourceNameChanged) {
+                _experienceService.updateExperience(_currentExperience).then((_) {
+                  print("ExperiencePageScreen: Saved updated experience with new photoResourceName to Firestore.");
+                  _didDataChange = true; // Signal that data changed for pop result
+                }).catchError((e) {
+                  print("ExperiencePageScreen: Error saving updated experience to Firestore: $e");
+                });
               }
             } else {
               // For non-web (mobile), DO NOT update _currentExperience.location.photoUrl.
@@ -523,12 +538,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
           Positioned.fill(
             child: Container(
               decoration: BoxDecoration(
-                image: experience.location.photoUrl != null
-                    ? DecorationImage(
-                        image: NetworkImage(experience.location.photoUrl!),
-                        fit: BoxFit.cover,
-                      )
-                    : null, // No background image if URL is null
+                image: _buildHeaderDecorationImage(experience),
                 color: experience.location.photoUrl == null
                     ? Colors.grey[400] // Placeholder color if no image
                     : null,

@@ -31,6 +31,7 @@ import 'map_screen.dart'; // ADDED: Import for MapScreen
 import 'package:flutter/foundation.dart'; // ADDED: Import for kIsWeb
 import 'package:flutter/gestures.dart'; // ADDED Import for PointerScrollEvent
 import 'package:flutter/rendering.dart'; // ADDED Import for Scrollable
+import '../services/google_maps_service.dart';
 
 // Helper function to parse hex color string (copied from map_screen)
 Color _parseColor(String hexColor) {
@@ -108,12 +109,67 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   List<GroupedContentItem> _groupedContentItems = [];
   // ADDED: State map for content preview expansion
   final Map<String, bool> _contentExpansionStates = {};
+  // ADDED: Track attempted photo refreshes to avoid repeated requests
+  final Set<String> _photoRefreshAttempts = {};
   // Perf logging toggle
   static const bool _perfLogs = true;
   // Lazy-load Content tab
   bool _contentLoaded = false;
   bool _isContentLoading = false;
   bool _isExperiencesLoading = false;
+  // ADDED: Background refresh helper for photo resource names
+  Future<void> _refreshPhotoResourceNameForExperience(Experience experience) async {
+    try {
+      final placeId = experience.location.placeId;
+      if (placeId == null || placeId.isEmpty) return;
+      final details = await GoogleMapsService().fetchPlaceDetailsData(placeId);
+      if (details == null) return;
+      String? resourceName;
+      if (details['photos'] is List && (details['photos'] as List).isNotEmpty) {
+        final first = (details['photos'] as List).first;
+        if (first is Map<String, dynamic>) {
+          resourceName = first['name'] as String?;
+        }
+      }
+      if (resourceName != null && resourceName.isNotEmpty) {
+        final updatedLocation = Location(
+          placeId: experience.location.placeId,
+          latitude: experience.location.latitude,
+          longitude: experience.location.longitude,
+          address: experience.location.address,
+          city: experience.location.city,
+          state: experience.location.state,
+          country: experience.location.country,
+          zipCode: experience.location.zipCode,
+          displayName: experience.location.displayName,
+          photoUrl: experience.location.photoUrl, // keep existing URL field
+          photoResourceName: resourceName,
+          website: experience.location.website,
+          rating: experience.location.rating,
+          userRatingCount: experience.location.userRatingCount,
+        );
+        final updated = experience.copyWith(location: updatedLocation);
+        await _experienceService.updateExperience(updated);
+        if (mounted) {
+          // Update local state: replace the experience in lists
+          setState(() {
+            final idx = _experiences.indexWhere((e) => e.id == experience.id);
+            if (idx != -1) {
+              _experiences[idx] = updated;
+            }
+            final fidx = _filteredExperiences.indexWhere((e) => e.id == experience.id);
+            if (fidx != -1) {
+              _filteredExperiences[fidx] = updated;
+            }
+          });
+        }
+      }
+    } catch (e) {
+      // Swallow errors; UI already shows placeholders
+      // Optionally log
+      // print('Photo refresh failed for experience ${experience.id}: $e');
+    }
+  }
 
   // --- ADDED: Filter State ---
   Set<String> _selectedCategoryIds =
@@ -1334,7 +1390,22 @@ final category = _categories.firstWhere(
     // Get the full address
     final fullAddress = experience.location.address;
     // Get the first image URL or null
-    final String? imageUrl = experience.location.photoUrl; // REVERTED: Directly use photoUrl
+    String? imageUrl;
+    if (experience.location.photoResourceName != null && experience.location.photoResourceName!.isNotEmpty) {
+      imageUrl = GoogleMapsService.buildPlacePhotoUrlFromResourceName(
+        experience.location.photoResourceName,
+        maxWidthPx: 400,
+        maxHeightPx: 400,
+      );
+    }
+    imageUrl ??= experience.location.photoUrl;
+    // If no URL yet but we have a Place ID and haven't tried, refresh resource name in background
+    if ((imageUrl == null || imageUrl.isEmpty) &&
+        (experience.location.placeId != null && experience.location.placeId!.isNotEmpty) &&
+        !_photoRefreshAttempts.contains(experience.id)) {
+      _photoRefreshAttempts.add(experience.id);
+      _refreshPhotoResourceNameForExperience(experience);
+    }
 
     return ListTile(
       key: ValueKey(experience.id), // Use experience ID as key
@@ -1355,6 +1426,12 @@ final category = _categories.firstWhere(
                         child: CircularProgressIndicator(strokeWidth: 2.0));
                   },
                   errorBuilder: (context, error, stackTrace) {
+                    // On error, attempt a one-time refresh if we have not tried yet
+                    if (!_photoRefreshAttempts.contains(experience.id) &&
+                        (experience.location.placeId != null && experience.location.placeId!.isNotEmpty)) {
+                      _photoRefreshAttempts.add(experience.id);
+                      _refreshPhotoResourceNameForExperience(experience);
+                    }
                     return Container(
                       color: Colors.grey[200],
                       child: Icon(Icons.broken_image, color: Colors.grey),
@@ -1515,7 +1592,21 @@ final category = _categories.firstWhere(
     final colorCategory = _colorCategories.firstWhereOrNull((cc) => cc.id == experience.colorCategoryId);
     final color = colorCategory != null ? _parseColor(colorCategory.colorHex) : Theme.of(context).disabledColor;
     final String? locationArea = experience.location.getFormattedArea();
-    final String? photoUrl = experience.location.photoUrl;
+    String? photoUrl;
+    if (experience.location.photoResourceName != null && experience.location.photoResourceName!.isNotEmpty) {
+      photoUrl = GoogleMapsService.buildPlacePhotoUrlFromResourceName(
+        experience.location.photoResourceName,
+        maxWidthPx: 600,
+        maxHeightPx: 400,
+      );
+    }
+    photoUrl ??= experience.location.photoUrl;
+    if ((photoUrl == null || photoUrl.isEmpty) &&
+        (experience.location.placeId != null && experience.location.placeId!.isNotEmpty) &&
+        !_photoRefreshAttempts.contains(experience.id)) {
+      _photoRefreshAttempts.add(experience.id);
+      _refreshPhotoResourceNameForExperience(experience);
+    }
 
     Widget categoryIconWidget = Container(
       height: 60, // MODIFIED: Reduced height
@@ -1657,6 +1748,11 @@ final category = _categories.firstWhere(
                 return const Center(child: CircularProgressIndicator(strokeWidth: 2.0));
               },
               errorBuilder: (context, error, stackTrace) {
+                if (!_photoRefreshAttempts.contains(experience.id) &&
+                    (experience.location.placeId != null && experience.location.placeId!.isNotEmpty)) {
+                  _photoRefreshAttempts.add(experience.id);
+                  _refreshPhotoResourceNameForExperience(experience);
+                }
                 return Container(
                   color: Colors.grey[300], // Placeholder if image fails
                   child: Center(child: Icon(Icons.broken_image_outlined, color: Colors.grey[500])),
