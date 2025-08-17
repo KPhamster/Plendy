@@ -1282,9 +1282,67 @@ final category = _categories.firstWhere(
                         ],
                       ),
                       // --- END MODIFIED ---
-                      _buildExperiencesListView(),
+                      Column(
+                        children: [
+                          // Count display at the top
+                          if (_filteredExperiences.isNotEmpty)
+                            Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                              decoration: BoxDecoration(
+                                color: Theme.of(context).primaryColor.withOpacity(0.1),
+                                border: Border(
+                                  bottom: BorderSide(
+                                    color: Theme.of(context).dividerColor,
+                                    width: 1,
+                                  ),
+                                ),
+                              ),
+                              child: Text(
+                                '${_filteredExperiences.length} ${_filteredExperiences.length == 1 ? 'Experience' : 'Experiences'}',
+                                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                  fontWeight: FontWeight.w600,
+                                  color: Theme.of(context).primaryColor,
+                                ),
+                                textAlign: TextAlign.center,
+                              ),
+                            ),
+                          Expanded(
+                            child: _buildExperiencesListView(),
+                          ),
+                        ],
+                      ),
                       // MODIFIED: Call builder for Content tab
-                      _buildContentTabBody(),
+                      Column(
+                        children: [
+                          // Count display at the top
+                          if (_filteredGroupedContentItems.isNotEmpty)
+                            Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                              decoration: BoxDecoration(
+                                color: Theme.of(context).primaryColor.withOpacity(0.1),
+                                border: Border(
+                                  bottom: BorderSide(
+                                    color: Theme.of(context).dividerColor,
+                                    width: 1,
+                                  ),
+                                ),
+                              ),
+                              child: Text(
+                                '${_filteredGroupedContentItems.length} ${_filteredGroupedContentItems.length == 1 ? 'Saved Content' : 'Saved Content'}',
+                                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                  fontWeight: FontWeight.w600,
+                                  color: Theme.of(context).primaryColor,
+                                ),
+                                textAlign: TextAlign.center,
+                              ),
+                            ),
+                          Expanded(
+                            child: _buildContentTabBody(),
+                          ),
+                        ],
+                      ),
                     ],
                   ),
                 ),
