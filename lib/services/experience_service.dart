@@ -852,12 +852,12 @@ class ExperienceService {
 
   /// Get experiences created by a specific user
   Future<List<Experience>> getExperiencesByUser(String userId,
-      {int limit = 50}) async {
+      {int limit = 50, GetOptions? options}) async {
     final query = _experiencesCollection
         .where('createdBy', isEqualTo: userId)
         .orderBy('createdAt', descending: true);
 
-    final snapshot = await query.get();
+    final snapshot = await query.get(options);
 
     return snapshot.docs.map((doc) => Experience.fromFirestore(doc)).toList();
   }
