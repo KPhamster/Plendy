@@ -113,6 +113,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   // Lazy-load Content tab
   bool _contentLoaded = false;
   bool _isContentLoading = false;
+  bool _isExperiencesLoading = false;
 
   // --- ADDED: Filter State ---
   Set<String> _selectedCategoryIds =
@@ -170,21 +171,16 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       final results = await Future.wait([
         _experienceService.getUserCategories(),
         _experienceService.getUserColorCategories(), // Fetch color categories
-        if (userId != null)
-          _experienceService.getExperiencesByUser(userId)
-        else
-          Future.value(<Experience>[]), // Return empty list if no user
       ]);
       if (_perfLogs) {
         fetchSw.stop();
         final ms = fetchSw.elapsedMilliseconds;
-        print('[Perf][Collections] Firestore fetch (categories, color categories, experiences) took ${ms}ms');
+        print('[Perf][Collections] Firestore fetch (categories, color categories) took ${ms}ms');
       }
 
       final categories = results[0] as List<UserCategory>;
       final colorCategories =
           results[1] as List<ColorCategory>; // Get color categories
-      final experiences = results[2] as List<Experience>;
 
       // Defer Content tab data (media fetch + grouping) to first Content tab open
 
@@ -192,7 +188,6 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         setState(() {
           _categories = categories;
           _colorCategories = colorCategories; // Store color categories
-          _experiences = experiences;
           _groupedContentItems = []; // Lazily built when Content tab opens
           _isLoading = false;
           _selectedCategory = null; // Reset selected category on reload
@@ -226,6 +221,11 @@ class _CollectionsScreenState extends State<CollectionsScreen>
           totalSw.stop();
           print('[Perf][Collections] _loadData total time ${totalSw.elapsedMilliseconds}ms');
         }
+      }
+
+      // Start loading experiences in the background (cache-first, then server)
+      if (userId != null) {
+        _loadExperiences(userId);
       }
     } catch (e) {
       if (mounted) {
@@ -1842,12 +1842,15 @@ final category = _categories.firstWhere(
 
   // --- REFACTORED: Widget builder for the Content Tab Body --- ///
   Widget _buildContentTabBody() {
+    if (!_contentLoaded || _isContentLoading) {
+      // Show loader on first open while content is being fetched/grouped
+      return const Center(child: CircularProgressIndicator());
+    }
     if (_filteredGroupedContentItems.isEmpty) {
-      bool filtersActive = _selectedCategoryIds.isNotEmpty || _selectedColorCategoryIds.isNotEmpty;
-      return Center(
-          child: Text(filtersActive
-              ? 'No content matches the current filters.'
-              : 'No shared content found across experiences.'));
+      final bool filtersActive = _selectedCategoryIds.isNotEmpty || _selectedColorCategoryIds.isNotEmpty;
+      return Center(child: Text(filtersActive
+          ? 'No content matches the current filters.'
+          : 'No shared content found across experiences.'));
     }
 
     final bool isDesktopWeb = kIsWeb && MediaQuery.of(context).size.width > 600;
@@ -3101,6 +3104,10 @@ return Container(
 
   Future<void> _loadGroupedContent() async {
     if (_isContentLoading || _contentLoaded) return;
+    // Wait until experiences are available if they are still loading
+    if (_experiences.isEmpty && _isExperiencesLoading) {
+      return;
+    }
     _isContentLoading = true;
     try {
       final experiences = _experiences;
@@ -3183,6 +3190,44 @@ return Container(
           SnackBar(content: Text('Error loading content: $e')),
         );
       }
+    }
+  }
+
+  Future<void> _loadExperiences(String userId) async {
+    _isExperiencesLoading = true;
+    try {
+      // Try cache first for instant render if available
+      try {
+        // Cache-first fetch if available (best-effort)
+        final cached = await _experienceService.getExperiencesByUser(userId);
+        if (mounted && cached.isNotEmpty) {
+          setState(() {
+            _experiences = cached;
+            _filteredExperiences = List.from(_experiences);
+          });
+          // Apply sorts on cached data
+          _applyExperienceSort(_experienceSortType, applyToFiltered: true);
+        }
+      } catch (_) {
+        // Ignore cache errors; proceed to server fetch
+      }
+
+      // Fetch from server
+      final fresh = await _experienceService.getExperiencesByUser(userId);
+      if (mounted) {
+        setState(() {
+          _experiences = fresh;
+          _filteredExperiences = List.from(_experiences);
+        });
+      }
+      await _applyExperienceSort(_experienceSortType, applyToFiltered: true);
+
+      // If user is on Content tab and content not yet loaded, kick it off
+      if (_tabController.index == 2 && !_contentLoaded && !_isContentLoading) {
+        await _loadGroupedContent();
+      }
+    } finally {
+      _isExperiencesLoading = false;
     }
   }
 }
