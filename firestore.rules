@@ -81,14 +81,16 @@ service cloud.firestore {
     match /experiences/{experienceId} {
       allow read: if request.auth != null;
       allow create: if request.auth != null;
+      // Allow updates by creator or any current editor listed in the document
       allow update: if request.auth != null && (
-                      request.resource.data.createdBy == request.auth.uid ||
-                      exists(/databases/$(database)/documents/share_permissions/$(permissionId))
-                       && get(/databases/$(database)/documents/share_permissions/$(permissionId)).data.itemId == experienceId
-                       && get(/databases/$(database)/documents/share_permissions/$(permissionId)).data.sharedWithUserId == request.auth.uid
-                       && get(/databases/$(database)/documents/share_permissions/$(permissionId)).data.accessLevel == 'edit'
-                    );
-      allow delete: if false;
+        request.resource.data.createdBy == request.auth.uid ||
+        (resource.data.editorUserIds is list && request.auth.uid in resource.data.editorUserIds)
+      );
+      // Allow deletes by creator, or the last remaining editor (when they are the only editor)
+      allow delete: if request.auth != null && (
+        resource.data.createdBy == request.auth.uid ||
+        ((resource.data.editorUserIds is list) && resource.data.editorUserIds.size() == 1 && request.auth.uid in resource.data.editorUserIds)
+      );
     }
 
     match /public_experiences/{publicExperienceId} {

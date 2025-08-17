@@ -584,6 +584,37 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
           ),
           // --- END: Positioned Back Button ---
 
+          // --- ADDED: Positioned Overflow Menu (3-dot) ---
+          Positioned(
+            top: MediaQuery.of(context).padding.top + 8.0,
+            right: 8.0,
+            child: PopupMenuButton<String>(
+              onSelected: (value) {
+                if (value == 'remove') {
+                  _promptRemoveExperience();
+                }
+              },
+              itemBuilder: (context) => [
+                const PopupMenuItem<String>(
+                  value: 'remove',
+                  child: Text('Remove Experience'),
+                ),
+              ],
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.4),
+                  shape: BoxShape.circle,
+                ),
+                padding: const EdgeInsets.all(8.0),
+                child: const Icon(
+                  Icons.more_vert,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+          ),
+          // --- END: Positioned Overflow Menu (3-dot) ---
+
           // 3. Content (Positioned to add padding)
           Positioned(
             bottom: 0,
@@ -2650,6 +2681,75 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     );
   }
   // --- ADDED: Helper Widget for Other Categories Row --- END ---
+
+  // --- ADDED: Removal confirmation and execution ---
+  Future<void> _promptRemoveExperience() async {
+    // Ensure user is authenticated
+    final String? userId = _currentUserId ?? _authService.currentUser?.uid;
+    if (userId == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('You must be signed in to remove experiences.')),
+        );
+      }
+      return;
+    }
+
+    final bool? confirm = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Remove Experience'),
+          content: const Text(
+              'This will remove the experience from your list. You will no longer see or edit it. Do you want to proceed?'),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              style: TextButton.styleFrom(foregroundColor: Colors.red),
+              child: const Text('Remove'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirm != true) return;
+
+    try {
+      // Remove current user's ID from editorUserIds
+      final List<String> updatedEditors = List<String>.from(_currentExperience.editorUserIds)
+        ..removeWhere((id) => id == userId);
+
+      if (updatedEditors.isEmpty) {
+        // No editors remain; delete the experience
+        await _experienceService.deleteExperience(_currentExperience.id);
+      } else {
+        final Experience updated = _currentExperience.copyWith(editorUserIds: updatedEditors);
+        await _experienceService.updateExperience(updated);
+      }
+
+      if (mounted) {
+        // Show toast/snackbar
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Experience removed.')),
+        );
+        _didDataChange = true;
+        // Navigate back to the main screen
+        Navigator.of(context).popUntil((route) => route.isFirst);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to remove experience: $e')),
+        );
+      }
+    }
+  }
+  // --- END: Removal confirmation and execution ---
 }
 
 // --- ADDED Helper class for SliverPersistentHeader (for TabBar) ---

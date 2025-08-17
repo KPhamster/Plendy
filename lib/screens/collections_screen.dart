@@ -82,6 +82,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
 
   late TabController _tabController;
   int _currentTabIndex = 0;
+  // ADDED: Flag to clear TypeAhead controller on next build
+  bool _clearSearchOnNextBuild = false;
 
   bool _isLoading = true;
   List<UserCategory> _categories = [];
@@ -1090,6 +1092,18 @@ if (mounted) {
                           horizontal: 12.0, vertical: 4.0),
                       child: TypeAheadField<Experience>(
                         builder: (context, controller, focusNode) {
+                          // ADDED: Clear the TypeAhead controller when requested
+                          if (_clearSearchOnNextBuild) {
+                            controller.clear();
+                            focusNode.unfocus();
+                            WidgetsBinding.instance.addPostFrameCallback((_) {
+                              if (mounted) {
+                                setState(() {
+                                  _clearSearchOnNextBuild = false;
+                                });
+                              }
+                            });
+                          }
                           return TextField(
                             controller: controller, // This is TypeAhead's controller
                             focusNode: focusNode,
@@ -1144,6 +1158,11 @@ final category = _categories.firstWhere(
                               ),
                             ),
                           );
+                          if (mounted) {
+                            setState(() {
+                              _clearSearchOnNextBuild = true;
+                            });
+                          }
                           _searchController.clear(); 
                           FocusScope.of(context).unfocus();
                           if (result == true && mounted) {
