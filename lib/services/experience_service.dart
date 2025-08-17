@@ -565,30 +565,44 @@ class ExperienceService {
     // Deduplicate IDs just in case
     final uniqueIds = mediaItemIds.toSet().toList();
 
-    List<SharedMediaItem> results = [];
     // Firestore 'in' query limit (currently 30, previously 10)
     const chunkSize = 30;
-
+    // Split into chunks
+    final List<List<String>> chunks = [];
     for (int i = 0; i < uniqueIds.length; i += chunkSize) {
-      final chunk = uniqueIds.sublist(i,
-          i + chunkSize > uniqueIds.length ? uniqueIds.length : i + chunkSize);
-
-      if (chunk.isEmpty) continue;
-
-      try {
-        final snapshot = await _sharedMediaItemsCollection
-            .where(FieldPath.documentId, whereIn: chunk)
-            .get();
-        
-        results.addAll(snapshot.docs
-            .map((doc) => SharedMediaItem.fromFirestore(doc))
-            .toList());
-      } catch (e) {
-        print("Error fetching shared media items chunk: $e");
-        // Decide how to handle partial failures - continue or throw?
-        // For now, we continue and return potentially incomplete results.
+      final end = (i + chunkSize) > uniqueIds.length ? uniqueIds.length : (i + chunkSize);
+      final chunk = uniqueIds.sublist(i, end);
+      if (chunk.isNotEmpty) {
+        chunks.add(chunk);
       }
     }
+
+    // Limit concurrency so we don't overwhelm device or Firestore
+    const int maxConcurrent = 6;
+    final List<SharedMediaItem> results = [];
+
+    for (int i = 0; i < chunks.length; i += maxConcurrent) {
+      final batch = chunks.sublist(i, (i + maxConcurrent) > chunks.length ? chunks.length : (i + maxConcurrent));
+      final futures = batch.map((chunk) async {
+        try {
+          final snapshot = await _sharedMediaItemsCollection
+              .where(FieldPath.documentId, whereIn: chunk)
+              .get();
+          return snapshot.docs
+              .map((doc) => SharedMediaItem.fromFirestore(doc))
+              .toList();
+        } catch (e) {
+          print("Error fetching shared media items chunk: $e");
+          return <SharedMediaItem>[];
+        }
+      }).toList();
+
+      final batchResults = await Future.wait(futures);
+      for (final r in batchResults) {
+        results.addAll(r);
+      }
+    }
+
     return results;
   }
 

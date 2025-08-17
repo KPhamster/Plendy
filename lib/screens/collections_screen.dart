@@ -108,6 +108,11 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   List<GroupedContentItem> _groupedContentItems = [];
   // ADDED: State map for content preview expansion
   final Map<String, bool> _contentExpansionStates = {};
+  // Perf logging toggle
+  static const bool _perfLogs = true;
+  // Lazy-load Content tab
+  bool _contentLoaded = false;
+  bool _isContentLoading = false;
 
   // --- ADDED: Filter State ---
   Set<String> _selectedCategoryIds =
@@ -137,6 +142,10 @@ class _CollectionsScreenState extends State<CollectionsScreen>
           });
         }
       }
+      // Trigger lazy load for Content tab when first viewed
+      if (_tabController.index == 2 && !_contentLoaded && !_isContentLoading) {
+        _loadGroupedContent();
+      }
     });
     _loadData();
   }
@@ -152,10 +161,12 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     setState(() {
       _isLoading = true;
     });
+    final totalSw = Stopwatch()..start();
 
     final userId = _authService.currentUser?.uid;
     try {
       // Fetch both types of categories concurrently
+      final fetchSw = Stopwatch()..start();
       final results = await Future.wait([
         _experienceService.getUserCategories(),
         _experienceService.getUserColorCategories(), // Fetch color categories
@@ -164,80 +175,25 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         else
           Future.value(<Experience>[]), // Return empty list if no user
       ]);
+      if (_perfLogs) {
+        fetchSw.stop();
+        final ms = fetchSw.elapsedMilliseconds;
+        print('[Perf][Collections] Firestore fetch (categories, color categories, experiences) took ${ms}ms');
+      }
 
       final categories = results[0] as List<UserCategory>;
       final colorCategories =
           results[1] as List<ColorCategory>; // Get color categories
       final experiences = results[2] as List<Experience>;
 
-      // --- REFACTORED: Populate _groupedContentItems using new data model --- START ---
-      List<GroupedContentItem> groupedContent = [];
-      if (experiences.isNotEmpty) {
-        // 1. Collect all unique media item IDs from all experiences
-        final Set<String> allMediaItemIds = {};
-        for (final exp in experiences) {
-          allMediaItemIds.addAll(exp.sharedMediaItemIds);
-        }
-
-        if (allMediaItemIds.isNotEmpty) {
-          // 2. Fetch all required SharedMediaItem objects in one go
-          final List<SharedMediaItem> allMediaItems = await _experienceService
-              .getSharedMediaItems(allMediaItemIds.toList());
-
-          // 3. Create a lookup map for efficient access
-          final Map<String, SharedMediaItem> mediaItemMap = {
-            for (var item in allMediaItems) item.id: item
-          };
-
-          // 4. Create intermediate list mapping media path to experience
-          final List<Map<String, dynamic>> pathExperiencePairs = [];
-          for (final exp in experiences) {
-            for (final mediaId in exp.sharedMediaItemIds) {
-              final mediaItem = mediaItemMap[mediaId];
-              if (mediaItem != null) {
-                pathExperiencePairs.add({
-                  'path': mediaItem.path,
-                  'mediaItem':
-                      mediaItem, // Keep mediaItem for easy access later
-                  'experience': exp,
-                });
-              } else {
-}
-            }
-          }
-
-          // 5. Group by media path
-          final groupedByPath =
-              groupBy(pathExperiencePairs, (pair) => pair['path'] as String);
-
-          // 6. Build the GroupedContentItem list
-          groupedByPath.forEach((path, pairs) {
-            if (pairs.isNotEmpty) {
-              final firstPair = pairs.first;
-              final mediaItem = firstPair['mediaItem'] as SharedMediaItem;
-              final associatedExperiences = pairs
-                  .map((pair) => pair['experience'] as Experience)
-                  .toList();
-              // Sort associated experiences alphabetically by default? Or by date? Let's do name for now.
-              associatedExperiences.sort((a, b) =>
-                  a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-
-              groupedContent.add(GroupedContentItem(
-                mediaItem: mediaItem,
-                associatedExperiences: associatedExperiences,
-              ));
-            }
-          });
-        }
-      }
-      // --- REFACTORED: Populate _groupedContentItems using new data model --- END ---
+      // Defer Content tab data (media fetch + grouping) to first Content tab open
 
       if (mounted) {
         setState(() {
           _categories = categories;
           _colorCategories = colorCategories; // Store color categories
           _experiences = experiences;
-          _groupedContentItems = groupedContent; // Set the state variable
+          _groupedContentItems = []; // Lazily built when Content tab opens
           _isLoading = false;
           _selectedCategory = null; // Reset selected category on reload
           _selectedColorCategory =
@@ -246,15 +202,30 @@ class _CollectionsScreenState extends State<CollectionsScreen>
 
           // Initialize filtered lists with all items initially
           _filteredExperiences = List.from(_experiences);
-          _filteredGroupedContentItems = List.from(_groupedContentItems);
+          _filteredGroupedContentItems = [];
+          _contentLoaded = false;
         });
         // Apply initial sorts after loading
-        _applyExperienceSort(_experienceSortType);
-        await _applyContentSort(
-            _contentSortType); // Apply initial content sort (await for distance)
+        final expSortSw = Stopwatch()..start();
+        _applyExperienceSort(_experienceSortType).whenComplete(() {
+          if (_perfLogs) {
+            print('[Perf][Collections] Initial experience sort took ${expSortSw.elapsedMilliseconds}ms');
+          }
+        });
+        // Defer content sort until content is loaded
         // Also apply to filtered lists to ensure UI displays correctly sorted data
-        _applyExperienceSort(_experienceSortType, applyToFiltered: true);
-        await _applyContentSort(_contentSortType, applyToFiltered: true);
+        final expFilteredSortSw = Stopwatch()..start();
+        _applyExperienceSort(_experienceSortType, applyToFiltered: true)
+            .whenComplete(() {
+          if (_perfLogs) {
+            print('[Perf][Collections] Filtered experience sort took ${expFilteredSortSw.elapsedMilliseconds}ms');
+          }
+        });
+        // Defer filtered content sort until content is loaded
+        if (_perfLogs) {
+          totalSw.stop();
+          print('[Perf][Collections] _loadData total time ${totalSw.elapsedMilliseconds}ms');
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -3126,5 +3097,92 @@ return Container(
         );
       },
     );
+  }
+
+  Future<void> _loadGroupedContent() async {
+    if (_isContentLoading || _contentLoaded) return;
+    _isContentLoading = true;
+    try {
+      final experiences = _experiences;
+      final groupSw = Stopwatch()..start();
+      List<GroupedContentItem> groupedContent = [];
+      if (experiences.isNotEmpty) {
+        final Set<String> allMediaItemIds = {};
+        for (final exp in experiences) {
+          allMediaItemIds.addAll(exp.sharedMediaItemIds);
+        }
+
+        if (allMediaItemIds.isNotEmpty) {
+          final mediaFetchSw = Stopwatch()..start();
+          final List<SharedMediaItem> allMediaItems = await _experienceService
+              .getSharedMediaItems(allMediaItemIds.toList());
+          if (_perfLogs) {
+            mediaFetchSw.stop();
+            print('[Perf][Collections] sharedMediaItems fetch (${allMediaItemIds.length} ids) took ${mediaFetchSw.elapsedMilliseconds}ms');
+          }
+
+          final Map<String, SharedMediaItem> mediaItemMap = {
+            for (var item in allMediaItems) item.id: item
+          };
+
+          final List<Map<String, dynamic>> pathExperiencePairs = [];
+          for (final exp in experiences) {
+            for (final mediaId in exp.sharedMediaItemIds) {
+              final mediaItem = mediaItemMap[mediaId];
+              if (mediaItem != null) {
+                pathExperiencePairs.add({
+                  'path': mediaItem.path,
+                  'mediaItem': mediaItem,
+                  'experience': exp,
+                });
+              }
+            }
+          }
+
+          final groupedByPath =
+              groupBy(pathExperiencePairs, (pair) => pair['path'] as String);
+
+          groupedByPath.forEach((path, pairs) {
+            if (pairs.isNotEmpty) {
+              final firstPair = pairs.first;
+              final mediaItem = firstPair['mediaItem'] as SharedMediaItem;
+              final associatedExperiences = pairs
+                  .map((pair) => pair['experience'] as Experience)
+                  .toList();
+              associatedExperiences.sort((a, b) =>
+                  a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+
+              groupedContent.add(GroupedContentItem(
+                mediaItem: mediaItem,
+                associatedExperiences: associatedExperiences,
+              ));
+            }
+          });
+        }
+      }
+      if (_perfLogs) {
+        groupSw.stop();
+        print('[Perf][Collections] Grouping content took ${groupSw.elapsedMilliseconds}ms (items=${groupedContent.length})');
+      }
+
+      if (mounted) {
+        setState(() {
+          _groupedContentItems = groupedContent;
+          _filteredGroupedContentItems = List.from(_groupedContentItems);
+          _contentLoaded = true;
+          _isContentLoading = false;
+        });
+      }
+
+      await _applyContentSort(_contentSortType);
+      await _applyContentSort(_contentSortType, applyToFiltered: true);
+    } catch (e) {
+      _isContentLoading = false;
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error loading content: $e')),
+        );
+      }
+    }
   }
 }
