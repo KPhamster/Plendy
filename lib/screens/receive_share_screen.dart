@@ -25,10 +25,10 @@ import 'location_picker_screen.dart';
 import '../services/sharing_service.dart';
 import 'dart:async';
 import 'package:http/http.dart' as http;
-import 'receive_share/widgets/yelp_preview_widget.dart';
 import 'receive_share/widgets/maps_preview_widget.dart';
 import 'receive_share/widgets/generic_url_preview_widget.dart';
 import 'receive_share/widgets/google_knowledge_graph_preview_widget.dart';
+import 'receive_share/widgets/web_url_preview_widget.dart';
 import 'receive_share/widgets/image_preview_widget.dart';
 import 'package:flutter/services.dart';
 import 'package:geocoding/geocoding.dart' as geocoding;
@@ -3554,17 +3554,11 @@ _showSnackBar(context, 'Error opening link: $e');
   }
 
   Widget _buildUrlPreview(String url, ExperienceCardData? card, int index, [String? sharedText]) {
-    if (card != null &&
-        (url.contains('yelp.com/biz') || url.contains('yelp.to/'))) {
-      
-      return YelpPreviewWidget(
-        yelpUrl: url,
-        sharedText: sharedText,
-        card: card, 
-        yelpPreviewFutures: _yelpPreviewFutures,
-        getBusinessFromYelpUrl: _getBusinessFromYelpUrl,
+    if (url.contains('yelp.com/biz') || url.contains('yelp.to/')) {
+      // Render Yelp links as a WebView consistent with GoogleKnowledgeGraphPreviewWidget
+      return WebUrlPreviewWidget(
+        url: url,
         launchUrlCallback: _launchUrl,
-        mapsService: _mapsService,
       );
     }
 
