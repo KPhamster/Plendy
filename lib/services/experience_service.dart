@@ -758,9 +758,36 @@ class ExperienceService {
 
   /// Delete an experience
   Future<void> deleteExperience(String experienceId) async {
-    // Consider adding a check for ownership or admin rights
+    // Before deleting, unlink this experience from any shared media items
+    try {
+      final expDoc = await _experiencesCollection.doc(experienceId).get();
+      if (expDoc.exists) {
+        final data = expDoc.data() as Map<String, dynamic>?;
+        final List<String> mediaItemIds = List<String>.from(
+          (data?['sharedMediaItemIds'] as List<dynamic>?)?.whereType<String>().toList() ?? [],
+        );
 
-    // Delete the experience
+        if (mediaItemIds.isNotEmpty) {
+          // Use existing helper to remove link and delete orphaned media
+          await Future.wait(mediaItemIds.map((mediaId) =>
+              removeExperienceLinkFromMediaItem(mediaId, experienceId, deleteIfOrphaned: true)));
+        } else {
+          // Fallback: query by arrayContains in case sharedMediaItemIds wasn't populated
+          final querySnap = await _sharedMediaItemsCollection
+              .where('experienceIds', arrayContains: experienceId)
+              .get();
+          if (querySnap.docs.isNotEmpty) {
+            await Future.wait(querySnap.docs.map((doc) =>
+                removeExperienceLinkFromMediaItem(doc.id, experienceId, deleteIfOrphaned: true)));
+          }
+        }
+      }
+    } catch (e) {
+      print("deleteExperience: Error unlinking shared media for experience $experienceId: $e");
+      // Proceed with deletion even if unlinking has partial failures
+    }
+
+    // Delete the experience document itself
     await _experiencesCollection.doc(experienceId).delete();
 
     // Optional: Also delete related reviews, comments, and reels
