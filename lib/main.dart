@@ -427,7 +427,7 @@ class _MyAppState extends State<MyApp> {
         colorScheme: ColorScheme.fromSeed(
           seedColor: const Color(0xFFD40000),
           primary: const Color(0xFFD40000),
-          secondary: const Color(0xFFFF5555), // Lighter red for secondary elements
+          secondary: Colors.white, // Lighter red for secondary elements
         ),
       ),
       home: _buildHomeWidget(authService, launchedFromShare),
