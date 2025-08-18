@@ -729,6 +729,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                         icon: const Icon(Icons.add),
                         label: const Text('Follow'),
                         style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFFD40000),
+                          foregroundColor: Colors.white,
                           // Optional: Add styling if needed (e.g., minimumSize)
                           minimumSize:
                               Size(140, 36), // Give buttons some minimum width
@@ -744,6 +746,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                             Icons.calendar_today_outlined), // Itinerary icon
                         label: const Text('Add to Itinerary'),
                         style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFFD40000),
+                          foregroundColor: Colors.white,
                           // Optional: Add styling if needed (e.g., minimumSize)
                           minimumSize:
                               Size(140, 36), // Give buttons some minimum width
@@ -783,6 +787,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
         return false;
       },
       child: Scaffold(
+        backgroundColor: Colors.white,
         // No AppBar needed here anymore
         // appBar: AppBar(...),
 
@@ -814,25 +819,29 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                 ),
                 // --- Details Section ---
                 SliverToBoxAdapter(
-                  child: Column(
-                    children: [
-                      const Divider(),
-                      _buildDynamicDetailsSection(context),
-                      const Divider(),
-                      _buildQuickActionsSection(context, _placeDetailsData,
-                          _currentExperience.location),
-                      const Divider(),
-                    ],
+                  child: Container(
+                    color: Colors.white,
+                    child: Column(
+                      children: [
+                        _buildDynamicDetailsSection(context),
+                        const Divider(),
+                        _buildQuickActionsSection(context, _placeDetailsData,
+                            _currentExperience.location),
+                        const Divider(),
+                      ],
+                    ),
                   ),
                 ),
                 // --- Sticky TabBar ---
                 SliverPersistentHeader(
                   delegate: _SliverAppBarDelegate(
-                    TabBar(
-                      controller: _tabController,
-                      labelColor: Theme.of(context).primaryColor,
-                      unselectedLabelColor: Colors.grey[600],
-                      indicatorColor: Theme.of(context).primaryColor,
+                    Container(
+                      color: Colors.white,
+                      child: TabBar(
+                        controller: _tabController,
+                        labelColor: Theme.of(context).primaryColor,
+                        unselectedLabelColor: Colors.grey[600],
+                        indicatorColor: Theme.of(context).primaryColor,
                       tabs: [
                         Tab(
                           icon: Icon(Icons.photo_library_outlined),
@@ -847,6 +856,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                           text: 'Comments ($commentCount)',
                         ),
                       ],
+                      ),
                     ),
                   ),
                   pinned: true, // Make the TabBar stick
@@ -982,38 +992,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       return reservableValue.toString(); // Fallback
     }
 
-    // Formatting for Hours
-    String formatHours(dynamic hoursValue) {
-      // ADDED: Log input to formatter
-      // print('    🔄 formatHours: Input value type: ${hoursValue?.runtimeType}');
-      // Check if data is available and is a Map
-      if (hoursValue == null || hoursValue is! Map) {
-        // print('    ⚠️ formatHours: Input is null or not a Map.');
-        return 'Not available';
-      }
-
-      // Prioritize weekday descriptions if available (most user-friendly)
-      if (hoursValue.containsKey('weekdayDescriptions') &&
-          hoursValue['weekdayDescriptions'] is List &&
-          (hoursValue['weekdayDescriptions'] as List).isNotEmpty) {
-        final descriptions =
-            (hoursValue['weekdayDescriptions'] as List).join('\n');
-        // print('    ✅ formatHours: Using weekdayDescriptions.');
-        return descriptions;
-      }
-
-      // Fallback: Check openNow status if available
-      if (hoursValue.containsKey('openNow') && hoursValue['openNow'] is bool) {
-        final isOpen = hoursValue['openNow'] as bool;
-        // print('    ✅ formatHours: Using openNow status ($isOpen).');
-        return isOpen
-            ? 'Open now (details unavailable)'
-            : 'Closed now (details unavailable)';
-      }
-      // print('    ⚠️ formatHours: No useful hour info found in Map.');
-      // If no useful info found
-      return 'Hours details unavailable';
-    }
+    // Removed legacy hours formatter; status/hours now handled in dedicated rows
 
     // Formatting for Parking
     String formatParking(dynamic parkingValue) {
@@ -1056,9 +1035,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
 
     // Get formatted values to log them
     final formattedDescription = getDetail('editorialSummary');
-    final formattedHours = formatHours(getDetail(
-        'regularOpeningHours')); // Use regularOpeningHours if that's what fetchPlaceDetailsData requests
-    final formattedStatus = getDetail('businessStatus');
+    // Keep hours/status formatting via dedicated UI rows; avoid unused locals
     final formattedReservable = formatReservable(getDetail('reservable'));
     final formattedParking = formatParking(getDetail('parkingOptions'));
 
@@ -1076,7 +1053,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     final bool canEdit = _canEditExperience();
 
     return Container(
-      color: Colors.grey[100],
+      color: Colors.white,
       padding: const EdgeInsets.all(16.0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1107,57 +1084,10 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                 ),
 
                 // Buttons on the right
-                // Yelp Button (Icon Only)
+                // 1. Map Screen Button (View Location on App Map)
                 ActionChip(
                   avatar: Icon(
-                    FontAwesomeIcons.yelp,
-                    color: yelpUrl != null && yelpUrl.isNotEmpty
-                        ? const Color(0xFFd32323) // Yelp Red
-                        : Colors.grey,
-                    size: 18,
-                  ),
-                  label: const SizedBox.shrink(),
-                  labelPadding: EdgeInsets.zero,
-                  onPressed: yelpUrl != null && yelpUrl.isNotEmpty
-                      ? () => _launchUrl(yelpUrl)
-                      : null,
-                  tooltip: yelpUrl != null && yelpUrl.isNotEmpty
-                      ? 'Open Yelp Page'
-                      : 'Yelp URL not available',
-                  backgroundColor: Colors.white,
-                  shape: StadiumBorder(
-                      side: BorderSide(color: Colors.grey.shade300)),
-                  materialTapTargetSize:
-                      MaterialTapTargetSize.shrinkWrap, // Reduce tap area
-                  padding: const EdgeInsets.all(4), // Adjust padding
-                ),
-                const SizedBox(width: 4), // Smaller spacing between buttons
-
-                // Google Maps Button (Icon Only)
-                ActionChip(
-                  avatar: Icon(
-                    Icons.map_outlined, // map icon
-                    color: Theme.of(context).primaryColor,
-                    size: 18,
-                  ),
-                  label: const SizedBox.shrink(),
-                  labelPadding: EdgeInsets.zero,
-                  onPressed: () =>
-                      _launchMapLocation(_currentExperience.location),
-                  tooltip: 'View on Map',
-                  backgroundColor: Colors.white,
-                  shape: StadiumBorder(
-                      side: BorderSide(color: Colors.grey.shade300)),
-                  materialTapTargetSize:
-                      MaterialTapTargetSize.shrinkWrap, // Reduce tap area
-                  padding: const EdgeInsets.all(4), // Adjust padding
-                ),
-                const SizedBox(width: 4), // Spacing
-
-                // --- MODIFIED View Location Button ---
-                ActionChip(
-                  avatar: Icon(
-                    Icons.location_pin, // New icon
+                    Icons.map_outlined, // Match Collections screen map icon
                     color: Theme.of(context)
                         .primaryColor, // Consistent with map icon
                     size: 18,
@@ -1182,10 +1112,56 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                   materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                   padding: const EdgeInsets.all(4),
                 ),
-                // --- END MODIFIED View Location Button ---
                 const SizedBox(width: 4), // Spacing
 
-                // Share Button
+                // 2. Google Button (View on Google Maps)
+                ActionChip(
+                  avatar: Icon(
+                    FontAwesomeIcons.google, // Google icon
+                    color: const Color(0xFF4285F4), // Official Google Blue
+                    size: 18,
+                  ),
+                  label: const SizedBox.shrink(),
+                  labelPadding: EdgeInsets.zero,
+                  onPressed: () =>
+                      _launchMapLocation(_currentExperience.location),
+                  tooltip: 'View on Map',
+                  backgroundColor: Colors.white,
+                  shape: StadiumBorder(
+                      side: BorderSide(color: Colors.grey.shade300)),
+                  materialTapTargetSize:
+                      MaterialTapTargetSize.shrinkWrap, // Reduce tap area
+                  padding: const EdgeInsets.all(4), // Adjust padding
+                ),
+                const SizedBox(width: 4), // Spacing
+
+                // 3. Yelp Button (Icon Only)
+                ActionChip(
+                  avatar: Icon(
+                    FontAwesomeIcons.yelp,
+                    color: yelpUrl != null && yelpUrl.isNotEmpty
+                        ? const Color(0xFFd32323) // Yelp Red
+                        : Colors.grey,
+                    size: 18,
+                  ),
+                  label: const SizedBox.shrink(),
+                  labelPadding: EdgeInsets.zero,
+                  onPressed: yelpUrl != null && yelpUrl.isNotEmpty
+                      ? () => _launchUrl(yelpUrl)
+                      : null,
+                  tooltip: yelpUrl != null && yelpUrl.isNotEmpty
+                      ? 'Open Yelp Page'
+                      : 'Yelp URL not available',
+                  backgroundColor: Colors.white,
+                  shape: StadiumBorder(
+                      side: BorderSide(color: Colors.grey.shade300)),
+                  materialTapTargetSize:
+                      MaterialTapTargetSize.shrinkWrap, // Reduce tap area
+                  padding: const EdgeInsets.all(4), // Adjust padding
+                ),
+                const SizedBox(width: 4), // Spacing
+
+                // 4. Share Button
                 ActionChip(
                   avatar: Icon(
                     Icons.share_outlined,
@@ -1212,7 +1188,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                 ),
                 const SizedBox(width: 4), // Spacing
 
-                // Edit Button
+                // 5. Edit Button
                 ActionChip(
                   avatar: Icon(
                     Icons.edit_outlined,
@@ -1313,12 +1289,16 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
               showLabel: false, // HIDE label
             ),
           ),
-          _buildStatusRow(context, getDetail('businessStatus')),
+          _buildStatusRow(
+            context,
+            getDetail('businessStatus'),
+            getDetail('currentOpeningHours'),
+          ),
           _buildExpandableHoursRow(
             context,
-            getDetail('regularOpeningHours'), // Pass hours data
-            getDetail(
-                'businessStatus'), // Pass status for coloring (still needed for hours row)
+            getDetail('regularOpeningHours'), // Weekly descriptions
+            getDetail('businessStatus'), // For temporary/permanent closures
+            getDetail('currentOpeningHours'), // For live open/closed
           ),
           _buildDetailRow(
             context,
@@ -1402,37 +1382,38 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   // --- ADDED: Helper Widget for Color Category Row --- END ---
 
   // --- ADDED: New Widget/Helper for Status Row ---
-  Widget _buildStatusRow(BuildContext context, dynamic statusValue) {
-    String statusText = 'Status unknown';
-    Color statusColor = Colors.grey;
-    bool isVisible = statusValue != null;
-
-    if (statusValue is String) {
-      switch (statusValue) {
-        case 'OPERATIONAL':
-          statusText = 'Open';
-          statusColor = Colors.green[700]!;
-          break;
-        case 'CLOSED_TEMPORARILY':
-          statusText = 'Closed Temporarily';
-          statusColor = Colors.red[700]!;
-          break;
-        case 'CLOSED_PERMANENTLY':
-          statusText = 'Closed Permanently';
-          statusColor = Colors.red[700]!;
-          break;
-        default:
-          statusText = statusValue; // Display unknown status raw
-          break;
-      }
-    } else if (statusValue != null) {
-      statusText = statusValue.toString(); // Fallback for unexpected type
+  Widget _buildStatusRow(
+      BuildContext context, String? businessStatus, dynamic currentHours) {
+    // Determine if permanently/temporarily closed first
+    if (businessStatus == 'CLOSED_PERMANENTLY') {
+      return _statusBadge(context, 'Closed Permanently', Colors.red[700]!);
+    }
+    if (businessStatus == 'CLOSED_TEMPORARILY') {
+      return _statusBadge(context, 'Closed Temporarily', Colors.red[700]!);
     }
 
-    // Only build the row if the status is known
-    if (!isVisible) return const SizedBox.shrink();
+    // Otherwise treat as operational and use live open/closed if available
+    bool? openNow;
+    if (currentHours is Map && currentHours['openNow'] is bool) {
+      openNow = currentHours['openNow'] as bool;
+    }
 
-    // Use _buildDetailRow structure but apply custom text and color
+    if (openNow == true) {
+      return _statusBadge(context, 'Open now', Colors.green[700]!);
+    }
+    if (openNow == false) {
+      return _statusBadge(context, 'Closed now', Colors.red[700]!);
+    }
+
+    // Unknown hours; if operational show neutral, else hide
+    if (businessStatus == 'OPERATIONAL' || businessStatus == null) {
+      return _statusBadge(context, 'Status unknown', Colors.grey);
+    }
+
+    return const SizedBox.shrink();
+  }
+
+  Widget _statusBadge(BuildContext context, String text, Color color) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6.0),
       child: Row(
@@ -1446,9 +1427,9 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                 style: Theme.of(context).textTheme.bodyMedium,
                 children: <TextSpan>[
                   TextSpan(
-                    text: statusText,
-                    style: TextStyle(
-                        color: statusColor, fontWeight: FontWeight.bold),
+                    text: text,
+                    style:
+                        TextStyle(color: color, fontWeight: FontWeight.bold),
                   ),
                 ],
               ),
@@ -1461,12 +1442,21 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   // --- End Status Row Widget ---
 
   // --- ADDED: New Widget for Expandable Hours ---
-  Widget _buildExpandableHoursRow(
-      BuildContext context, dynamic hoursData, String? businessStatus) {
+  Widget _buildExpandableHoursRow(BuildContext context, dynamic regularHours,
+      String? businessStatus, dynamic currentHours) {
     // --- Helper Logic within the build method ---
-    final bool isOperational = businessStatus == 'OPERATIONAL';
-    final Color statusColor =
-        isOperational ? Colors.green[700]! : Colors.red[700]!;
+    bool? openNow;
+    if (currentHours is Map && currentHours['openNow'] is bool) {
+      openNow = currentHours['openNow'] as bool;
+    }
+    final bool isTemporarilyOrPermanentlyClosed =
+        businessStatus == 'CLOSED_TEMPORARILY' ||
+            businessStatus == 'CLOSED_PERMANENTLY';
+    final Color statusColor = isTemporarilyOrPermanentlyClosed
+        ? Colors.red[700]!
+        : (openNow == true
+            ? Colors.green[700]!
+            : (openNow == false ? Colors.red[700]! : Colors.grey));
     List<String>? descriptions;
     String todayString = 'Hours details unavailable';
     final now = DateTime.now(); // ADDED for debugging
@@ -1484,11 +1474,12 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     print('Calculated Google Index (0=Mon, ..., 6=Sun): $googleWeekdayIndex');
     // --- END: Debug Prints ---
 
-    if (hoursData is Map &&
-        hoursData.containsKey('weekdayDescriptions') &&
-        hoursData['weekdayDescriptions'] is List &&
-        (hoursData['weekdayDescriptions'] as List).isNotEmpty) {
-      descriptions = (hoursData['weekdayDescriptions'] as List).cast<String>();
+    if (regularHours is Map &&
+        regularHours.containsKey('weekdayDescriptions') &&
+        regularHours['weekdayDescriptions'] is List &&
+        (regularHours['weekdayDescriptions'] as List).isNotEmpty) {
+      descriptions =
+          (regularHours['weekdayDescriptions'] as List).cast<String>();
       // --- ADDED: Debug Print for API data ---
       print('Weekday Descriptions from API: $descriptions');
       // --- END: Debug Print ---
@@ -1497,11 +1488,11 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       } else {
         todayString = 'Today\'s hours unavailable'; // Data length mismatch
       }
-    } else if (hoursData is Map &&
-        hoursData.containsKey('openNow') &&
-        hoursData['openNow'] is bool) {
+    } else if (currentHours is Map &&
+        currentHours.containsKey('openNow') &&
+        currentHours['openNow'] is bool) {
       // Fallback if only openNow is available
-      todayString = hoursData['openNow']
+      todayString = currentHours['openNow']
           ? 'Open now (details unavailable)'
           : 'Closed now (details unavailable)';
       descriptions = [todayString]; // Use this as the only description
@@ -1608,11 +1599,13 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
 
     return Column(
       children: [
-        TabBar(
-          controller: _tabController,
-          labelColor: Theme.of(context).primaryColor,
-          unselectedLabelColor: Colors.grey[600],
-          indicatorColor: Theme.of(context).primaryColor,
+        Container(
+          color: Colors.white,
+          child: TabBar(
+            controller: _tabController,
+            labelColor: Theme.of(context).primaryColor,
+            unselectedLabelColor: Colors.grey[600],
+            indicatorColor: Theme.of(context).primaryColor,
           tabs: [
             Tab(
               // Use an Instagram icon or keep the generic one
@@ -1629,6 +1622,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
               text: 'Comments ($commentCount)',
             ),
           ],
+          ),
         ),
         SizedBox(
           height: tabContentHeight,
@@ -1722,14 +1716,22 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       BuildContext context, List<SharedMediaItem> mediaItems) {
     // Use the passed mediaItems list directly
     if (_isLoadingMedia) {
-      return const Center(child: CircularProgressIndicator());
+      return Container(
+        color: Colors.white,
+        child: const Center(child: CircularProgressIndicator()),
+      );
     } else if (mediaItems.isEmpty) {
-      return const Center(
-          child: Text('No media items shared for this experience.'));
+      return Container(
+        color: Colors.white,
+        child: const Center(
+            child: Text('No media items shared for this experience.')),
+      );
     }
 
-    // Wrap content in a Column
-    return Column(
+    // Wrap content in a Column with white background
+    return Container(
+      color: Colors.white,
+      child: Column(
       children: [
         // --- MOVED Fullscreen Button to the top ---
         Padding(
@@ -2194,19 +2196,28 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
           ),
         ),
       ],
+      ),
     );
   }
 
   // Builds the Reviews Tab ListView
   Widget _buildReviewsTab(BuildContext context) {
     if (_isLoadingReviews) {
-      return const Center(child: CircularProgressIndicator());
+      return Container(
+        color: Colors.white,
+        child: const Center(child: CircularProgressIndicator()),
+      );
     }
     if (_reviews.isEmpty) {
-      return const Center(child: Text('No reviews yet.'));
+      return Container(
+        color: Colors.white,
+        child: const Center(child: Text('No reviews yet.')),
+      );
     }
 
-    return ListView.builder(
+    return Container(
+      color: Colors.white,
+      child: ListView.builder(
       itemCount: _reviews.length,
       itemBuilder: (context, index) {
         final review = _reviews[index];
@@ -2218,19 +2229,28 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
               'By: ${review.userName ?? review.userId} - ${review.createdAt.toLocal()}'),
         );
       },
+      ),
     );
   }
 
   // Builds the Comments Tab ListView
   Widget _buildCommentsTab(BuildContext context) {
     if (_isLoadingComments) {
-      return const Center(child: CircularProgressIndicator());
+      return Container(
+        color: Colors.white,
+        child: const Center(child: CircularProgressIndicator()),
+      );
     }
     if (_comments.isEmpty) {
-      return const Center(child: Text('No comments yet.'));
+      return Container(
+        color: Colors.white,
+        child: const Center(child: Text('No comments yet.')),
+      );
     }
 
-    return ListView.builder(
+    return Container(
+      color: Colors.white,
+      child: ListView.builder(
       itemCount: _comments.length,
       itemBuilder: (context, index) {
         final comment = _comments[index];
@@ -2241,6 +2261,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
               'By: ${comment.userName ?? comment.userId} - ${comment.createdAt.toLocal()}'),
         );
       },
+      ),
     );
   }
 
@@ -2764,13 +2785,13 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
 
 // --- ADDED Helper class for SliverPersistentHeader (for TabBar) ---
 class _SliverAppBarDelegate extends SliverPersistentHeaderDelegate {
-  _SliverAppBarDelegate(this._tabBar);
+  _SliverAppBarDelegate(this._child);
 
-  final TabBar _tabBar;
+  final Widget _child;
 
   @override
   double get minExtent =>
-      _tabBar.preferredSize.height +
+      kToolbarHeight +
       MediaQueryData.fromView(
                   WidgetsBinding.instance.platformDispatcher.views.first)
               .padding
@@ -2778,7 +2799,7 @@ class _SliverAppBarDelegate extends SliverPersistentHeaderDelegate {
           0.6;
   @override
   double get maxExtent =>
-      _tabBar.preferredSize.height +
+      kToolbarHeight +
       MediaQueryData.fromView(
                   WidgetsBinding.instance.platformDispatcher.views.first)
               .padding
@@ -2790,20 +2811,19 @@ class _SliverAppBarDelegate extends SliverPersistentHeaderDelegate {
       BuildContext context, double shrinkOffset, bool overlapsContent) {
     // Return a container that fills the delegate's space
     return Container(
-      color: Theme.of(context)
-          .scaffoldBackgroundColor, // Background for the whole pinned area
-      // Align the TabBar to the bottom of this container
+      color: Colors.white, // Force white background for the pinned area
+      // Align the child widget to the bottom of this container
       child: Align(
         alignment: Alignment.bottomCenter,
-        child: _tabBar, // Place the actual TabBar here
+        child: _child, // Place the actual child widget here
       ),
     );
   }
 
   @override
   bool shouldRebuild(_SliverAppBarDelegate oldDelegate) {
-    // Rebuild if the TabBar instance changes
-    return _tabBar != oldDelegate._tabBar;
+    // Rebuild if the child widget instance changes
+    return _child != oldDelegate._child;
   }
   }
   // --- End Helper Class ---
