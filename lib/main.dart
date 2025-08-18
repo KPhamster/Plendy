@@ -422,7 +422,13 @@ class _MyAppState extends State<MyApp> {
       navigatorKey: navigatorKey, // Assign the key to MaterialApp
       debugShowCheckedModeBanner: false, // Optional: removes debug banner
       theme: ThemeData(
-        primarySwatch: Colors.blue,
+        primarySwatch: Colors.red,
+        primaryColor: const Color(0xFFD40000), // Bold red for primary elements
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFFD40000),
+          primary: const Color(0xFFD40000),
+          secondary: const Color(0xFFFF5555), // Lighter red for secondary elements
+        ),
       ),
       home: _buildHomeWidget(authService, launchedFromShare),
     );
