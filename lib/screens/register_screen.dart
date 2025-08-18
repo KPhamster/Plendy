@@ -43,17 +43,23 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
 		return Scaffold(
 			body: SafeArea(
-				child: Column(
-					children: [
-						// Top section with background image
-						Expanded(
-							flex: 4,
+				child: SingleChildScrollView(
+					child: ConstrainedBox(
+						constraints: BoxConstraints(
+							minHeight: MediaQuery.of(context).size.height - MediaQuery.of(context).padding.top,
+						),
+						child: Column(
+							children: [
+								// Top section with background image
+								SizedBox(
+									height: MediaQuery.of(context).size.height * 0.70,
 							child: Stack(
 								children: [
 									Positioned.fill(
 										child: Image.asset(
 											'lib/assets/images/auth_background.jpg',
 											fit: BoxFit.cover,
+											alignment: Alignment.bottomCenter,
 										),
 									),
 									Column(
@@ -201,13 +207,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
 							),
 						),
 
-						// Bottom section on plain background  
-						Expanded(
-							flex: 1,
-							child: Padding(
-								padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-								child: Column(
-									mainAxisAlignment: MainAxisAlignment.center,
+								// Bottom section on plain background  
+								Padding(
+									padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 32),
+									child: Column(
 									children: [
 										Row(
 											children: [
@@ -261,8 +264,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
 									],
 								),
 							),
+							],
 						),
-					],
+					),
 				),
 			),
 		);
