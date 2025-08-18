@@ -979,6 +979,8 @@ if (mounted) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Collection'),
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.black,
         actions: [
           // ADDED: Map Button
           IconButton(
@@ -1105,8 +1107,10 @@ if (mounted) {
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
-          : Column(
-              children: [
+          : Container(
+              color: Colors.white,
+              child: Column(
+                children: [
                 // ADDED: Search Bar Area
                 Builder( // ADDED Builder for conditional width
                   builder: (context) {
@@ -1136,7 +1140,7 @@ if (mounted) {
                             focusNode: focusNode,
                             decoration: InputDecoration(
                               labelText: 'Search your experiences',
-                              prefixIcon: const Icon(Icons.search),
+                              prefixIcon: Icon(Icons.search, color: Theme.of(context).primaryColor),
                               border: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(25.0),
                               ),
@@ -1217,17 +1221,19 @@ final category = _categories.firstWhere(
                   }
                 ),
                 // ADDED: TabBar placed here in the body's Column
-                TabBar(
-                  controller: _tabController,
-                  tabs: const [
-                    Tab(text: 'Categories'),
-                    Tab(text: 'Experiences'),
-                    Tab(text: 'Content'),
-                  ],
-                  // Optional: Style the TabBar if needed when outside AppBar
-                  // labelColor: Theme.of(context).primaryColor,
-                  // unselectedLabelColor: Colors.grey,
-                  // indicatorColor: Theme.of(context).primaryColor,
+                Container(
+                  color: Colors.white,
+                  child: TabBar(
+                    controller: _tabController,
+                    tabs: const [
+                      Tab(text: 'Categories'),
+                      Tab(text: 'Experiences'),
+                      Tab(text: 'Content'),
+                    ],
+                    labelColor: Theme.of(context).primaryColor,
+                    unselectedLabelColor: Colors.grey,
+                    indicatorColor: Theme.of(context).primaryColor,
+                  ),
                 ),
                 // Existing TabBarView wrapped in Expanded
                 Expanded(
@@ -1239,118 +1245,73 @@ final category = _categories.firstWhere(
                       //     ? _buildCategoriesList()
                       //     : _buildCategoryExperiencesList(_selectedCategory!),
                       // --- MODIFIED: First tab now uses Column and toggle ---
-                      Column(
-                        children: [
-                          Padding(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 16.0, vertical: 8.0),
-                            child: Align(
-                              alignment: Alignment.centerRight,
-                              child: TextButton.icon(
-                                icon: Icon(_showingColorCategories
-                                    ? Icons.category_outlined
-                                    : Icons.color_lens_outlined),
-                                label: Text(_showingColorCategories
-                                    ? 'Categories'
-                                    : 'Color Categories'),
-                                onPressed: () {
-                                  setState(() {
-                                    _showingColorCategories =
-                                        !_showingColorCategories;
-                                    _selectedCategory =
-                                        null; // Clear selected text category when switching views
-                                    _selectedColorCategory =
-                                        null; // Clear selected color category when switching views
-                                  });
-                                },
+                      Container(
+                        color: Colors.white,
+                        child: Column(
+                          children: [
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 16.0, vertical: 8.0),
+                              child: Align(
+                                alignment: Alignment.centerRight,
+                                child: TextButton.icon(
+                                  icon: Icon(_showingColorCategories
+                                      ? Icons.category_outlined
+                                      : Icons.color_lens_outlined),
+                                  label: Text(_showingColorCategories
+                                      ? 'Categories'
+                                      : 'Color Categories'),
+                                  onPressed: () {
+                                    setState(() {
+                                      _showingColorCategories =
+                                          !_showingColorCategories;
+                                      _selectedCategory =
+                                          null; // Clear selected text category when switching views
+                                      _selectedColorCategory =
+                                          null; // Clear selected color category when switching views
+                                    });
+                                  },
+                                ),
                               ),
                             ),
-                          ),
-                          Expanded(
-                            child: _selectedCategory != null
-                                ? _buildCategoryExperiencesList(
-                                    _selectedCategory!) // Still show experiences if a text category was selected
-                                // --- MODIFIED: Check for selected color category first --- START ---
-                                : _selectedColorCategory != null
-                                    ? _buildColorCategoryExperiencesList(
-                                        _selectedColorCategory!) // Show color experiences
-                                    : _showingColorCategories
-                                        ? _buildColorCategoriesList() // Show color list
-                                        : _buildCategoriesList(), // Show text list
-                            // --- MODIFIED: Check for selected color category first --- END ---
-                          ),
-                        ],
+                            Expanded(
+                              child: _selectedCategory != null
+                                  ? _buildCategoryExperiencesList(
+                                      _selectedCategory!) // Still show experiences if a text category was selected
+                                  // --- MODIFIED: Check for selected color category first --- START ---
+                                  : _selectedColorCategory != null
+                                      ? _buildColorCategoryExperiencesList(
+                                          _selectedColorCategory!) // Show color experiences
+                                      : _showingColorCategories
+                                          ? _buildColorCategoriesList() // Show color list
+                                          : _buildCategoriesList(), // Show text list
+                              // --- MODIFIED: Check for selected color category first --- END ---
+                            ),
+                          ],
+                        ),
                       ),
                       // --- END MODIFIED ---
-                      Column(
-                        children: [
-                          // Count display at the top
-                          if (_filteredExperiences.isNotEmpty)
-                            Container(
-                              width: double.infinity,
-                              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-                              decoration: BoxDecoration(
-                                color: Theme.of(context).primaryColor.withOpacity(0.1),
-                                border: Border(
-                                  bottom: BorderSide(
-                                    color: Theme.of(context).dividerColor,
-                                    width: 1,
-                                  ),
-                                ),
-                              ),
-                              child: Text(
-                                '${_filteredExperiences.length} ${_filteredExperiences.length == 1 ? 'Experience' : 'Experiences'}',
-                                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                  fontWeight: FontWeight.w600,
-                                  color: Theme.of(context).primaryColor,
-                                ),
-                                textAlign: TextAlign.center,
-                              ),
-                            ),
-                          Expanded(
-                            child: _buildExperiencesListView(),
-                          ),
-                        ],
+                      Container(
+                        color: Colors.white,
+                        child: _buildExperiencesListView(),
                       ),
                       // MODIFIED: Call builder for Content tab
-                      Column(
-                        children: [
-                          // Count display at the top
-                          if (_filteredGroupedContentItems.isNotEmpty)
-                            Container(
-                              width: double.infinity,
-                              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-                              decoration: BoxDecoration(
-                                color: Theme.of(context).primaryColor.withOpacity(0.1),
-                                border: Border(
-                                  bottom: BorderSide(
-                                    color: Theme.of(context).dividerColor,
-                                    width: 1,
-                                  ),
-                                ),
-                              ),
-                              child: Text(
-                                '${_filteredGroupedContentItems.length} ${_filteredGroupedContentItems.length == 1 ? 'Saved Content' : 'Saved Content'}',
-                                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                  fontWeight: FontWeight.w600,
-                                  color: Theme.of(context).primaryColor,
-                                ),
-                                textAlign: TextAlign.center,
-                              ),
-                            ),
-                          Expanded(
-                            child: _buildContentTabBody(),
-                          ),
-                        ],
+                      Container(
+                        color: Colors.white,
+                        child: _buildContentTabBody(),
                       ),
                     ],
                   ),
                 ),
               ],
             ),
+          ),
       floatingActionButton: FloatingActionButton(
         onPressed: _showAddMenu,
         tooltip: 'Add',
+        backgroundColor: Theme.of(context).primaryColor,
+        foregroundColor: Colors.white,
+        shape: const CircleBorder(),
         child: const Icon(Icons.add),
       ),
     );
@@ -1359,6 +1320,7 @@ final category = _categories.firstWhere(
   void _showAddMenu() {
     showModalBottomSheet<void>(
       context: context,
+      backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
@@ -1890,10 +1852,27 @@ final category = _categories.firstWhere(
 
     final bool isDesktopWeb = kIsWeb && MediaQuery.of(context).size.width > 600;
 
+    // Build count header widget
+    Widget countHeader = Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+      ),
+      child: Text(
+        '${_filteredExperiences.length} ${_filteredExperiences.length == 1 ? 'Experience' : 'Experiences'}',
+        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+          fontWeight: FontWeight.w400,
+          color: Colors.grey,
+        ),
+        textAlign: TextAlign.center,
+      ),
+    );
+
     if (isDesktopWeb) {
       final screenWidth = MediaQuery.of(context).size.width;
       const double contentMaxWidth = 1200.0;
-      const double defaultPadding = 12.0; // Original all-around padding was 12.0
+      const double defaultPadding = 12.0;
 
       double horizontalPadding;
       if (screenWidth > contentMaxWidth) {
@@ -1902,26 +1881,38 @@ final category = _categories.firstWhere(
         horizontalPadding = defaultPadding;
       }
 
-      // Web: Use GridView.builder
-      return GridView.builder(
-        padding: EdgeInsets.symmetric(horizontal: horizontalPadding, vertical: defaultPadding),
-        itemCount: _filteredExperiences.length,
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 3,
-          mainAxisSpacing: 12.0,
-          crossAxisSpacing: 12.0,
-          childAspectRatio: 0.75, //  (width / height) - results in items being taller than wide
-        ),
-        itemBuilder: (context, index) {
-          return _buildExperienceGridItem(_filteredExperiences[index], isDesktopWeb); // MODIFIED: Pass isDesktopWeb
-        },
+      // Web: Use CustomScrollView with Slivers to include header
+      return CustomScrollView(
+        slivers: [
+          SliverToBoxAdapter(child: countHeader),
+          SliverPadding(
+            padding: EdgeInsets.symmetric(horizontal: horizontalPadding, vertical: defaultPadding),
+            sliver: SliverGrid(
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 3,
+                mainAxisSpacing: 12.0,
+                crossAxisSpacing: 12.0,
+                childAspectRatio: 0.75,
+              ),
+              delegate: SliverChildBuilderDelegate(
+                (context, index) {
+                  return _buildExperienceGridItem(_filteredExperiences[index], isDesktopWeb);
+                },
+                childCount: _filteredExperiences.length,
+              ),
+            ),
+          ),
+        ],
       );
     } else {
-      // Mobile: Use existing ListView.builder
+      // Mobile: Use ListView with header as first item
       return ListView.builder(
-        itemCount: _filteredExperiences.length,
+        itemCount: _filteredExperiences.length + 1, // +1 for header
         itemBuilder: (context, index) {
-          return _buildExperienceListItem(_filteredExperiences[index]);
+          if (index == 0) {
+            return countHeader;
+          }
+          return _buildExperienceListItem(_filteredExperiences[index - 1]);
         },
       );
     }
@@ -2009,10 +2000,27 @@ final category = _categories.firstWhere(
 
     final bool isDesktopWeb = kIsWeb && MediaQuery.of(context).size.width > 600;
 
+    // Build count header widget
+    Widget countHeader = Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+      ),
+      child: Text(
+        '${_filteredGroupedContentItems.length} ${_filteredGroupedContentItems.length == 1 ? 'Saved Content' : 'Saved Content'}',
+        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+          fontWeight: FontWeight.w400,
+          color: Colors.grey,
+        ),
+        textAlign: TextAlign.center,
+      ),
+    );
+
     if (isDesktopWeb) {
       final screenWidth = MediaQuery.of(context).size.width;
       const double contentMaxWidth = 1200.0;
-      const double defaultPadding = 10.0; // Original all-around padding was 10.0
+      const double defaultPadding = 10.0;
 
       double horizontalPadding;
       if (screenWidth > contentMaxWidth) {
@@ -2021,27 +2029,43 @@ final category = _categories.firstWhere(
         horizontalPadding = defaultPadding;
       }
 
-      // Web: Use GridView.builder
-      return GridView.builder(
-        padding: EdgeInsets.symmetric(horizontal: horizontalPadding, vertical: defaultPadding),
-        itemCount: _filteredGroupedContentItems.length,
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 3,
-          mainAxisSpacing: 10.0,
-          crossAxisSpacing: 10.0,
-          childAspectRatio: 0.6, 
-        ),
-        itemBuilder: (context, index) {
-          return _buildContentGridItem(_filteredGroupedContentItems[index], index);
-        },
+      // Web: Use CustomScrollView with Slivers to include header
+      return CustomScrollView(
+        slivers: [
+          SliverToBoxAdapter(child: countHeader),
+          SliverPadding(
+            padding: EdgeInsets.symmetric(horizontal: horizontalPadding, vertical: defaultPadding),
+            sliver: SliverGrid(
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 3,
+                mainAxisSpacing: 10.0,
+                crossAxisSpacing: 10.0,
+                childAspectRatio: 0.6,
+              ),
+              delegate: SliverChildBuilderDelegate(
+                (context, index) {
+                  return _buildContentGridItem(_filteredGroupedContentItems[index], index);
+                },
+                childCount: _filteredGroupedContentItems.length,
+              ),
+            ),
+          ),
+        ],
       );
     } else {
       // Mobile or Mobile Web: Use existing ListView.builder (original complex list item)
       return ListView.builder(
         padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 16.0),
-        itemCount: _filteredGroupedContentItems.length,
+        itemCount: _filteredGroupedContentItems.length + 1, // +1 for header
         itemBuilder: (context, index) {
-          final group = _filteredGroupedContentItems[index];
+          if (index == 0) {
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 16.0),
+              child: countHeader,
+            );
+          }
+          final adjustedIndex = index - 1;
+          final group = _filteredGroupedContentItems[adjustedIndex];
           final mediaItem = group.mediaItem;
           final mediaPath = mediaItem.path;
           final associatedExperiences = group.associatedExperiences;
@@ -2140,7 +2164,7 @@ return Container(
                       backgroundColor:
                           Theme.of(context).primaryColor.withOpacity(0.8),
                       child: Text(
-                        '${index + 1}',
+                        '${adjustedIndex + 1}',
                         style: TextStyle(
                           fontSize: 14.0,
                           fontWeight: FontWeight.bold,
@@ -2150,9 +2174,26 @@ return Container(
                     ),
                   ),
                 ),
-                Card(
+                Container(
                   margin: EdgeInsets.zero,
-                  elevation: 2.0,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(4.0),
+                    boxShadow: [
+                      // Top shadow
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.1),
+                        blurRadius: 4.0,
+                        offset: const Offset(0, -2), // Negative Y for top shadow
+                      ),
+                      // Bottom shadow (matching other cards)
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.1),
+                        blurRadius: 4.0,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
                   clipBehavior: Clip.antiAlias,
                   child: Column(
                     children: [
@@ -2558,7 +2599,6 @@ setState(() {
                 decoration: BoxDecoration(
                   color: category.color, 
                   shape: BoxShape.circle,
-                  border: Border.all(color: Theme.of(context).dividerColor, width: 1.5),
                 ),
               ),
               const SizedBox(height: 8),
@@ -2622,7 +2662,7 @@ setState(() {
               decoration: BoxDecoration(
                   color: category.color,
                   shape: BoxShape.circle,
-                  border: Border.all(color: Colors.grey.shade400, width: 1)),
+              ),
             ),
             title: Text(category.name),
             subtitle: Text('$count ${count == 1 ? "experience" : "experiences"}'),
@@ -2724,7 +2764,7 @@ _saveColorCategoryOrder();
                 decoration: BoxDecoration(
                     color: category.color,
                     shape: BoxShape.circle,
-                    border: Border.all(color: Colors.grey.shade400, width: 1)),
+                ),
               ),
               const SizedBox(width: 8),
               Text(
@@ -2858,7 +2898,7 @@ _saveColorCategoryOrder();
                                   color: _parseColor(
                                       colorCategory.colorHex), // Use helper
                                   shape: BoxShape.circle,
-                                  border: Border.all(color: Colors.grey)),
+                              ),
                             ),
                             const SizedBox(width: 8),
                             Flexible(

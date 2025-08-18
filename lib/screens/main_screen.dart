@@ -151,7 +151,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
               ),
             ],
             currentIndex: _selectedIndex,
-            selectedItemColor: Colors.blue,
+            selectedItemColor: const Color(0xFFD40000), // Red theme color
+            unselectedItemColor: Colors.grey,
+            backgroundColor: Colors.white,
             onTap: _onItemTapped,
             type: BottomNavigationBarType.fixed,
           );
