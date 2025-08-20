@@ -1409,61 +1409,41 @@ final category = _categories.firstWhere(
 
     // Get the full address
     final fullAddress = experience.location.address;
-    // Get the first image URL or null
-    String? imageUrl;
-    if (experience.location.photoResourceName != null && experience.location.photoResourceName!.isNotEmpty) {
-      imageUrl = GoogleMapsService.buildPlacePhotoUrlFromResourceName(
-        experience.location.photoResourceName,
-        maxWidthPx: 400,
-        maxHeightPx: 400,
-      );
-    }
-    imageUrl ??= experience.location.photoUrl;
-    // If no URL yet but we have a Place ID and haven't tried, refresh resource name in background
-    if ((imageUrl == null || imageUrl.isEmpty) &&
-        (experience.location.placeId != null && experience.location.placeId!.isNotEmpty) &&
-        !_photoRefreshAttempts.contains(experience.id)) {
-      _photoRefreshAttempts.add(experience.id);
-      _refreshPhotoResourceNameForExperience(experience);
-    }
 
     return ListTile(
       key: ValueKey(experience.id), // Use experience ID as key
-      leading: SizedBox(
-        width: 56, // Define width for the leading image container
-        height: 56, // Define height for the leading image container
-        child: ClipRRect(
-          // Clip the image to a rounded rectangle
+      leading: Container(
+        width: 56,
+        height: 56,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: Colors.white,
           borderRadius: BorderRadius.circular(8.0),
-          child: imageUrl != null
-              ? Image.network(
-                  imageUrl,
-                  fit: BoxFit.cover,
-                  // Optional: Add loading/error builders
-                  loadingBuilder: (context, child, loadingProgress) {
-                    if (loadingProgress == null) return child;
-                    return Center(
-                        child: CircularProgressIndicator(strokeWidth: 2.0));
-                  },
-                  errorBuilder: (context, error, stackTrace) {
-                    // On error, attempt a one-time refresh if we have not tried yet
-                    if (!_photoRefreshAttempts.contains(experience.id) &&
-                        (experience.location.placeId != null && experience.location.placeId!.isNotEmpty)) {
-                      _photoRefreshAttempts.add(experience.id);
-                      _refreshPhotoResourceNameForExperience(experience);
-                    }
-                    return Container(
-                      color: Colors.grey[200],
-                      child: Icon(Icons.broken_image, color: Colors.grey),
-                    );
-                  },
-                )
-              : Container(
-                  // Placeholder if no image URL
-                  color: Colors.grey[300],
-                  child:
-                      Icon(Icons.image_not_supported, color: Colors.grey[600]),
+        ),
+        child: MediaQuery(
+          data: MediaQuery.of(context).copyWith(textScaleFactor: 1.0),
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.center,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  categoryIcon,
+                  style: const TextStyle(fontSize: 28),
                 ),
+                const SizedBox(height: 2),
+                Text(
+                  categoryName,
+                  textAlign: TextAlign.center,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 10),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
       // --- MODIFIED: Integrate indicator into title --- START ---
@@ -1520,41 +1500,27 @@ final category = _categories.firstWhere(
               fullAddress, // Use full address
               style: Theme.of(context).textTheme.bodySmall,
             ),
-          // --- MODIFIED: Primary category and other categories in same row ---
-          Row(
-            children: [
-              // Primary category on the left
-              Expanded(
-                child: Text(
-                  '$categoryIcon $categoryName', // Use looked-up category name
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
+          // --- MODIFIED: Show only subcategory icons below the address ---
+          if (experience.otherCategories.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 2.0),
+              child: Wrap(
+                spacing: 6.0,
+                runSpacing: 2.0,
+                children: experience.otherCategories.map((categoryId) {
+                  final otherCategory = _categories.firstWhereOrNull(
+                    (cat) => cat.id == categoryId,
+                  );
+                  if (otherCategory != null) {
+                    return Text(
+                      otherCategory.icon,
+                      style: const TextStyle(fontSize: 14),
+                    );
+                  }
+                  return const SizedBox.shrink();
+                }).toList(),
               ),
-              // Other categories icons on the right
-              if (experience.otherCategories.isNotEmpty)
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: experience.otherCategories
-                      .map((categoryId) {
-                        // Find the category object for this ID
-                        final otherCategory = _categories.firstWhereOrNull(
-                          (cat) => cat.id == categoryId,
-                        );
-                        if (otherCategory != null) {
-                          return Padding(
-                            padding: const EdgeInsets.only(left: 4.0),
-                            child: Text(
-                              otherCategory.icon,
-                              style: const TextStyle(fontSize: 14),
-                            ),
-                          );
-                        }
-                        return const SizedBox.shrink(); // Skip if category not found
-                      })
-                      .toList(),
-                ),
-            ],
-          ),
+            ),
           // --- END MODIFIED ---
           // ADDED: Display notes if available
           if (experience.additionalNotes != null &&
