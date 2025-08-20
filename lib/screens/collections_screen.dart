@@ -1138,6 +1138,7 @@ if (mounted) {
                           return TextField(
                             controller: controller, // This is TypeAhead's controller
                             focusNode: focusNode,
+                            autofocus: false,
                             decoration: InputDecoration(
                               labelText: 'Search your experiences',
                               prefixIcon: Icon(Icons.search, color: Theme.of(context).primaryColor),
