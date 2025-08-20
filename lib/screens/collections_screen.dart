@@ -1409,15 +1409,26 @@ final category = _categories.firstWhere(
 
     // Get the full address
     final fullAddress = experience.location.address;
+    // Determine leading box background color from color category with opacity
+    final colorCategoryForBox = _colorCategories.firstWhereOrNull(
+      (cc) => cc.id == experience.colorCategoryId,
+    );
+    final Color leadingBoxColor = colorCategoryForBox != null
+        ? _parseColor(colorCategoryForBox.colorHex).withOpacity(0.5)
+        : Colors.white;
+    // Number of related content items
+    final int contentCount = experience.sharedMediaItemIds.length;
 
     return ListTile(
       key: ValueKey(experience.id), // Use experience ID as key
+      contentPadding: const EdgeInsets.symmetric(horizontal: 8.0),
+      visualDensity: const VisualDensity(horizontal: -4),
       leading: Container(
         width: 56,
         height: 56,
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: leadingBoxColor,
           borderRadius: BorderRadius.circular(8.0),
         ),
         child: MediaQuery(
@@ -1433,63 +1444,16 @@ final category = _categories.firstWhere(
                   categoryIcon,
                   style: const TextStyle(fontSize: 28),
                 ),
-                const SizedBox(height: 2),
-                Text(
-                  categoryName,
-                  textAlign: TextAlign.center,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 10),
-                ),
               ],
             ),
           ),
         ),
       ),
       // --- MODIFIED: Integrate indicator into title --- START ---
-      title: Row(
-        mainAxisSize:
-            MainAxisSize.min, // Prevent Row from taking excessive space
-        children: [
-          Expanded(
-            child: Text(
-              experience.name,
-              overflow:
-                  TextOverflow.ellipsis, // Prevent overflow if name is long
-              maxLines: 1,
-            ),
-          ),
-          // Add spacing
-          const SizedBox(width: 8),
-          // Color Indicator Circle
-          if (experience.colorCategoryId != null)
-            Builder(
-              builder: (context) {
-                final colorCategory = _colorCategories.firstWhereOrNull(
-                  (cat) => cat.id == experience.colorCategoryId,
-                );
-                if (colorCategory != null) {
-                  return Container(
-                    width: 10, // User adjusted size
-                    height: 10,
-                    decoration: BoxDecoration(
-                      color: colorCategory.color,
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: Theme.of(context).dividerColor,
-                        width: 1,
-                      ),
-                    ),
-                    child: Tooltip(message: colorCategory.name),
-                  );
-                } else {
-                  return const SizedBox(
-                      width: 10,
-                      height: 10); // Maintain space even if category not found
-                }
-              },
-            ),
-        ],
+      title: Text(
+        experience.name,
+        overflow: TextOverflow.ellipsis,
+        maxLines: 1,
       ),
       // --- MODIFIED: Integrate indicator into title --- END ---
       subtitle: Column(
@@ -1500,25 +1464,50 @@ final category = _categories.firstWhere(
               fullAddress, // Use full address
               style: Theme.of(context).textTheme.bodySmall,
             ),
-          // --- MODIFIED: Show only subcategory icons below the address ---
-          if (experience.otherCategories.isNotEmpty)
+          // --- MODIFIED: Show subcategory icons and content count in the same row ---
+          if (experience.otherCategories.isNotEmpty || contentCount > 0)
             Padding(
               padding: const EdgeInsets.only(top: 2.0),
-              child: Wrap(
-                spacing: 6.0,
-                runSpacing: 2.0,
-                children: experience.otherCategories.map((categoryId) {
-                  final otherCategory = _categories.firstWhereOrNull(
-                    (cat) => cat.id == categoryId,
-                  );
-                  if (otherCategory != null) {
-                    return Text(
-                      otherCategory.icon,
-                      style: const TextStyle(fontSize: 14),
-                    );
-                  }
-                  return const SizedBox.shrink();
-                }).toList(),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Wrap(
+                      spacing: 6.0,
+                      runSpacing: 2.0,
+                      children: experience.otherCategories.map((categoryId) {
+                        final otherCategory = _categories.firstWhereOrNull(
+                          (cat) => cat.id == categoryId,
+                        );
+                        if (otherCategory != null) {
+                          return Text(
+                            otherCategory.icon,
+                            style: const TextStyle(fontSize: 14),
+                          );
+                        }
+                        return const SizedBox.shrink();
+                      }).toList(),
+                    ),
+                  ),
+                  if (contentCount > 0)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).primaryColor,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.photo_library_outlined, size: 12, color: Colors.white),
+                          const SizedBox(width: 4),
+                          Text(
+                            '$contentCount',
+                            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Colors.white),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
               ),
             ),
           // --- END MODIFIED ---
@@ -1536,6 +1525,7 @@ final category = _categories.firstWhere(
                 overflow: TextOverflow.ellipsis,
               ),
             ),
+          // Removed separate bottom-right badge to avoid duplication
         ],
       ),
       onTap: () async {
