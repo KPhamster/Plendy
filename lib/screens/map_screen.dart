@@ -1563,6 +1563,8 @@ class _MapScreenState extends State<MapScreen> {
     return Scaffold(
       resizeToAvoidBottomInset: true,
       appBar: AppBar(
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.black,
         title: const Text('Experiences Map'),
         actions: [
           IconButton(
@@ -1591,10 +1593,13 @@ class _MapScreenState extends State<MapScreen> {
         child: Column(
           children: [
             // --- Search bar ---
-            Padding(
-              padding: const EdgeInsets.all(8.0),
-              child: Card(
-                child: Padding(
+            Container(
+              color: Colors.white,
+              child: Padding(
+                padding: const EdgeInsets.all(8.0),
+                child: Card(
+                  color: Colors.white,
+                  child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 8.0),
                   child: TextField(
                     controller: _searchController,
@@ -1602,7 +1607,9 @@ class _MapScreenState extends State<MapScreen> {
                     decoration: InputDecoration(
                       hintText: 'Search for a place or address',
                       border: InputBorder.none,
-                      prefixIcon: Icon(Icons.search),
+                      filled: true,
+                      fillColor: Colors.white,
+                      prefixIcon: Icon(Icons.search, color: Theme.of(context).primaryColor),
                       suffixIcon: _isSearching // Show loading indicator in search bar
                           ? SizedBox(
                               width: 24,
@@ -1641,6 +1648,7 @@ class _MapScreenState extends State<MapScreen> {
                   ),
                 ),
               ),
+            ),
             ),
             // --- END Search bar ---
 

@@ -1742,8 +1742,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
                 TextButton.icon(
-                  icon: const Icon(Icons.filter_list, size: 20.0),
-                  label: const Text('Filter'),
+                  icon: const Icon(Icons.filter_list, size: 20.0, color: Colors.black),
+                  label: const Text('Filter', style: TextStyle(color: Colors.black)),
                   style: TextButton.styleFrom(
                     padding:
                         const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -1755,8 +1755,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                 ),
                 const SizedBox(width: 8),
                 TextButton.icon(
-                  icon: const Icon(Icons.sort, size: 20.0),
-                  label: const Text('Sort'),
+                  icon: const Icon(Icons.sort, size: 20.0, color: Colors.black),
+                  label: const Text('Sort', style: TextStyle(color: Colors.black)),
                   style: TextButton.styleFrom(
                     padding:
                         const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
