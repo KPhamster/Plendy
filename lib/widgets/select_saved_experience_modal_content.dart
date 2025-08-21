@@ -149,36 +149,15 @@ class _SelectSavedExperienceModalContentState
           TextField(
             controller: _searchController,
             decoration: InputDecoration(
-              hintText: 'Search your experiences...',
+              labelText: 'Search your experiences',
               prefixIcon: Icon(Icons.search, color: Theme.of(context).primaryColor),
               border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(30.0),
-                borderSide: BorderSide(
-                  color: Theme.of(context).primaryColor,
-                  width: 2.0,
-                ),
+                borderRadius: BorderRadius.circular(25.0),
               ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(30.0),
-                borderSide: BorderSide(
-                  color: Theme.of(context).primaryColor,
-                  width: 2.0,
-                ),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(30.0),
-                borderSide: BorderSide(
-                  color: Theme.of(context).primaryColor,
-                  width: 2.5,
-                ),
-              ),
-              filled: true,
-              fillColor: Colors.white,
-              contentPadding:
-                  const EdgeInsets.symmetric(vertical: 0, horizontal: 20),
               suffixIcon: _searchController.text.isNotEmpty
                   ? IconButton(
-                      icon: const Icon(Icons.clear, size: 20),
+                      icon: const Icon(Icons.clear),
+                      tooltip: 'Clear Search',
                       onPressed: () {
                         _searchController.clear();
                         // _filterExperiences will be called by the listener

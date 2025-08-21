@@ -907,11 +907,38 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
       onTap: () {
         FocusManager.instance.primaryFocus?.unfocus();
       },
-      child: Card(
-        color: Colors.white,
-        margin: EdgeInsets.only(bottom: 16),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        elevation: 2,
+             child: Container(
+         margin: EdgeInsets.only(bottom: 16),
+         decoration: BoxDecoration(
+           color: Colors.white,
+           borderRadius: BorderRadius.circular(8),
+           boxShadow: [
+             BoxShadow(
+               color: Colors.black.withOpacity(0.08),
+               spreadRadius: 2,
+               blurRadius: 8,
+               offset: Offset(0, 4),
+             ),
+             BoxShadow(
+               color: Colors.black.withOpacity(0.04),
+               spreadRadius: 1,
+               blurRadius: 4,
+               offset: Offset(0, -2),
+             ),
+             BoxShadow(
+               color: Colors.black.withOpacity(0.04),
+               spreadRadius: 1,
+               blurRadius: 4,
+               offset: Offset(-2, 0),
+             ),
+             BoxShadow(
+               color: Colors.black.withOpacity(0.04),
+               spreadRadius: 1,
+               blurRadius: 4,
+               offset: Offset(2, 0),
+             ),
+           ],
+         ),
         child: Form(
           key: widget.formKey, // Use the passed form key
           child: Column(
