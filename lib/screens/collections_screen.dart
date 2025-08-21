@@ -1000,6 +1000,7 @@ if (mounted) {
             PopupMenuButton<CategorySortType>(
               icon: const Icon(Icons.sort),
               tooltip: 'Sort Categories',
+              color: Colors.white,
               onSelected: (CategorySortType result) {
                 _applySortAndSave(result); // Saves text category order
               },
@@ -1024,6 +1025,7 @@ if (mounted) {
             PopupMenuButton<ColorCategorySortType>(
               icon: const Icon(Icons.sort),
               tooltip: 'Sort Color Categories',
+              color: Colors.white,
               onSelected: (ColorCategorySortType result) {
                 _applyColorSortAndSave(result); // Saves color category order
               },
@@ -1046,6 +1048,7 @@ if (mounted) {
             PopupMenuButton<ExperienceSortType>(
               icon: const Icon(Icons.sort),
               tooltip: 'Sort Experiences',
+              color: Colors.white,
               onSelected: (ExperienceSortType result) {
                 _applyExperienceSort(result);
               },
@@ -1072,6 +1075,7 @@ if (mounted) {
             PopupMenuButton<ContentSortType>(
               icon: const Icon(Icons.sort),
               tooltip: 'Sort Content',
+              color: Colors.white,
               onSelected: (ContentSortType result) {
                 _applyContentSort(result); // Use the new sort function
               },
@@ -2795,6 +2799,7 @@ _saveColorCategoryOrder();
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
+          backgroundColor: Colors.white,
           title: const Text('Filter Items'),
           content: StatefulBuilder(
             builder: (BuildContext context, StateSetter setStateDialog) {

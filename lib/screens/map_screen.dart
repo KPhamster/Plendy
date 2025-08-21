@@ -373,6 +373,7 @@ class _MapScreenState extends State<MapScreen> {
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
+          backgroundColor: Colors.white,
           title: const Text('Filter Experiences'),
           insetPadding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 24.0),
           content: SizedBox(
@@ -1567,25 +1568,28 @@ class _MapScreenState extends State<MapScreen> {
         foregroundColor: Colors.black,
         title: const Text('Experiences Map'),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.filter_list),
-            tooltip: 'Filter Experiences',
-            onPressed: () {
-              print("🗺️ MAP SCREEN: Filter button pressed!");
-              setState(() {
-                _tappedLocationMarker = null;
-                _tappedLocationDetails = null;
-                _tappedExperience = null; // ADDED: Clear associated experience
-                _tappedExperienceCategory = null; // ADDED: Clear associated category
-                _tappedLocationBusinessStatus = null; // ADDED: Clear business status
-                _tappedLocationOpenNow = null; // ADDED: Clear open-now status
-                _searchController.clear();
-                _searchResults = [];
-                _showSearchResults = false;
-                _searchFocusNode.unfocus();
-              });
-              _showFilterDialog();
-            },
+          Container(
+            color: Colors.white,
+            child: IconButton(
+              icon: const Icon(Icons.filter_list),
+              tooltip: 'Filter Experiences',
+              onPressed: () {
+                print("🗺️ MAP SCREEN: Filter button pressed!");
+                setState(() {
+                  _tappedLocationMarker = null;
+                  _tappedLocationDetails = null;
+                  _tappedExperience = null; // ADDED: Clear associated experience
+                  _tappedExperienceCategory = null; // ADDED: Clear associated category
+                  _tappedLocationBusinessStatus = null; // ADDED: Clear business status
+                  _tappedLocationOpenNow = null; // ADDED: Clear open-now status
+                  _searchController.clear();
+                  _searchResults = [];
+                  _showSearchResults = false;
+                  _searchFocusNode.unfocus();
+                });
+                _showFilterDialog();
+              },
+            ),
           ),
         ],
       ),
