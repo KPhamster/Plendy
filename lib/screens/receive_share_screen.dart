@@ -98,10 +98,12 @@ class _ExperienceCardsSection extends StatelessWidget {
     // final shareProvider = context.watch<ReceiveShareProvider>();
     // final experienceCards = shareProvider.experienceCards;
 
-    return Padding(
-      key: sectionKey, // ADDED for scrolling
-      padding: const EdgeInsets.symmetric(horizontal: 16.0),
-      child: Column(
+    return Container(
+      color: Colors.white,
+      child: Padding(
+        key: sectionKey, // ADDED for scrolling
+        padding: const EdgeInsets.symmetric(horizontal: 16.0),
+        child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (experienceCards.isNotEmpty)
@@ -183,6 +185,7 @@ class _ExperienceCardsSection extends StatelessWidget {
               ),
             ),
         ],
+        ),
       ),
     );
   }
@@ -332,9 +335,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     // Rebuilds show suffix icons immediately based on controller text
     return StatefulBuilder(
       builder: (context, setInnerState) {
-        return Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-          child: TextField(
+        return Container(
+          color: Colors.white,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+            child: TextField(
             controller: _sharedUrlController,
             focusNode: _sharedUrlFocusNode,
             autofocus: widget.requireUrlFirst && !_didDeferredInit,
@@ -395,6 +400,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             onChanged: (_) {
               setInnerState(() {});
             },
+            ),
           ),
         );
       },
@@ -2927,7 +2933,7 @@ if (mounted) {
     final selectedExperience = await showModalBottomSheet<Experience>(
       context: context,
       isScrollControlled: true, 
-      backgroundColor: Theme.of(context).cardColor, 
+      backgroundColor: Colors.white, 
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
@@ -3173,6 +3179,11 @@ _scrollController.animateTo(
   Widget build(BuildContext context) {
 return _wrapWithWillPopScope(Scaffold(
       appBar: AppBar(
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.black,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        surfaceTintColor: Colors.white,
         title: _isSpecialUrl(_currentSharedFiles.isNotEmpty
                 ? _extractFirstUrl(_currentSharedFiles.first.path) ?? ''
                 : '') 
@@ -3195,8 +3206,10 @@ _sharingService.markShareFlowAsInactive();
             false, 
         actions: [],
       ),
-      body: SafeArea(
-        child: _isSaving
+      body: Container(
+        color: Colors.white,
+        child: SafeArea(
+          child: _isSaving
             ? const Center(
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
@@ -3309,6 +3322,7 @@ _sharingService.markShareFlowAsInactive();
                                                   vertical: verticalPadding,
                                                 ),
                                                 child: Card(
+                                                  color: Colors.white,
                                                   elevation: 2.0,
                                                   margin: (isInstagram || isTikTok)
                                                       ? EdgeInsets.zero
@@ -3383,6 +3397,8 @@ _sharingService.markShareFlowAsInactive();
                                 bottom: 16, // Adjust as needed
                                 right: 16,  // Adjust as needed
                                 child: FloatingActionButton(
+                                  backgroundColor: Theme.of(context).primaryColor,
+                                  foregroundColor: Colors.white,
                                   shape: const CircleBorder(), // ENSURE CIRCULAR
                                   onPressed: _handleFabPress,
                                   child: Icon(_showUpArrowForFab ? Icons.arrow_upward : Icons.arrow_downward),
@@ -3398,7 +3414,7 @@ _sharingService.markShareFlowAsInactive();
                           padding: const EdgeInsets.symmetric(
                               horizontal: 16.0, vertical: 12.0),
                           decoration: BoxDecoration(
-                            color: Theme.of(context).cardColor,
+                            color: Colors.white,
                             boxShadow: [
                               BoxShadow(
                                 color: Colors.black.withOpacity(0.1),
@@ -3433,6 +3449,8 @@ _sharingService.markShareFlowAsInactive();
                                     ? 'Saving...'
                                     : 'Save Experience(s)'),
                                 style: ElevatedButton.styleFrom(
+                                  backgroundColor: Theme.of(context).primaryColor,
+                                  foregroundColor: Colors.white,
                                   padding: const EdgeInsets.symmetric(
                                       horizontal: 24, vertical: 12),
                                 ),
@@ -3450,8 +3468,9 @@ _sharingService.markShareFlowAsInactive();
                   }
                 },
               ),
-      ),
-    ));
+          ),
+        ),
+      ));
   }
 
   Future<void> _launchUrl(String urlString) async {
@@ -4586,36 +4605,39 @@ class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
           onPageFinished: _handlePageFinished,
         ),
         const SizedBox(height: 8),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            const SizedBox(width: 48), 
-            IconButton(
-              icon: const Icon(FontAwesomeIcons.instagram),
-              color: const Color(0xFFE1306C),
-              iconSize: 32, 
-              tooltip: 'Open in Instagram',
-              constraints: const BoxConstraints(),
-              padding:
-                  EdgeInsets.zero, 
-              onPressed: () => _handleUrlLaunch(widget.url),
-            ),
-            IconButton(
-              icon:
-                  Icon(_isExpanded ? Icons.fullscreen_exit : Icons.fullscreen),
-              iconSize: 24,
-              color: Colors.blue,
-              tooltip: _isExpanded ? 'Collapse' : 'Expand',
-              constraints: const BoxConstraints(),
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              onPressed: () {
-                _safeSetState(() {
-                  _isExpanded = !_isExpanded;
-                  widget.onExpansionChanged?.call(_isExpanded, widget.url); // CALL CALLBACK with URL
-                });
-              },
-            ),
-          ],
+        Container(
+          color: Colors.white,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const SizedBox(width: 48), 
+              IconButton(
+                icon: const Icon(FontAwesomeIcons.instagram),
+                color: const Color(0xFFE1306C),
+                iconSize: 32, 
+                tooltip: 'Open in Instagram',
+                constraints: const BoxConstraints(),
+                padding:
+                    EdgeInsets.zero, 
+                onPressed: () => _handleUrlLaunch(widget.url),
+              ),
+              IconButton(
+                icon:
+                    Icon(_isExpanded ? Icons.fullscreen_exit : Icons.fullscreen),
+                iconSize: 24,
+                color: Colors.blue,
+                tooltip: _isExpanded ? 'Collapse' : 'Expand',
+                constraints: const BoxConstraints(),
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                onPressed: () {
+                  _safeSetState(() {
+                    _isExpanded = !_isExpanded;
+                    widget.onExpansionChanged?.call(_isExpanded, widget.url); // CALL CALLBACK with URL
+                  });
+                },
+              ),
+            ],
+          ),
         ),
         const SizedBox(height: 8),
       ],

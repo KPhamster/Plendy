@@ -354,6 +354,11 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
     return Scaffold(
       resizeToAvoidBottomInset: true,
       appBar: AppBar(
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.black,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        surfaceTintColor: Colors.white,
         title: Text(widget.title),
         actions: [
           if (_selectedLocation != null)
@@ -409,13 +414,18 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
               ),
             )
           : null,
-      body: SafeArea(
-        child: Column(
+      body: Container(
+        color: Colors.white,
+        child: SafeArea(
+          child: Column(
           children: [
             // Search bar
-            Padding(
-              padding: const EdgeInsets.all(8.0),
-              child: Card(
+            Container(
+              color: Colors.white,
+              child: Padding(
+                padding: const EdgeInsets.all(8.0),
+                child: Card(
+                  color: Colors.white,
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 8.0),
                   child: TextField(
@@ -424,7 +434,9 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
                     decoration: InputDecoration(
                       hintText: 'Search for a place',
                       border: InputBorder.none,
-                      prefixIcon: Icon(Icons.search),
+                      filled: true,
+                      fillColor: Colors.white,
+                      prefixIcon: Icon(Icons.search, color: Theme.of(context).primaryColor),
                       suffixIcon: _isSearching
                           ? SizedBox(
                               width: 24,
@@ -448,6 +460,7 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
                   ),
                 ),
               ),
+            ),
             ),
 
             // Search results
@@ -747,6 +760,7 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
                 ),
               ),
           ],
+          ),
         ),
       ),
     );
