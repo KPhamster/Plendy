@@ -57,7 +57,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final user = authService.currentUser;
 
     return Scaffold(
+      backgroundColor: Colors.white,
       appBar: AppBar(
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.black,
         title: const Text('Profile'),
         actions: [
           IconButton(
