@@ -511,6 +511,18 @@ class ExperienceService {
         'experienceIds': FieldValue.arrayRemove([experienceId])
       });
 
+      // Also remove the media reference from the Experience document
+      try {
+        await _experiencesCollection.doc(experienceId).update({
+          'sharedMediaItemIds': FieldValue.arrayRemove([mediaItemId])
+        });
+        print(
+            "removeExperienceLinkFromMediaItem: Removed media $mediaItemId from experience $experienceId.sharedMediaItemIds");
+      } catch (e) {
+        print(
+            "removeExperienceLinkFromMediaItem: Warning: failed to update experience $experienceId to remove media $mediaItemId: $e");
+      }
+
       if (deleteIfOrphaned) {
         print(
             "removeExperienceLinkFromMediaItem: Checking if media item $mediaItemId is orphaned.");

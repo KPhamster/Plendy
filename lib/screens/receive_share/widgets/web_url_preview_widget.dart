@@ -4,11 +4,17 @@ import 'package:webview_flutter/webview_flutter.dart';
 class WebUrlPreviewWidget extends StatefulWidget {
   final String url;
   final Future<void> Function(String) launchUrlCallback;
+  final void Function(WebViewController)? onWebViewCreated;
+  final bool showControls;
+  final double? height; // Used when showControls is false
 
   const WebUrlPreviewWidget({
     super.key,
     required this.url,
     required this.launchUrlCallback,
+    this.onWebViewCreated,
+    this.showControls = true,
+    this.height,
   });
 
   @override
@@ -91,6 +97,11 @@ class _WebUrlPreviewWidgetState extends State<WebUrlPreviewWidget> with Automati
         ),
       )
       ..loadRequest(Uri.parse(widget.url));
+
+    // Expose controller to parent if requested
+    if (widget.onWebViewCreated != null) {
+      widget.onWebViewCreated!(_controller);
+    }
   }
 
   @override
@@ -102,6 +113,70 @@ class _WebUrlPreviewWidgetState extends State<WebUrlPreviewWidget> with Automati
   @override
   Widget build(BuildContext context) {
     super.build(context);
+    final double resolvedHeight = widget.showControls
+        ? (_isExpanded ? 1000 : 600)
+        : (widget.height ?? 600);
+
+    final Widget webViewStack = Container(
+      height: resolvedHeight,
+      width: double.infinity,
+      decoration: BoxDecoration(
+        border: widget.showControls
+            ? Border.all(color: Colors.grey.shade300)
+            : null,
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.zero,
+        child: Stack(
+          children: [
+            SizedBox(
+              width: double.infinity,
+              height: resolvedHeight,
+              child: WebViewWidget(controller: _controller),
+            ),
+            if (_isLoading)
+              Container(
+                color: Colors.white.withOpacity(0.8),
+                child: const Center(
+                  child: CircularProgressIndicator(),
+                ),
+              ),
+            if (_hasError && !_isLoading)
+              Container(
+                color: Colors.grey.shade100,
+                child: Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.error_outline, size: 48, color: Colors.grey.shade600),
+                      const SizedBox(height: 16),
+                      Text(
+                        'Unable to load preview',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w500,
+                          color: Colors.grey.shade700,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      TextButton.icon(
+                        onPressed: () => widget.launchUrlCallback(widget.url),
+                        icon: const Icon(Icons.open_in_new),
+                        label: const Text('Open in Browser'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+
+    if (!widget.showControls) {
+      return webViewStack;
+    }
+
     return Column(
       children: [
         Container(
@@ -138,69 +213,7 @@ class _WebUrlPreviewWidgetState extends State<WebUrlPreviewWidget> with Automati
             ],
           ),
         ),
-        Container(
-          height: _isExpanded ? 1000 : 600,
-          width: double.infinity,
-          decoration: BoxDecoration(
-            border: Border.all(color: Colors.grey.shade300),
-          ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.zero,
-            child: Stack(
-              children: [
-                SizedBox(
-                  width: double.infinity,
-                  height: _isExpanded ? 1000 : 600,
-                  child: WebViewWidget(controller: _controller),
-                ),
-                if (_isLoading)
-                  Container(
-                    color: Colors.white.withOpacity(0.8),
-                    child: const Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          CircularProgressIndicator(),
-                          SizedBox(height: 16),
-                          Text(
-                            'Loading preview...',
-                            style: TextStyle(color: Colors.grey),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                if (_hasError && !_isLoading)
-                  Container(
-                    color: Colors.grey.shade100,
-                    child: Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.error_outline, size: 48, color: Colors.grey.shade600),
-                          const SizedBox(height: 16),
-                          Text(
-                            'Unable to load preview',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w500,
-                              color: Colors.grey.shade700,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          TextButton.icon(
-                            onPressed: () => widget.launchUrlCallback(widget.url),
-                            icon: const Icon(Icons.open_in_new),
-                            label: const Text('Open in Browser'),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ),
+        webViewStack,
         Container(
           width: double.infinity,
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
