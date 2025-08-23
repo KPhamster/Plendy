@@ -25,6 +25,7 @@ import 'receive_share/widgets/tiktok_preview_widget.dart';
 import 'receive_share/widgets/facebook_preview_widget.dart';
 import 'receive_share/widgets/youtube_preview_widget.dart';
 import 'receive_share/widgets/generic_url_preview_widget.dart';
+import 'receive_share/widgets/web_url_preview_widget.dart';
 import '../models/shared_media_item.dart'; // ADDED Import
 import 'package:collection/collection.dart'; // ADDED: Import for groupBy
 import 'map_screen.dart'; // ADDED: Import for MapScreen
@@ -2459,11 +2460,21 @@ return Container(
                 },
               );
             } else {
-              // Use generic URL preview for other network URLs
-              mediaWidget = GenericUrlPreviewWidget(
-                url: mediaPath,
-                launchUrlCallback: _launchUrl,
-              );
+              // Yelp: use the same WebView preview style as Experience page content tab
+              if (mediaPath.toLowerCase().contains('yelp.com/biz') || mediaPath.toLowerCase().contains('yelp.to/')) {
+                mediaWidget = WebUrlPreviewWidget(
+                  url: mediaPath,
+                  launchUrlCallback: _launchUrl,
+                  showControls: false,
+                  height: isExpanded ? 1000.0 : 600.0,
+                );
+              } else {
+                // Use generic URL preview for other network URLs
+                mediaWidget = GenericUrlPreviewWidget(
+                  url: mediaPath,
+                  launchUrlCallback: _launchUrl,
+                );
+              }
             }
           } else {
             mediaWidget = Container(
