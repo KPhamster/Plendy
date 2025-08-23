@@ -2367,11 +2367,25 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       if (!mounted) return;
 
       final now = DateTime.now();
-      final uniqueSharedPaths =
-          _currentSharedFiles.map((f) => f.path).toSet().toList();
+      // Normalize shared paths so that Yelp text shares store only the Yelp URL
+      final List<String> uniqueMediaPaths = _currentSharedFiles.map((f) {
+        final String original = f.path;
+        // For text/url types containing a Yelp link, extract and store only the Yelp URL
+        if (f.type == SharedMediaType.text || f.type == SharedMediaType.url) {
+          final String? extracted = _extractFirstUrl(original);
+          if (extracted != null && _isYelpUrl(extracted)) {
+            String url = extracted.trim();
+            if (!url.startsWith('http://') && !url.startsWith('https://')) {
+              url = 'https://$url';
+            }
+            return url;
+          }
+        }
+        return original;
+      }).toSet().toList();
 
       final Map<String, String> mediaPathToItemIdMap = {};
-      for (final path in uniqueSharedPaths) {
+      for (final path in uniqueMediaPaths) {
         try {
           SharedMediaItem? existingItem;
           try {
@@ -2416,7 +2430,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         }
       }
 
-      if (mediaPathToItemIdMap.length != uniqueSharedPaths.length && errors.isEmpty) {
+      if (mediaPathToItemIdMap.length != uniqueMediaPaths.length && errors.isEmpty) {
          // If there was an issue creating media items but no errors were added to the list yet (e.g. silent failure)
         errors.add("Error processing some media files.");
       }
@@ -2513,7 +2527,7 @@ errors.add('Could not update "$cardTitle" (not found).');
 updateCount++;
             }
 
-            final List<String> relevantMediaItemIds = uniqueSharedPaths
+            final List<String> relevantMediaItemIds = uniqueMediaPaths
                 .map((path) => mediaPathToItemIdMap[path])
                 .where((id) => id != null)
                 .cast<String>()
@@ -2585,14 +2599,14 @@ PublicExperience? existingPublicExp = await _experienceService
                     placeID: placeId,
                     yelpUrl: cardYelpUrl.isNotEmpty ? cardYelpUrl : null,
                     website: cardWebsite.isNotEmpty ? cardWebsite : null,
-                    allMediaPaths: uniqueSharedPaths);
+                    allMediaPaths: uniqueMediaPaths);
 await _experienceService
                     .createPublicExperience(newPublicExperience);
                 if (!mounted) return;
               } else {
 await _experienceService.updatePublicExperienceMediaAndMaybeYelp(
                     existingPublicExp.id,
-                    uniqueSharedPaths,
+                    uniqueMediaPaths,
                     newYelpUrl: cardYelpUrl.isNotEmpty ? cardYelpUrl : null);
                 if (!mounted) return;
               }

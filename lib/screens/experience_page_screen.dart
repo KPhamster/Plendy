@@ -20,6 +20,7 @@ import 'receive_share/widgets/tiktok_preview_widget.dart';
 import 'receive_share/widgets/facebook_preview_widget.dart';
 import 'receive_share/widgets/youtube_preview_widget.dart';
 import 'receive_share/widgets/generic_url_preview_widget.dart';
+import 'receive_share/widgets/web_url_preview_widget.dart';
 // REMOVED: Dio import (no longer needed for thumbnail fetching)
 // import 'package:dio/dio.dart';
 // REMOVED: Dotenv import (no longer needed for credentials)
@@ -1870,11 +1871,19 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                           Container(height: 200, color: Colors.grey[200], child: Center(child: Icon(Icons.broken_image)))
                     );
                   } else {
-                    // Use generic URL preview for other network URLs
-                    mediaWidget = GenericUrlPreviewWidget(
-                      url: url,
-                      launchUrlCallback: _launchUrl,
-                    );
+                    // Yelp: render using the same WebView preview as Google Knowledge Graph preview
+                    if (url.toLowerCase().contains('yelp.com/biz') || url.toLowerCase().contains('yelp.to/')) {
+                      mediaWidget = WebUrlPreviewWidget(
+                        url: url,
+                        launchUrlCallback: _launchUrl,
+                      );
+                    } else {
+                      // Use generic URL preview for other network URLs
+                      mediaWidget = GenericUrlPreviewWidget(
+                        url: url,
+                        launchUrlCallback: _launchUrl,
+                      );
+                    }
                   }
                 } else {
                   // Fallback for non-network URLs
