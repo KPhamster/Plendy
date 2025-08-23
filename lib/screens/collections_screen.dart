@@ -112,6 +112,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   // ADDED: City header expansion states
   final Map<String, bool> _cityExpansionExperiences = {};
   final Map<String, bool> _cityExpansionContent = {};
+  bool _groupByCityExperiences = false;
+  bool _groupByCityContent = false;
   // ADDED: Track attempted photo refreshes to avoid repeated requests
   final Set<String> _photoRefreshAttempts = {};
   // Perf logging toggle
@@ -668,8 +670,8 @@ setState(() {
             (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
       } else if (sortType == ExperienceSortType.mostRecent) {
         listToSort.sort((a, b) {
-          // Sort descending by creation date (most recent first)
-          return b.createdAt.compareTo(a.createdAt);
+          // Sort descending by last update time (most recently updated first)
+          return b.updatedAt.compareTo(a.updatedAt);
         });
       } else if (sortType == ExperienceSortType.distanceFromMe) {
         // --- MODIFIED: Distance Sorting Logic now operates on listToSort ---
@@ -697,7 +699,7 @@ setState(() {
           _filteredExperiences.sort(
               (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
         } else if (sortType == ExperienceSortType.mostRecent) {
-          _filteredExperiences.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+          _filteredExperiences.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
         } else if (sortType == ExperienceSortType.distanceFromMe) {
           await _sortExperiencesByDistance(_filteredExperiences);
         } else if (sortType == ExperienceSortType.city) {
@@ -1152,10 +1154,28 @@ if (mounted) {
                     ),
                   ),
                 ),
-                _buildPopupMenuItem<ExperienceSortType>(
-                  value: ExperienceSortType.city,
-                  text: 'Sort by City',
-                  currentValue: _experienceSortType,
+                PopupMenuItem<ExperienceSortType>(
+                  onTap: () {
+                    setState(() {
+                      _groupByCityExperiences = !_groupByCityExperiences;
+                      _cityExpansionExperiences.clear();
+                      for (final exp in _filteredExperiences) {
+                        final key = (exp.location.city ?? '').trim().toLowerCase();
+                        _cityExpansionExperiences.putIfAbsent(key, () => false);
+                      }
+                      _cityExpansionExperiences.putIfAbsent('', () => false);
+                    });
+                  },
+                  child: Row(
+                    children: [
+                      Checkbox(
+                        value: _groupByCityExperiences,
+                        onChanged: (_) {},
+                      ),
+                      const SizedBox(width: 8),
+                      const Expanded(child: Text('Group by City')),
+                    ],
+                  ),
                 ),
               ],
             ),
@@ -1193,10 +1213,30 @@ if (mounted) {
                     ),
                   ),
                 ),
-                _buildPopupMenuItem<ContentSortType>(
-                  value: ContentSortType.city,
-                  text: 'Sort by City (from Experience)',
-                  currentValue: _contentSortType,
+                PopupMenuItem<ContentSortType>(
+                  onTap: () {
+                    setState(() {
+                      _groupByCityContent = !_groupByCityContent;
+                      _cityExpansionContent.clear();
+                      for (final group in _filteredGroupedContentItems) {
+                        for (final exp in group.associatedExperiences) {
+                          final key = (exp.location.city ?? '').trim().toLowerCase();
+                          _cityExpansionContent.putIfAbsent(key, () => false);
+                        }
+                      }
+                      _cityExpansionContent.putIfAbsent('', () => false);
+                    });
+                  },
+                  child: Row(
+                    children: [
+                      Checkbox(
+                        value: _groupByCityContent,
+                        onChanged: (_) {},
+                      ),
+                      const SizedBox(width: 8),
+                      const Expanded(child: Text('Group by City')),
+                    ],
+                  ),
                 ),
               ],
             ),
@@ -1983,31 +2023,91 @@ final category = _categories.firstWhere(
       );
     } else {
       // Mobile: Use ListView with header as first item
+      // When grouping by city, build a flattened list of headers + items ordered by the primary sort.
+      List<Map<String, Object>>? expCityStructured;
+      if (_groupByCityExperiences) {
+        final Map<String, List<Experience>> cityItems = {};
+        final Map<String, String> cityDisplay = {};
+        // Group experiences by city key
+        for (final exp in _filteredExperiences) {
+          final display = (exp.location.city ?? '').trim();
+          final key = display.isEmpty ? '' : display.toLowerCase();
+          cityDisplay[key] = display.isEmpty ? 'Unknown city' : display;
+          cityItems.putIfAbsent(key, () => <Experience>[]).add(exp);
+        }
+        // Sort items within each city by the selected primary sort
+        for (final entry in cityItems.entries) {
+          final list = entry.value;
+          if (_experienceSortType == ExperienceSortType.mostRecent) {
+            list.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+          } else if (_experienceSortType == ExperienceSortType.alphabetical) {
+            list.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+          } else if (_experienceSortType == ExperienceSortType.distanceFromMe) {
+            // Keep the global order, which is already distance-ascending due to prior sort
+            // So no per-city re-sort is needed
+          }
+        }
+        // Determine city header ordering by primary sort
+        List<String> cityKeys = cityItems.keys.toList();
+        if (_experienceSortType == ExperienceSortType.mostRecent) {
+          cityKeys.sort((ka, kb) {
+            final maxA = cityItems[ka]!.map((e) => e.updatedAt).fold<DateTime?>(null, (p, c) => p == null || c.isAfter(p) ? c : p) ?? DateTime.fromMillisecondsSinceEpoch(0);
+            final maxB = cityItems[kb]!.map((e) => e.updatedAt).fold<DateTime?>(null, (p, c) => p == null || c.isAfter(p) ? c : p) ?? DateTime.fromMillisecondsSinceEpoch(0);
+            if (ka.isEmpty && kb.isEmpty) return 0;
+            if (ka.isEmpty) return 1; // Unknown last
+            if (kb.isEmpty) return -1;
+            return maxB.compareTo(maxA);
+          });
+        } else if (_experienceSortType == ExperienceSortType.alphabetical) {
+          cityKeys.sort((ka, kb) {
+            if (ka.isEmpty && kb.isEmpty) return 0;
+            if (ka.isEmpty) return 1;
+            if (kb.isEmpty) return -1;
+            return cityDisplay[ka]!.toLowerCase().compareTo(cityDisplay[kb]!.toLowerCase());
+          });
+        } else if (_experienceSortType == ExperienceSortType.distanceFromMe) {
+          // Use the index of the first occurrence in the globally distance-sorted list
+          final Map<String, int> firstIndex = {};
+          for (int i = 0; i < _filteredExperiences.length; i++) {
+            final exp = _filteredExperiences[i];
+            final key = (exp.location.city ?? '').trim().toLowerCase();
+            firstIndex.putIfAbsent(key, () => i);
+          }
+          cityKeys.sort((ka, kb) {
+            if (ka.isEmpty && kb.isEmpty) return 0;
+            if (ka.isEmpty) return 1;
+            if (kb.isEmpty) return -1;
+            return (firstIndex[ka] ?? 1 << 30).compareTo(firstIndex[kb] ?? 1 << 30);
+          });
+        }
+        // Build flattened list
+        final List<Map<String, Object>> flattened = [];
+        for (final key in cityKeys) {
+          final display = cityDisplay[key] ?? 'Unknown city';
+          flattened.add({'header': display, 'key': key});
+          for (final exp in cityItems[key]!) {
+            flattened.add({'item': exp, 'key': key});
+          }
+        }
+        expCityStructured = flattened;
+      }
+
       return ListView.builder(
-        itemCount: _filteredExperiences.length + 1, // +1 for header
+        itemCount: (expCityStructured != null ? expCityStructured.length : _filteredExperiences.length) + 1, // +1 for header
         itemBuilder: (context, index) {
           if (index == 0) {
             return countHeader;
           }
-          final exp = _filteredExperiences[index - 1];
-          final item = _buildExperienceListItem(exp);
-          if (_experienceSortType == ExperienceSortType.city) {
-            String displayCity = (exp.location.city ?? '').trim();
-            String currentKey = displayCity.toLowerCase();
-            if (currentKey.isEmpty) {
-              displayCity = 'Unknown city';
-            }
-            String prevKey = '';
-            if (index > 1) {
-              final prev = _filteredExperiences[index - 2];
-              prevKey = (prev.location.city ?? '').trim().toLowerCase();
-            }
-            if (currentKey != prevKey) {
-              final isExpanded = _cityExpansionExperiences[currentKey] ?? false;
-              final header = InkWell(
+          if (expCityStructured != null) {
+            final entry = expCityStructured[index - 1];
+            if (entry.containsKey('header')) {
+              final key = entry['key'] as String;
+              final displayCity = entry['header'] as String;
+              final isExpanded = _cityExpansionExperiences[key] ?? false;
+              return InkWell(
                 onTap: () {
                   setState(() {
-                    _cityExpansionExperiences[currentKey] = !isExpanded;
+                    _cityExpansionExperiences[key] = !isExpanded;
                   });
                 },
                 child: Container(
@@ -2016,39 +2116,30 @@ final category = _categories.firstWhere(
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
                   child: Row(
                     children: [
-                      Icon(
-                        isExpanded ? Icons.expand_less : Icons.expand_more,
-                        color: Colors.grey[700],
-                        size: 18,
-                      ),
+                      Icon(isExpanded ? Icons.expand_less : Icons.expand_more, color: Colors.grey[700], size: 18),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
                           displayCity,
-                          style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                                fontWeight: FontWeight.bold,
-                                color: Colors.grey[700],
-                              ),
+                          style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold, color: Colors.grey[700]),
                         ),
                       ),
                     ],
                   ),
                 ),
               );
-              if (!(isExpanded)) {
-                return header;
+            } else {
+              final exp = entry['item'] as Experience;
+              final key = entry['key'] as String;
+              if (!(_cityExpansionExperiences[key] ?? false)) {
+                return const SizedBox.shrink();
               }
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [header, item],
-              );
-            }
-            final isExpanded = _cityExpansionExperiences[currentKey] ?? false;
-            if (!isExpanded) {
-              return const SizedBox.shrink();
+              return _buildExperienceListItem(exp);
             }
           }
-          return item;
+          // Not grouped: simple list
+          final exp = _filteredExperiences[index - 1];
+          return _buildExperienceListItem(exp);
         },
       );
     }
@@ -2070,7 +2161,7 @@ final category = _categories.firstWhere(
           .sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
     } else if (_experienceSortType == ExperienceSortType.mostRecent) {
       categoryExperiences.sort((a, b) {
-        return b.createdAt.compareTo(a.createdAt);
+        return b.updatedAt.compareTo(a.updatedAt);
       });
     }
 
@@ -2190,7 +2281,7 @@ final category = _categories.firstWhere(
       );
     } else {
       // Mobile or Mobile Web
-      final bool useCityGrouping = _contentSortType == ContentSortType.city;
+      final bool useCityGrouping = _groupByCityContent;
       List<Map<String, Object>>? cityStructured;
       if (useCityGrouping) {
         String norm(String? s) => (s ?? '').trim();
