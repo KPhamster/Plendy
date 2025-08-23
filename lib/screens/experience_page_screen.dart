@@ -1646,19 +1646,34 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     final bool? confirm = await showDialog<bool>(
       context: context,
       builder: (BuildContext context) {
+        final primary = Theme.of(context).primaryColor;
         return AlertDialog(
+          backgroundColor: Colors.white,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           title: const Text('Confirm Deletion'),
-          content:
-              const Text('Are you sure you want to remove this media item?'),
+          content: const Text('Are you sure you want to remove this media item?'),
+          actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
           actions: <Widget>[
-            TextButton(
+            OutlinedButton(
+              style: OutlinedButton.styleFrom(
+                backgroundColor: Colors.white,
+                foregroundColor: primary,
+                side: BorderSide(color: primary),
+                shape: const StadiumBorder(),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              ),
+              onPressed: () => Navigator.of(context).pop(false),
               child: const Text('Cancel'),
-              onPressed: () => Navigator.of(context).pop(false), // Return false
             ),
-            TextButton(
-              style: TextButton.styleFrom(foregroundColor: Colors.red),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: primary,
+                foregroundColor: Colors.white,
+                shape: const StadiumBorder(),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              ),
               onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('Delete'), // Return true
+              child: const Text('Delete'),
             ),
           ],
         );
@@ -1794,7 +1809,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
               final isYouTubeUrl = url.toLowerCase().contains('youtube.com') || 
                                    url.toLowerCase().contains('youtu.be') || 
                                    url.toLowerCase().contains('youtube.com/shorts');
-              final bool isGenericUrl = !isTikTokUrl && !isInstagramUrl && !isFacebookUrl && !isYouTubeUrl;
+              final isYelpUrl = url.toLowerCase().contains('yelp.com/biz') || url.toLowerCase().contains('yelp.to/');
+              final bool isGenericUrl = !isTikTokUrl && !isInstagramUrl && !isFacebookUrl && !isYouTubeUrl && !isYelpUrl;
 
               if (isTikTokUrl) {
                 final key = GlobalKey<TikTokPreviewWidgetState>();
@@ -1873,9 +1889,17 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                   } else {
                     // Yelp: render using the same WebView preview as Google Knowledge Graph preview
                     if (url.toLowerCase().contains('yelp.com/biz') || url.toLowerCase().contains('yelp.to/')) {
+                      // Render Yelp with WebView but hide internal controls; reuse our bottom row controls for uniform UX
                       mediaWidget = WebUrlPreviewWidget(
                         url: url,
                         launchUrlCallback: _launchUrl,
+                        showControls: false,
+                        onWebViewCreated: (controller) {
+                          _webViewControllers[url] = controller;
+                        },
+                        height: (_mediaTabExpansionStates[url] ?? false)
+                            ? 1000.0
+                            : 600.0,
                       );
                     } else {
                       // Use generic URL preview for other network URLs
@@ -2166,7 +2190,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                                       : 'Open URL',
                               onPressed: () => _launchUrl(url),
                             ),
-                          // Expand/Collapse Button
+                          // Expand/Collapse Button (show for Instagram, TikTok, Facebook, Yelp)
                           if (!isGenericUrl && !isYouTubeUrl)
                             IconButton(
                                 icon: Icon(
@@ -2470,6 +2494,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
         setState(() {
           _currentExperience = updatedExperience;
         });
+        // After refreshing the experience (including sharedMediaItemIds), refresh media items list
+        await _fetchMediaItems();
       }
       // Handle case where experience is not found after deletion (optional)
       // else if (mounted) { Navigator.of(context).pop(); // Or show error }
