@@ -1439,7 +1439,12 @@ if (mounted) {
         ],
       ),
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
+          ? Container(
+              color: Colors.white,
+              child: Center(
+                child: CircularProgressIndicator(color: Colors.black54),
+              ),
+            )
           : Container(
               color: Colors.white,
               child: Column(
@@ -2476,7 +2481,12 @@ final category = _categories.firstWhere(
   Widget _buildContentTabBody() {
     if (!_contentLoaded || _isContentLoading) {
       // Show loader on first open while content is being fetched/grouped
-      return const Center(child: CircularProgressIndicator());
+      return Container(
+        color: Colors.white,
+        child: Center(
+          child: CircularProgressIndicator(color: Colors.black54),
+        ),
+      );
     }
     if (_filteredGroupedContentItems.isEmpty) {
       final bool filtersActive = _selectedCategoryIds.isNotEmpty || _selectedColorCategoryIds.isNotEmpty;
