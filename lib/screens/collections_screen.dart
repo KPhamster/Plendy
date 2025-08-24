@@ -932,6 +932,10 @@ for (int i = 0; i < listToSort.length && i < 20; i++) {
           return b.mediaItem.createdAt.compareTo(a.mediaItem.createdAt);
         });
       }
+      // Apply the same sort to the filtered list using the same logic
+      if (!applyToFiltered) {
+        await _applyContentSort(sortType, applyToFiltered: true);
+      }
     } catch (e, stackTrace) {
 if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -2312,12 +2316,82 @@ final category = _categories.firstWhere(
             list.add(group);
           }
         }
-        final List<String> sortedKeys = [
-          ...cityItems.keys.where((k) => k.isNotEmpty).toList()..sort(),
-          ...cityItems.keys.where((k) => k.isEmpty),
-        ];
+        // Sort items within each city by the selected primary sort
+        for (final entry in cityItems.entries) {
+          final list = entry.value;
+          if (_contentSortType == ContentSortType.mostRecent) {
+            list.sort((a, b) => b.mediaItem.createdAt.compareTo(a.mediaItem.createdAt));
+          } else if (_contentSortType == ContentSortType.alphabetical) {
+            list.sort((a, b) {
+              if (a.associatedExperiences.isEmpty && b.associatedExperiences.isEmpty) return 0;
+              if (a.associatedExperiences.isEmpty) return 1;
+              if (b.associatedExperiences.isEmpty) return -1;
+              return a.associatedExperiences.first.name
+                  .toLowerCase()
+                  .compareTo(b.associatedExperiences.first.name.toLowerCase());
+            });
+          } else if (_contentSortType == ContentSortType.city) {
+            // For city sort, secondary sort within group by most recent
+            list.sort((a, b) => b.mediaItem.createdAt.compareTo(a.mediaItem.createdAt));
+          } else if (_contentSortType == ContentSortType.distanceFromMe) {
+            // Keep insertion order which follows the globally distance-sorted list
+          }
+        }
+
+        // Determine city header ordering by primary sort
+        List<String> cityKeys = cityItems.keys.toList();
+        if (_contentSortType == ContentSortType.mostRecent) {
+          cityKeys.sort((ka, kb) {
+            final maxA = cityItems[ka]!
+                    .map((g) => g.mediaItem.createdAt)
+                    .fold<DateTime?>(null, (p, c) => p == null || c.isAfter(p) ? c : p) ??
+                DateTime.fromMillisecondsSinceEpoch(0);
+            final maxB = cityItems[kb]!
+                    .map((g) => g.mediaItem.createdAt)
+                    .fold<DateTime?>(null, (p, c) => p == null || c.isAfter(p) ? c : p) ??
+                DateTime.fromMillisecondsSinceEpoch(0);
+            if (ka.isEmpty && kb.isEmpty) return 0;
+            if (ka.isEmpty) return 1; // Unknown last
+            if (kb.isEmpty) return -1;
+            return maxB.compareTo(maxA);
+          });
+        } else if (_contentSortType == ContentSortType.alphabetical ||
+            _contentSortType == ContentSortType.city) {
+          cityKeys.sort((ka, kb) {
+            if (ka.isEmpty && kb.isEmpty) return 0;
+            if (ka.isEmpty) return 1;
+            if (kb.isEmpty) return -1;
+            return (cityDisplay[ka] ?? '').toLowerCase().compareTo((cityDisplay[kb] ?? '').toLowerCase());
+          });
+        } else if (_contentSortType == ContentSortType.distanceFromMe) {
+          // Use the index of the first occurrence in the globally distance-sorted filtered list
+          final Map<String, int> firstIndex = {};
+          for (int i = 0; i < _filteredGroupedContentItems.length; i++) {
+            final group = _filteredGroupedContentItems[i];
+            final Set<String> keysForGroup = {};
+            for (final exp in group.associatedExperiences) {
+              final city = norm(exp.location.city);
+              final key = city.isEmpty ? '' : city.toLowerCase();
+              keysForGroup.add(key);
+            }
+            if (keysForGroup.isEmpty) {
+              keysForGroup.add('');
+            }
+            for (final k in keysForGroup) {
+              firstIndex.putIfAbsent(k, () => i);
+            }
+          }
+          cityKeys.sort((ka, kb) {
+            if (ka.isEmpty && kb.isEmpty) return 0;
+            if (ka.isEmpty) return 1;
+            if (kb.isEmpty) return -1;
+            return (firstIndex[ka] ?? 1 << 30).compareTo(firstIndex[kb] ?? 1 << 30);
+          });
+        }
+
+        // Build flattened list: headers then their items
         final List<Map<String, Object>> flattened = [];
-        for (final key in sortedKeys) {
+        for (final key in cityKeys) {
           flattened.add({'header': cityDisplay[key] ?? 'Unknown city'});
           for (final group in cityItems[key]!) {
             flattened.add({'item': group});
@@ -3783,7 +3857,6 @@ return Container(
       }
 
       await _applyContentSort(_contentSortType);
-      await _applyContentSort(_contentSortType, applyToFiltered: true);
     } catch (e) {
       _isContentLoading = false;
       if (mounted) {
