@@ -21,6 +21,7 @@ import 'receive_share/widgets/facebook_preview_widget.dart';
 import 'receive_share/widgets/youtube_preview_widget.dart';
 import 'receive_share/widgets/generic_url_preview_widget.dart';
 import 'receive_share/widgets/web_url_preview_widget.dart';
+import 'receive_share/widgets/maps_preview_widget.dart';
 // REMOVED: Dio import (no longer needed for thumbnail fetching)
 // import 'package:dio/dio.dart';
 // REMOVED: Dotenv import (no longer needed for credentials)
@@ -133,6 +134,9 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
 
   // --- ADDED: Expansion state for media tab items ---
   final Map<String, bool> _mediaTabExpansionStates = {};
+  // --- END ADDED ---
+  // --- ADDED: Maps preview futures cache for content tab ---
+  final Map<String, Future<Map<String, dynamic>?>> _mapsPreviewFutures = {};
   // --- END ADDED ---
   // --- ADDED: Webview controllers for refresh ---
   final Map<String, WebViewController> _webViewControllers = {};
@@ -1810,7 +1814,12 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                                    url.toLowerCase().contains('youtu.be') || 
                                    url.toLowerCase().contains('youtube.com/shorts');
               final isYelpUrl = url.toLowerCase().contains('yelp.com/biz') || url.toLowerCase().contains('yelp.to/');
-              final bool isGenericUrl = !isTikTokUrl && !isInstagramUrl && !isFacebookUrl && !isYouTubeUrl && !isYelpUrl;
+              final bool isMapsUrl = url.toLowerCase().contains('google.com/maps') ||
+                  url.toLowerCase().contains('maps.app.goo.gl') ||
+                  url.toLowerCase().contains('goo.gl/maps') ||
+                  url.toLowerCase().contains('g.co/kgs/') ||
+                  url.toLowerCase().contains('share.google/');
+              final bool isGenericUrl = !isTikTokUrl && !isInstagramUrl && !isFacebookUrl && !isYouTubeUrl && !isYelpUrl && !isMapsUrl;
 
               if (isTikTokUrl) {
                 final key = GlobalKey<TikTokPreviewWidgetState>();
@@ -1887,8 +1896,14 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                           Container(height: 200, color: Colors.grey[200], child: Center(child: Icon(Icons.broken_image)))
                     );
                   } else {
+                    final lower = url.toLowerCase();
+                    final bool isMapsUrl = lower.contains('google.com/maps') ||
+                        lower.contains('maps.app.goo.gl') ||
+                        lower.contains('goo.gl/maps') ||
+                        lower.contains('g.co/kgs/') ||
+                        lower.contains('share.google/');
                     // Yelp: render using the same WebView preview as Google Knowledge Graph preview
-                    if (url.toLowerCase().contains('yelp.com/biz') || url.toLowerCase().contains('yelp.to/')) {
+                    if (lower.contains('yelp.com/biz') || lower.contains('yelp.to/')) {
                       // Render Yelp with WebView but hide internal controls; reuse our bottom row controls for uniform UX
                       mediaWidget = WebUrlPreviewWidget(
                         url: url,
@@ -1900,6 +1915,23 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                         height: (_mediaTabExpansionStates[url] ?? false)
                             ? 1000.0
                             : 600.0,
+                      );
+                    } else if (isMapsUrl) {
+                      // Seed Maps preview with the current experience location so details are shown immediately
+                      if (!_mapsPreviewFutures.containsKey(url)) {
+                        _mapsPreviewFutures[url] = Future.value({
+                          'location': _currentExperience.location,
+                          'placeName': _currentExperience.name,
+                          'mapsUrl': url,
+                          'website': _currentExperience.location.website,
+                        });
+                      }
+                      mediaWidget = MapsPreviewWidget(
+                        mapsUrl: url,
+                        mapsPreviewFutures: _mapsPreviewFutures,
+                        getLocationFromMapsUrl: (u) async => null, // Already seeded
+                        launchUrlCallback: _launchUrl,
+                        mapsService: _googleMapsService,
                       );
                     } else {
                       // Use generic URL preview for other network URLs
@@ -2167,7 +2199,9 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                                       ? FontAwesomeIcons.tiktok
                                       : isYouTubeUrl
                                         ? FontAwesomeIcons.youtube
-                                        : Icons.open_in_new,
+                                        : isMapsUrl
+                                          ? FontAwesomeIcons.google
+                                          : Icons.open_in_new,
                               ),
                               color: isInstagramUrl 
                                 ? const Color(0xFFE1306C) 
@@ -2177,7 +2211,9 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                                     ? Colors.black
                                     : isYouTubeUrl
                                       ? Colors.red
-                                      : Theme.of(context).primaryColor,
+                                      : isMapsUrl
+                                        ? const Color(0xFF4285F4)
+                                        : Theme.of(context).primaryColor,
                               iconSize: 32,
                               tooltip: isInstagramUrl 
                                 ? 'Open in Instagram'
@@ -2187,7 +2223,9 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                                     ? 'Open in TikTok'
                                     : isYouTubeUrl
                                       ? 'Open in YouTube'
-                                      : 'Open URL',
+                                      : isMapsUrl
+                                        ? 'Open in Google Maps'
+                                        : 'Open URL',
                               onPressed: () => _launchUrl(url),
                             ),
                           // Expand/Collapse Button (show for Instagram, TikTok, Facebook, Yelp)
