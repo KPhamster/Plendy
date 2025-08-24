@@ -26,6 +26,7 @@ import 'receive_share/widgets/facebook_preview_widget.dart';
 import 'receive_share/widgets/youtube_preview_widget.dart';
 import 'receive_share/widgets/generic_url_preview_widget.dart';
 import 'receive_share/widgets/web_url_preview_widget.dart';
+import 'receive_share/widgets/maps_preview_widget.dart';
 import '../models/shared_media_item.dart'; // ADDED Import
 import 'package:collection/collection.dart'; // ADDED: Import for groupBy
 import 'map_screen.dart'; // ADDED: Import for MapScreen
@@ -117,6 +118,10 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   bool _groupByCityContent = false;
   // ADDED: Track attempted photo refreshes to avoid repeated requests
   final Set<String> _photoRefreshAttempts = {};
+  // Maps preview futures cache
+  final Map<String, Future<Map<String, dynamic>?>> _mapsPreviewFutures = {};
+  // Track filled business data to avoid duplicates but also cache results
+  final Map<String, Map<String, dynamic>> _businessDataCache = {};
   // Perf logging toggle
   static const bool _perfLogs = true;
   // Lazy-load Content tab
@@ -2460,13 +2465,39 @@ return Container(
                 },
               );
             } else {
+              final lower = mediaPath.toLowerCase();
+              final bool isMapsUrl = lower.contains('google.com/maps') ||
+                  lower.contains('maps.app.goo.gl') ||
+                  lower.contains('goo.gl/maps') ||
+                  lower.contains('g.co/kgs/') ||
+                  lower.contains('share.google/');
               // Yelp: use the same WebView preview style as Experience page content tab
-              if (mediaPath.toLowerCase().contains('yelp.com/biz') || mediaPath.toLowerCase().contains('yelp.to/')) {
+              if (lower.contains('yelp.com/biz') || lower.contains('yelp.to/')) {
                 mediaWidget = WebUrlPreviewWidget(
                   url: mediaPath,
                   launchUrlCallback: _launchUrl,
                   showControls: false,
                   height: isExpanded ? 1000.0 : 600.0,
+                );
+              } else if (isMapsUrl) {
+                // Seed Maps preview with associated experience details so it doesn't rely on URL parsing
+                if (!_mapsPreviewFutures.containsKey(mediaPath) &&
+                    associatedExperiences.isNotEmpty) {
+                  final exp = associatedExperiences.first;
+                  _mapsPreviewFutures[mediaPath] = Future.value({
+                    'location': exp.location,
+                    'placeName': exp.name,
+                    'mapsUrl': mediaPath,
+                    'website': exp.location.website,
+                  });
+                }
+                // Use our MapsPreviewWidget (photo, address, directions)
+                mediaWidget = MapsPreviewWidget(
+                  mapsUrl: mediaPath,
+                  mapsPreviewFutures: _mapsPreviewFutures,
+                  getLocationFromMapsUrl: _getLocationFromMapsUrl,
+                  launchUrlCallback: _launchUrl,
+                  mapsService: GoogleMapsService(),
                 );
               } else {
                 // Use generic URL preview for other network URLs
@@ -2636,6 +2667,46 @@ return Container(
                                 color: const Color(0xFFE4405F),
                                 iconSize: 32,
                                 tooltip: 'Open in Instagram',
+                                constraints: const BoxConstraints(),
+                                padding: EdgeInsets.zero,
+                                onPressed: () => _launchUrl(mediaPath),
+                              ),
+                            ],
+                          ),
+                        ),
+                      if (mediaPath.toLowerCase().contains('yelp.com/biz') || mediaPath.toLowerCase().contains('yelp.to/'))
+                        Container(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              IconButton(
+                                icon: const FaIcon(FontAwesomeIcons.yelp),
+                                color: const Color(0xFFD32323),
+                                iconSize: 32,
+                                tooltip: 'Open in Yelp',
+                                constraints: const BoxConstraints(),
+                                padding: EdgeInsets.zero,
+                                onPressed: () => _launchUrl(mediaPath),
+                              ),
+                            ],
+                          ),
+                        ),
+                      if (mediaPath.toLowerCase().contains('google.com/maps') ||
+                          mediaPath.toLowerCase().contains('maps.app.goo.gl') ||
+                          mediaPath.toLowerCase().contains('goo.gl/maps') ||
+                          mediaPath.toLowerCase().contains('g.co/kgs/') ||
+                          mediaPath.toLowerCase().contains('share.google/'))
+                        Container(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              IconButton(
+                                icon: const FaIcon(FontAwesomeIcons.google),
+                                color: const Color(0xFF4285F4),
+                                iconSize: 32,
+                                tooltip: 'Open in Google Maps',
                                 constraints: const BoxConstraints(),
                                 padding: EdgeInsets.zero,
                                 onPressed: () => _launchUrl(mediaPath),
@@ -3721,6 +3792,74 @@ return Container(
         );
       }
     }
+  }
+
+  Future<Map<String, dynamic>?> _getLocationFromMapsUrl(String mapsUrl) async {
+    final String originalUrlKey = mapsUrl.trim();
+
+    if (_businessDataCache.containsKey(originalUrlKey)) {
+      return _businessDataCache[originalUrlKey];
+    }
+
+    String resolvedUrl = mapsUrl;
+    if (!resolvedUrl.contains('google.com/maps')) {
+      return null;
+    }
+
+    Map<String, dynamic>? placeData;
+    String? placeIdToLookup;
+
+    try {
+      String searchQuery = resolvedUrl; 
+      try {
+        final Uri uri = Uri.parse(resolvedUrl);
+        final placeSegmentIndex = uri.pathSegments.indexOf('place');
+        if (placeSegmentIndex != -1 &&
+            placeSegmentIndex < uri.pathSegments.length - 1) {
+          String placePathInfo = uri.pathSegments[placeSegmentIndex + 1];
+          placePathInfo =
+              Uri.decodeComponent(placePathInfo).replaceAll('+', ' ');
+          placePathInfo = placePathInfo.split('@')[0].trim();
+
+          if (placePathInfo.isNotEmpty) {
+            searchQuery = placePathInfo;
+          }
+        }
+      } catch (e) {
+        // Continue with original URL as search query
+      }
+
+      final results = await GoogleMapsService().searchPlaces(searchQuery);
+      if (results.isNotEmpty) {
+        placeData = results.first;
+        placeIdToLookup = placeData['place_id'] as String?;
+      }
+    } catch (e) {
+      return null;
+    }
+
+    if (placeData != null && placeIdToLookup != null) {
+      final locationData = {
+        'name': placeData['name'] ?? '',
+        'address': placeData['formatted_address'] ?? '',
+        'placeId': placeIdToLookup,
+        'latitude': placeData['geometry']?['location']?['lat'] ?? 0.0,
+        'longitude': placeData['geometry']?['location']?['lng'] ?? 0.0,
+        'city': '',
+        'state': '',
+        'country': '',
+        'zipCode': '',
+        'photoUrl': '',
+        'photoResourceName': '',
+        'website': '',
+        'rating': placeData['rating']?.toDouble() ?? 0.0,
+        'userRatingCount': placeData['user_ratings_total'] ?? 0,
+      };
+      _businessDataCache[originalUrlKey] = locationData;
+      return locationData;
+    }
+
+    return null;
   }
 
   Future<void> _loadExperiences(String userId) async {
