@@ -121,6 +121,11 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   final Map<String, bool> _countryExpansionContent = {};
   bool _groupByCountryExperiences = false;
   bool _groupByCountryContent = false;
+  // --- NEW: Unified grouping flags and state expansion maps ---
+  bool _groupByLocationExperiences = false;
+  bool _groupByLocationContent = false;
+  final Map<String, bool> _stateExpansionExperiences = {};
+  final Map<String, bool> _stateExpansionContent = {};
   // ADDED: Track attempted photo refreshes to avoid repeated requests
   final Set<String> _photoRefreshAttempts = {};
   // Maps preview futures cache
@@ -1169,111 +1174,24 @@ if (mounted) {
                     ),
                   ),
                 ),
-                // --- Grouping options (match style with top items) ---
+                // --- Group by Location (single checkbox) ---
                 PopupMenuItem<ExperienceSortType>(
                   onTap: () {
                     setState(() {
-                      _groupByCityExperiences = false;
-                      _groupByCountryExperiences = false;
-                      _cityExpansionExperiences.clear();
+                      _groupByLocationExperiences = !_groupByLocationExperiences;
                       _countryExpansionExperiences.clear();
-                    });
-                  },
-                  child: Row(
-                    children: [
-                      Icon(
-                        (!_groupByCityExperiences && !_groupByCountryExperiences)
-                            ? Icons.check
-                            : Icons.radio_button_off,
-                        color: (!_groupByCityExperiences && !_groupByCountryExperiences)
-                            ? Theme.of(context).primaryColor
-                            : Colors.grey,
-                        size: 20,
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          'No Grouping',
-                          style: TextStyle(
-                            fontWeight: (!_groupByCityExperiences && !_groupByCountryExperiences)
-                                ? FontWeight.w600
-                                : FontWeight.normal,
-                            color: (!_groupByCityExperiences && !_groupByCountryExperiences)
-                                ? Theme.of(context).primaryColor
-                                : null,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                PopupMenuItem<ExperienceSortType>(
-                  onTap: () {
-                    setState(() {
-                      _groupByCityExperiences = true;
-                      _groupByCountryExperiences = false;
+                      _stateExpansionExperiences.clear();
                       _cityExpansionExperiences.clear();
-                      for (final exp in _filteredExperiences) {
-                        final key = (exp.location.city ?? '').trim().toLowerCase();
-                        _cityExpansionExperiences.putIfAbsent(key, () => false);
-                      }
-                      _cityExpansionExperiences.putIfAbsent('', () => false);
                     });
                   },
                   child: Row(
                     children: [
-                      Icon(
-                        _groupByCityExperiences ? Icons.check : Icons.radio_button_off,
-                        color: _groupByCityExperiences
-                            ? Theme.of(context).primaryColor
-                            : Colors.grey,
-                        size: 20,
+                      Checkbox(
+                        value: _groupByLocationExperiences,
+                        onChanged: (_) {},
                       ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          'Group by City',
-                          style: TextStyle(
-                            fontWeight: _groupByCityExperiences ? FontWeight.w600 : FontWeight.normal,
-                            color: _groupByCityExperiences ? Theme.of(context).primaryColor : null,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                PopupMenuItem<ExperienceSortType>(
-                  onTap: () {
-                    setState(() {
-                      _groupByCityExperiences = false;
-                      _groupByCountryExperiences = true;
-                      _countryExpansionExperiences.clear();
-                      for (final exp in _filteredExperiences) {
-                        final key = (exp.location.country ?? '').trim().toLowerCase();
-                        _countryExpansionExperiences.putIfAbsent(key, () => false);
-                      }
-                      _countryExpansionExperiences.putIfAbsent('', () => false);
-                    });
-                  },
-                  child: Row(
-                    children: [
-                      Icon(
-                        _groupByCountryExperiences ? Icons.check : Icons.radio_button_off,
-                        color: _groupByCountryExperiences
-                            ? Theme.of(context).primaryColor
-                            : Colors.grey,
-                        size: 20,
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          'Group by Country',
-                          style: TextStyle(
-                            fontWeight: _groupByCountryExperiences ? FontWeight.w600 : FontWeight.normal,
-                            color: _groupByCountryExperiences ? Theme.of(context).primaryColor : null,
-                          ),
-                        ),
-                      ),
+                      const SizedBox(width: 8),
+                      const Expanded(child: Text('Group by Location (Country > State > City)')),
                     ],
                   ),
                 ),
@@ -1313,115 +1231,24 @@ if (mounted) {
                     ),
                   ),
                 ),
-                // --- Grouping options (match style with top items) ---
+                // --- Group by Location (single checkbox) ---
                 PopupMenuItem<ContentSortType>(
                   onTap: () {
                     setState(() {
-                      _groupByCityContent = false;
-                      _groupByCountryContent = false;
-                      _cityExpansionContent.clear();
+                      _groupByLocationContent = !_groupByLocationContent;
                       _countryExpansionContent.clear();
-                    });
-                  },
-                  child: Row(
-                    children: [
-                      Icon(
-                        (!_groupByCityContent && !_groupByCountryContent)
-                            ? Icons.check
-                            : Icons.radio_button_off,
-                        color: (!_groupByCityContent && !_groupByCountryContent)
-                            ? Theme.of(context).primaryColor
-                            : Colors.grey,
-                        size: 20,
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          'No Grouping',
-                          style: TextStyle(
-                            fontWeight: (!_groupByCityContent && !_groupByCountryContent)
-                                ? FontWeight.w600
-                                : FontWeight.normal,
-                            color: (!_groupByCityContent && !_groupByCountryContent)
-                                ? Theme.of(context).primaryColor
-                                : null,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                PopupMenuItem<ContentSortType>(
-                  onTap: () {
-                    setState(() {
-                      _groupByCityContent = true;
-                      _groupByCountryContent = false;
+                      _stateExpansionContent.clear();
                       _cityExpansionContent.clear();
-                      for (final group in _filteredGroupedContentItems) {
-                        for (final exp in group.associatedExperiences) {
-                          final key = (exp.location.city ?? '').trim().toLowerCase();
-                          _cityExpansionContent.putIfAbsent(key, () => false);
-                        }
-                      }
-                      _cityExpansionContent.putIfAbsent('', () => false);
                     });
                   },
                   child: Row(
                     children: [
-                      Icon(
-                        _groupByCityContent ? Icons.check : Icons.radio_button_off,
-                        color: _groupByCityContent
-                            ? Theme.of(context).primaryColor
-                            : Colors.grey,
-                        size: 20,
+                      Checkbox(
+                        value: _groupByLocationContent,
+                        onChanged: (_) {},
                       ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          'Group by City',
-                          style: TextStyle(
-                            fontWeight: _groupByCityContent ? FontWeight.w600 : FontWeight.normal,
-                            color: _groupByCityContent ? Theme.of(context).primaryColor : null,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                PopupMenuItem<ContentSortType>(
-                  onTap: () {
-                    setState(() {
-                      _groupByCityContent = false;
-                      _groupByCountryContent = true;
-                      _countryExpansionContent.clear();
-                      for (final group in _filteredGroupedContentItems) {
-                        for (final exp in group.associatedExperiences) {
-                          final key = (exp.location.country ?? '').trim().toLowerCase();
-                          _countryExpansionContent.putIfAbsent(key, () => false);
-                        }
-                      }
-                      _countryExpansionContent.putIfAbsent('', () => false);
-                    });
-                  },
-                  child: Row(
-                    children: [
-                      Icon(
-                        _groupByCountryContent ? Icons.check : Icons.radio_button_off,
-                        color: _groupByCountryContent
-                            ? Theme.of(context).primaryColor
-                            : Colors.grey,
-                        size: 20,
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          'Group by Country',
-                          style: TextStyle(
-                            fontWeight: _groupByCountryContent ? FontWeight.w600 : FontWeight.normal,
-                            color: _groupByCountryContent ? Theme.of(context).primaryColor : null,
-                          ),
-                        ),
-                      ),
+                      const SizedBox(width: 8),
+                      const Expanded(child: Text('Group by Location (Country > State > City)')),
                     ],
                   ),
                 ),
@@ -2217,7 +2044,136 @@ final category = _categories.firstWhere(
       // Mobile: Use ListView with header as first item
       // When grouping, build a flattened list of headers + items ordered by the primary sort.
       List<Map<String, Object>>? expRegionStructured;
-      if (_groupByCityExperiences) {
+      if (_groupByLocationExperiences) {
+        String n(String? s) => (s ?? '').trim();
+        final Map<String, Map<String, Map<String, List<Experience>>>> tree = {};
+        final Map<String, String> countryDisp = {};
+        final Map<String, Map<String, String>> stateDisp = {};
+        final Map<String, Map<String, Map<String, String>>> cityDisp = {};
+
+        for (final exp in _filteredExperiences) {
+          final ctry = n(exp.location.country);
+          final state = n(exp.location.state);
+          final city  = n(exp.location.city);
+          final ck = ctry.isEmpty ? '' : ctry.toLowerCase();
+          final sk = state.isEmpty ? '' : state.toLowerCase();
+          final cik = city.isEmpty ? '' : city.toLowerCase();
+
+          countryDisp[ck] = ctry.isEmpty ? 'Unknown country' : ctry;
+          stateDisp.putIfAbsent(ck, () => {})[sk] = state.isEmpty ? 'Unknown state' : state;
+          cityDisp.putIfAbsent(ck, () => {}).putIfAbsent(sk, () => {})[cik] = city.isEmpty ? 'Unknown city' : city;
+
+          final levelCountry = tree.putIfAbsent(ck, () => {});
+          final levelState   = levelCountry.putIfAbsent(sk, () => {});
+          final levelCity    = levelState.putIfAbsent(cik, () => []);
+          levelCity.add(exp);
+        }
+
+        DateTime newestOf(List<Experience> xs) =>
+            xs.map((e) => e.updatedAt).fold<DateTime>(DateTime.fromMillisecondsSinceEpoch(0), (p, c) => c.isAfter(p) ? c : p);
+
+        Map<String, int> firstIndexFor = {};
+        if (_experienceSortType == ExperienceSortType.distanceFromMe) {
+          for (int i = 0; i < _filteredExperiences.length; i++) {
+            final e = _filteredExperiences[i];
+            final ck = n(e.location.country).toLowerCase();
+            final sk = n(e.location.state).toLowerCase();
+            final cik= n(e.location.city).toLowerCase();
+            firstIndexFor.putIfAbsent('C:$ck', () => i);
+            firstIndexFor.putIfAbsent('S:$ck|$sk', () => i);
+            firstIndexFor.putIfAbsent('I:$ck|$sk|$cik', () => i);
+          }
+        }
+
+        int cmpCountry(String a, String b) {
+          if (_experienceSortType == ExperienceSortType.mostRecent) {
+            DateTime maxA = DateTime.fromMillisecondsSinceEpoch(0), maxB = maxA;
+            tree[a]?.forEach((sk, cities) => cities.forEach((cik, list) {
+              final m = newestOf(list);
+              if (m.isAfter(maxA)) maxA = m;
+            }));
+            tree[b]?.forEach((sk, cities) => cities.forEach((cik, list) {
+              final m = newestOf(list);
+              if (m.isAfter(maxB)) maxB = m;
+            }));
+            if (a.isEmpty && b.isEmpty) return 0; if (a.isEmpty) return 1; if (b.isEmpty) return -1;
+            return maxB.compareTo(maxA);
+          } else if (_experienceSortType == ExperienceSortType.alphabetical || _experienceSortType == ExperienceSortType.city) {
+            if (a.isEmpty && b.isEmpty) return 0; if (a.isEmpty) return 1; if (b.isEmpty) return -1;
+            return (countryDisp[a] ?? '').toLowerCase().compareTo((countryDisp[b] ?? '').toLowerCase());
+          } else {
+            if (a.isEmpty && b.isEmpty) return 0; if (a.isEmpty) return 1; if (b.isEmpty) return -1;
+            return (firstIndexFor['C:$a'] ?? 1 << 30).compareTo(firstIndexFor['C:$b'] ?? 1 << 30);
+          }
+        }
+        int cmpState(String ck, String a, String b) {
+          if (_experienceSortType == ExperienceSortType.mostRecent) {
+            DateTime maxA = DateTime.fromMillisecondsSinceEpoch(0), maxB = maxA;
+            tree[ck]?[a]?.forEach((cik, list) { final m = newestOf(list); if (m.isAfter(maxA)) maxA = m; });
+            tree[ck]?[b]?.forEach((cik, list) { final m = newestOf(list); if (m.isAfter(maxB)) maxB = m; });
+            if (a.isEmpty && b.isEmpty) return 0; if (a.isEmpty) return 1; if (b.isEmpty) return -1;
+            return maxB.compareTo(maxA);
+          } else if (_experienceSortType == ExperienceSortType.alphabetical || _experienceSortType == ExperienceSortType.city) {
+            if (a.isEmpty && b.isEmpty) return 0; if (a.isEmpty) return 1; if (b.isEmpty) return -1;
+            return (stateDisp[ck]?[a] ?? '').toLowerCase().compareTo((stateDisp[ck]?[b] ?? '').toLowerCase());
+          } else {
+            if (a.isEmpty && b.isEmpty) return 0; if (a.isEmpty) return 1; if (b.isEmpty) return -1;
+            return (firstIndexFor['S:$ck|$a'] ?? 1 << 30).compareTo(firstIndexFor['S:$ck|$b'] ?? 1 << 30);
+          }
+        }
+        int cmpCity(String ck, String sk, String a, String b) {
+          if (_experienceSortType == ExperienceSortType.mostRecent) {
+            final maxA = newestOf(tree[ck]![sk]![a]!);
+            final maxB = newestOf(tree[ck]![sk]![b]!);
+            if (a.isEmpty && b.isEmpty) return 0; if (a.isEmpty) return 1; if (b.isEmpty) return -1;
+            return maxB.compareTo(maxA);
+          } else if (_experienceSortType == ExperienceSortType.alphabetical || _experienceSortType == ExperienceSortType.city) {
+            if (a.isEmpty && b.isEmpty) return 0; if (a.isEmpty) return 1; if (b.isEmpty) return -1;
+            return (cityDisp[ck]?[sk]?[a] ?? '').toLowerCase().compareTo((cityDisp[ck]?[sk]?[b] ?? '').toLowerCase());
+          } else {
+            if (a.isEmpty && b.isEmpty) return 0; if (a.isEmpty) return 1; if (b.isEmpty) return -1;
+            return (firstIndexFor['I:$ck|$sk|$a'] ?? 1 << 30).compareTo(firstIndexFor['I:$ck|$sk|$b'] ?? 1 << 30);
+          }
+        }
+
+        final List<Map<String, Object>> flattened = [];
+        final countries = tree.keys.toList()..sort(cmpCountry);
+        for (final ck in countries) {
+          flattened.add({'header': countryDisp[ck] ?? 'Unknown country', 'level': 'country', 'key': ck});
+          final isCtryExpanded = _countryExpansionExperiences[ck] ?? false;
+          _countryExpansionExperiences.putIfAbsent(ck, () => false);
+          if (!isCtryExpanded) continue;
+
+          final states = tree[ck]!.keys.toList()..sort((a, b) => cmpState(ck, a, b));
+          for (final sk in states) {
+            final skKey = '$ck|$sk';
+            flattened.add({'header': stateDisp[ck]?[sk] ?? 'Unknown state', 'level': 'state', 'key': skKey});
+            final isStateExpanded = _stateExpansionExperiences[skKey] ?? false;
+            _stateExpansionExperiences.putIfAbsent(skKey, () => false);
+            if (!isStateExpanded) continue;
+
+            final cities = tree[ck]![sk]!.keys.toList()..sort((a, b) => cmpCity(ck, sk, a, b));
+            for (final cik in cities) {
+              final ciKey = '$ck|$sk|$cik';
+              flattened.add({'header': cityDisp[ck]?[sk]?[cik] ?? 'Unknown city', 'level': 'city', 'key': ciKey});
+              final isCityExpanded = _cityExpansionExperiences[ciKey] ?? false;
+              _cityExpansionExperiences.putIfAbsent(ciKey, () => false);
+              if (!isCityExpanded) continue;
+
+              final items = tree[ck]![sk]![cik]!;
+              if (_experienceSortType == ExperienceSortType.alphabetical) {
+                items.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+              } else if (_experienceSortType == ExperienceSortType.mostRecent) {
+                items.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+              }
+              for (final e in items) {
+                flattened.add({'item': e, 'key': ciKey});
+              }
+            }
+          }
+        }
+        expRegionStructured = flattened;
+      } else if (_groupByCityExperiences) {
         final Map<String, List<Experience>> cityItems = {};
         final Map<String, String> cityDisplay = {};
         // Group experiences by city key
@@ -2357,16 +2313,21 @@ final category = _categories.firstWhere(
           if (expRegionStructured != null) {
             final entry = expRegionStructured[index - 1];
             if (entry.containsKey('header')) {
+              final level = entry['level'] as String?;
               final key = entry['key'] as String;
               final displayRegion = entry['header'] as String;
-              final isExpanded = _groupByCountryExperiences
+              final bool isExpanded = (level == 'country')
                   ? (_countryExpansionExperiences[key] ?? false)
-                  : (_cityExpansionExperiences[key] ?? false);
+                  : (level == 'state')
+                      ? (_stateExpansionExperiences[key] ?? false)
+                      : (_cityExpansionExperiences[key] ?? false);
               return InkWell(
                 onTap: () {
                   setState(() {
-                    if (_groupByCountryExperiences) {
+                    if (level == 'country') {
                       _countryExpansionExperiences[key] = !isExpanded;
+                    } else if (level == 'state') {
+                      _stateExpansionExperiences[key] = !isExpanded;
                     } else {
                       _cityExpansionExperiences[key] = !isExpanded;
                     }
@@ -2392,13 +2353,6 @@ final category = _categories.firstWhere(
               );
             } else {
               final exp = entry['item'] as Experience;
-              final key = entry['key'] as String;
-              final expanded = _groupByCountryExperiences
-                  ? (_countryExpansionExperiences[key] ?? false)
-                  : (_cityExpansionExperiences[key] ?? false);
-              if (!expanded) {
-                return const SizedBox.shrink();
-              }
               return _buildExperienceListItem(exp);
             }
           }
@@ -2551,245 +2505,186 @@ final category = _categories.firstWhere(
       );
     } else {
       // Mobile or Mobile Web
-      final bool useCityGrouping = _groupByCityContent;
-      final bool useCountryGrouping = _groupByCountryContent;
-      List<Map<String, Object>>? cityStructured;
-      List<Map<String, Object>>? countryStructured;
-      if (useCityGrouping) {
-        String norm(String? s) => (s ?? '').trim();
-        final Map<String, String> cityDisplay = {};
-        final Map<String, List<GroupedContentItem>> cityItems = {};
+      if (_groupByLocationContent) {
+        String n(String? s) => (s ?? '').trim();
+        // country -> state -> city -> list
+        final Map<String, Map<String, Map<String, List<GroupedContentItem>>>> tree = {};
+        final Map<String, String> countryDisp = {};
+        final Map<String, Map<String, String>> stateDisp = {};
+        final Map<String, Map<String, Map<String, String>>> cityDisp = {};
         for (final group in _filteredGroupedContentItems) {
-          final Set<String> cityKeys = {};
+          final Set<String> tuples = {};
           for (final exp in group.associatedExperiences) {
-            final city = norm(exp.location.city);
-            if (city.isNotEmpty) {
-              final key = city.toLowerCase();
-              cityKeys.add(key);
-              cityDisplay[key] = city; // preserve original case
-            }
+            final ctry = n(exp.location.country);
+            final state = n(exp.location.state);
+            final city  = n(exp.location.city);
+            final ck = ctry.isEmpty ? '' : ctry.toLowerCase();
+            final sk = state.isEmpty ? '' : state.toLowerCase();
+            final cik = city.isEmpty ? '' : city.toLowerCase();
+            countryDisp[ck] = ctry.isEmpty ? 'Unknown country' : ctry;
+            stateDisp.putIfAbsent(ck, () => {})[sk] = state.isEmpty ? 'Unknown state' : state;
+            cityDisp.putIfAbsent(ck, () => {}).putIfAbsent(sk, () => {})[cik] = city.isEmpty ? 'Unknown city' : city;
+            tuples.add('$ck|$sk|$cik');
           }
-          if (cityKeys.isEmpty) {
-            cityKeys.add(''); // Unknown city bucket
-            cityDisplay[''] = 'Unknown city';
+          if (tuples.isEmpty) {
+            countryDisp[''] = 'Unknown country';
+            stateDisp.putIfAbsent('', () => {})[''] = 'Unknown state';
+            cityDisp.putIfAbsent('', () => {}).putIfAbsent('', () => {})[''] = 'Unknown city';
+            tuples.add('||');
           }
-          for (final key in cityKeys) {
-            final list = cityItems.putIfAbsent(key, () => []);
+          for (final key in tuples) {
+            final parts = key.split('|');
+            final ck = parts[0];
+            final sk = parts.length > 1 ? parts[1] : '';
+            final cik = parts.length > 2 ? parts[2] : '';
+            final levelCountry = tree.putIfAbsent(ck, () => {});
+            final levelState   = levelCountry.putIfAbsent(sk, () => {});
+            final list         = levelState.putIfAbsent(cik, () => []);
             list.add(group);
           }
         }
-        // Sort items within each city by the selected primary sort
-        for (final entry in cityItems.entries) {
-          final list = entry.value;
+        DateTime newestOf(List<GroupedContentItem> xs) =>
+            xs.map((g) => g.mediaItem.createdAt).fold<DateTime>(DateTime.fromMillisecondsSinceEpoch(0), (p, c) => c.isAfter(p) ? c : p);
+        Map<String, int> firstIndexFor = {};
+        if (_contentSortType == ContentSortType.distanceFromMe) {
+          for (int i = 0; i < _filteredGroupedContentItems.length; i++) {
+            final g = _filteredGroupedContentItems[i];
+            final seen = <String>{};
+            for (final exp in g.associatedExperiences) {
+              final ck = n(exp.location.country).toLowerCase();
+              final sk = n(exp.location.state).toLowerCase();
+              final cik= n(exp.location.city).toLowerCase();
+              if (seen.add('C:$ck')) firstIndexFor.putIfAbsent('C:$ck', () => i);
+              if (seen.add('S:$ck|$sk')) firstIndexFor.putIfAbsent('S:$ck|$sk', () => i);
+              if (seen.add('I:$ck|$sk|$cik')) firstIndexFor.putIfAbsent('I:$ck|$sk|$cik', () => i);
+            }
+            if (seen.isEmpty) {
+              firstIndexFor.putIfAbsent('C:', () => i);
+              firstIndexFor.putIfAbsent('S:|', () => i);
+              firstIndexFor.putIfAbsent('I:||', () => i);
+            }
+          }
+        }
+        int cmpCountry(String a, String b) {
           if (_contentSortType == ContentSortType.mostRecent) {
-            list.sort((a, b) => b.mediaItem.createdAt.compareTo(a.mediaItem.createdAt));
-          } else if (_contentSortType == ContentSortType.alphabetical) {
-            list.sort((a, b) {
-              if (a.associatedExperiences.isEmpty && b.associatedExperiences.isEmpty) return 0;
-              if (a.associatedExperiences.isEmpty) return 1;
-              if (b.associatedExperiences.isEmpty) return -1;
-              return a.associatedExperiences.first.name
-                  .toLowerCase()
-                  .compareTo(b.associatedExperiences.first.name.toLowerCase());
-            });
-          } else if (_contentSortType == ContentSortType.city) {
-            // For city sort, secondary sort within group by most recent
-            list.sort((a, b) => b.mediaItem.createdAt.compareTo(a.mediaItem.createdAt));
-          } else if (_contentSortType == ContentSortType.distanceFromMe) {
-            // Keep insertion order which follows the globally distance-sorted list
-          }
-        }
-
-        // Determine city header ordering by primary sort
-        List<String> cityKeys = cityItems.keys.toList();
-        if (_contentSortType == ContentSortType.mostRecent) {
-          cityKeys.sort((ka, kb) {
-            final maxA = cityItems[ka]!
-                    .map((g) => g.mediaItem.createdAt)
-                    .fold<DateTime?>(null, (p, c) => p == null || c.isAfter(p) ? c : p) ??
-                DateTime.fromMillisecondsSinceEpoch(0);
-            final maxB = cityItems[kb]!
-                    .map((g) => g.mediaItem.createdAt)
-                    .fold<DateTime?>(null, (p, c) => p == null || c.isAfter(p) ? c : p) ??
-                DateTime.fromMillisecondsSinceEpoch(0);
-            if (ka.isEmpty && kb.isEmpty) return 0;
-            if (ka.isEmpty) return 1; // Unknown last
-            if (kb.isEmpty) return -1;
+            DateTime maxA = DateTime.fromMillisecondsSinceEpoch(0), maxB = maxA;
+            tree[a]?.forEach((sk, cities) => cities.forEach((cik, list) { final m = newestOf(list); if (m.isAfter(maxA)) maxA = m; }));
+            tree[b]?.forEach((sk, cities) => cities.forEach((cik, list) { final m = newestOf(list); if (m.isAfter(maxB)) maxB = m; }));
+            if (a.isEmpty && b.isEmpty) return 0; if (a.isEmpty) return 1; if (b.isEmpty) return -1;
             return maxB.compareTo(maxA);
-          });
-        } else if (_contentSortType == ContentSortType.alphabetical ||
-            _contentSortType == ContentSortType.city) {
-          cityKeys.sort((ka, kb) {
-            if (ka.isEmpty && kb.isEmpty) return 0;
-            if (ka.isEmpty) return 1;
-            if (kb.isEmpty) return -1;
-            return (cityDisplay[ka] ?? '').toLowerCase().compareTo((cityDisplay[kb] ?? '').toLowerCase());
-          });
-        } else if (_contentSortType == ContentSortType.distanceFromMe) {
-          // Use the index of the first occurrence in the globally distance-sorted filtered list
-          final Map<String, int> firstIndex = {};
-          for (int i = 0; i < _filteredGroupedContentItems.length; i++) {
-            final group = _filteredGroupedContentItems[i];
-            final Set<String> keysForGroup = {};
-            for (final exp in group.associatedExperiences) {
-              final city = norm(exp.location.city);
-              final key = city.isEmpty ? '' : city.toLowerCase();
-              keysForGroup.add(key);
-            }
-            if (keysForGroup.isEmpty) {
-              keysForGroup.add('');
-            }
-            for (final k in keysForGroup) {
-              firstIndex.putIfAbsent(k, () => i);
-            }
-          }
-          cityKeys.sort((ka, kb) {
-            if (ka.isEmpty && kb.isEmpty) return 0;
-            if (ka.isEmpty) return 1;
-            if (kb.isEmpty) return -1;
-            return (firstIndex[ka] ?? 1 << 30).compareTo(firstIndex[kb] ?? 1 << 30);
-          });
-        }
-
-        // Build flattened list: headers then their items
-        final List<Map<String, Object>> flattened = [];
-        for (final key in cityKeys) {
-          flattened.add({'header': cityDisplay[key] ?? 'Unknown city'});
-          for (final group in cityItems[key]!) {
-            flattened.add({'item': group});
+          } else if (_contentSortType == ContentSortType.alphabetical || _contentSortType == ContentSortType.city) {
+            if (a.isEmpty && b.isEmpty) return 0; if (a.isEmpty) return 1; if (b.isEmpty) return -1;
+            return (countryDisp[a] ?? '').toLowerCase().compareTo((countryDisp[b] ?? '').toLowerCase());
+          } else {
+            if (a.isEmpty && b.isEmpty) return 0; if (a.isEmpty) return 1; if (b.isEmpty) return -1;
+            return (firstIndexFor['C:$a'] ?? 1 << 30).compareTo(firstIndexFor['C:$b'] ?? 1 << 30);
           }
         }
-        cityStructured = flattened;
-      } else if (useCountryGrouping) {
-        String norm(String? s) => (s ?? '').trim();
-        final Map<String, String> countryDisplay = {};
-        final Map<String, List<GroupedContentItem>> countryItems = {};
-        for (final group in _filteredGroupedContentItems) {
-          final Set<String> countryKeys = {};
-          for (final exp in group.associatedExperiences) {
-            final country = norm(exp.location.country);
-            if (country.isNotEmpty) {
-              final key = country.toLowerCase();
-              countryKeys.add(key);
-              countryDisplay[key] = country; // preserve original case
-            }
-          }
-          if (countryKeys.isEmpty) {
-            countryKeys.add(''); // Unknown country bucket
-            countryDisplay[''] = 'Unknown country';
-          }
-          for (final key in countryKeys) {
-            final list = countryItems.putIfAbsent(key, () => []);
-            list.add(group);
-          }
-        }
-        // Sort items within each country per current sort
-        for (final entry in countryItems.entries) {
-          final list = entry.value;
-          if (_contentSortType == ContentSortType.mostRecent || _contentSortType == ContentSortType.city) {
-            list.sort((a, b) => b.mediaItem.createdAt.compareTo(a.mediaItem.createdAt));
-          } else if (_contentSortType == ContentSortType.alphabetical) {
-            list.sort((a, b) {
-              if (a.associatedExperiences.isEmpty && b.associatedExperiences.isEmpty) return 0;
-              if (a.associatedExperiences.isEmpty) return 1;
-              if (b.associatedExperiences.isEmpty) return -1;
-              return a.associatedExperiences.first.name
-                  .toLowerCase()
-                  .compareTo(b.associatedExperiences.first.name.toLowerCase());
-            });
-          } else if (_contentSortType == ContentSortType.distanceFromMe) {
-            // Keep insertion order following global distance sort
-          }
-        }
-        // Determine country header ordering per primary sort
-        List<String> sortedKeys;
-        if (_contentSortType == ContentSortType.mostRecent) {
-          sortedKeys = countryItems.keys.toList();
-          sortedKeys.sort((ka, kb) {
-            final maxA = countryItems[ka]!
-                    .map((g) => g.mediaItem.createdAt)
-                    .fold<DateTime?>(null, (p, c) => p == null || c.isAfter(p) ? c : p) ??
-                DateTime.fromMillisecondsSinceEpoch(0);
-            final maxB = countryItems[kb]!
-                    .map((g) => g.mediaItem.createdAt)
-                    .fold<DateTime?>(null, (p, c) => p == null || c.isAfter(p) ? c : p) ??
-                DateTime.fromMillisecondsSinceEpoch(0);
-            if (ka.isEmpty && kb.isEmpty) return 0;
-            if (ka.isEmpty) return 1;
-            if (kb.isEmpty) return -1;
+        int cmpState(String ck, String a, String b) {
+          if (_contentSortType == ContentSortType.mostRecent) {
+            DateTime maxA = DateTime.fromMillisecondsSinceEpoch(0), maxB = maxA;
+            tree[ck]?[a]?.forEach((cik, list) { final m = newestOf(list); if (m.isAfter(maxA)) maxA = m; });
+            tree[ck]?[b]?.forEach((cik, list) { final m = newestOf(list); if (m.isAfter(maxB)) maxB = m; });
+            if (a.isEmpty && b.isEmpty) return 0; if (a.isEmpty) return 1; if (b.isEmpty) return -1;
             return maxB.compareTo(maxA);
-          });
-        } else if (_contentSortType == ContentSortType.alphabetical || _contentSortType == ContentSortType.city) {
-          sortedKeys = [
-            ...countryItems.keys.where((k) => k.isNotEmpty).toList()..sort((a, b) => (countryDisplay[a] ?? '').toLowerCase().compareTo((countryDisplay[b] ?? '').toLowerCase())),
-            ...countryItems.keys.where((k) => k.isEmpty),
-          ];
-        } else if (_contentSortType == ContentSortType.distanceFromMe) {
-          final Map<String, int> firstIndex = {};
-          for (int i = 0; i < _filteredGroupedContentItems.length; i++) {
-            final group = _filteredGroupedContentItems[i];
-            final Set<String> keysForGroup = {};
-            for (final exp in group.associatedExperiences) {
-              final c = norm(exp.location.country);
-              final key = c.isEmpty ? '' : c.toLowerCase();
-              keysForGroup.add(key);
-            }
-            if (keysForGroup.isEmpty) keysForGroup.add('');
-            for (final k in keysForGroup) {
-              firstIndex.putIfAbsent(k, () => i);
-            }
-          }
-          sortedKeys = countryItems.keys.toList();
-          sortedKeys.sort((ka, kb) {
-            if (ka.isEmpty && kb.isEmpty) return 0;
-            if (ka.isEmpty) return 1;
-            if (kb.isEmpty) return -1;
-            return (firstIndex[ka] ?? 1 << 30).compareTo(firstIndex[kb] ?? 1 << 30);
-          });
-        } else {
-          sortedKeys = countryItems.keys.toList();
-        }
-        final List<Map<String, Object>> flattened = [];
-        for (final key in sortedKeys) {
-          flattened.add({'header': countryDisplay[key] ?? 'Unknown country'});
-          for (final group in countryItems[key]!) {
-            flattened.add({'item': group});
+          } else if (_contentSortType == ContentSortType.alphabetical || _contentSortType == ContentSortType.city) {
+            if (a.isEmpty && b.isEmpty) return 0; if (a.isEmpty) return 1; if (b.isEmpty) return -1;
+            return (stateDisp[ck]?[a] ?? '').toLowerCase().compareTo((stateDisp[ck]?[b] ?? '').toLowerCase());
+          } else {
+            if (a.isEmpty && b.isEmpty) return 0; if (a.isEmpty) return 1; if (b.isEmpty) return -1;
+            return (firstIndexFor['S:$ck|$a'] ?? 1 << 30).compareTo(firstIndexFor['S:$ck|$b'] ?? 1 << 30);
           }
         }
-        countryStructured = flattened;
-      }
-      return ListView.builder(
-        padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 16.0),
-        itemCount: (cityStructured != null
-                ? cityStructured.length
-                : countryStructured != null
-                    ? countryStructured.length
-                    : _filteredGroupedContentItems.length) +
-            1, // +1 for header
-        itemBuilder: (context, index) {
-          if (index == 0) {
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 16.0),
-              child: countHeader,
-            );
+        int cmpCity(String ck, String sk, String a, String b) {
+          if (_contentSortType == ContentSortType.mostRecent) {
+            final maxA = newestOf(tree[ck]![sk]![a]!);
+            final maxB = newestOf(tree[ck]![sk]![b]!);
+            if (a.isEmpty && b.isEmpty) return 0; if (a.isEmpty) return 1; if (b.isEmpty) return -1;
+            return maxB.compareTo(maxA);
+          } else if (_contentSortType == ContentSortType.alphabetical || _contentSortType == ContentSortType.city) {
+            if (a.isEmpty && b.isEmpty) return 0; if (a.isEmpty) return 1; if (b.isEmpty) return -1;
+            return (cityDisp[ck]?[sk]?[a] ?? '').toLowerCase().compareTo((cityDisp[ck]?[sk]?[b] ?? '').toLowerCase());
+          } else {
+            if (a.isEmpty && b.isEmpty) return 0; if (a.isEmpty) return 1; if (b.isEmpty) return -1;
+            return (firstIndexFor['I:$ck|$sk|$a'] ?? 1 << 30).compareTo(firstIndexFor['I:$ck|$sk|$b'] ?? 1 << 30);
           }
-          GroupedContentItem group;
-          final adjustedIndex = index - 1;
-          if (cityStructured != null || countryStructured != null) {
-            final entry = (cityStructured ?? countryStructured!)[adjustedIndex];
+        }
+        final List<Map<String, Object>> flat = [];
+        final countries = tree.keys.toList()..sort(cmpCountry);
+        for (final ck in countries) {
+          // Country header
+          flat.add({'header': countryDisp[ck] ?? 'Unknown country', 'level': 'country', 'key': ck});
+          final bool countryExpanded = _countryExpansionContent[ck] ?? false;
+          _countryExpansionContent.putIfAbsent(ck, () => false);
+          if (!countryExpanded) continue;
+
+          final states = tree[ck]!.keys.toList()..sort((a, b) => cmpState(ck, a, b));
+          for (final sk in states) {
+            final skKey = '$ck|$sk';
+            // State header
+            flat.add({'header': stateDisp[ck]?[sk] ?? 'Unknown state', 'level': 'state', 'key': skKey});
+            final bool stateExpanded = _stateExpansionContent[skKey] ?? false;
+            _stateExpansionContent.putIfAbsent(skKey, () => false);
+            if (!stateExpanded) continue;
+
+            final cities = tree[ck]![sk]!.keys.toList()..sort((a, b) => cmpCity(ck, sk, a, b));
+            for (final cik in cities) {
+              final ciKey = '$ck|$sk|$cik';
+              // City header
+              flat.add({'header': cityDisp[ck]?[sk]?[cik] ?? 'Unknown city', 'level': 'city', 'key': ciKey});
+              final bool cityExpanded = _cityExpansionContent[ciKey] ?? false;
+              _cityExpansionContent.putIfAbsent(ciKey, () => false);
+              if (!cityExpanded) continue;
+
+              final items = tree[ck]![sk]![cik]!;
+              if (_contentSortType == ContentSortType.alphabetical) {
+                items.sort((a, b) {
+                  if (a.associatedExperiences.isEmpty && b.associatedExperiences.isEmpty) return 0;
+                  if (a.associatedExperiences.isEmpty) return 1;
+                  if (b.associatedExperiences.isEmpty) return -1;
+                  return a.associatedExperiences.first.name.toLowerCase().compareTo(b.associatedExperiences.first.name.toLowerCase());
+                });
+              } else if (_contentSortType == ContentSortType.mostRecent || _contentSortType == ContentSortType.city) {
+                items.sort((a, b) => b.mediaItem.createdAt.compareTo(a.mediaItem.createdAt));
+              }
+              for (final g in items) {
+                flat.add({'item': g, 'pathKey': ciKey});
+              }
+            }
+          }
+        }
+        return ListView.builder(
+          padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 16.0),
+          itemCount: flat.length + 1,
+          itemBuilder: (context, index) {
+            if (index == 0) {
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 16.0),
+                child: countHeader,
+              );
+            }
+            final entry = flat[index - 1];
             if (entry.containsKey('header')) {
               final display = entry['header'] as String;
-              final key = display.toLowerCase().startsWith('unknown') ? '' : display.toLowerCase();
-              final isExpanded = cityStructured != null
-                  ? (_cityExpansionContent[key] ?? false)
-                  : (_countryExpansionContent[key] ?? false);
+              final level = entry['level'] as String;
+              final key = entry['key'] as String;
+              bool isExpanded = false;
+              if (level == 'country') {
+                isExpanded = _countryExpansionContent[key] ?? false;
+              } else if (level == 'state') {
+                isExpanded = _stateExpansionContent[key] ?? false;
+              } else {
+                isExpanded = _cityExpansionContent[key] ?? false;
+              }
               return InkWell(
                 onTap: () {
                   setState(() {
-                    if (cityStructured != null) {
-                      _cityExpansionContent[key] = !isExpanded;
-                    } else {
+                    if (level == 'country') {
                       _countryExpansionContent[key] = !isExpanded;
+                    } else if (level == 'state') {
+                      _stateExpansionContent[key] = !isExpanded;
+                    } else {
+                      _cityExpansionContent[key] = !isExpanded;
                     }
                   });
                 },
@@ -2808,10 +2703,10 @@ final category = _categories.firstWhere(
                       Expanded(
                         child: Text(
                           display,
-                          style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                                fontWeight: FontWeight.bold,
-                                color: Colors.grey[700],
-                              ),
+                          style: Theme.of(context)
+                              .textTheme
+                              .titleSmall
+                              ?.copyWith(fontWeight: FontWeight.bold, color: Colors.grey[700]),
                         ),
                       ),
                     ],
@@ -2819,23 +2714,32 @@ final category = _categories.firstWhere(
                 ),
               );
             } else {
-              group = entry['item'] as GroupedContentItem;
-              // Hide items under collapsed section
-              String deriveKey(GroupedContentItem g) {
-                for (final exp in g.associatedExperiences) {
-                  final c = (exp.location.city ?? '').trim();
-                  if (c.isNotEmpty) return c.toLowerCase();
-                }
-                return '';
-              }
-              final key = deriveKey(group);
-              if (!(_cityExpansionContent[key] ?? false)) {
-                return const SizedBox.shrink();
-              }
+              final group = entry['item'] as GroupedContentItem;
+              final pathKey = entry['pathKey'] as String;
+              final parts = pathKey.split('|');
+              final ck = parts[0];
+              final sk = parts.length > 1 ? parts[1] : '';
+              final cik = parts.length > 2 ? parts[2] : '';
+              final expanded = (_countryExpansionContent[ck] ?? false) &&
+                  (_stateExpansionContent['$ck|$sk'] ?? false) &&
+                  (_cityExpansionContent['$ck|$sk|$cik'] ?? false);
+              if (!expanded) return const SizedBox.shrink();
+              return _buildContentListItem(group, index - 1);
             }
-          } else {
-            group = _filteredGroupedContentItems[adjustedIndex];
+          },
+        );
+      }
+      return ListView.builder(
+        padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 16.0),
+        itemCount: _filteredGroupedContentItems.length + 1,
+        itemBuilder: (context, index) {
+          if (index == 0) {
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 16.0),
+              child: countHeader,
+            );
           }
+          final group = _filteredGroupedContentItems[index - 1];
           final mediaItem = group.mediaItem;
           final mediaPath = mediaItem.path;
           final associatedExperiences = group.associatedExperiences;
@@ -2970,7 +2874,7 @@ return Container(
                       backgroundColor:
                           Theme.of(context).primaryColor.withOpacity(0.8),
                       child: Text(
-                        '${adjustedIndex + 1}',
+                        '${index}',
                         style: TextStyle(
                           fontSize: 14.0,
                           fontWeight: FontWeight.bold,
@@ -4044,6 +3948,326 @@ return Container(
         ),
       ),
     );
+  }
+
+  // ADDED: Reusable Content List Item builder (mobile) to keep grouped and flat views consistent
+  Widget _buildContentListItem(GroupedContentItem group, int index) {
+    final mediaItem = group.mediaItem;
+    final mediaPath = mediaItem.path;
+    final associatedExperiences = group.associatedExperiences;
+    final isExpanded = _contentExpansionStates[mediaPath] ?? false;
+    final bool isInstagramUrl = mediaPath.toLowerCase().contains('instagram.com');
+    final bool isTikTokUrl = mediaPath.toLowerCase().contains('tiktok.com') ||
+        mediaPath.toLowerCase().contains('vm.tiktok.com');
+    final bool isFacebookUrl = mediaPath.toLowerCase().contains('facebook.com') ||
+        mediaPath.toLowerCase().contains('fb.com') ||
+        mediaPath.toLowerCase().contains('fb.watch');
+    final bool isYouTubeUrl = mediaPath.toLowerCase().contains('youtube.com') ||
+        mediaPath.toLowerCase().contains('youtu.be') ||
+        mediaPath.toLowerCase().contains('youtube.com/shorts');
+    bool isNetworkUrl =
+        mediaPath.startsWith('http') || mediaPath.startsWith('https');
+
+    Widget mediaWidget;
+    if (isTikTokUrl) {
+      mediaWidget = TikTokPreviewWidget(
+        url: mediaPath,
+        launchUrlCallback: _launchUrl,
+      );
+    } else if (isInstagramUrl) {
+      mediaWidget = instagram_widget.InstagramWebView(
+        url: mediaPath,
+        height: 640.0,
+        launchUrlCallback: _launchUrl,
+        onWebViewCreated: (_) {},
+        onPageFinished: (_) {},
+      );
+    } else if (isFacebookUrl) {
+      mediaWidget = FacebookPreviewWidget(
+        url: mediaPath,
+        height: 500.0,
+        launchUrlCallback: _launchUrl,
+        onWebViewCreated: (_) {},
+        onPageFinished: (_) {},
+      );
+    } else if (isYouTubeUrl) {
+      mediaWidget = YouTubePreviewWidget(
+        url: mediaPath,
+        launchUrlCallback: _launchUrl,
+      );
+    } else if (isNetworkUrl) {
+      if (mediaPath.toLowerCase().endsWith('.jpg') ||
+          mediaPath.toLowerCase().endsWith('.jpeg') ||
+          mediaPath.toLowerCase().endsWith('.png') ||
+          mediaPath.toLowerCase().endsWith('.gif') ||
+          mediaPath.toLowerCase().endsWith('.webp')) {
+        mediaWidget = Image.network(
+          mediaPath,
+          fit: BoxFit.cover,
+          loadingBuilder: (context, child, loadingProgress) {
+            if (loadingProgress == null) return child;
+            return const Center(child: CircularProgressIndicator());
+          },
+          errorBuilder: (context, error, stackTrace) {
+            return Container(
+              color: Colors.grey[200],
+              height: 200,
+              child: Center(
+                  child: Icon(Icons.broken_image_outlined,
+                      color: Colors.grey[600], size: 40)),
+            );
+          },
+        );
+      } else {
+        final lower = mediaPath.toLowerCase();
+        final bool isMapsUrl = lower.contains('google.com/maps') ||
+            lower.contains('maps.app.goo.gl') ||
+            lower.contains('goo.gl/maps') ||
+            lower.contains('g.co/kgs/') ||
+            lower.contains('share.google/');
+        if (lower.contains('yelp.com/biz') || lower.contains('yelp.to/')) {
+          mediaWidget = WebUrlPreviewWidget(
+            url: mediaPath,
+            launchUrlCallback: _launchUrl,
+            showControls: false,
+            height: isExpanded ? 1000.0 : 600.0,
+          );
+        } else if (isMapsUrl) {
+          if (!_mapsPreviewFutures.containsKey(mediaPath) &&
+              associatedExperiences.isNotEmpty) {
+            final exp = associatedExperiences.first;
+            _mapsPreviewFutures[mediaPath] = Future.value({
+              'location': exp.location,
+              'placeName': exp.name,
+              'mapsUrl': mediaPath,
+              'website': exp.location.website,
+            });
+          }
+          mediaWidget = MapsPreviewWidget(
+            mapsUrl: mediaPath,
+            mapsPreviewFutures: _mapsPreviewFutures,
+            getLocationFromMapsUrl: _getLocationFromMapsUrl,
+            launchUrlCallback: _launchUrl,
+            mapsService: GoogleMapsService(),
+          );
+        } else {
+          mediaWidget = GenericUrlPreviewWidget(
+            url: mediaPath,
+            launchUrlCallback: _launchUrl,
+          );
+        }
+      }
+    } else {
+      mediaWidget = Container(
+        color: Colors.grey[300],
+        height: 150,
+        child: Center(
+            child: Icon(Icons.description, color: Colors.grey[700], size: 40)),
+      );
+    }
+
+    final contentItem = Padding(
+      key: ValueKey(mediaPath),
+      padding: const EdgeInsets.only(bottom: 24.0),
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8.0),
+            child: Center(
+              child: CircleAvatar(
+                radius: 14,
+                backgroundColor:
+                    Theme.of(context).primaryColor.withOpacity(0.8),
+                child: Text(
+                  '$index',
+                  style: const TextStyle(
+                    fontSize: 14.0,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Container(
+            margin: EdgeInsets.zero,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(4.0),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.1),
+                  blurRadius: 4.0,
+                  offset: const Offset(0, -2),
+                ),
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.1),
+                  blurRadius: 4.0,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 12.0, vertical: 8.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (associatedExperiences.length > 1)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 6.0),
+                          child: Text(
+                            'Linked Experiences (${associatedExperiences.length}):',
+                            style: Theme.of(context)
+                                .textTheme
+                                .labelLarge
+                                ?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.black87,
+                                ),
+                          ),
+                        ),
+                      ...associatedExperiences.map((exp) {
+                        final category = _categories.firstWhereOrNull(
+                            (cat) => cat.id == exp.categoryId);
+                        final categoryIcon = category?.icon ?? '❓';
+                        final colorCategory = _colorCategories
+                            .firstWhereOrNull((cc) => cc.id == exp.colorCategoryId);
+                        final color = colorCategory != null
+                            ? _parseColor(colorCategory.colorHex)
+                            : Theme.of(context).disabledColor;
+
+                        return InkWell(
+                          onTap: () {
+                            final resolvedCategory = category ?? UserCategory(
+                              id: exp.categoryId ?? 'uncategorized',
+                              name: category?.name ?? 'Uncategorized',
+                              icon: categoryIcon,
+                              ownerUserId: category?.ownerUserId ?? _authService.currentUser?.uid ?? 'system_default',
+                              orderIndex: category?.orderIndex ?? 9999,
+                            );
+                            Navigator.push<bool>(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => ExperiencePageScreen(
+                                  experience: exp,
+                                  category: resolvedCategory,
+                                  userColorCategories: _colorCategories,
+                                ),
+                              ),
+                            ).then((result) {
+                              if (result == true && mounted) {
+                                _loadData();
+                              }
+                            });
+                          },
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4.0),
+                            child: Row(
+                              children: [
+                                Text(categoryIcon, style: const TextStyle(fontSize: 16)),
+                                const SizedBox(width: 6),
+                                if (colorCategory != null)
+                                  Padding(
+                                    padding: const EdgeInsets.only(right: 6.0),
+                                    child: Icon(Icons.circle, color: color, size: 10),
+                                  ),
+                                Expanded(
+                                  child: Text(
+                                    exp.name,
+                                    style: Theme.of(context).textTheme.bodyMedium,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                const Icon(Icons.chevron_right, color: Colors.grey, size: 18),
+                              ],
+                            ),
+                          ),
+                        );
+                      }),
+                      if (associatedExperiences.isEmpty)
+                        const Text('No linked experiences.',
+                            style: TextStyle(fontStyle: FontStyle.italic)),
+                    ],
+                  ),
+                ),
+                GestureDetector(
+                  onTap: () {
+                    setState(() {
+                      _contentExpansionStates[mediaPath] = !isExpanded;
+                    });
+                  },
+                  child: mediaWidget,
+                ),
+                if (isInstagramUrl)
+                  Container(
+                    color: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        IconButton(
+                          icon: const FaIcon(FontAwesomeIcons.instagram),
+                          color: const Color(0xFFE4405F),
+                          iconSize: 32,
+                          tooltip: 'Open in Instagram',
+                          constraints: const BoxConstraints(),
+                          padding: EdgeInsets.zero,
+                          onPressed: () => _launchUrl(mediaPath),
+                        ),
+                      ],
+                    ),
+                  ),
+                if (mediaPath.toLowerCase().contains('yelp.com/biz') || mediaPath.toLowerCase().contains('yelp.to/'))
+                  Container(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        IconButton(
+                          icon: const FaIcon(FontAwesomeIcons.yelp),
+                          color: const Color(0xFFD32323),
+                          iconSize: 32,
+                          tooltip: 'Open in Yelp',
+                          constraints: const BoxConstraints(),
+                          padding: EdgeInsets.zero,
+                          onPressed: () => _launchUrl(mediaPath),
+                        ),
+                      ],
+                    ),
+                  ),
+                if (mediaPath.toLowerCase().contains('google.com/maps') ||
+                    mediaPath.toLowerCase().contains('maps.app.goo.gl') ||
+                    mediaPath.toLowerCase().contains('goo.gl/maps') ||
+                    mediaPath.toLowerCase().contains('g.co/kgs/') ||
+                    mediaPath.toLowerCase().contains('share.google/'))
+                  Container(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        IconButton(
+                          icon: const FaIcon(FontAwesomeIcons.google),
+                          color: const Color(0xFF4285F4),
+                          iconSize: 32,
+                          tooltip: 'Open in Google Maps',
+                          constraints: const BoxConstraints(),
+                          padding: EdgeInsets.zero,
+                          onPressed: () => _launchUrl(mediaPath),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+    return contentItem;
   }
 
   // ADDED: Dialog to show media details (associated experiences)
