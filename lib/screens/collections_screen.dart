@@ -2321,6 +2321,13 @@ final category = _categories.firstWhere(
                   : (level == 'state')
                       ? (_stateExpansionExperiences[key] ?? false)
                       : (_cityExpansionExperiences[key] ?? false);
+              final TextStyle base = Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold, color: Colors.grey[700]) ?? const TextStyle(fontWeight: FontWeight.bold);
+              final TextStyle style = level == 'country'
+                  ? base.copyWith(fontSize: (base.fontSize ?? 14) + 4)
+                  : level == 'state'
+                      ? base.copyWith(fontSize: (base.fontSize ?? 14) + 2)
+                      : base;
+              final double leftPadding = level == 'country' ? 0 : level == 'state' ? 16 : 32;
               return InkWell(
                 onTap: () {
                   setState(() {
@@ -2336,7 +2343,7 @@ final category = _categories.firstWhere(
                 child: Container(
                   width: double.infinity,
                   color: Colors.white,
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
+                  padding: EdgeInsets.fromLTRB(16 + leftPadding, 12, 16, 6),
                   child: Row(
                     children: [
                       Icon(isExpanded ? Icons.expand_less : Icons.expand_more, color: Colors.grey[700], size: 18),
@@ -2344,7 +2351,7 @@ final category = _categories.firstWhere(
                       Expanded(
                         child: Text(
                           displayRegion,
-                          style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold, color: Colors.grey[700]),
+                          style: style,
                         ),
                       ),
                     ],
@@ -2676,6 +2683,13 @@ final category = _categories.firstWhere(
               } else {
                 isExpanded = _cityExpansionContent[key] ?? false;
               }
+              final TextStyle base = Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold, color: Colors.grey[700]) ?? const TextStyle(fontWeight: FontWeight.bold);
+              final TextStyle style = level == 'country'
+                  ? base.copyWith(fontSize: (base.fontSize ?? 14) + 4)
+                  : level == 'state'
+                      ? base.copyWith(fontSize: (base.fontSize ?? 14) + 2)
+                      : base;
+              final double leftPadding = level == 'country' ? 0 : level == 'state' ? 16 : 32;
               return InkWell(
                 onTap: () {
                   setState(() {
@@ -2691,7 +2705,7 @@ final category = _categories.firstWhere(
                 child: Container(
                   width: double.infinity,
                   color: Colors.white,
-                  padding: const EdgeInsets.fromLTRB(0, 8, 0, 8),
+                  padding: EdgeInsets.fromLTRB(leftPadding, 8, 0, 8),
                   child: Row(
                     children: [
                       Icon(
@@ -2703,10 +2717,7 @@ final category = _categories.firstWhere(
                       Expanded(
                         child: Text(
                           display,
-                          style: Theme.of(context)
-                              .textTheme
-                              .titleSmall
-                              ?.copyWith(fontWeight: FontWeight.bold, color: Colors.grey[700]),
+                          style: style,
                         ),
                       ),
                     ],
