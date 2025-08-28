@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'dart:math' as math;
 import 'dart:io';
-import 'package:path_provider/path_provider.dart';
+// import 'package:path_provider/path_provider.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:receive_sharing_intent/receive_sharing_intent.dart';
+import 'package:share_handler/share_handler.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:firebase_messaging/firebase_messaging.dart'; // FCM Import
 import 'package:flutter_local_notifications/flutter_local_notifications.dart'; // Local Notifications Import
@@ -14,6 +14,7 @@ import 'screens/receive_share_screen.dart';
 import 'screens/follow_requests_screen.dart'; // Import FollowRequestsScreen
 import 'services/auth_service.dart';
 import 'services/sharing_service.dart';
+import 'models/shared_media_compat.dart';
 import 'services/notification_state_service.dart'; // Import NotificationStateService
 import 'package:provider/provider.dart';
 import 'providers/receive_share_provider.dart';
@@ -27,16 +28,7 @@ import 'package:fluttertoast/fluttertoast.dart';
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 // Debug logging function for cold start issues
-Future<void> _writeDebugLog(String message) async {
-  try {
-    final directory = await getApplicationDocumentsDirectory();
-    final file = File('${directory.path}/plendy_debug.log');
-    final timestamp = DateTime.now().toIso8601String();
-    await file.writeAsString('$timestamp: $message\n', mode: FileMode.append);
-  } catch (e) {
-    print('Failed to write debug log: $e');
-  }
-}
+// _writeDebugLog disabled (unused)
 
 // Initialize FlutterLocalNotificationsPlugin (if you want to show foreground notifications)
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
@@ -55,6 +47,84 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       // You could potentially show a local notification here if needed for background messages,
       // but often the system tray notification from FCM is sufficient and desired.
    }
+}
+
+// DEBUG: Function to periodically check for shared data
+void _startShareDebugTimer() {
+  print("DEBUG: Starting share debug timer...");
+  
+  // Check immediately
+  _checkForSharedData();
+  
+  // Then check every 2 seconds
+  Timer.periodic(Duration(seconds: 2), (timer) {
+    _checkForSharedData();
+  });
+}
+
+// DEBUG: Check for shared data from receive_sharing_intent
+Future<void> _checkForSharedData() async {
+  try {
+    // First, check app group UserDefaults directly (iOS specific)
+    if (Platform.isIOS) {
+      _debugCheckAppGroup();
+    }
+    
+    // Check initial media (for when app was closed)
+    final initial = await ShareHandlerPlatform.instance.getInitialSharedMedia();
+    if (initial != null && ((initial.content?.isNotEmpty ?? false) || (initial.attachments?.isNotEmpty ?? false))) {
+      final files = _convertSharedMedia(initial);
+      print("🎯 DEBUG: Found INITIAL shared data: ${files.length} items");
+      for (var item in files) {
+        print("🎯 DEBUG: ${item.type}: ${item.path}");
+      }
+      // Show a toast to indicate we received data
+      if (!kIsWeb) {
+        Fluttertoast.showToast(
+          msg: "Received ${files.length} shared item(s)",
+          toastLength: Toast.LENGTH_LONG,
+          gravity: ToastGravity.TOP,
+          backgroundColor: Colors.green,
+          textColor: Colors.white,
+        );
+      }
+    }
+
+    // Note: URL/text are delivered via getInitialMedia as SharedMediaType.text on iOS
+    
+    // Also check the stream for live updates
+    ShareHandlerPlatform.instance.sharedMediaStream.listen((media) {
+      final value = _convertSharedMedia(media);
+      if (value.isNotEmpty) {
+        print("🎯 DEBUG: Found STREAM shared data: ${value.length} items");
+        for (var item in value) {
+          print("🎯 DEBUG: ${item.type}: ${item.path}");
+        }
+        // Show a toast to indicate we received data
+        if (!kIsWeb) {
+          Fluttertoast.showToast(
+            msg: "Stream received ${value.length} item(s)",
+            toastLength: Toast.LENGTH_LONG,
+            gravity: ToastGravity.TOP,
+            backgroundColor: Colors.blue,
+            textColor: Colors.white,
+          );
+        }
+      }
+    });
+
+    // Note: URL/text stream is delivered via getMediaStream as SharedMediaType.text on iOS
+  } catch (e) {
+    print("DEBUG: Error checking for shared data: $e");
+  }
+}
+
+// DEBUG: Check iOS App Group directly
+void _debugCheckAppGroup() {
+  print("📱 DEBUG: Checking iOS App Group data...");
+  // This is just logging - the actual check happens in native code
+  // The receive_sharing_intent plugin reads from UserDefaults(suiteName: "group.com.plendy.app")
+  // with keys "ShareKey" and "ShareKey#data"
 }
 
 Future<void> _configureLocalNotifications() async {
@@ -133,6 +203,9 @@ void main() async {
   // Conditionally initialize SharingService if not on web
   if (!kIsWeb) {
     SharingService().init();
+    
+    // DEBUG: Start timer to check for shared data
+    _startShareDebugTimer();
 
     // --- FCM Setup ---
     await _configureLocalNotifications(); // Setup for local notifications (foreground)
@@ -244,12 +317,14 @@ class _MyAppState extends State<MyApp> {
 
     if (!kIsWeb) {
       // Check for initial shared files when app was closed
-      ReceiveSharingIntent.instance
-          .getInitialMedia()
-          .then((List<SharedMediaFile>? value) {
+      ShareHandlerPlatform.instance
+          .getInitialSharedMedia()
+          .then((SharedMedia? media) {
         print("MAIN: Initial media check complete");
 
-        if (value != null && value.isNotEmpty) {
+        final value = media != null ? _convertSharedMedia(media) : <SharedMediaFile>[];
+
+        if (value.isNotEmpty) {
           print("MAIN: Found initial shared files: ${value.length}");
           
           // Add toast when we detect shared files
@@ -315,8 +390,9 @@ class _MyAppState extends State<MyApp> {
       });
 
       // Listen for incoming shares while the app is running
-      _intentSub = ReceiveSharingIntent.instance.getMediaStream().listen(
-          (List<SharedMediaFile> value) {
+      _intentSub = ShareHandlerPlatform.instance.sharedMediaStream.listen(
+          (SharedMedia media) {
+        final value = _convertSharedMedia(media);
         if (mounted) {
           setState(() {
             _sharedFiles = value;
@@ -446,9 +522,7 @@ class _MyAppState extends State<MyApp> {
                 _shouldShowReceiveShare = false; // Reset flag
               });
             }
-            if (!kIsWeb) {
-              ReceiveSharingIntent.instance.reset(); // Reset intent
-            }
+            // No explicit reset needed with share_handler
           }),
       );
     }
@@ -487,9 +561,7 @@ class _MyAppState extends State<MyApp> {
               setState(() {
                 _sharedFiles = null;
               });
-              if (!kIsWeb) {
-                ReceiveSharingIntent.instance.reset();
-              }
+              // No explicit reset needed with share_handler
               print("MyApp: Cleared share data due to logout.");
             }
           });
@@ -501,6 +573,53 @@ class _MyAppState extends State<MyApp> {
       },
     );
   }
+}
+
+// Minimal converters duplicated here for main.dart context
+List<SharedMediaFile> _convertSharedMedia(SharedMedia media) {
+  final List<SharedMediaFile> out = [];
+  final content = media.content;
+  if (content != null && content.trim().isNotEmpty) {
+    final url = _extractFirstUrl(content);
+    out.add(SharedMediaFile(
+      path: content,
+      thumbnail: null,
+      duration: null,
+      type: url != null ? SharedMediaType.url : SharedMediaType.text,
+    ));
+  }
+  final atts = media.attachments ?? [];
+  for (final att in atts) {
+    if (att == null) continue;
+    SharedMediaType t = SharedMediaType.file;
+    switch (att.type) {
+      case SharedAttachmentType.image:
+        t = SharedMediaType.image;
+        break;
+      case SharedAttachmentType.video:
+        t = SharedMediaType.video;
+        break;
+      case SharedAttachmentType.file:
+      default:
+        t = SharedMediaType.file;
+    }
+    out.add(SharedMediaFile(
+      path: att.path,
+      thumbnail: null,
+      duration: null,
+      type: t,
+    ));
+  }
+  return out;
+}
+
+String? _extractFirstUrl(String text) {
+  if (text.isEmpty) return null;
+  final RegExp urlRegex = RegExp(
+      r"(?:(?:https?|ftp):\/\/|www\.)[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b(?:[-a-zA-Z0-9()@:%_\+.~#?&\/=]*)",
+      caseSensitive: false);
+  final match = urlRegex.firstMatch(text);
+  return match?.group(0);
 }
 
 // Simple observer for app lifecycle events

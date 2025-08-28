@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'dart:math';
-import 'package:receive_sharing_intent/receive_sharing_intent.dart';
+import '../models/shared_media_compat.dart';
 import 'dart:io';
 import 'dart:convert';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -1301,7 +1301,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     _isFullyInitialized = false; // Reset initialization flag
     WidgetsBinding.instance.removeObserver(this);
     _sharingService.sharedFiles.removeListener(_handleSharedFilesUpdate);
-    // Removed direct call to ReceiveSharingIntent.instance.reset() from here,
+    // Removed direct call to receive_sharing_intent reset from here,
     // it's now part of _sharingService.resetSharedItems()
     _userCategoriesNotifier.dispose();
     _userColorCategoriesNotifier.dispose();

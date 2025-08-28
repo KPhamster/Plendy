@@ -2,7 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:receive_sharing_intent/receive_sharing_intent.dart';
+import 'package:share_handler/share_handler.dart';
+// ignore: unused_import
 import 'dart:io' show Platform;
 import '../screens/receive_share_screen.dart';
 import 'package:provider/provider.dart';
@@ -13,6 +14,9 @@ import '../models/share_permission.dart';
 import '../models/enums/share_enums.dart';
 import '../screens/main_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+// ignore: unused_import
+import 'package:flutter/services.dart';
+import '../models/shared_media_compat.dart';
 
 class SharingService {
   static final SharingService _instance = SharingService._internal();
@@ -149,8 +153,11 @@ class SharingService {
   // Helper method to check if we have initial shared content to process
   Future<bool> _hasInitialSharedContent() async {
     try {
-      final initialMedia = await ReceiveSharingIntent.instance.getInitialMedia();
-      return initialMedia.isNotEmpty;
+      final media = await ShareHandlerPlatform.instance.getInitialSharedMedia();
+      if (media == null) return false;
+      if ((media.content != null && media.content!.trim().isNotEmpty)) return true;
+      if (media.attachments != null && media.attachments!.isNotEmpty) return true;
+      return false;
     } catch (e) {
       print("SHARE SERVICE: Error checking for initial content: $e");
       return false;
@@ -369,8 +376,8 @@ class SharingService {
 
     print("SHARE SERVICE: Setting up intent stream listener");
 
-    _intentSub = ReceiveSharingIntent.instance.getMediaStream().listen(
-        (List<SharedMediaFile> value) {
+    _intentSub = ShareHandlerPlatform.instance.sharedMediaStream.listen((SharedMedia media) {
+      final value = _convertSharedMedia(media);
       print("SHARE SERVICE: Received shared files in stream: ${value.length}");
       if (value.isNotEmpty) {
         _sharedFilesController.value = List.from(value);
@@ -421,23 +428,23 @@ class SharingService {
     }, onError: (err) {
       print("SHARE SERVICE: getIntentDataStream error: $err");
     });
+
+    // Text/URL arrives as SharedMediaType.text via getMediaStream on iOS
   }
 
   Future<void> _checkInitialIntent() async {
     print("SHARE SERVICE: Checking for initial intent");
     try {
-      final initialMedia =
-          await ReceiveSharingIntent.instance.getInitialMedia();
-
-      if (initialMedia.isNotEmpty) {
-        print(
-            "SHARE SERVICE: Found initial intent with ${initialMedia.length} files");
-        print("SHARE SERVICE: First file path: ${initialMedia.first.path}");
-        _sharedFilesController.value = List.from(initialMedia);
-
-        // We'll let the app handle navigation based on this data
-      } else {
-        print("SHARE SERVICE: No initial intent found");
+      final initial = await ShareHandlerPlatform.instance.getInitialSharedMedia();
+      if (initial != null) {
+        final files = _convertSharedMedia(initial);
+        if (files.isNotEmpty) {
+          print("SHARE SERVICE: Found initial shared media: ${files.length}");
+          _sharedFilesController.value = List.from(files);
+          isShareFlowActive = true;
+          _persistOriginalSharedContent();
+          persistCurrentSharedContent(files);
+        }
       }
     } catch (e) {
       print("SHARE SERVICE: Error checking initial intent: $e");
@@ -459,21 +466,7 @@ class SharingService {
     _isReceiveShareScreenOpen = false;
     print("SHARE SERVICE: Reset _isReceiveShareScreenOpen flag to false");
 
-    // Only reset for Android - iOS needs the intent to persist
-    if (!Platform.isIOS) {
-      ReceiveSharingIntent.instance.reset();
-
-      // Force a short delay and then reset again to ensure complete cleanup
-      Future.delayed(Duration(milliseconds: 200), () {
-        ReceiveSharingIntent.instance.reset();
-        print("SHARE SERVICE: Secondary share intent reset completed");
-      });
-
-      print("SHARE SERVICE: Share intent reset completed");
-    } else {
-      print(
-          "SHARE SERVICE: On iOS - not resetting intent to ensure it persists");
-    }
+    // share_handler has no reset call; nothing further required here.
   }
 
   // Recreate listeners after app resume
@@ -633,8 +626,7 @@ class SharingService {
     
     // isShareFlowActive should be false already if prepareToNavigateAwayFromShare was called.
     // Try an additional reset here, now that MainScreen is active.
-    print("SHARE SERVICE: Attempting final intent reset from shareNavigationComplete.");
-    ReceiveSharingIntent.instance.reset(); 
+    print("SHARE SERVICE: Attempting final cleanup from shareNavigationComplete.");
   }
 
   /// Shares an item (Experience or UserCategory) with another user.
@@ -762,4 +754,61 @@ class SharingService {
 
   // Consider adding methods to fetch the actual shared Experience/UserCategory objects
   // based on the SharePermission list, potentially combining data.
+}
+
+// --- share_handler compatibility helpers ---
+// ignore: unused_element
+bool _sharedMediaHasAny(SharedMedia? media) {
+  if (media == null) return false;
+  if ((media.content != null && media.content!.trim().isNotEmpty)) return true;
+  if (media.attachments != null && media.attachments!.isNotEmpty) return true;
+  return false;
+}
+
+List<SharedMediaFile> _convertSharedMedia(SharedMedia media) {
+  final List<SharedMediaFile> out = [];
+  final content = media.content;
+  if (content != null && content.trim().isNotEmpty) {
+    final url = _extractFirstUrl(content);
+    out.add(SharedMediaFile(
+      path: content,
+      thumbnail: null,
+      duration: null,
+      type: url != null ? SharedMediaType.url : SharedMediaType.text,
+    ));
+  }
+  final atts = media.attachments ?? [];
+  for (final att in atts) {
+    if (att == null) continue;
+    SharedMediaType t = SharedMediaType.file;
+    switch (att.type) {
+      case SharedAttachmentType.image:
+        t = SharedMediaType.image;
+        break;
+      case SharedAttachmentType.video:
+        t = SharedMediaType.video;
+        break;
+      case SharedAttachmentType.file:
+        t = SharedMediaType.file;
+        break;
+      default:
+        t = SharedMediaType.file;
+    }
+    out.add(SharedMediaFile(
+      path: att.path,
+      thumbnail: null,
+      duration: null,
+      type: t,
+    ));
+  }
+  return out;
+}
+
+String? _extractFirstUrl(String text) {
+  if (text.isEmpty) return null;
+  final RegExp urlRegex = RegExp(
+      r"(?:(?:https?|ftp):\/\/|www\.)[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b(?:[-a-zA-Z0-9()@:%_\+.~#?&\/=]*)",
+      caseSensitive: false);
+  final match = urlRegex.firstMatch(text);
+  return match?.group(0);
 }

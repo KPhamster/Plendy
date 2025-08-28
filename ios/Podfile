@@ -1,7 +1,5 @@
-# Uncomment this line to define a global platform for your project
 platform :ios, '15.0'
 
-# CocoaPods analytics sends network stats synchronously affecting flutter build latency.
 ENV['COCOAPODS_DISABLE_STATS'] = 'true'
 
 project 'Runner', {
@@ -10,12 +8,14 @@ project 'Runner', {
   'Release' => :release,
 }
 
+# Workaround for CocoaPods issue with app extensions
+install! 'cocoapods', :disable_input_output_paths => true
+
 def flutter_root
   generated_xcode_build_settings_path = File.expand_path(File.join('..', 'Flutter', 'Generated.xcconfig'), __FILE__)
   unless File.exist?(generated_xcode_build_settings_path)
     raise "#{generated_xcode_build_settings_path} must exist. If you're running pod install manually, make sure flutter pub get is executed first"
   end
-
   File.foreach(generated_xcode_build_settings_path) do |line|
     matches = line.match(/FLUTTER_ROOT\=(.*)/)
     return matches[1].strip if matches
@@ -29,124 +29,27 @@ flutter_ios_podfile_setup
 
 target 'Runner' do
   use_frameworks!
+  use_modular_headers!
 
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
+
   target 'RunnerTests' do
     inherit! :search_paths
   end
+
+  target 'ShareExtension' do
+    inherit! :search_paths
+    pod "share_handler_ios_models", :path => ".symlinks/plugins/share_handler_ios/ios/Models"
+  end
 end
+
+ 
 
 post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)
     target.build_configurations.each do |config|
       config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
-      
-      # Specifically fix BoringSSL-GRPC and gRPC-Core compiler flags
-      if target.name == 'BoringSSL-GRPC' || target.name == 'gRPC-Core' || target.name == 'gRPC-C++'
-        if config.build_settings['COMPILER_FLAGS']
-          # Remove the problematic -GCC_WARN_INHIBIT_ALL_WARNINGS flag entirely
-          config.build_settings['COMPILER_FLAGS'] = config.build_settings['COMPILER_FLAGS'].gsub(/-GCC_WARN_INHIBIT_ALL_WARNINGS\s*/, '')
-          # Clean up any double spaces
-          config.build_settings['COMPILER_FLAGS'] = config.build_settings['COMPILER_FLAGS'].gsub(/\s+/, ' ').strip
-        end
-        
-        # Additional fixes for gRPC targets
-        config.build_settings['CLANG_CXX_LANGUAGE_STANDARD'] = 'c++17'
-        config.build_settings['CLANG_CXX_LIBRARY'] = 'libc++'
-        config.build_settings['CLANG_WARN_DOCUMENTATION_COMMENTS'] = 'NO'
-        config.build_settings['GCC_WARN_INHIBIT_ALL_WARNINGS'] = 'YES'
-      end
-      
-      # Remove all problematic compiler flags from all targets
-      ['OTHER_CFLAGS', 'OTHER_CPLUSPLUSFLAGS', 'OTHER_SWIFT_FLAGS', 'COMPILER_FLAGS'].each do |flag_key|
-        if config.build_settings[flag_key]
-          if config.build_settings[flag_key].is_a?(Array)
-            config.build_settings[flag_key] = config.build_settings[flag_key].reject { |flag| 
-              flag == '-G' || flag.include?('-G ') || flag.include?('-GCC_WARN_INHIBIT_ALL_WARNINGS')
-            }
-          elsif config.build_settings[flag_key].is_a?(String)
-            # Remove problematic flags
-            config.build_settings[flag_key] = config.build_settings[flag_key]
-              .gsub(/-GCC_WARN_INHIBIT_ALL_WARNINGS\s*/, '')
-              .gsub(/\s*-G\s+/, ' ')
-              .gsub(/\s*-G$/, '')
-              .gsub(/\s+/, ' ')
-              .strip
-          end
-        end
-      end
-      
-      # Ensure proper architecture settings for simulator and device
-      config.build_settings['ONLY_ACTIVE_ARCH'] = 'NO'
-      
-      # For iOS Simulator (x86_64 for Intel Macs)
-      config.build_settings['ARCHS[sdk=iphonesimulator*]'] = 'x86_64'
-      config.build_settings['VALID_ARCHS[sdk=iphonesimulator*]'] = 'x86_64'
-      config.build_settings['EXCLUDED_ARCHS[sdk=iphonesimulator*]'] = 'arm64'
-      
-      # For iOS Device (arm64)
-      config.build_settings['ARCHS[sdk=iphoneos*]'] = 'arm64'
-      config.build_settings['VALID_ARCHS[sdk=iphoneos*]'] = 'arm64'
-      
-      # Fix C++ language standard for gRPC compatibility
-      config.build_settings['CLANG_CXX_LANGUAGE_STANDARD'] = 'c++14'
-      config.build_settings['CLANG_CXX_LIBRARY'] = 'libc++'
-      
-      # Remove any legacy settings
-      config.build_settings.delete('ARCHS[sdk=iphonesimulator*]')
-      config.build_settings.delete('EXCLUDED_ARCHS[sdk=iphoneos*]')
     end
-
-    # Suppress deprecation warnings from cloud_firestore Obj-C sources only
-    if target.name == 'cloud_firestore'
-      target.build_configurations.each do |config|
-        existing_flags = config.build_settings['WARNING_CFLAGS']
-        if existing_flags.is_a?(Array)
-          config.build_settings['WARNING_CFLAGS'] = (existing_flags + ['-Wno-deprecated-declarations']).uniq
-        elsif existing_flags.is_a?(String)
-          unless existing_flags.include?('-Wno-deprecated-declarations')
-            config.build_settings['WARNING_CFLAGS'] = "#{existing_flags} -Wno-deprecated-declarations"
-          end
-        else
-          config.build_settings['WARNING_CFLAGS'] = ['-Wno-deprecated-declarations']
-        end
-      end
-    end
-  end
-  
-  # Also fix the pods project itself
-  installer.pods_project.build_configurations.each do |config|
-    config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
-  end
-  
-  # Fix problematic compiler flags in the project file
-  project_path = installer.pods_project.path
-  pbxproj_path = "#{project_path}/project.pbxproj" 
-  
-  # Check if the file exists before trying to read it
-  if File.exist?(pbxproj_path)
-    # Read the file
-    pbxproj_content = File.read(pbxproj_path)
-    
-    # Remove all instances of -GCC_WARN_INHIBIT_ALL_WARNINGS flag
-    original_content = pbxproj_content.dup
-    pbxproj_content.gsub!(/-GCC_WARN_INHIBIT_ALL_WARNINGS/, '')
-    pbxproj_content.gsub!(/GCC_WARN_INHIBIT_ALL_WARNINGS/, '')
-    
-    # Clean up multiple spaces and trailing spaces
-    pbxproj_content.gsub!(/\s+/, ' ')
-    pbxproj_content.gsub!(/ ;/, ';')
-    pbxproj_content.gsub!(/ "/, '"')
-    
-    # Write the file back only if changes were made
-    if pbxproj_content != original_content
-      File.write(pbxproj_path, pbxproj_content)
-      puts "Successfully removed #{original_content.scan(/-?GCC_WARN_INHIBIT_ALL_WARNINGS/).count} problematic compiler flag instances"
-    else
-      puts "No problematic compiler flags found in Pods project"
-    end
-  else
-    puts "Pods project.pbxproj not found, skipping flag fix"
   end
 end

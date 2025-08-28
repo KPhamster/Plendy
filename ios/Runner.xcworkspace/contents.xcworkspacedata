@@ -7,4 +7,9 @@
    <FileRef
       location = "group:Pods/Pods.xcodeproj">
    </FileRef>
+   <Group
+      location = "group:"
+      name = "Frameworks">
+      
+   </Group>
 </Workspace>

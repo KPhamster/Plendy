@@ -48,7 +48,7 @@ dependencies:
   image_picker: ^1.1.2
   firebase_storage: ^13.0.0
   cloud_firestore: ^6.0.0
-  receive_sharing_intent: ^1.8.1
+  share_handler: ^0.0.25
   any_link_preview: ^3.0.1
   url_launcher: ^6.3.1
   webview_flutter: ^4.13.0
