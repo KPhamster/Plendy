@@ -1,6 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:receive_sharing_intent/receive_sharing_intent.dart';
+import '../../../models/shared_media_compat.dart';
 
 class ImagePreviewWidget extends StatelessWidget {
   final SharedMediaFile file;

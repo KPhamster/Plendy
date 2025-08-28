@@ -1,6 +1,7 @@
 import Flutter
 import UIKit
 import GoogleMaps
+import Foundation
 
 @main
 @objc class AppDelegate: FlutterAppDelegate {
@@ -16,6 +17,37 @@ import GoogleMaps
       NSLog("[Plendy] Google Maps API key is missing or not resolved. Ensure MAPS_API_KEY is set and Info.plist contains key 'GoogleMapsApiKey'.")
     }
     GeneratedPluginRegistrant.register(with: self)
+
+    // Bridge to read shared data from App Group if the plugin doesn't deliver it
+    if let controller = window?.rootViewController as? FlutterViewController {
+      let channel = FlutterMethodChannel(name: "plendy.share/channel", binaryMessenger: controller.binaryMessenger)
+      channel.setMethodCallHandler { [weak self] call, result in
+        guard let _ = self else { return }
+
+        // Determine App Group ID similar to plugin logic
+        let appGroupId = Bundle.main.object(forInfoDictionaryKey: "AppGroupId") as? String
+        let defaultGroupId = "group.\(Bundle.main.bundleIdentifier ?? "")"
+        let suiteId = (appGroupId?.isEmpty == false) ? appGroupId! : defaultGroupId
+        let userDefaults = UserDefaults(suiteName: suiteId)
+
+        switch call.method {
+        case "getInitialSharedMedia":
+          let jsonData = userDefaults?.data(forKey: "ShareKey")
+          let message = userDefaults?.string(forKey: "ShareMessageKey")
+          let jsonString = jsonData.flatMap { String(data: $0, encoding: .utf8) }
+          result(["json": jsonString as Any, "message": message as Any])
+
+        case "resetSharedMedia":
+          userDefaults?.removeObject(forKey: "ShareKey")
+          userDefaults?.removeObject(forKey: "ShareMessageKey")
+          userDefaults?.synchronize()
+          result(true)
+
+        default:
+          result(FlutterMethodNotImplemented)
+        }
+      }
+    }
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 }
