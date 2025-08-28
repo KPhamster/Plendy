@@ -27,6 +27,19 @@ class GoogleMapsService {
   // Get the API key securely
   static String get apiKey => ApiSecrets.googleMapsApiKey;
 
+  // ADDED: Helper to build Places v1 media URL from a photo resource name
+  static String? buildPlacePhotoUrlFromResourceName(String? resourceName,
+      {int? maxWidthPx, int? maxHeightPx}) {
+    if (resourceName == null || resourceName.isEmpty) return null;
+    final key = apiKey;
+    if (key.isEmpty) return null;
+    final params = <String>[];
+    if (maxWidthPx != null) params.add('maxWidthPx=$maxWidthPx');
+    if (maxHeightPx != null) params.add('maxHeightPx=$maxHeightPx');
+    final paramStr = params.isNotEmpty ? '&${params.join('&')}' : '';
+    return 'https://places.googleapis.com/v1/$resourceName/media?key=$key$paramStr';
+  }
+
   /// Check and request location permissions
   Future<LocationPermission> checkAndRequestLocationPermission() async {
     bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
@@ -1399,7 +1412,7 @@ class GoogleMapsService {
 
     // Define the fields to request using FieldMask syntax
     const String fieldMask =
-        'id,displayName,formattedAddress,addressComponents,location,websiteUri,nationalPhoneNumber,regularOpeningHours,businessStatus,reservable,parkingOptions,editorialSummary,rating,userRatingCount,priceLevel,photos';
+        'id,displayName,formattedAddress,addressComponents,location,websiteUri,nationalPhoneNumber,regularOpeningHours,currentOpeningHours,businessStatus,reservable,parkingOptions,editorialSummary,rating,userRatingCount,priceLevel,photos';
 
     final url = 'https://places.googleapis.com/v1/places/$placeId';
 

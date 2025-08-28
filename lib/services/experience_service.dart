@@ -511,6 +511,18 @@ class ExperienceService {
         'experienceIds': FieldValue.arrayRemove([experienceId])
       });
 
+      // Also remove the media reference from the Experience document
+      try {
+        await _experiencesCollection.doc(experienceId).update({
+          'sharedMediaItemIds': FieldValue.arrayRemove([mediaItemId])
+        });
+        print(
+            "removeExperienceLinkFromMediaItem: Removed media $mediaItemId from experience $experienceId.sharedMediaItemIds");
+      } catch (e) {
+        print(
+            "removeExperienceLinkFromMediaItem: Warning: failed to update experience $experienceId to remove media $mediaItemId: $e");
+      }
+
       if (deleteIfOrphaned) {
         print(
             "removeExperienceLinkFromMediaItem: Checking if media item $mediaItemId is orphaned.");
@@ -565,30 +577,44 @@ class ExperienceService {
     // Deduplicate IDs just in case
     final uniqueIds = mediaItemIds.toSet().toList();
 
-    List<SharedMediaItem> results = [];
     // Firestore 'in' query limit (currently 30, previously 10)
     const chunkSize = 30;
-
+    // Split into chunks
+    final List<List<String>> chunks = [];
     for (int i = 0; i < uniqueIds.length; i += chunkSize) {
-      final chunk = uniqueIds.sublist(i,
-          i + chunkSize > uniqueIds.length ? uniqueIds.length : i + chunkSize);
-
-      if (chunk.isEmpty) continue;
-
-      try {
-        final snapshot = await _sharedMediaItemsCollection
-            .where(FieldPath.documentId, whereIn: chunk)
-            .get();
-        
-        results.addAll(snapshot.docs
-            .map((doc) => SharedMediaItem.fromFirestore(doc))
-            .toList());
-      } catch (e) {
-        print("Error fetching shared media items chunk: $e");
-        // Decide how to handle partial failures - continue or throw?
-        // For now, we continue and return potentially incomplete results.
+      final end = (i + chunkSize) > uniqueIds.length ? uniqueIds.length : (i + chunkSize);
+      final chunk = uniqueIds.sublist(i, end);
+      if (chunk.isNotEmpty) {
+        chunks.add(chunk);
       }
     }
+
+    // Limit concurrency so we don't overwhelm device or Firestore
+    const int maxConcurrent = 6;
+    final List<SharedMediaItem> results = [];
+
+    for (int i = 0; i < chunks.length; i += maxConcurrent) {
+      final batch = chunks.sublist(i, (i + maxConcurrent) > chunks.length ? chunks.length : (i + maxConcurrent));
+      final futures = batch.map((chunk) async {
+        try {
+          final snapshot = await _sharedMediaItemsCollection
+              .where(FieldPath.documentId, whereIn: chunk)
+              .get();
+          return snapshot.docs
+              .map((doc) => SharedMediaItem.fromFirestore(doc))
+              .toList();
+        } catch (e) {
+          print("Error fetching shared media items chunk: $e");
+          return <SharedMediaItem>[];
+        }
+      }).toList();
+
+      final batchResults = await Future.wait(futures);
+      for (final r in batchResults) {
+        results.addAll(r);
+      }
+    }
+
     return results;
   }
 
@@ -758,9 +784,36 @@ class ExperienceService {
 
   /// Delete an experience
   Future<void> deleteExperience(String experienceId) async {
-    // Consider adding a check for ownership or admin rights
+    // Before deleting, unlink this experience from any shared media items
+    try {
+      final expDoc = await _experiencesCollection.doc(experienceId).get();
+      if (expDoc.exists) {
+        final data = expDoc.data() as Map<String, dynamic>?;
+        final List<String> mediaItemIds = List<String>.from(
+          (data?['sharedMediaItemIds'] as List<dynamic>?)?.whereType<String>().toList() ?? [],
+        );
 
-    // Delete the experience
+        if (mediaItemIds.isNotEmpty) {
+          // Use existing helper to remove link and delete orphaned media
+          await Future.wait(mediaItemIds.map((mediaId) =>
+              removeExperienceLinkFromMediaItem(mediaId, experienceId, deleteIfOrphaned: true)));
+        } else {
+          // Fallback: query by arrayContains in case sharedMediaItemIds wasn't populated
+          final querySnap = await _sharedMediaItemsCollection
+              .where('experienceIds', arrayContains: experienceId)
+              .get();
+          if (querySnap.docs.isNotEmpty) {
+            await Future.wait(querySnap.docs.map((doc) =>
+                removeExperienceLinkFromMediaItem(doc.id, experienceId, deleteIfOrphaned: true)));
+          }
+        }
+      }
+    } catch (e) {
+      print("deleteExperience: Error unlinking shared media for experience $experienceId: $e");
+      // Proceed with deletion even if unlinking has partial failures
+    }
+
+    // Delete the experience document itself
     await _experiencesCollection.doc(experienceId).delete();
 
     // Optional: Also delete related reviews, comments, and reels
@@ -811,12 +864,12 @@ class ExperienceService {
 
   /// Get experiences created by a specific user
   Future<List<Experience>> getExperiencesByUser(String userId,
-      {int limit = 50}) async {
+      {int limit = 50, GetOptions? options}) async {
     final query = _experiencesCollection
         .where('createdBy', isEqualTo: userId)
         .orderBy('createdAt', descending: true);
 
-    final snapshot = await query.get();
+    final snapshot = await query.get(options);
 
     return snapshot.docs.map((doc) => Experience.fromFirestore(doc)).toList();
   }

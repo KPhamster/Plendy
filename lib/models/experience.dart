@@ -13,6 +13,8 @@ class Location extends Equatable {
   final String? zipCode;
   final String? displayName; // Business or place display name
   final String? photoUrl; // URL to the place's photo
+  // ADDED: Google Places photo resource name (e.g., places/PLACE_ID/photos/PHOTO_REFERENCE)
+  final String? photoResourceName;
   final String? website; // Add website field
   final double? rating; // ADDED: Google Maps rating for the place
   final int? userRatingCount; // ADDED: Number of ratings
@@ -28,6 +30,7 @@ class Location extends Equatable {
     this.zipCode,
     this.displayName,
     this.photoUrl,
+    this.photoResourceName,
     this.website, // Add to constructor
     this.rating, // ADDED
     this.userRatingCount, // ADDED
@@ -45,6 +48,7 @@ class Location extends Equatable {
         zipCode,
         displayName,
         photoUrl,
+        photoResourceName,
         website,
         rating, // ADDED
         userRatingCount, // ADDED
@@ -62,6 +66,7 @@ class Location extends Equatable {
       displayName: map['displayName'] ?? map['name'],
       placeId: map['placeId'],
       photoUrl: map['photoUrl'],
+      photoResourceName: map['photoResourceName'],
       website: map['website'], // Add from map
       rating: (map['rating'] as num?)?.toDouble(), // ADDED
       userRatingCount: map['userRatingCount'] as int?, // ADDED
@@ -80,6 +85,7 @@ class Location extends Equatable {
       'displayName': displayName,
       'placeId': placeId,
       'photoUrl': photoUrl,
+      'photoResourceName': photoResourceName,
       'website': website, // Add to map
       'rating': rating, // ADDED
       'userRatingCount': userRatingCount, // ADDED

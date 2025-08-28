@@ -175,7 +175,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Colors.white,
       appBar: AppBar(
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.black,
         title: const Text('Edit Profile'),
         actions: [
           if (!_isLoading)
@@ -272,6 +275,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
+          backgroundColor: Colors.white,
           title: const Text('Delete Account'),
           content: const Text(
               'Are you sure you want to delete your account? This action is permanent and cannot be undone. All of your data, including experiences and reviews, will be removed.'),
