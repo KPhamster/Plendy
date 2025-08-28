@@ -29,6 +29,8 @@ class LocationPickerScreen extends StatefulWidget {
 class _LocationPickerScreenState extends State<LocationPickerScreen> {
   final GoogleMapsService _mapsService = GoogleMapsService();
   Location? _selectedLocation;
+  String? _selectedLocationBusinessStatus; // ADDED: business status for selected location
+  bool? _selectedLocationOpenNow; // ADDED: open-now status
   List<Map<String, dynamic>> _searchResults = [];
   bool _showSearchResults = false;
   final TextEditingController _searchController = TextEditingController();
@@ -197,12 +199,26 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
       final placeId = result['placeId'];
       final location = await _mapsService.getPlaceDetails(placeId);
 
+      // Fetch business status using Places API v1 details
+      String? businessStatus;
+      bool? openNow;
+      try {
+        final detailsMap = await _mapsService.fetchPlaceDetailsData(placeId);
+        businessStatus = detailsMap?['businessStatus'] as String?;
+        openNow = (detailsMap?['currentOpeningHours']?['openNow']) as bool?;
+      } catch (e) {
+        businessStatus = null;
+        openNow = null;
+      }
+
       setState(() {
         _selectedLocation = location;
         _searchController.text =
             location.displayName ?? location.address ?? 'Selected Location';
         _showSearchResults = false;
         _isSearching = false;
+        _selectedLocationBusinessStatus = businessStatus; // ADDED
+        _selectedLocationOpenNow = openNow; // ADDED
       });
 
       // Get reference to the GoogleMapsWidget
@@ -232,6 +248,10 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
   }
 
   Future<void> _onLocationSelected(Location location) async {
+    // Dismiss keyboard if focused on the search bar when tapping the map
+    _searchFocusNode.unfocus();
+    FocusScope.of(context).unfocus();
+
     Location detailedLocation = location;
 
     if (location.placeId != null && location.placeId!.isNotEmpty) {
@@ -249,11 +269,27 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
       print("📍 Map tap location has no Place ID. Using basic info.");
     }
 
+    // Fetch business status using Places API v1 if placeId available
+    String? businessStatus;
+    bool? openNow;
+    try {
+      if (detailedLocation.placeId != null && detailedLocation.placeId!.isNotEmpty) {
+        final detailsMap = await _mapsService.fetchPlaceDetailsData(detailedLocation.placeId!);
+        businessStatus = detailsMap?['businessStatus'] as String?;
+        openNow = (detailsMap?['currentOpeningHours']?['openNow']) as bool?;
+      }
+    } catch (e) {
+      businessStatus = null;
+      openNow = null;
+    }
+
     setState(() {
       _selectedLocation = detailedLocation;
       _searchController.text = detailedLocation.displayName ??
           detailedLocation.address ??
           'Selected Location';
+      _selectedLocationBusinessStatus = businessStatus; // ADDED
+      _selectedLocationOpenNow = openNow; // ADDED
     });
 
     // Make sure we have the location centered on the map
@@ -318,6 +354,11 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
     return Scaffold(
       resizeToAvoidBottomInset: true,
       appBar: AppBar(
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.black,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        surfaceTintColor: Colors.white,
         title: Text(widget.title),
         actions: [
           if (_selectedLocation != null)
@@ -373,13 +414,18 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
               ),
             )
           : null,
-      body: SafeArea(
-        child: Column(
+      body: Container(
+        color: Colors.white,
+        child: SafeArea(
+          child: Column(
           children: [
             // Search bar
-            Padding(
-              padding: const EdgeInsets.all(8.0),
-              child: Card(
+            Container(
+              color: Colors.white,
+              child: Padding(
+                padding: const EdgeInsets.all(8.0),
+                child: Card(
+                  color: Colors.white,
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 8.0),
                   child: TextField(
@@ -388,7 +434,9 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
                     decoration: InputDecoration(
                       hintText: 'Search for a place',
                       border: InputBorder.none,
-                      prefixIcon: Icon(Icons.search),
+                      filled: true,
+                      fillColor: Colors.white,
+                      prefixIcon: Icon(Icons.search, color: Theme.of(context).primaryColor),
                       suffixIcon: _isSearching
                           ? SizedBox(
                               width: 24,
@@ -412,6 +460,7 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
                   ),
                 ),
               ),
+            ),
             ),
 
             // Search results
@@ -629,6 +678,50 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
                           ),
                           SizedBox(height: 8),
                         ],
+
+                        // ADDED: Business/open-now status beneath rating
+                        Builder(builder: (context) {
+                          String? statusText;
+                          Color statusColor = Colors.grey;
+                          if (_selectedLocationBusinessStatus == 'CLOSED_PERMANENTLY') {
+                            statusText = 'Closed Permanently';
+                            statusColor = Colors.red[700]!;
+                          } else if (_selectedLocationBusinessStatus == 'CLOSED_TEMPORARILY') {
+                            statusText = 'Closed Temporarily';
+                            statusColor = Colors.red[700]!;
+                          } else if (_selectedLocationOpenNow != null) {
+                            if (_selectedLocationOpenNow == true) {
+                              statusText = 'Open now';
+                              statusColor = Colors.green[700]!;
+                            } else {
+                              statusText = 'Closed now';
+                              statusColor = Colors.red[700]!;
+                            }
+                          } else if (_selectedLocationBusinessStatus == 'OPERATIONAL') {
+                            statusText = 'Operational';
+                            statusColor = Colors.grey;
+                          }
+                          if (statusText == null) return const SizedBox.shrink();
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 4.0),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Icon(Icons.info_outline, size: 18.0, color: Colors.black54),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    statusText,
+                                    style: TextStyle(
+                                      color: statusColor,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        }),
                       ],
                     ),
 
@@ -667,6 +760,7 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
                 ),
               ),
           ],
+          ),
         ),
       ),
     );

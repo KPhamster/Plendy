@@ -497,6 +497,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                     uniqueCategoriesByName.values.toList();
 
                 return Dialog(
+                  backgroundColor: Colors.white,
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(16.0)),
                   child: ConstrainedBox(
@@ -721,6 +722,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                     List.from(currentColorCategories);
 
                 return Dialog(
+                  backgroundColor: Colors.white,
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(16.0)),
                   child: ConstrainedBox(
@@ -905,10 +907,38 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
       onTap: () {
         FocusManager.instance.primaryFocus?.unfocus();
       },
-      child: Card(
-        margin: EdgeInsets.only(bottom: 16),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        elevation: 2,
+             child: Container(
+         margin: EdgeInsets.only(bottom: 16),
+         decoration: BoxDecoration(
+           color: Colors.white,
+           borderRadius: BorderRadius.circular(8),
+           boxShadow: [
+             BoxShadow(
+               color: Colors.black.withOpacity(0.08),
+               spreadRadius: 2,
+               blurRadius: 8,
+               offset: Offset(0, 4),
+             ),
+             BoxShadow(
+               color: Colors.black.withOpacity(0.04),
+               spreadRadius: 1,
+               blurRadius: 4,
+               offset: Offset(0, -2),
+             ),
+             BoxShadow(
+               color: Colors.black.withOpacity(0.04),
+               spreadRadius: 1,
+               blurRadius: 4,
+               offset: Offset(-2, 0),
+             ),
+             BoxShadow(
+               color: Colors.black.withOpacity(0.04),
+               spreadRadius: 1,
+               blurRadius: 4,
+               offset: Offset(2, 0),
+             ),
+           ],
+         ),
         child: Form(
           key: widget.formKey, // Use the passed form key
           child: Column(
@@ -979,7 +1009,12 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                           onPressed: () =>
                               widget.onSelectSavedExperience(widget.cardData),
                           style: OutlinedButton.styleFrom(
-                            foregroundColor: Colors.blue,
+                            backgroundColor: Colors.white,
+                            foregroundColor: Theme.of(context).primaryColor,
+                            side: BorderSide(
+                              color: Theme.of(context).primaryColor,
+                              width: 2.0,
+                            ),
                             padding: EdgeInsets.symmetric(
                                 horizontal: 12, vertical: 8),
                             visualDensity: VisualDensity.compact,
@@ -1322,6 +1357,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                       children:
                                           selectedCategories.map((category) {
                                         return Chip(
+                                          backgroundColor: Colors.white,
                                           avatar: Text(category.icon,
                                               style: const TextStyle(
                                                   fontSize: 14)),
@@ -1642,6 +1678,7 @@ class _OtherCategoriesSelectionDialogState
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
+      backgroundColor: Colors.white,
       title: const Text('Select Other Categories'),
       contentPadding: const EdgeInsets.fromLTRB(0, 20, 0, 0),
       content: SizedBox(

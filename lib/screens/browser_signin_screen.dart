@@ -73,7 +73,10 @@ class _BrowserSignInScreenState extends State<BrowserSignInScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Colors.white,
       appBar: AppBar(
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.black,
         title: const Text('Browser Sign In'),
       ),
       body: Column(

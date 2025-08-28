@@ -149,22 +149,15 @@ class _SelectSavedExperienceModalContentState
           TextField(
             controller: _searchController,
             decoration: InputDecoration(
-              hintText: 'Search your experiences...',
-              prefixIcon: const Icon(Icons.search),
+              labelText: 'Search your experiences',
+              prefixIcon: Icon(Icons.search, color: Theme.of(context).primaryColor),
               border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(30.0),
-                borderSide: BorderSide.none,
+                borderRadius: BorderRadius.circular(25.0),
               ),
-              filled: true,
-              // Consider theming this color or adapting to modal background
-              fillColor: Theme.of(context).scaffoldBackgroundColor == Colors.black // Basic dark mode check
-                  ? Colors.grey[800]
-                  : Colors.grey[200],
-              contentPadding:
-                  const EdgeInsets.symmetric(vertical: 0, horizontal: 20),
               suffixIcon: _searchController.text.isNotEmpty
                   ? IconButton(
-                      icon: const Icon(Icons.clear, size: 20),
+                      icon: const Icon(Icons.clear),
+                      tooltip: 'Clear Search',
                       onPressed: () {
                         _searchController.clear();
                         // _filterExperiences will be called by the listener

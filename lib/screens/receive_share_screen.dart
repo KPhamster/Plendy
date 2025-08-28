@@ -25,10 +25,10 @@ import 'location_picker_screen.dart';
 import '../services/sharing_service.dart';
 import 'dart:async';
 import 'package:http/http.dart' as http;
-import 'receive_share/widgets/yelp_preview_widget.dart';
 import 'receive_share/widgets/maps_preview_widget.dart';
 import 'receive_share/widgets/generic_url_preview_widget.dart';
 import 'receive_share/widgets/google_knowledge_graph_preview_widget.dart';
+import 'receive_share/widgets/web_url_preview_widget.dart';
 import 'receive_share/widgets/image_preview_widget.dart';
 import 'package:flutter/services.dart';
 import 'package:geocoding/geocoding.dart' as geocoding;
@@ -98,10 +98,12 @@ class _ExperienceCardsSection extends StatelessWidget {
     // final shareProvider = context.watch<ReceiveShareProvider>();
     // final experienceCards = shareProvider.experienceCards;
 
-    return Padding(
-      key: sectionKey, // ADDED for scrolling
-      padding: const EdgeInsets.symmetric(horizontal: 16.0),
-      child: Column(
+    return Container(
+      color: Colors.white,
+      child: Padding(
+        key: sectionKey, // ADDED for scrolling
+        padding: const EdgeInsets.symmetric(horizontal: 16.0),
+        child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (experienceCards.isNotEmpty)
@@ -183,6 +185,7 @@ class _ExperienceCardsSection extends StatelessWidget {
               ),
             ),
         ],
+        ),
       ),
     );
   }
@@ -332,9 +335,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     // Rebuilds show suffix icons immediately based on controller text
     return StatefulBuilder(
       builder: (context, setInnerState) {
-        return Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-          child: TextField(
+        return Container(
+          color: Colors.white,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+            child: TextField(
             controller: _sharedUrlController,
             focusNode: _sharedUrlFocusNode,
             autofocus: widget.requireUrlFirst && !_didDeferredInit,
@@ -395,6 +400,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             onChanged: (_) {
               setInnerState(() {});
             },
+            ),
           ),
         );
       },
@@ -2361,11 +2367,25 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       if (!mounted) return;
 
       final now = DateTime.now();
-      final uniqueSharedPaths =
-          _currentSharedFiles.map((f) => f.path).toSet().toList();
+      // Normalize shared paths so that Yelp text shares store only the Yelp URL
+      final List<String> uniqueMediaPaths = _currentSharedFiles.map((f) {
+        final String original = f.path;
+        // For text/url types containing a Yelp link, extract and store only the Yelp URL
+        if (f.type == SharedMediaType.text || f.type == SharedMediaType.url) {
+          final String? extracted = _extractFirstUrl(original);
+          if (extracted != null && _isYelpUrl(extracted)) {
+            String url = extracted.trim();
+            if (!url.startsWith('http://') && !url.startsWith('https://')) {
+              url = 'https://$url';
+            }
+            return url;
+          }
+        }
+        return original;
+      }).toSet().toList();
 
       final Map<String, String> mediaPathToItemIdMap = {};
-      for (final path in uniqueSharedPaths) {
+      for (final path in uniqueMediaPaths) {
         try {
           SharedMediaItem? existingItem;
           try {
@@ -2410,7 +2430,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         }
       }
 
-      if (mediaPathToItemIdMap.length != uniqueSharedPaths.length && errors.isEmpty) {
+      if (mediaPathToItemIdMap.length != uniqueMediaPaths.length && errors.isEmpty) {
          // If there was an issue creating media items but no errors were added to the list yet (e.g. silent failure)
         errors.add("Error processing some media files.");
       }
@@ -2507,7 +2527,7 @@ errors.add('Could not update "$cardTitle" (not found).');
 updateCount++;
             }
 
-            final List<String> relevantMediaItemIds = uniqueSharedPaths
+            final List<String> relevantMediaItemIds = uniqueMediaPaths
                 .map((path) => mediaPathToItemIdMap[path])
                 .where((id) => id != null)
                 .cast<String>()
@@ -2579,14 +2599,14 @@ PublicExperience? existingPublicExp = await _experienceService
                     placeID: placeId,
                     yelpUrl: cardYelpUrl.isNotEmpty ? cardYelpUrl : null,
                     website: cardWebsite.isNotEmpty ? cardWebsite : null,
-                    allMediaPaths: uniqueSharedPaths);
+                    allMediaPaths: uniqueMediaPaths);
 await _experienceService
                     .createPublicExperience(newPublicExperience);
                 if (!mounted) return;
               } else {
 await _experienceService.updatePublicExperienceMediaAndMaybeYelp(
                     existingPublicExp.id,
-                    uniqueSharedPaths,
+                    uniqueMediaPaths,
                     newYelpUrl: cardYelpUrl.isNotEmpty ? cardYelpUrl : null);
                 if (!mounted) return;
               }
@@ -2927,7 +2947,7 @@ if (mounted) {
     final selectedExperience = await showModalBottomSheet<Experience>(
       context: context,
       isScrollControlled: true, 
-      backgroundColor: Theme.of(context).cardColor, 
+      backgroundColor: Colors.white, 
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
@@ -3173,6 +3193,11 @@ _scrollController.animateTo(
   Widget build(BuildContext context) {
 return _wrapWithWillPopScope(Scaffold(
       appBar: AppBar(
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.black,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        surfaceTintColor: Colors.white,
         title: _isSpecialUrl(_currentSharedFiles.isNotEmpty
                 ? _extractFirstUrl(_currentSharedFiles.first.path) ?? ''
                 : '') 
@@ -3195,8 +3220,10 @@ _sharingService.markShareFlowAsInactive();
             false, 
         actions: [],
       ),
-      body: SafeArea(
-        child: _isSaving
+      body: Container(
+        color: Colors.white,
+        child: SafeArea(
+          child: _isSaving
             ? const Center(
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
@@ -3309,6 +3336,7 @@ _sharingService.markShareFlowAsInactive();
                                                   vertical: verticalPadding,
                                                 ),
                                                 child: Card(
+                                                  color: Colors.white,
                                                   elevation: 2.0,
                                                   margin: (isInstagram || isTikTok)
                                                       ? EdgeInsets.zero
@@ -3383,6 +3411,8 @@ _sharingService.markShareFlowAsInactive();
                                 bottom: 16, // Adjust as needed
                                 right: 16,  // Adjust as needed
                                 child: FloatingActionButton(
+                                  backgroundColor: Theme.of(context).primaryColor,
+                                  foregroundColor: Colors.white,
                                   shape: const CircleBorder(), // ENSURE CIRCULAR
                                   onPressed: _handleFabPress,
                                   child: Icon(_showUpArrowForFab ? Icons.arrow_upward : Icons.arrow_downward),
@@ -3398,7 +3428,7 @@ _sharingService.markShareFlowAsInactive();
                           padding: const EdgeInsets.symmetric(
                               horizontal: 16.0, vertical: 12.0),
                           decoration: BoxDecoration(
-                            color: Theme.of(context).cardColor,
+                            color: Colors.white,
                             boxShadow: [
                               BoxShadow(
                                 color: Colors.black.withOpacity(0.1),
@@ -3433,6 +3463,8 @@ _sharingService.markShareFlowAsInactive();
                                     ? 'Saving...'
                                     : 'Save Experience(s)'),
                                 style: ElevatedButton.styleFrom(
+                                  backgroundColor: Theme.of(context).primaryColor,
+                                  foregroundColor: Colors.white,
                                   padding: const EdgeInsets.symmetric(
                                       horizontal: 24, vertical: 12),
                                 ),
@@ -3450,8 +3482,9 @@ _sharingService.markShareFlowAsInactive();
                   }
                 },
               ),
-      ),
-    ));
+          ),
+        ),
+      ));
   }
 
   Future<void> _launchUrl(String urlString) async {
@@ -3554,17 +3587,11 @@ _showSnackBar(context, 'Error opening link: $e');
   }
 
   Widget _buildUrlPreview(String url, ExperienceCardData? card, int index, [String? sharedText]) {
-    if (card != null &&
-        (url.contains('yelp.com/biz') || url.contains('yelp.to/'))) {
-      
-      return YelpPreviewWidget(
-        yelpUrl: url,
-        sharedText: sharedText,
-        card: card, 
-        yelpPreviewFutures: _yelpPreviewFutures,
-        getBusinessFromYelpUrl: _getBusinessFromYelpUrl,
+    if (url.contains('yelp.com/biz') || url.contains('yelp.to/')) {
+      // Render Yelp links as a WebView consistent with GoogleKnowledgeGraphPreviewWidget
+      return WebUrlPreviewWidget(
+        url: url,
         launchUrlCallback: _launchUrl,
-        mapsService: _mapsService,
       );
     }
 
@@ -4592,36 +4619,39 @@ class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
           onPageFinished: _handlePageFinished,
         ),
         const SizedBox(height: 8),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            const SizedBox(width: 48), 
-            IconButton(
-              icon: const Icon(FontAwesomeIcons.instagram),
-              color: const Color(0xFFE1306C),
-              iconSize: 32, 
-              tooltip: 'Open in Instagram',
-              constraints: const BoxConstraints(),
-              padding:
-                  EdgeInsets.zero, 
-              onPressed: () => _handleUrlLaunch(widget.url),
-            ),
-            IconButton(
-              icon:
-                  Icon(_isExpanded ? Icons.fullscreen_exit : Icons.fullscreen),
-              iconSize: 24,
-              color: Colors.blue,
-              tooltip: _isExpanded ? 'Collapse' : 'Expand',
-              constraints: const BoxConstraints(),
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              onPressed: () {
-                _safeSetState(() {
-                  _isExpanded = !_isExpanded;
-                  widget.onExpansionChanged?.call(_isExpanded, widget.url); // CALL CALLBACK with URL
-                });
-              },
-            ),
-          ],
+        Container(
+          color: Colors.white,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const SizedBox(width: 48), 
+              IconButton(
+                icon: const Icon(FontAwesomeIcons.instagram),
+                color: const Color(0xFFE1306C),
+                iconSize: 32, 
+                tooltip: 'Open in Instagram',
+                constraints: const BoxConstraints(),
+                padding:
+                    EdgeInsets.zero, 
+                onPressed: () => _handleUrlLaunch(widget.url),
+              ),
+              IconButton(
+                icon:
+                    Icon(_isExpanded ? Icons.fullscreen_exit : Icons.fullscreen),
+                iconSize: 24,
+                color: Colors.blue,
+                tooltip: _isExpanded ? 'Collapse' : 'Expand',
+                constraints: const BoxConstraints(),
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                onPressed: () {
+                  _safeSetState(() {
+                    _isExpanded = !_isExpanded;
+                    widget.onExpansionChanged?.call(_isExpanded, widget.url); // CALL CALLBACK with URL
+                  });
+                },
+              ),
+            ],
+          ),
         ),
         const SizedBox(height: 8),
       ],

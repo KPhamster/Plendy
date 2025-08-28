@@ -291,7 +291,10 @@ class _MyPeopleScreenState extends State<MyPeopleScreen>
     final String? currentUserId = _authService?.currentUser?.uid;
 
     return Scaffold(
+      backgroundColor: Colors.white,
       appBar: AppBar(
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.black,
         title: const Text('My People'),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
@@ -303,21 +306,19 @@ class _MyPeopleScreenState extends State<MyPeopleScreen>
       body: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.all(8.0),
+            padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 4.0),
             child: TextField(
               controller: _searchController,
               decoration: InputDecoration(
-                hintText: 'Search users...',
-                prefixIcon: const Icon(Icons.search),
+                labelText: 'Search users...',
+                prefixIcon: Icon(Icons.search, color: Theme.of(context).primaryColor),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(25.0),
-                  borderSide: BorderSide.none,
                 ),
-                filled: true,
-                contentPadding: const EdgeInsets.symmetric(vertical: 0, horizontal: 16),
                 suffixIcon: _searchQuery.isNotEmpty
                     ? IconButton(
                         icon: const Icon(Icons.clear),
+                        tooltip: 'Clear Search',
                         onPressed: () {
                           _searchController.clear();
                         },

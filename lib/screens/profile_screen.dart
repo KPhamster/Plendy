@@ -57,7 +57,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final user = authService.currentUser;
 
     return Scaffold(
+      backgroundColor: Colors.white,
       appBar: AppBar(
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.black,
         title: const Text('Profile'),
         actions: [
           IconButton(
@@ -171,12 +174,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   await authService.signOut();
                 },
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.red,
+                  backgroundColor: Theme.of(context).primaryColor,
                   padding: const EdgeInsets.symmetric(vertical: 16),
                 ),
                 child: const Text(
                   'Log Out',
-                  style: TextStyle(fontSize: 16),
+                  style: TextStyle(fontSize: 16, color: Colors.white),
                 ),
               ),
             ),
