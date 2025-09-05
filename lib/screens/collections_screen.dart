@@ -121,6 +121,9 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   final Map<String, bool> _countryExpansionContent = {};
   bool _groupByCountryExperiences = false;
   bool _groupByCountryContent = false;
+  // --- ADDED: No-location expansion flags ---
+  bool _noLocationExperiencesExpanded = true;
+  bool _noLocationContentExpanded = true;
   // --- NEW: Unified grouping flags and state expansion maps ---
   bool _groupByLocationExperiences = false;
   bool _groupByLocationContent = false;
@@ -1286,7 +1289,16 @@ if (mounted) {
                     Widget searchBarWidget = Padding(
                       padding: const EdgeInsets.symmetric(
                           horizontal: 12.0, vertical: 4.0),
-                      child: TypeAheadField<Experience>(
+                      child: Theme(
+                        data: Theme.of(context).copyWith(
+                          cardColor: Colors.white,
+                          canvasColor: Colors.white,
+                          colorScheme: Theme.of(context).colorScheme.copyWith(
+                            surface: Colors.white,
+                            background: Colors.white,
+                          ),
+                        ),
+                        child: TypeAheadField<Experience>(
                         builder: (context, controller, focusNode) {
                           // ADDED: Clear the TypeAhead controller when requested
                           if (_clearSearchOnNextBuild) {
@@ -1327,9 +1339,12 @@ if (mounted) {
                           return await _getExperienceSuggestions(pattern);
                         },
                         itemBuilder: (context, suggestion) {
-                          return ListTile(
-                            leading: const Icon(Icons.history),
-                            title: Text(suggestion.name),
+                          return Container(
+                            color: Colors.white,
+                            child: ListTile(
+                              leading: const Icon(Icons.history),
+                              title: Text(suggestion.name),
+                            ),
                           );
                         },
                         onSelected: (suggestion) async {
@@ -1371,6 +1386,7 @@ final category = _categories.firstWhere(
                           child: Text('No experiences found.',
                               style: TextStyle(color: Colors.grey)),
                         ),
+                      ),
                       ),
                     );
 
@@ -2051,10 +2067,15 @@ final category = _categories.firstWhere(
         final Map<String, Map<String, String>> stateDisp = {};
         final Map<String, Map<String, Map<String, String>>> cityDisp = {};
 
+        final List<Experience> noLocationExperiences = [];
         for (final exp in _filteredExperiences) {
           final ctry = n(exp.location.country);
           final state = n(exp.location.state);
           final city  = n(exp.location.city);
+          if (ctry.isEmpty && state.isEmpty && city.isEmpty) {
+            noLocationExperiences.add(exp);
+            continue;
+          }
           final ck = ctry.isEmpty ? '' : ctry.toLowerCase();
           final sk = state.isEmpty ? '' : state.toLowerCase();
           final cik = city.isEmpty ? '' : city.toLowerCase();
@@ -2169,6 +2190,15 @@ final category = _categories.firstWhere(
               for (final e in items) {
                 flattened.add({'item': e, 'key': ciKey});
               }
+            }
+          }
+        }
+        // Append No Location Specified as a country-level group at the bottom
+        if (noLocationExperiences.isNotEmpty) {
+          flattened.add({'header': 'No Location Specified', 'level': 'country', 'key': 'noloc'});
+          if (_countryExpansionExperiences['noloc'] ?? false) {
+            for (final e in noLocationExperiences) {
+              flattened.add({'item': e, 'key': 'noloc'});
             }
           }
         }
@@ -2320,7 +2350,9 @@ final category = _categories.firstWhere(
                   ? (_countryExpansionExperiences[key] ?? false)
                   : (level == 'state')
                       ? (_stateExpansionExperiences[key] ?? false)
-                      : (_cityExpansionExperiences[key] ?? false);
+                      : (level == 'city')
+                          ? (_cityExpansionExperiences[key] ?? false)
+                          : (_noLocationExperiencesExpanded);
               final TextStyle base = Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold, color: Colors.grey[700]) ?? const TextStyle(fontWeight: FontWeight.bold);
               final TextStyle style = level == 'country'
                   ? base.copyWith(fontSize: (base.fontSize ?? 14) + 4)
@@ -2335,8 +2367,10 @@ final category = _categories.firstWhere(
                       _countryExpansionExperiences[key] = !isExpanded;
                     } else if (level == 'state') {
                       _stateExpansionExperiences[key] = !isExpanded;
-                    } else {
+                    } else if (level == 'city') {
                       _cityExpansionExperiences[key] = !isExpanded;
+                    } else {
+                      _noLocationExperiencesExpanded = !isExpanded;
                     }
                   });
                 },
@@ -2519,12 +2553,28 @@ final category = _categories.firstWhere(
         final Map<String, String> countryDisp = {};
         final Map<String, Map<String, String>> stateDisp = {};
         final Map<String, Map<String, Map<String, String>>> cityDisp = {};
+        // Collect content items that should go exclusively under No Location Specified
+        final List<GroupedContentItem> noLocItemsCollected = [];
         for (final group in _filteredGroupedContentItems) {
+          final bool anyNoLoc = group.associatedExperiences.any((exp) {
+            final ctry = n(exp.location.country);
+            final state = n(exp.location.state);
+            final city  = n(exp.location.city);
+            return ctry.isEmpty && state.isEmpty && city.isEmpty;
+          });
+          if (anyNoLoc) {
+            noLocItemsCollected.add(group);
+            continue; // Do not also add to unknown/location buckets
+          }
           final Set<String> tuples = {};
           for (final exp in group.associatedExperiences) {
             final ctry = n(exp.location.country);
             final state = n(exp.location.state);
             final city  = n(exp.location.city);
+            // If all three are empty, defer to the No Location Specified bucket
+            if (ctry.isEmpty && state.isEmpty && city.isEmpty) {
+              continue;
+            }
             final ck = ctry.isEmpty ? '' : ctry.toLowerCase();
             final sk = state.isEmpty ? '' : state.toLowerCase();
             final cik = city.isEmpty ? '' : city.toLowerCase();
@@ -2533,11 +2583,9 @@ final category = _categories.firstWhere(
             cityDisp.putIfAbsent(ck, () => {}).putIfAbsent(sk, () => {})[cik] = city.isEmpty ? 'Unknown city' : city;
             tuples.add('$ck|$sk|$cik');
           }
+          // Only place into the location tree if there is at least one tuple
           if (tuples.isEmpty) {
-            countryDisp[''] = 'Unknown country';
-            stateDisp.putIfAbsent('', () => {})[''] = 'Unknown state';
-            cityDisp.putIfAbsent('', () => {}).putIfAbsent('', () => {})[''] = 'Unknown city';
-            tuples.add('||');
+            continue;
           }
           for (final key in tuples) {
             final parts = key.split('|');
@@ -2617,6 +2665,9 @@ final category = _categories.firstWhere(
           }
         }
         final List<Map<String, Object>> flat = [];
+        // Use the collected list for No Location Specified items
+        final List<GroupedContentItem> noLocItems = noLocItemsCollected;
+        // We'll append the No Location Specified group at the end to mirror country-level
         final countries = tree.keys.toList()..sort(cmpCountry);
         for (final ck in countries) {
           // Country header
@@ -2660,6 +2711,15 @@ final category = _categories.firstWhere(
             }
           }
         }
+        // Append No Location Specified section at bottom (country-level look, independent expansion)
+        if (noLocItems.isNotEmpty) {
+          flat.add({'header': 'No Location Specified', 'level': 'country', 'key': 'noloc'});
+          if (_noLocationContentExpanded) {
+            for (final g in noLocItems) {
+              flat.add({'item': g, 'pathKey': 'noloc'});
+            }
+          }
+        }
         return ListView.builder(
           padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 16.0),
           itemCount: flat.length + 1,
@@ -2677,11 +2737,15 @@ final category = _categories.firstWhere(
               final key = entry['key'] as String;
               bool isExpanded = false;
               if (level == 'country') {
-                isExpanded = _countryExpansionContent[key] ?? false;
+                isExpanded = key == 'noloc'
+                    ? _noLocationContentExpanded
+                    : (_countryExpansionContent[key] ?? false);
               } else if (level == 'state') {
                 isExpanded = _stateExpansionContent[key] ?? false;
-              } else {
+              } else if (level == 'city') {
                 isExpanded = _cityExpansionContent[key] ?? false;
+              } else {
+                isExpanded = _noLocationContentExpanded;
               }
               final TextStyle base = Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold, color: Colors.grey[700]) ?? const TextStyle(fontWeight: FontWeight.bold);
               final TextStyle style = level == 'country'
@@ -2694,11 +2758,17 @@ final category = _categories.firstWhere(
                 onTap: () {
                   setState(() {
                     if (level == 'country') {
-                      _countryExpansionContent[key] = !isExpanded;
+                      if (key == 'noloc') {
+                        _noLocationContentExpanded = !isExpanded;
+                      } else {
+                        _countryExpansionContent[key] = !isExpanded;
+                      }
                     } else if (level == 'state') {
                       _stateExpansionContent[key] = !isExpanded;
-                    } else {
+                    } else if (level == 'city') {
                       _cityExpansionContent[key] = !isExpanded;
+                    } else {
+                      _noLocationContentExpanded = !isExpanded;
                     }
                   });
                 },
@@ -2727,13 +2797,18 @@ final category = _categories.firstWhere(
             } else {
               final group = entry['item'] as GroupedContentItem;
               final pathKey = entry['pathKey'] as String;
-              final parts = pathKey.split('|');
-              final ck = parts[0];
-              final sk = parts.length > 1 ? parts[1] : '';
-              final cik = parts.length > 2 ? parts[2] : '';
-              final expanded = (_countryExpansionContent[ck] ?? false) &&
-                  (_stateExpansionContent['$ck|$sk'] ?? false) &&
-                  (_cityExpansionContent['$ck|$sk|$cik'] ?? false);
+              bool expanded;
+              if (pathKey == 'noloc') {
+                expanded = _noLocationContentExpanded;
+              } else {
+                final parts = pathKey.split('|');
+                final ck = parts[0];
+                final sk = parts.length > 1 ? parts[1] : '';
+                final cik = parts.length > 2 ? parts[2] : '';
+                expanded = (_countryExpansionContent[ck] ?? false) &&
+                    (_stateExpansionContent['$ck|$sk'] ?? false) &&
+                    (_cityExpansionContent['$ck|$sk|$cik'] ?? false);
+              }
               if (!expanded) return const SizedBox.shrink();
               return _buildContentListItem(group, index - 1);
             }
