@@ -81,7 +81,7 @@ Future<void> _checkForSharedData() async {
       // Show a toast to indicate we received data
       if (!kIsWeb) {
         Fluttertoast.showToast(
-          msg: "Received ${files.length} shared item(s)",
+          msg: "Received shared content",
           toastLength: Toast.LENGTH_LONG,
           gravity: ToastGravity.TOP,
           backgroundColor: Colors.green,
@@ -204,8 +204,10 @@ void main() async {
   if (!kIsWeb) {
     SharingService().init();
     
-    // DEBUG: Start timer to check for shared data
-    _startShareDebugTimer();
+    // DEBUG: Start timer to check for shared data (Android only)
+    if (Platform.isAndroid) {
+      _startShareDebugTimer();
+    }
 
     // --- FCM Setup ---
     await _configureLocalNotifications(); // Setup for local notifications (foreground)
@@ -297,6 +299,7 @@ class _MyAppState extends State<MyApp> {
   List<SharedMediaFile>? _sharedFiles;
   bool _initialCheckComplete = false;
   bool _shouldShowReceiveShare = false;
+  bool _iosShareToastShown = false; // iOS: ensure toast shows only once per session
 
   @override
   void initState() {
@@ -516,6 +519,19 @@ class _MyAppState extends State<MyApp> {
     // If we have shared files, show ReceiveShareScreen
     if (launchedFromShare && _sharedFiles != null && _sharedFiles!.isNotEmpty) {
       print("MAIN BUILD DEBUG: Creating ReceiveShareScreen with ${_sharedFiles!.length} files");
+      // On iOS, show a single toast once when navigating to the receive share screen
+      if (Platform.isIOS && !_iosShareToastShown) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          Fluttertoast.showToast(
+            msg: "Received shared content",
+            toastLength: Toast.LENGTH_SHORT,
+            gravity: ToastGravity.TOP,
+            backgroundColor: Colors.green,
+            textColor: Colors.white,
+          );
+        });
+        _iosShareToastShown = true;
+      }
       return ChangeNotifierProvider(
         create: (_) => ReceiveShareProvider(),
         child: ReceiveShareScreen(
