@@ -324,6 +324,7 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
     // Calculate keyboard height and adjust layout accordingly
     final double keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
     final bool isKeyboardVisible = keyboardHeight > 0;
+    final bool isIOS = Theme.of(context).platform == TargetPlatform.iOS;
 
     // Calculate flexible height for map based on available space
     final double screenHeight = MediaQuery.of(context).size.height;
@@ -351,6 +352,140 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
       mapHeight = mapHeight < minMapHeight ? minMapHeight : mapHeight;
     }
 
+    // Allocate more space to the results on iOS when keyboard is visible
+    final bool giveResultsMoreSpace = isIOS && isKeyboardVisible && _showSearchResults;
+
+    // Prebuild search results container to allow platform-specific wrapping
+    final Widget searchResultsContainer = Container(
+      constraints: giveResultsMoreSpace
+          ? null
+          : BoxConstraints(
+              maxHeight: isKeyboardVisible
+                  ? (isIOS
+                      ? MediaQuery.of(context).size.height * 0.6
+                      : MediaQuery.of(context).size.height * 0.4)
+                  : MediaQuery.of(context).size.height * 0.3,
+            ),
+      margin: EdgeInsets.symmetric(horizontal: 8.0),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 8,
+            offset: Offset(0, 3),
+          ),
+        ],
+      ),
+      child: ListView.separated(
+        shrinkWrap: true,
+        padding: EdgeInsets.only(
+          top: 8,
+          bottom: (isIOS && isKeyboardVisible) ? keyboardHeight : 8,
+        ),
+        itemCount: _searchResults.length,
+        separatorBuilder: (context, index) =>
+            Divider(height: 1, indent: 56, endIndent: 16),
+        itemBuilder: (context, index) {
+          final result = _searchResults[index];
+          final bool hasRating = result['rating'] != null;
+          final double rating = hasRating ? (result['rating'] as double) : 0.0;
+          final String? address = result['address'] ??
+              (result['structured_formatting'] != null
+                  ? result['structured_formatting']['secondary_text']
+                  : null);
+
+          return Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: () => _selectSearchResult(result),
+              borderRadius: BorderRadius.circular(8),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4.0),
+                child: ListTile(
+                  leading: CircleAvatar(
+                    backgroundColor:
+                        Theme.of(context).primaryColor.withOpacity(0.1),
+                    child: Text(
+                      '${index + 1}',
+                      style: TextStyle(
+                        color: Theme.of(context).primaryColor,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
+                    ),
+                  ),
+                  title: Text(
+                    result['description'] ?? 'Unknown Place',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w500,
+                      fontSize: 15,
+                    ),
+                  ),
+                  subtitle: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (address != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4.0),
+                          child: Row(
+                            children: [
+                              Icon(Icons.location_on,
+                                  size: 14, color: Colors.grey[600]),
+                              SizedBox(width: 4),
+                              Expanded(
+                                child: Text(
+                                  address,
+                                  style: TextStyle(
+                                    color: Colors.grey[600],
+                                    fontSize: 13,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      if (hasRating)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4.0),
+                          child: Row(
+                            children: [
+                              ...List.generate(
+                                  5,
+                                  (i) => Icon(
+                                        i < rating.floor()
+                                            ? Icons.star
+                                            : (i < rating)
+                                                ? Icons.star_half
+                                                : Icons.star_border,
+                                        size: 14,
+                                        color: Colors.amber,
+                                      )),
+                              SizedBox(width: 4),
+                              if (result['userRatingCount'] != null)
+                                Text(
+                                  '(${result['userRatingCount']})',
+                                  style: TextStyle(
+                                    color: Colors.grey[600],
+                                    fontSize: 12,
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+
     return Scaffold(
       resizeToAvoidBottomInset: true,
       appBar: AppBar(
@@ -375,7 +510,7 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
         ],
       ),
       // Fixed bottom button that's always visible
-      bottomNavigationBar: _selectedLocation != null
+      bottomNavigationBar: _selectedLocation != null && !(isIOS && isKeyboardVisible)
           ? Container(
               padding: EdgeInsets.all(16),
               decoration: BoxDecoration(
@@ -465,149 +600,49 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
 
             // Search results
             if (_showSearchResults)
-              Container(
-                constraints: BoxConstraints(
-                  maxHeight: isKeyboardVisible
-                      ? MediaQuery.of(context).size.height * 0.4
-                      : MediaQuery.of(context).size.height * 0.3,
-                ),
-                margin: EdgeInsets.symmetric(horizontal: 8.0),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(8),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.1),
-                      blurRadius: 8,
-                      offset: Offset(0, 3),
-                    ),
-                  ],
-                ),
-                child: ListView.separated(
-                  shrinkWrap: true,
-                  padding: EdgeInsets.symmetric(vertical: 8),
-                  itemCount: _searchResults.length,
-                  separatorBuilder: (context, index) =>
-                      Divider(height: 1, indent: 56, endIndent: 16),
-                  itemBuilder: (context, index) {
-                    final result = _searchResults[index];
-                    final bool hasRating = result['rating'] != null;
-                    final double rating =
-                        hasRating ? (result['rating'] as double) : 0.0;
-                    final String? address = result['address'] ??
-                        (result['structured_formatting'] != null
-                            ? result['structured_formatting']['secondary_text']
-                            : null);
-
-                    return Material(
-                      color: Colors.transparent,
-                      child: InkWell(
-                        onTap: () => _selectSearchResult(result),
-                        borderRadius: BorderRadius.circular(8),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 4.0),
-                          child: ListTile(
-                            leading: CircleAvatar(
-                              backgroundColor: Theme.of(context)
-                                  .primaryColor
-                                  .withOpacity(0.1),
-                              child: Text(
-                                '${index + 1}',
-                                style: TextStyle(
-                                  color: Theme.of(context).primaryColor,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 16,
-                                ),
-                              ),
-                            ),
-                            title: Text(
-                              result['description'] ?? 'Unknown Place',
-                              style: TextStyle(
-                                fontWeight: FontWeight.w500,
-                                fontSize: 15,
-                              ),
-                            ),
-                            subtitle: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                if (address != null)
-                                  Padding(
-                                    padding: const EdgeInsets.only(top: 4.0),
-                                    child: Row(
-                                      children: [
-                                        Icon(Icons.location_on,
-                                            size: 14, color: Colors.grey[600]),
-                                        SizedBox(width: 4),
-                                        Expanded(
-                                          child: Text(
-                                            address,
-                                            style: TextStyle(
-                                              color: Colors.grey[600],
-                                              fontSize: 13,
-                                            ),
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                if (hasRating)
-                                  Padding(
-                                    padding: const EdgeInsets.only(top: 4.0),
-                                    child: Row(
-                                      children: [
-                                        ...List.generate(
-                                            5,
-                                            (i) => Icon(
-                                                  i < rating.floor()
-                                                      ? Icons.star
-                                                      : (i < rating)
-                                                          ? Icons.star_half
-                                                          : Icons.star_border,
-                                                  size: 14,
-                                                  color: Colors.amber,
-                                                )),
-                                        SizedBox(width: 4),
-                                        if (result['userRatingCount'] != null)
-                                          Text(
-                                            '(${result['userRatingCount']})',
-                                            style: TextStyle(
-                                              color: Colors.grey[600],
-                                              fontSize: 12,
-                                            ),
-                                          ),
-                                      ],
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
+              (giveResultsMoreSpace
+                  ? Expanded(flex: 3, child: searchResultsContainer)
+                  : (isIOS
+                      ? Flexible(child: searchResultsContainer)
+                      : searchResultsContainer)),
 
             // Map takes the remaining space
-            Expanded(
-              child: Stack(
-                children: [
-                  GoogleMapsWidget(
-                    initialLocation: widget.initialLocation,
-                    showUserLocation: true,
-                    allowSelection: true,
-                    onLocationSelected: _onLocationSelected,
-                    // Pass a *copy* of the map to ensure change detection
-                    additionalMarkers: Map.of(_mapMarkers),
-                    onMapControllerCreated: (controller) {
-                      _mapController = controller;
-                    },
-                  ),
-                ],
-              ),
-            ),
+            (giveResultsMoreSpace
+                ? Flexible(
+                    flex: 1,
+                    child: Stack(
+                      children: [
+                        GoogleMapsWidget(
+                          initialLocation: widget.initialLocation,
+                          showUserLocation: true,
+                          allowSelection: true,
+                          onLocationSelected: _onLocationSelected,
+                          // Pass a *copy* of the map to ensure change detection
+                          additionalMarkers: Map.of(_mapMarkers),
+                          onMapControllerCreated: (controller) {
+                            _mapController = controller;
+                          },
+                        ),
+                      ],
+                    ),
+                  )
+                : Expanded(
+                    child: Stack(
+                      children: [
+                        GoogleMapsWidget(
+                          initialLocation: widget.initialLocation,
+                          showUserLocation: true,
+                          allowSelection: true,
+                          onLocationSelected: _onLocationSelected,
+                          // Pass a *copy* of the map to ensure change detection
+                          additionalMarkers: Map.of(_mapMarkers),
+                          onMapControllerCreated: (controller) {
+                            _mapController = controller;
+                          },
+                        ),
+                      ],
+                    ),
+                  )),
 
             // Information about selected location - only when keyboard is not visible
             if (_selectedLocation != null && !isKeyboardVisible)

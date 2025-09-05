@@ -429,6 +429,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
   // Add a map to track TikTok photo carousel status
   final Map<String, bool> _tiktokPhotoStatus = {};
+  
+  // Suspend media previews (unmount WebViews) while navigating to other screens
+  bool _suspendMediaPreviews = false;
 
   // Method to show snackbar only if not already showing
   void _showSnackBar(BuildContext context, String message) {
@@ -2782,17 +2785,33 @@ if (mounted) {
     await Future.microtask(() {}); // ADDED
 
     bool isOriginalShareYelp = card.originalShareType == ShareType.yelp;
-final result = await Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => LocationPickerScreen(
-          initialLocation: card.selectedLocation,
-          onLocationSelected: (location) {},
-          businessNameHint:
-              isOriginalShareYelp ? card.titleController.text : null,
+    // Suspend media previews to prevent auto-resume/fullscreen when returning
+    if (mounted) {
+      setState(() {
+        _suspendMediaPreviews = true;
+      });
+    }
+
+    dynamic result;
+    try {
+      result = await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => LocationPickerScreen(
+            initialLocation: card.selectedLocation,
+            onLocationSelected: (location) {},
+            businessNameHint:
+                isOriginalShareYelp ? card.titleController.text : null,
+          ),
         ),
-      ),
-    );
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _suspendMediaPreviews = false;
+        });
+      }
+    }
 
     if (result != null && mounted) {
       Future.microtask(() {
@@ -3618,6 +3637,20 @@ _showSnackBar(context, 'Error opening link: $e');
       // This logic is a bit tricky here as _buildMediaPreview is called inside a loop.
       // We set _currentVisibleInstagramUrl more reliably in the ListView builder.
       
+      if (_suspendMediaPreviews) {
+        return SizedBox(
+          height: 840.0,
+          child: Container(
+            color: Colors.black,
+            alignment: Alignment.center,
+            child: const Text(
+              'Instagram preview paused',
+              style: TextStyle(color: Colors.white70),
+            ),
+          ),
+        );
+      }
+
       return InstagramPreviewWrapper(
         key: _instagramPreviewKeys[url], // Use the specific key for this Instagram preview
         url: url,
@@ -3627,13 +3660,29 @@ _showSnackBar(context, 'Error opening link: $e');
     }
 
     if (url.contains('tiktok.com') || url.contains('vm.tiktok.com')) {
+      if (_suspendMediaPreviews) {
+        final bool isPhoto = _tiktokPhotoStatus[url] == true;
+        final double height = isPhoto ? 350.0 : 700.0;
+        return SizedBox(
+          height: height,
+          child: Container(
+            color: Colors.black,
+            alignment: Alignment.center,
+            child: const Text(
+              'TikTok preview paused',
+              style: TextStyle(color: Colors.white70),
+            ),
+          ),
+        );
+      }
+
       return TikTokPreviewWidget(
         url: url,
         launchUrlCallback: _launchUrl,
         onPhotoDetected: (detectedUrl, isPhoto) {
           // Track whether this TikTok URL is a photo carousel
           _tiktokPhotoStatus[detectedUrl] = isPhoto;
-},
+        },
       );
     }
 
