@@ -603,27 +603,33 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
           Positioned(
             top: MediaQuery.of(context).padding.top + 8.0,
             right: 8.0,
-            child: PopupMenuButton<String>(
-              onSelected: (value) {
-                if (value == 'remove') {
-                  _promptRemoveExperience();
-                }
-              },
-              itemBuilder: (context) => [
-                const PopupMenuItem<String>(
-                  value: 'remove',
-                  child: Text('Remove Experience'),
-                ),
-              ],
-              child: Container(
-                decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.4),
-                  shape: BoxShape.circle,
-                ),
-                padding: const EdgeInsets.all(8.0),
-                child: const Icon(
-                  Icons.more_vert,
-                  color: Colors.white,
+            child: Theme(
+              data: Theme.of(context).copyWith(
+                popupMenuTheme: const PopupMenuThemeData(color: Colors.white),
+                canvasColor: Colors.white,
+              ),
+              child: PopupMenuButton<String>(
+                onSelected: (value) {
+                  if (value == 'remove') {
+                    _promptRemoveExperience();
+                  }
+                },
+                itemBuilder: (context) => [
+                  const PopupMenuItem<String>(
+                    value: 'remove',
+                    child: Text('Remove Experience'),
+                  ),
+                ],
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.4),
+                    shape: BoxShape.circle,
+                  ),
+                  padding: const EdgeInsets.all(8.0),
+                  child: const Icon(
+                    Icons.more_vert,
+                    color: Colors.white,
+                  ),
                 ),
               ),
             ),
