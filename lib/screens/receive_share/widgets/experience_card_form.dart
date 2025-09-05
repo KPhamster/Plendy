@@ -15,6 +15,7 @@ import 'package:plendy/widgets/add_category_modal.dart';
 import 'package:plendy/widgets/edit_categories_modal.dart';
 // ADDED: Import for Clipboard
 import 'package:flutter/services.dart';
+import 'dart:io';
 // ADDED: Import for ColorCategory
 import 'package:plendy/models/color_category.dart';
 // --- ADDED: Placeholders for Color Category Modals ---
@@ -327,6 +328,31 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
       print('DEBUG YELP: About to launch URL: $uri');
       // For Yelp URLs, try multiple approaches to force new navigation
       bool launched = false;
+      
+      // iOS-specific: Prefer Yelp app deep link for search to avoid landing on homepage
+      if (Platform.isIOS && uri.toString().contains('yelp.com/search')) {
+        final String? terms = uri.queryParameters['find_desc'];
+        final String? location = uri.queryParameters['find_loc'];
+        if (terms != null && terms.isNotEmpty) {
+          final String t = Uri.encodeComponent(terms);
+          final String l = location != null && location.isNotEmpty
+              ? '&location=${Uri.encodeComponent(location)}'
+              : '';
+          final Uri iosDeepLink = Uri.parse('yelp:///search?terms=$t$l');
+          print('DEBUG YELP: iOS deep link for search: $iosDeepLink');
+          try {
+            if (await canLaunchUrl(iosDeepLink)) {
+              launched = await launchUrl(iosDeepLink, mode: LaunchMode.externalApplication);
+              print('DEBUG YELP: iOS deep link launch result: $launched');
+              if (launched) {
+                return; // Successfully launched deep link; stop here
+              }
+            }
+          } catch (e) {
+            print('DEBUG YELP: Error launching iOS deep link: $e');
+          }
+        }
+      }
       
       // For Yelp search URLs, try a special technique to force new navigation
       if (uri.toString().contains('yelp.com/search')) {
