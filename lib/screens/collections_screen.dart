@@ -2705,8 +2705,10 @@ final category = _categories.firstWhere(
               } else if (_contentSortType == ContentSortType.mostRecent || _contentSortType == ContentSortType.city) {
                 items.sort((a, b) => b.mediaItem.createdAt.compareTo(a.mediaItem.createdAt));
               }
+              int ordinal = 1;
               for (final g in items) {
-                flat.add({'item': g, 'pathKey': ciKey});
+                flat.add({'item': g, 'pathKey': ciKey, 'ordinal': ordinal});
+                ordinal++;
               }
             }
           }
@@ -2715,8 +2717,10 @@ final category = _categories.firstWhere(
         if (noLocItems.isNotEmpty) {
           flat.add({'header': 'No Location Specified', 'level': 'country', 'key': 'noloc'});
           if (_noLocationContentExpanded) {
+            int ordinal = 1;
             for (final g in noLocItems) {
-              flat.add({'item': g, 'pathKey': 'noloc'});
+              flat.add({'item': g, 'pathKey': 'noloc', 'ordinal': ordinal});
+              ordinal++;
             }
           }
         }
@@ -2810,7 +2814,8 @@ final category = _categories.firstWhere(
                     (_cityExpansionContent['$ck|$sk|$cik'] ?? false);
               }
               if (!expanded) return const SizedBox.shrink();
-              return _buildContentListItem(group, index - 1);
+              final int ordinal = (entry['ordinal'] as int?) ?? (index - 1);
+              return _buildContentListItem(group, ordinal);
             }
           },
         );
