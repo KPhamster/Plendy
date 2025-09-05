@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'package:webview_flutter_wkwebview/webview_flutter_wkwebview.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 // ignore: depend_on_referenced_packages
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'dart:io' show Platform;
 
 class TikTokPreviewWidget extends StatefulWidget {
   final String url;
@@ -208,7 +210,16 @@ class TikTokPreviewWidgetState extends State<TikTokPreviewWidget> {
   }
 
   void _initializeWebView() {
-    _controller = WebViewController()
+    final bool isiOS = Platform.isIOS;
+    if (isiOS) {
+      final WebKitWebViewControllerCreationParams params = WebKitWebViewControllerCreationParams(
+        allowsInlineMediaPlayback: false,
+      );
+      _controller = WebViewController.fromPlatformCreationParams(params);
+    } else {
+      _controller = WebViewController();
+    }
+    _controller
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(Colors.black)
       ..addJavaScriptChannel(
@@ -509,10 +520,7 @@ class TikTokPreviewWidgetState extends State<TikTokPreviewWidget> {
     }
   }
 
-  void _loadFallbackHtml() {
-    // Use the new method that includes better error handling
-    _loadFallbackHtmlWithDirectEmbed();
-  }
+  // Removed unused fallback helper (use _loadFallbackHtmlWithDirectEmbed instead)
 
   @override
   Widget build(BuildContext context) {
