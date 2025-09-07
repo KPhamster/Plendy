@@ -29,13 +29,16 @@ class TikTokPreviewWidget extends StatefulWidget {
   State<TikTokPreviewWidget> createState() => TikTokPreviewWidgetState();
 }
 
-class TikTokPreviewWidgetState extends State<TikTokPreviewWidget> {
+class TikTokPreviewWidgetState extends State<TikTokPreviewWidget> with AutomaticKeepAliveClientMixin {
   bool _isDisposed = false;
   late WebViewController _controller;
   bool _isLoading = true;
   String? _errorMessage;
   String? _currentEmbedHtml;
   bool _isPhotoCarousel = false;
+
+  @override
+  bool get wantKeepAlive => true;
 
   @override
   void initState() {
@@ -213,7 +216,7 @@ class TikTokPreviewWidgetState extends State<TikTokPreviewWidget> {
     final bool isiOS = Platform.isIOS;
     if (isiOS) {
       final WebKitWebViewControllerCreationParams params = WebKitWebViewControllerCreationParams(
-        allowsInlineMediaPlayback: false,
+        allowsInlineMediaPlayback: true,
       );
       _controller = WebViewController.fromPlatformCreationParams(params);
     } else {
@@ -327,7 +330,7 @@ class TikTokPreviewWidgetState extends State<TikTokPreviewWidget> {
     <svg class="tiktok-logo" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
       <path d="M34.353 13.547c2.849.204 5.524-1.27 7.455-3.13v7.126a14.41 14.41 0 01-7.455-2.002v9.154c0 9.154-9.843 15.487-17.484 9.702-5.072-3.838-6.361-11.627-2.829-16.936 3.532-5.31 10.794-6.748 16.087-3.195v7.57c-.88-.352-1.863-.52-2.84-.477-2.876.127-5.128 2.509-5.026 5.38.102 2.871 2.557 5.136 5.433 5.026 2.876-.11 5.173-2.463 5.173-5.338V4h7.486v9.547z" fill="#FE2C55"/>
       <path d="M34.353 13.547V4h7.486c-.086 4.023 2.126 7.78 5.725 9.547-1.931 1.86-4.606 3.334-7.455 3.13a10.41 10.41 0 01-5.756-3.13z" fill="#25F4EE"/>
-      <path d="M11.343 28.705c-3.532 5.309-2.243 13.098 2.829 16.936 7.641 5.785 17.484-.548 17.484-9.702v-9.154a14.41 14.41 0 007.455 2.002v-7.126c-3.599-1.767-5.811-5.524-5.725-9.547H26.9v23.314c0 2.875-2.297 5.228-5.173 5.338-2.876.11-5.331-2.155-5.433-5.026-.102-2.871 2.15-5.253 5.026-5.38.977-.043 1.96.125 2.84.477v-7.57c-5.293-3.553-12.555-2.115-16.087 3.195z" fill="#FE2C55"/>
+      <path d="M11.343 28.705c-3.532 5.309-2.243 13.098 2.829 16.936 7.641 5.785 17.484-.548 17.484-9.702v-9.154a14.41 14.41 0 007.455 2.002v-7.126c-3.599-1.767-5.811-5.524-5.725-9.547H26.9 v23.314c0 2.875-2.297 5.228-5.173 5.338-2.876.11-5.331-2.155-5.433-5.026-.102-2.871 2.15-5.253 5.026-5.38.977-.043 1.96.125 2.84.477v-7.57c-5.293-3.553-12.555-2.115-16.087 3.195z" fill="#FE2C55"/>
     </svg>
     <h2 style="color: white; margin: 10px 0;">TikTok Content</h2>
     <p class="error-message">${_errorMessage ?? 'Unable to load preview'}</p>
@@ -480,17 +483,16 @@ class TikTokPreviewWidgetState extends State<TikTokPreviewWidget> {
   }
 
   void _injectCustomStyles() {
-    // Inject custom JavaScript to improve the embed appearance
+    // Inject custom JavaScript to improve the embed appearance and enforce inline playback
     _controller.runJavaScript('''
       // Wait for TikTok embed to load
       setTimeout(function() {
-        // Hide unnecessary elements and customize appearance
+        // Style adjustments
         var style = document.createElement('style');
         style.innerHTML = `
           body { 
             background: #000 !important; 
           }
-          /* Ensure the iframe fills the container */
           .tiktok-embed iframe {
             width: 100% !important;
             max-width: 100% !important;
@@ -498,7 +500,25 @@ class TikTokPreviewWidgetState extends State<TikTokPreviewWidget> {
           }
         `;
         document.head.appendChild(style);
-        
+
+        // Enforce inline playback and remove fullscreen permissions
+        var iframes = document.querySelectorAll('.tiktok-embed iframe');
+        iframes.forEach(function(iframe) {
+          try {
+            // Add playsinline hint
+            iframe.setAttribute('playsinline', '');
+            // Remove allowfullscreen attributes and tokens
+            iframe.removeAttribute('allowfullscreen');
+            var allow = iframe.getAttribute('allow') || '';
+            allow = allow.replace(/fullscreen/g, '').trim();
+            if (allow.length > 0) {
+              iframe.setAttribute('allow', allow);
+            } else {
+              iframe.removeAttribute('allow');
+            }
+          } catch (e) { }
+        });
+
         // Force a resize event to ensure proper rendering
         window.dispatchEvent(new Event('resize'));
       }, 1000);
@@ -524,6 +544,7 @@ class TikTokPreviewWidgetState extends State<TikTokPreviewWidget> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     // Fixed height for TikTok embed
     final double height = _isPhotoCarousel ? 350.0 : 700.0;
 
