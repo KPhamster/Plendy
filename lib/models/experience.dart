@@ -11,6 +11,13 @@ class Location extends Equatable {
   final String? state;
   final String? country;
   final String? zipCode;
+  // Additional admin levels for richer grouping
+  final String? administrativeAreaLevel2; // e.g., county/district
+  final String? administrativeAreaLevel3;
+  final String? administrativeAreaLevel4;
+  final String? administrativeAreaLevel5;
+  final String? administrativeAreaLevel6;
+  final String? administrativeAreaLevel7;
   final String? displayName; // Business or place display name
   final String? photoUrl; // URL to the place's photo
   // ADDED: Google Places photo resource name (e.g., places/PLACE_ID/photos/PHOTO_REFERENCE)
@@ -28,6 +35,12 @@ class Location extends Equatable {
     this.state,
     this.country,
     this.zipCode,
+    this.administrativeAreaLevel2,
+    this.administrativeAreaLevel3,
+    this.administrativeAreaLevel4,
+    this.administrativeAreaLevel5,
+    this.administrativeAreaLevel6,
+    this.administrativeAreaLevel7,
     this.displayName,
     this.photoUrl,
     this.photoResourceName,
@@ -46,6 +59,12 @@ class Location extends Equatable {
         state,
         country,
         zipCode,
+        administrativeAreaLevel2,
+        administrativeAreaLevel3,
+        administrativeAreaLevel4,
+        administrativeAreaLevel5,
+        administrativeAreaLevel6,
+        administrativeAreaLevel7,
         displayName,
         photoUrl,
         photoResourceName,
@@ -63,6 +82,12 @@ class Location extends Equatable {
       state: map['state'],
       country: map['country'],
       zipCode: map['zipCode'],
+      administrativeAreaLevel2: map['administrativeAreaLevel2'],
+      administrativeAreaLevel3: map['administrativeAreaLevel3'],
+      administrativeAreaLevel4: map['administrativeAreaLevel4'],
+      administrativeAreaLevel5: map['administrativeAreaLevel5'],
+      administrativeAreaLevel6: map['administrativeAreaLevel6'],
+      administrativeAreaLevel7: map['administrativeAreaLevel7'],
       displayName: map['displayName'] ?? map['name'],
       placeId: map['placeId'],
       photoUrl: map['photoUrl'],
@@ -74,22 +99,45 @@ class Location extends Equatable {
   }
 
   Map<String, dynamic> toMap() {
-    return {
+    final Map<String, dynamic> map = {
       'latitude': latitude,
       'longitude': longitude,
-      'address': address,
-      'city': city,
-      'state': state,
-      'country': country,
-      'zipCode': zipCode,
-      'displayName': displayName,
-      'placeId': placeId,
-      'photoUrl': photoUrl,
-      'photoResourceName': photoResourceName,
-      'website': website, // Add to map
-      'rating': rating, // ADDED
-      'userRatingCount': userRatingCount, // ADDED
     };
+
+    if (address != null) map['address'] = address;
+    if (city != null) map['city'] = city;
+    if (state != null) map['state'] = state;
+    if (country != null) map['country'] = country;
+    if (zipCode != null) map['zipCode'] = zipCode;
+
+    if (administrativeAreaLevel2 != null) {
+      map['administrativeAreaLevel2'] = administrativeAreaLevel2;
+    }
+    if (administrativeAreaLevel3 != null) {
+      map['administrativeAreaLevel3'] = administrativeAreaLevel3;
+    }
+    if (administrativeAreaLevel4 != null) {
+      map['administrativeAreaLevel4'] = administrativeAreaLevel4;
+    }
+    if (administrativeAreaLevel5 != null) {
+      map['administrativeAreaLevel5'] = administrativeAreaLevel5;
+    }
+    if (administrativeAreaLevel6 != null) {
+      map['administrativeAreaLevel6'] = administrativeAreaLevel6;
+    }
+    if (administrativeAreaLevel7 != null) {
+      map['administrativeAreaLevel7'] = administrativeAreaLevel7;
+    }
+
+    if (displayName != null) map['displayName'] = displayName;
+    if (placeId != null) map['placeId'] = placeId;
+    if (photoUrl != null) map['photoUrl'] = photoUrl;
+    if (photoResourceName != null) map['photoResourceName'] = photoResourceName;
+    if (website != null) map['website'] = website; // Add to map
+    if (rating != null) map['rating'] = rating; // ADDED
+    if (userRatingCount != null) map['userRatingCount'] = userRatingCount; // ADDED
+
+    return map;
   }
 
   /// Get the human-friendly place name to display
