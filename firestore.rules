@@ -85,7 +85,7 @@ service cloud.firestore {
       allow update: if request.auth != null && (
         request.resource.data.createdBy == request.auth.uid ||
         (resource.data.editorUserIds is list && request.auth.uid in resource.data.editorUserIds)
-      );
+      ) && isValidLocationData(request.resource.data.location);
       // Allow deletes by creator, or the last remaining editor (when they are the only editor)
       allow delete: if request.auth != null && (
         resource.data.createdBy == request.auth.uid ||
@@ -120,5 +120,16 @@ service cloud.firestore {
       allow delete: if request.auth != null &&
                       resource.data.ownerUserId == request.auth.uid;
     }
+  }
+
+  function isValidLocationData(loc) {
+    return (loc == null) || (
+      (loc.get('administrativeAreaLevel2', '') is string) &&
+      (loc.get('administrativeAreaLevel3', '') is string) &&
+      (loc.get('administrativeAreaLevel4', '') is string) &&
+      (loc.get('administrativeAreaLevel5', '') is string) &&
+      (loc.get('administrativeAreaLevel6', '') is string) &&
+      (loc.get('administrativeAreaLevel7', '') is string)
+    );
   }
 }
