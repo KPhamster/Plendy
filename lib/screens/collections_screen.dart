@@ -114,6 +114,9 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   // ADDED: City header expansion states
   final Map<String, bool> _cityExpansionExperiences = {};
   final Map<String, bool> _cityExpansionContent = {};
+  // NEW: Generic expansion maps for dynamic multi-level grouping
+  final Map<String, bool> _locationExpansionExperiences = {};
+  final Map<String, bool> _locationExpansionContent = {};
   bool _groupByCityExperiences = false;
   bool _groupByCityContent = false;
   // --- ADDED: Country grouping state and expansion maps ---
@@ -236,6 +239,477 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     _tabController.dispose();
     _searchController.dispose();
     super.dispose();
+  }
+
+  // Build fully dynamic grouping for Experiences tab (Country -> L1..L7 -> LOC)
+  List<Map<String, Object>> _buildDynamicExperienceGrouping() {
+    String n(String? s) => (s ?? '').trim();
+    // Collect per-country paths
+    final Map<String, List<Map<String, dynamic>>> byCountry = {};
+    final List<Experience> noLoc = [];
+    for (final exp in _filteredExperiences) {
+      final c = n(exp.location.country);
+      String l1 = n(exp.location.state);
+      final l2 = n(exp.location.administrativeAreaLevel2);
+      final l3 = n(exp.location.administrativeAreaLevel3);
+      final l4 = n(exp.location.administrativeAreaLevel4);
+      final l5 = n(exp.location.administrativeAreaLevel5);
+      final l6 = n(exp.location.administrativeAreaLevel6);
+      final l7 = n(exp.location.administrativeAreaLevel7);
+      String loc = n(exp.location.city);
+      final displayName = n(exp.location.displayName);
+      // Fallbacks: if state or city missing, use displayName at that level
+      if (l1.isEmpty && displayName.isNotEmpty) {
+        l1 = displayName;
+      }
+      if (loc.isEmpty && displayName.isNotEmpty) {
+        loc = displayName;
+      }
+      if ([c, l1, l2, l3, l4, l5, l6, l7, loc].every((v) => v.isEmpty)) {
+        noLoc.add(exp);
+        continue;
+      }
+      final keyC = c.toLowerCase();
+      byCountry.putIfAbsent(keyC, () => []);
+      byCountry[keyC]!.add({
+        'labels': {
+          'C': c,
+          'L1': l1,
+          'L2': l2,
+          'L3': l3,
+          'L4': l4,
+          'L5': l5,
+          'L6': l6,
+          'L7': l7,
+          'LOC': loc,
+        },
+        'data': exp,
+      });
+    }
+
+    String sortKeyFor(String s) => s.toLowerCase();
+    final List<Map<String, Object>> flat = [];
+    // Precompute global index for distance-based group ordering
+    final Map<String, int> expIndexMap = {};
+    if (_experienceSortType == ExperienceSortType.distanceFromMe) {
+      for (int i = 0; i < _filteredExperiences.length; i++) {
+        expIndexMap[_filteredExperiences[i].id] = i;
+      }
+    }
+    final countries = byCountry.keys.toList()
+      ..sort((a, b) {
+        if (a.isEmpty && b.isEmpty) return 0;
+        if (a.isEmpty) return 1;
+        if (b.isEmpty) return -1;
+        if (_experienceSortType == ExperienceSortType.mostRecent) {
+          DateTime maxA = DateTime.fromMillisecondsSinceEpoch(0);
+          for (final p in byCountry[a]!) {
+            final d = (p['data'] as Experience).updatedAt;
+            if (d.isAfter(maxA)) maxA = d;
+          }
+          DateTime maxB = DateTime.fromMillisecondsSinceEpoch(0);
+          for (final p in byCountry[b]!) {
+            final d = (p['data'] as Experience).updatedAt;
+            if (d.isAfter(maxB)) maxB = d;
+          }
+          return maxB.compareTo(maxA);
+        } else if (_experienceSortType == ExperienceSortType.alphabetical || _experienceSortType == ExperienceSortType.city) {
+          final dispA = (byCountry[a]!.first['labels'] as Map<String, String?>)['C'] ?? '';
+          final dispB = (byCountry[b]!.first['labels'] as Map<String, String?>)['C'] ?? '';
+          if (dispA.isEmpty && dispB.isEmpty) return 0;
+          if (dispA.isEmpty) return 1;
+          if (dispB.isEmpty) return -1;
+          return dispA.toLowerCase().compareTo(dispB.toLowerCase());
+        } else { // distanceFromMe
+          int minA = 1 << 30;
+          for (final p in byCountry[a]!) {
+            final idx = expIndexMap[(p['data'] as Experience).id];
+            if (idx != null && idx < minA) minA = idx;
+          }
+          int minB = 1 << 30;
+          for (final p in byCountry[b]!) {
+            final idx = expIndexMap[(p['data'] as Experience).id];
+            if (idx != null && idx < minB) minB = idx;
+          }
+          return minA.compareTo(minB);
+        }
+      });
+    for (final ck in countries) {
+      final dispCountry = (byCountry[ck]!.first['labels'] as Map<String, String?>)['C'] ?? 'Unknown country';
+      final countryKey = 'C:$ck';
+      flat.add({'header': dispCountry, 'level': 'country', 'key': countryKey});
+      _locationExpansionExperiences.putIfAbsent(countryKey, () => false);
+      if (!(_locationExpansionExperiences[countryKey] ?? false)) continue;
+
+      // Determine which levels exist in this country
+      final levels = ['L1','L2','L3','L4','L5','L6','L7','LOC'];
+      final List<String> presentLevels = levels.where((lvl) {
+        return byCountry[ck]!.any((p) => n((p['labels'] as Map<String, String?>)[lvl]).isNotEmpty);
+      }).toList();
+
+      // Recursive build
+      void buildLevel(String prefixKey, String level, List<Map<String, dynamic>> items) {
+        // Find the next present level starting from the requested level
+        String useLevel = level;
+        while (!presentLevels.contains(useLevel)) {
+          useLevel = _nextLevel(useLevel);
+          if (useLevel == '__end__') break;
+        }
+        // If we ran out of levels, output items as leaf
+        if (useLevel == '__end__') {
+          final leaf = items.map((p) => p['data'] as Experience).toList();
+          if (_experienceSortType == ExperienceSortType.alphabetical) {
+            leaf.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+          } else if (_experienceSortType == ExperienceSortType.mostRecent) {
+            leaf.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+          }
+          for (final e in leaf) flat.add({'item': e, 'key': prefixKey});
+          return;
+        }
+        // Group by the resolved present level
+        final Map<String, List<Map<String, dynamic>>> buckets = {};
+        for (final p in items) {
+          final label = n((p['labels'] as Map<String, String?>)[useLevel]);
+          final k = label.toLowerCase();
+          buckets.putIfAbsent(k, () => []).add(p);
+        }
+        final keys = buckets.keys.toList()
+          ..sort((a, b) {
+            if (_experienceSortType == ExperienceSortType.mostRecent) {
+              DateTime maxA = DateTime.fromMillisecondsSinceEpoch(0);
+              for (final p in buckets[a]!) {
+                final d = (p['data'] as Experience).updatedAt;
+                if (d.isAfter(maxA)) maxA = d;
+              }
+              DateTime maxB = DateTime.fromMillisecondsSinceEpoch(0);
+              for (final p in buckets[b]!) {
+                final d = (p['data'] as Experience).updatedAt;
+                if (d.isAfter(maxB)) maxB = d;
+              }
+              // Unknown/empty last
+              if (a.isEmpty && b.isEmpty) return 0;
+              if (a.isEmpty) return 1;
+              if (b.isEmpty) return -1;
+              return maxB.compareTo(maxA);
+            } else if (_experienceSortType == ExperienceSortType.alphabetical || _experienceSortType == ExperienceSortType.city) {
+              final dispA = n((buckets[a]!.first['labels'] as Map<String, String?>)[useLevel]);
+              final dispB = n((buckets[b]!.first['labels'] as Map<String, String?>)[useLevel]);
+              if (dispA.isEmpty && dispB.isEmpty) return 0;
+              if (dispA.isEmpty) return 1;
+              if (dispB.isEmpty) return -1;
+              return dispA.toLowerCase().compareTo(dispB.toLowerCase());
+            } else { // distanceFromMe
+              int minA = 1 << 30;
+              for (final p in buckets[a]!) {
+                final idx = expIndexMap[(p['data'] as Experience).id];
+                if (idx != null && idx < minA) minA = idx;
+              }
+              int minB = 1 << 30;
+              for (final p in buckets[b]!) {
+                final idx = expIndexMap[(p['data'] as Experience).id];
+                if (idx != null && idx < minB) minB = idx;
+              }
+              if (a.isEmpty && b.isEmpty) return 0;
+              if (a.isEmpty) return 1;
+              if (b.isEmpty) return -1;
+              return minA.compareTo(minB);
+            }
+          });
+        for (final k in keys) {
+          final disp = n((buckets[k]!.first['labels'] as Map<String, String?>)[useLevel]);
+          if (disp.isEmpty) {
+            // Missing level for these items: drop deeper to next present level/leaf
+            buildLevel(prefixKey, _nextLevel(useLevel), buckets[k]!);
+          } else {
+            final key = '$prefixKey|$useLevel:${k}';
+            flat.add({'header': disp, 'level': useLevel, 'key': key});
+            _locationExpansionExperiences.putIfAbsent(key, () => false);
+            if (!(_locationExpansionExperiences[key] ?? false)) continue;
+            buildLevel(key, _nextLevel(useLevel), buckets[k]!);
+          }
+        }
+      }
+
+      buildLevel(countryKey, 'L1', byCountry[ck]!);
+    }
+
+    if (noLoc.isNotEmpty) {
+      final key = 'C:noloc';
+      flat.add({'header': 'No Location Specified', 'level': 'country', 'key': key});
+      _locationExpansionExperiences.putIfAbsent(key, () => false);
+      if (_locationExpansionExperiences[key] ?? false) {
+        final items = List<Experience>.from(noLoc);
+        if (_experienceSortType == ExperienceSortType.alphabetical) {
+          items.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+        } else if (_experienceSortType == ExperienceSortType.mostRecent) {
+          items.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+        }
+        for (final e in items) flat.add({'item': e, 'key': key});
+      }
+    }
+    return flat;
+  }
+
+  // Build fully dynamic grouping for Content tab (Country -> L1..L7 -> LOC)
+  List<Map<String, Object>> _buildDynamicContentGrouping() {
+    String n(String? s) => (s ?? '').trim();
+    final Map<String, List<Map<String, dynamic>>> byCountry = {};
+    final List<GroupedContentItem> noLoc = [];
+
+    for (final group in _filteredGroupedContentItems) {
+      // Exclusive No-Location rule: if any associated experience lacks all levels, put this group only under No Location
+      final bool anyNoLoc = group.associatedExperiences.any((exp) {
+        final c = n(exp.location.country);
+        String l1 = n(exp.location.state);
+        final l2 = n(exp.location.administrativeAreaLevel2);
+        final l3 = n(exp.location.administrativeAreaLevel3);
+        final l4 = n(exp.location.administrativeAreaLevel4);
+        final l5 = n(exp.location.administrativeAreaLevel5);
+        final l6 = n(exp.location.administrativeAreaLevel6);
+        final l7 = n(exp.location.administrativeAreaLevel7);
+        String loc = n(exp.location.city);
+        final displayName = n(exp.location.displayName);
+        if (l1.isEmpty && displayName.isNotEmpty) {
+          l1 = displayName;
+        }
+        if (loc.isEmpty && displayName.isNotEmpty) {
+          loc = displayName;
+        }
+        return [c,l1,l2,l3,l4,l5,l6,l7,loc].every((v) => v.isEmpty);
+      });
+      if (anyNoLoc) {
+        noLoc.add(group);
+        continue;
+      }
+
+      // Otherwise, place this group under all location paths for its associated experiences
+      for (final exp in group.associatedExperiences) {
+        final c = n(exp.location.country);
+        if (c.isEmpty) continue; // without country, treat as noloc but we already handled
+        String l1 = n(exp.location.state);
+        final l2 = n(exp.location.administrativeAreaLevel2);
+        final l3 = n(exp.location.administrativeAreaLevel3);
+        final l4 = n(exp.location.administrativeAreaLevel4);
+        final l5 = n(exp.location.administrativeAreaLevel5);
+        final l6 = n(exp.location.administrativeAreaLevel6);
+        final l7 = n(exp.location.administrativeAreaLevel7);
+        String loc = n(exp.location.city);
+        final displayName = n(exp.location.displayName);
+        if (l1.isEmpty && displayName.isNotEmpty) {
+          l1 = displayName;
+        }
+        if (loc.isEmpty && displayName.isNotEmpty) {
+          loc = displayName;
+        }
+
+        final keyC = c.toLowerCase();
+        byCountry.putIfAbsent(keyC, () => []);
+        byCountry[keyC]!.add({
+          'labels': {
+            'C': c,
+            'L1': l1,
+            'L2': l2,
+            'L3': l3,
+            'L4': l4,
+            'L5': l5,
+            'L6': l6,
+            'L7': l7,
+            'LOC': loc,
+          },
+          'gid': group.mediaItem.id,
+          'data': group,
+        });
+      }
+    }
+
+    String sortKeyFor(String s) => s.toLowerCase();
+    final List<Map<String, Object>> flat = [];
+    // Precompute global index for distance-based group ordering (by content list order)
+    final Map<String, int> contentIndexMap = {};
+    if (_contentSortType == ContentSortType.distanceFromMe) {
+      for (int i = 0; i < _filteredGroupedContentItems.length; i++) {
+        contentIndexMap[_filteredGroupedContentItems[i].mediaItem.id] = i;
+      }
+    }
+    final countries = byCountry.keys.toList()
+      ..sort((a,b){
+        if (a.isEmpty && b.isEmpty) return 0;
+        if (a.isEmpty) return 1;
+        if (b.isEmpty) return -1;
+        if (_contentSortType == ContentSortType.mostRecent) {
+          DateTime maxA = DateTime.fromMillisecondsSinceEpoch(0);
+          for (final p in byCountry[a]!) {
+            final d = (p['data'] as GroupedContentItem).mediaItem.createdAt;
+            if (d.isAfter(maxA)) maxA = d;
+          }
+          DateTime maxB = DateTime.fromMillisecondsSinceEpoch(0);
+          for (final p in byCountry[b]!) {
+            final d = (p['data'] as GroupedContentItem).mediaItem.createdAt;
+            if (d.isAfter(maxB)) maxB = d;
+          }
+          return maxB.compareTo(maxA);
+        } else if (_contentSortType == ContentSortType.alphabetical || _contentSortType == ContentSortType.city) {
+          final dispA = (byCountry[a]!.first['labels'] as Map<String, String?>)['C'] ?? '';
+          final dispB = (byCountry[b]!.first['labels'] as Map<String, String?>)['C'] ?? '';
+          if (dispA.isEmpty && dispB.isEmpty) return 0;
+          if (dispA.isEmpty) return 1;
+          if (dispB.isEmpty) return -1;
+          return dispA.toLowerCase().compareTo(dispB.toLowerCase());
+        } else { // distanceFromMe
+          int minA = 1 << 30;
+          for (final p in byCountry[a]!) {
+            final idx = contentIndexMap[(p['gid'] as String?) ?? (p['data'] as GroupedContentItem).mediaItem.id];
+            if (idx != null && idx < minA) minA = idx;
+          }
+          int minB = 1 << 30;
+          for (final p in byCountry[b]!) {
+            final idx = contentIndexMap[(p['gid'] as String?) ?? (p['data'] as GroupedContentItem).mediaItem.id];
+            if (idx != null && idx < minB) minB = idx;
+          }
+          return minA.compareTo(minB);
+        }
+      });
+    for (final ck in countries) {
+      final dispCountry = (byCountry[ck]!.first['labels'] as Map<String, String?>)['C'] ?? 'Unknown country';
+      final countryKey = 'C:$ck';
+      flat.add({'header': dispCountry, 'level': 'country', 'key': countryKey});
+      _locationExpansionContent.putIfAbsent(countryKey, () => false);
+      if (!(_locationExpansionContent[countryKey] ?? false)) continue;
+
+      // Determine which levels exist in this country
+      final levels = ['L1','L2','L3','L4','L5','L6','L7','LOC'];
+      final List<String> presentLevels = levels.where((lvl) {
+        return byCountry[ck]!.any((p) => n((p['labels'] as Map<String, String?>)[lvl]).isNotEmpty);
+      }).toList();
+
+      void buildLevel(String prefixKey, String level, List<Map<String, dynamic>> items) {
+        // Find the next present level starting from the requested level
+        String useLevel = level;
+        while (!presentLevels.contains(useLevel)) {
+          useLevel = _nextLevel(useLevel);
+          if (useLevel == '__end__') break;
+        }
+        // If we ran out of levels, this branch is a leaf: dedupe and sort
+        if (useLevel == '__end__') {
+          final Map<String, GroupedContentItem> seen = {};
+          for (final p in items) {
+            final gid = p['gid'] as String? ?? (p['data'] as GroupedContentItem).mediaItem.id;
+            seen.putIfAbsent(gid, () => p['data'] as GroupedContentItem);
+          }
+          final leaf = seen.values.toList();
+          if (_contentSortType == ContentSortType.alphabetical) {
+            leaf.sort((a,b){
+              final an = a.associatedExperiences.isNotEmpty ? a.associatedExperiences.first.name.toLowerCase() : '';
+              final bn = b.associatedExperiences.isNotEmpty ? b.associatedExperiences.first.name.toLowerCase() : '';
+              return an.compareTo(bn);
+            });
+          } else {
+            leaf.sort((a,b)=>b.mediaItem.createdAt.compareTo(a.mediaItem.createdAt));
+          }
+          int ordinal = 1;
+          for (final g in leaf) {
+            flat.add({'item': g, 'pathKey': prefixKey, 'ordinal': ordinal});
+            ordinal++;
+          }
+          return;
+        }
+        // Group by the resolved present level
+        final Map<String, List<Map<String, dynamic>>> buckets = {};
+        for (final p in items) {
+          final label = n((p['labels'] as Map<String, String?>)[useLevel]);
+          final k = label.toLowerCase();
+          buckets.putIfAbsent(k, () => []).add(p);
+        }
+        final keys = buckets.keys.toList()
+          ..sort((a,b){
+            if (_contentSortType == ContentSortType.mostRecent) {
+              DateTime maxA = DateTime.fromMillisecondsSinceEpoch(0);
+              for (final p in buckets[a]!) {
+                final d = (p['data'] as GroupedContentItem).mediaItem.createdAt;
+                if (d.isAfter(maxA)) maxA = d;
+              }
+              DateTime maxB = DateTime.fromMillisecondsSinceEpoch(0);
+              for (final p in buckets[b]!) {
+                final d = (p['data'] as GroupedContentItem).mediaItem.createdAt;
+                if (d.isAfter(maxB)) maxB = d;
+              }
+              if (a.isEmpty && b.isEmpty) return 0;
+              if (a.isEmpty) return 1;
+              if (b.isEmpty) return -1;
+              return maxB.compareTo(maxA);
+            } else if (_contentSortType == ContentSortType.alphabetical || _contentSortType == ContentSortType.city) {
+              final dispA = n((buckets[a]!.first['labels'] as Map<String, String?>)[useLevel]);
+              final dispB = n((buckets[b]!.first['labels'] as Map<String, String?>)[useLevel]);
+              if (dispA.isEmpty && dispB.isEmpty) return 0;
+              if (dispA.isEmpty) return 1;
+              if (dispB.isEmpty) return -1;
+              return dispA.toLowerCase().compareTo(dispB.toLowerCase());
+            } else { // distanceFromMe
+              int minA = 1 << 30;
+              for (final p in buckets[a]!) {
+                final gid = (p['gid'] as String?) ?? (p['data'] as GroupedContentItem).mediaItem.id;
+                final idx = contentIndexMap[gid];
+                if (idx != null && idx < minA) minA = idx;
+              }
+              int minB = 1 << 30;
+              for (final p in buckets[b]!) {
+                final gid = (p['gid'] as String?) ?? (p['data'] as GroupedContentItem).mediaItem.id;
+                final idx = contentIndexMap[gid];
+                if (idx != null && idx < minB) minB = idx;
+              }
+              if (a.isEmpty && b.isEmpty) return 0;
+              if (a.isEmpty) return 1;
+              if (b.isEmpty) return -1;
+              return minA.compareTo(minB);
+            }
+          });
+        for (final k in keys) {
+          final disp = n((buckets[k]!.first['labels'] as Map<String, String?>)[useLevel]);
+          if (disp.isEmpty) {
+            buildLevel(prefixKey, _nextLevel(useLevel), buckets[k]!);
+          } else {
+            final key = '$prefixKey|$useLevel:${k}';
+            flat.add({'header': disp, 'level': useLevel, 'key': key});
+            _locationExpansionContent.putIfAbsent(key, () => false);
+            if (!(_locationExpansionContent[key] ?? false)) continue;
+            buildLevel(key, _nextLevel(useLevel), buckets[k]!);
+          }
+        }
+      }
+
+      buildLevel(countryKey, 'L1', byCountry[ck]!);
+    }
+
+    if (noLoc.isNotEmpty) {
+      final key = 'C:noloc';
+      flat.add({'header': 'No Location Specified', 'level': 'country', 'key': key});
+      _locationExpansionContent.putIfAbsent(key, () => false);
+      if (_locationExpansionContent[key] ?? false) {
+        final items = List<GroupedContentItem>.from(noLoc);
+        if (_contentSortType == ContentSortType.alphabetical) {
+          items.sort((a,b){
+            final an = a.associatedExperiences.isNotEmpty ? a.associatedExperiences.first.name.toLowerCase() : '';
+            final bn = b.associatedExperiences.isNotEmpty ? b.associatedExperiences.first.name.toLowerCase() : '';
+            return an.compareTo(bn);
+          });
+        } else {
+          items.sort((a,b)=>b.mediaItem.createdAt.compareTo(a.mediaItem.createdAt));
+        }
+        int ordinal = 1;
+        for (final g in items) {
+          flat.add({'item': g, 'pathKey': key, 'ordinal': ordinal});
+          ordinal++;
+        }
+      }
+    }
+
+    return flat;
+  }
+
+  String _nextLevel(String level) {
+    const order = ['L1','L2','L3','L4','L5','L6','L7','LOC'];
+    final i = order.indexOf(level);
+    return i >= 0 && i < order.length - 1 ? order[i + 1] : '__end__';
   }
 
   Future<void> _loadData() async {
@@ -1185,6 +1659,7 @@ if (mounted) {
                       _countryExpansionExperiences.clear();
                       _stateExpansionExperiences.clear();
                       _cityExpansionExperiences.clear();
+                      _locationExpansionExperiences.clear();
                     });
                   },
                   child: Row(
@@ -1242,6 +1717,7 @@ if (mounted) {
                       _countryExpansionContent.clear();
                       _stateExpansionContent.clear();
                       _cityExpansionContent.clear();
+                      _locationExpansionContent.clear();
                     });
                   },
                   child: Row(
@@ -1298,7 +1774,7 @@ if (mounted) {
                             background: Colors.white,
                           ),
                         ),
-                        child: TypeAheadField<Experience>(
+                      child: TypeAheadField<Experience>(
                         builder: (context, controller, focusNode) {
                           // ADDED: Clear the TypeAhead controller when requested
                           if (_clearSearchOnNextBuild) {
@@ -1342,8 +1818,8 @@ if (mounted) {
                           return Container(
                             color: Colors.white,
                             child: ListTile(
-                              leading: const Icon(Icons.history),
-                              title: Text(suggestion.name),
+                            leading: const Icon(Icons.history),
+                            title: Text(suggestion.name),
                             ),
                           );
                         },
@@ -1386,7 +1862,7 @@ final category = _categories.firstWhere(
                           child: Text('No experiences found.',
                               style: TextStyle(color: Colors.grey)),
                         ),
-                      ),
+                        ),
                       ),
                     );
 
@@ -2061,148 +2537,7 @@ final category = _categories.firstWhere(
       // When grouping, build a flattened list of headers + items ordered by the primary sort.
       List<Map<String, Object>>? expRegionStructured;
       if (_groupByLocationExperiences) {
-        String n(String? s) => (s ?? '').trim();
-        final Map<String, Map<String, Map<String, List<Experience>>>> tree = {};
-        final Map<String, String> countryDisp = {};
-        final Map<String, Map<String, String>> stateDisp = {};
-        final Map<String, Map<String, Map<String, String>>> cityDisp = {};
-
-        final List<Experience> noLocationExperiences = [];
-        for (final exp in _filteredExperiences) {
-          final ctry = n(exp.location.country);
-          final state = n(exp.location.state);
-          final city  = n(exp.location.city);
-          if (ctry.isEmpty && state.isEmpty && city.isEmpty) {
-            noLocationExperiences.add(exp);
-            continue;
-          }
-          final ck = ctry.isEmpty ? '' : ctry.toLowerCase();
-          final sk = state.isEmpty ? '' : state.toLowerCase();
-          final cik = city.isEmpty ? '' : city.toLowerCase();
-
-          countryDisp[ck] = ctry.isEmpty ? 'Unknown country' : ctry;
-          stateDisp.putIfAbsent(ck, () => {})[sk] = state.isEmpty ? 'Unknown state' : state;
-          cityDisp.putIfAbsent(ck, () => {}).putIfAbsent(sk, () => {})[cik] = city.isEmpty ? 'Unknown city' : city;
-
-          final levelCountry = tree.putIfAbsent(ck, () => {});
-          final levelState   = levelCountry.putIfAbsent(sk, () => {});
-          final levelCity    = levelState.putIfAbsent(cik, () => []);
-          levelCity.add(exp);
-        }
-
-        DateTime newestOf(List<Experience> xs) =>
-            xs.map((e) => e.updatedAt).fold<DateTime>(DateTime.fromMillisecondsSinceEpoch(0), (p, c) => c.isAfter(p) ? c : p);
-
-        Map<String, int> firstIndexFor = {};
-        if (_experienceSortType == ExperienceSortType.distanceFromMe) {
-          for (int i = 0; i < _filteredExperiences.length; i++) {
-            final e = _filteredExperiences[i];
-            final ck = n(e.location.country).toLowerCase();
-            final sk = n(e.location.state).toLowerCase();
-            final cik= n(e.location.city).toLowerCase();
-            firstIndexFor.putIfAbsent('C:$ck', () => i);
-            firstIndexFor.putIfAbsent('S:$ck|$sk', () => i);
-            firstIndexFor.putIfAbsent('I:$ck|$sk|$cik', () => i);
-          }
-        }
-
-        int cmpCountry(String a, String b) {
-          if (_experienceSortType == ExperienceSortType.mostRecent) {
-            DateTime maxA = DateTime.fromMillisecondsSinceEpoch(0), maxB = maxA;
-            tree[a]?.forEach((sk, cities) => cities.forEach((cik, list) {
-              final m = newestOf(list);
-              if (m.isAfter(maxA)) maxA = m;
-            }));
-            tree[b]?.forEach((sk, cities) => cities.forEach((cik, list) {
-              final m = newestOf(list);
-              if (m.isAfter(maxB)) maxB = m;
-            }));
-            if (a.isEmpty && b.isEmpty) return 0; if (a.isEmpty) return 1; if (b.isEmpty) return -1;
-            return maxB.compareTo(maxA);
-          } else if (_experienceSortType == ExperienceSortType.alphabetical || _experienceSortType == ExperienceSortType.city) {
-            if (a.isEmpty && b.isEmpty) return 0; if (a.isEmpty) return 1; if (b.isEmpty) return -1;
-            return (countryDisp[a] ?? '').toLowerCase().compareTo((countryDisp[b] ?? '').toLowerCase());
-          } else {
-            if (a.isEmpty && b.isEmpty) return 0; if (a.isEmpty) return 1; if (b.isEmpty) return -1;
-            return (firstIndexFor['C:$a'] ?? 1 << 30).compareTo(firstIndexFor['C:$b'] ?? 1 << 30);
-          }
-        }
-        int cmpState(String ck, String a, String b) {
-          if (_experienceSortType == ExperienceSortType.mostRecent) {
-            DateTime maxA = DateTime.fromMillisecondsSinceEpoch(0), maxB = maxA;
-            tree[ck]?[a]?.forEach((cik, list) { final m = newestOf(list); if (m.isAfter(maxA)) maxA = m; });
-            tree[ck]?[b]?.forEach((cik, list) { final m = newestOf(list); if (m.isAfter(maxB)) maxB = m; });
-            if (a.isEmpty && b.isEmpty) return 0; if (a.isEmpty) return 1; if (b.isEmpty) return -1;
-            return maxB.compareTo(maxA);
-          } else if (_experienceSortType == ExperienceSortType.alphabetical || _experienceSortType == ExperienceSortType.city) {
-            if (a.isEmpty && b.isEmpty) return 0; if (a.isEmpty) return 1; if (b.isEmpty) return -1;
-            return (stateDisp[ck]?[a] ?? '').toLowerCase().compareTo((stateDisp[ck]?[b] ?? '').toLowerCase());
-          } else {
-            if (a.isEmpty && b.isEmpty) return 0; if (a.isEmpty) return 1; if (b.isEmpty) return -1;
-            return (firstIndexFor['S:$ck|$a'] ?? 1 << 30).compareTo(firstIndexFor['S:$ck|$b'] ?? 1 << 30);
-          }
-        }
-        int cmpCity(String ck, String sk, String a, String b) {
-          if (_experienceSortType == ExperienceSortType.mostRecent) {
-            final maxA = newestOf(tree[ck]![sk]![a]!);
-            final maxB = newestOf(tree[ck]![sk]![b]!);
-            if (a.isEmpty && b.isEmpty) return 0; if (a.isEmpty) return 1; if (b.isEmpty) return -1;
-            return maxB.compareTo(maxA);
-          } else if (_experienceSortType == ExperienceSortType.alphabetical || _experienceSortType == ExperienceSortType.city) {
-            if (a.isEmpty && b.isEmpty) return 0; if (a.isEmpty) return 1; if (b.isEmpty) return -1;
-            return (cityDisp[ck]?[sk]?[a] ?? '').toLowerCase().compareTo((cityDisp[ck]?[sk]?[b] ?? '').toLowerCase());
-          } else {
-            if (a.isEmpty && b.isEmpty) return 0; if (a.isEmpty) return 1; if (b.isEmpty) return -1;
-            return (firstIndexFor['I:$ck|$sk|$a'] ?? 1 << 30).compareTo(firstIndexFor['I:$ck|$sk|$b'] ?? 1 << 30);
-          }
-        }
-
-        final List<Map<String, Object>> flattened = [];
-        final countries = tree.keys.toList()..sort(cmpCountry);
-        for (final ck in countries) {
-          flattened.add({'header': countryDisp[ck] ?? 'Unknown country', 'level': 'country', 'key': ck});
-          final isCtryExpanded = _countryExpansionExperiences[ck] ?? false;
-          _countryExpansionExperiences.putIfAbsent(ck, () => false);
-          if (!isCtryExpanded) continue;
-
-          final states = tree[ck]!.keys.toList()..sort((a, b) => cmpState(ck, a, b));
-          for (final sk in states) {
-            final skKey = '$ck|$sk';
-            flattened.add({'header': stateDisp[ck]?[sk] ?? 'Unknown state', 'level': 'state', 'key': skKey});
-            final isStateExpanded = _stateExpansionExperiences[skKey] ?? false;
-            _stateExpansionExperiences.putIfAbsent(skKey, () => false);
-            if (!isStateExpanded) continue;
-
-            final cities = tree[ck]![sk]!.keys.toList()..sort((a, b) => cmpCity(ck, sk, a, b));
-            for (final cik in cities) {
-              final ciKey = '$ck|$sk|$cik';
-              flattened.add({'header': cityDisp[ck]?[sk]?[cik] ?? 'Unknown city', 'level': 'city', 'key': ciKey});
-              final isCityExpanded = _cityExpansionExperiences[ciKey] ?? false;
-              _cityExpansionExperiences.putIfAbsent(ciKey, () => false);
-              if (!isCityExpanded) continue;
-
-              final items = tree[ck]![sk]![cik]!;
-              if (_experienceSortType == ExperienceSortType.alphabetical) {
-                items.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-              } else if (_experienceSortType == ExperienceSortType.mostRecent) {
-                items.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
-              }
-              for (final e in items) {
-                flattened.add({'item': e, 'key': ciKey});
-              }
-            }
-          }
-        }
-        // Append No Location Specified as a country-level group at the bottom
-        if (noLocationExperiences.isNotEmpty) {
-          flattened.add({'header': 'No Location Specified', 'level': 'country', 'key': 'noloc'});
-          if (_countryExpansionExperiences['noloc'] ?? false) {
-            for (final e in noLocationExperiences) {
-              flattened.add({'item': e, 'key': 'noloc'});
-            }
-          }
-        }
-        expRegionStructured = flattened;
+        expRegionStructured = _buildDynamicExperienceGrouping();
       } else if (_groupByCityExperiences) {
         final Map<String, List<Experience>> cityItems = {};
         final Map<String, String> cityDisplay = {};
@@ -2346,52 +2681,90 @@ final category = _categories.firstWhere(
               final level = entry['level'] as String?;
               final key = entry['key'] as String;
               final displayRegion = entry['header'] as String;
-              final bool isExpanded = (level == 'country')
-                  ? (_countryExpansionExperiences[key] ?? false)
-                  : (level == 'state')
-                      ? (_stateExpansionExperiences[key] ?? false)
-                      : (level == 'city')
-                          ? (_cityExpansionExperiences[key] ?? false)
-                          : (_noLocationExperiencesExpanded);
-              final TextStyle base = Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold, color: Colors.grey[700]) ?? const TextStyle(fontWeight: FontWeight.bold);
-              final TextStyle style = level == 'country'
-                  ? base.copyWith(fontSize: (base.fontSize ?? 14) + 4)
-                  : level == 'state'
-                      ? base.copyWith(fontSize: (base.fontSize ?? 14) + 2)
-                      : base;
-              final double leftPadding = level == 'country' ? 0 : level == 'state' ? 16 : 32;
-              return InkWell(
-                onTap: () {
-                  setState(() {
-                    if (level == 'country') {
-                      _countryExpansionExperiences[key] = !isExpanded;
-                    } else if (level == 'state') {
-                      _stateExpansionExperiences[key] = !isExpanded;
-                    } else if (level == 'city') {
-                      _cityExpansionExperiences[key] = !isExpanded;
-                    } else {
-                      _noLocationExperiencesExpanded = !isExpanded;
-                    }
-                  });
-                },
-                child: Container(
-                  width: double.infinity,
-                  color: Colors.white,
-                  padding: EdgeInsets.fromLTRB(16 + leftPadding, 12, 16, 6),
-                  child: Row(
-                    children: [
-                      Icon(isExpanded ? Icons.expand_less : Icons.expand_more, color: Colors.grey[700], size: 18),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          displayRegion,
-                          style: style,
+              if (_groupByLocationExperiences && level != null) {
+                // Dynamic grouping: use unified expansion map and hierarchical levels
+                final bool isExpanded = _locationExpansionExperiences[key] ?? false;
+                final TextStyle base = Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold, color: Colors.grey[700]) ?? const TextStyle(fontWeight: FontWeight.bold);
+                const order = ['country','L1','L2','L3','L4','L5','L6','L7','LOC'];
+                int depth = order.indexOf(level);
+                depth = depth < 0 ? 0 : depth;
+                final TextStyle style = level == 'country'
+                    ? base.copyWith(fontSize: (base.fontSize ?? 14) + 4)
+                    : base.copyWith(fontSize: (base.fontSize ?? 14) + (depth >= 1 ? 2 : 0));
+                final double leftPadding = (depth * 16).toDouble();
+                return InkWell(
+                  onTap: () {
+                    setState(() {
+                      _locationExpansionExperiences[key] = !isExpanded;
+                    });
+                  },
+                  child: Container(
+                    width: double.infinity,
+                    color: Colors.white,
+                    padding: EdgeInsets.fromLTRB(16 + leftPadding, 12, 16, 6),
+                    child: Row(
+                      children: [
+                        Icon(isExpanded ? Icons.expand_less : Icons.expand_more, color: Colors.grey[700], size: 18),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            displayRegion,
+                            style: style,
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
-                ),
-              );
+                );
+              } else {
+                // Legacy country/state/city grouping path
+                final bool isExpanded = (level == 'country')
+                    ? (_countryExpansionExperiences[key] ?? false)
+                    : (level == 'state')
+                        ? (_stateExpansionExperiences[key] ?? false)
+                        : (level == 'city')
+                            ? (_cityExpansionExperiences[key] ?? false)
+                            : (_noLocationExperiencesExpanded);
+                final TextStyle base = Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold, color: Colors.grey[700]) ?? const TextStyle(fontWeight: FontWeight.bold);
+                final TextStyle style = level == 'country'
+                    ? base.copyWith(fontSize: (base.fontSize ?? 14) + 4)
+                    : level == 'state'
+                        ? base.copyWith(fontSize: (base.fontSize ?? 14) + 2)
+                        : base;
+                final double leftPadding = level == 'country' ? 0 : level == 'state' ? 16 : 32;
+                return InkWell(
+                  onTap: () {
+                    setState(() {
+                      if (level == 'country') {
+                        _countryExpansionExperiences[key] = !isExpanded;
+                      } else if (level == 'state') {
+                        _stateExpansionExperiences[key] = !isExpanded;
+                      } else if (level == 'city') {
+                        _cityExpansionExperiences[key] = !isExpanded;
+                      } else {
+                        _noLocationExperiencesExpanded = !isExpanded;
+                      }
+                    });
+                  },
+                  child: Container(
+                    width: double.infinity,
+                    color: Colors.white,
+                    padding: EdgeInsets.fromLTRB(16 + leftPadding, 12, 16, 6),
+                    child: Row(
+                      children: [
+                        Icon(isExpanded ? Icons.expand_less : Icons.expand_more, color: Colors.grey[700], size: 18),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            displayRegion,
+                            style: style,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }
             } else {
               final exp = entry['item'] as Experience;
               return _buildExperienceListItem(exp);
@@ -2547,183 +2920,7 @@ final category = _categories.firstWhere(
     } else {
       // Mobile or Mobile Web
       if (_groupByLocationContent) {
-        String n(String? s) => (s ?? '').trim();
-        // country -> state -> city -> list
-        final Map<String, Map<String, Map<String, List<GroupedContentItem>>>> tree = {};
-        final Map<String, String> countryDisp = {};
-        final Map<String, Map<String, String>> stateDisp = {};
-        final Map<String, Map<String, Map<String, String>>> cityDisp = {};
-        // Collect content items that should go exclusively under No Location Specified
-        final List<GroupedContentItem> noLocItemsCollected = [];
-        for (final group in _filteredGroupedContentItems) {
-          final bool anyNoLoc = group.associatedExperiences.any((exp) {
-            final ctry = n(exp.location.country);
-            final state = n(exp.location.state);
-            final city  = n(exp.location.city);
-            return ctry.isEmpty && state.isEmpty && city.isEmpty;
-          });
-          if (anyNoLoc) {
-            noLocItemsCollected.add(group);
-            continue; // Do not also add to unknown/location buckets
-          }
-          final Set<String> tuples = {};
-          for (final exp in group.associatedExperiences) {
-            final ctry = n(exp.location.country);
-            final state = n(exp.location.state);
-            final city  = n(exp.location.city);
-            // If all three are empty, defer to the No Location Specified bucket
-            if (ctry.isEmpty && state.isEmpty && city.isEmpty) {
-              continue;
-            }
-            final ck = ctry.isEmpty ? '' : ctry.toLowerCase();
-            final sk = state.isEmpty ? '' : state.toLowerCase();
-            final cik = city.isEmpty ? '' : city.toLowerCase();
-            countryDisp[ck] = ctry.isEmpty ? 'Unknown country' : ctry;
-            stateDisp.putIfAbsent(ck, () => {})[sk] = state.isEmpty ? 'Unknown state' : state;
-            cityDisp.putIfAbsent(ck, () => {}).putIfAbsent(sk, () => {})[cik] = city.isEmpty ? 'Unknown city' : city;
-            tuples.add('$ck|$sk|$cik');
-          }
-          // Only place into the location tree if there is at least one tuple
-          if (tuples.isEmpty) {
-            continue;
-          }
-          for (final key in tuples) {
-            final parts = key.split('|');
-            final ck = parts[0];
-            final sk = parts.length > 1 ? parts[1] : '';
-            final cik = parts.length > 2 ? parts[2] : '';
-            final levelCountry = tree.putIfAbsent(ck, () => {});
-            final levelState   = levelCountry.putIfAbsent(sk, () => {});
-            final list         = levelState.putIfAbsent(cik, () => []);
-            list.add(group);
-          }
-        }
-        DateTime newestOf(List<GroupedContentItem> xs) =>
-            xs.map((g) => g.mediaItem.createdAt).fold<DateTime>(DateTime.fromMillisecondsSinceEpoch(0), (p, c) => c.isAfter(p) ? c : p);
-        Map<String, int> firstIndexFor = {};
-        if (_contentSortType == ContentSortType.distanceFromMe) {
-          for (int i = 0; i < _filteredGroupedContentItems.length; i++) {
-            final g = _filteredGroupedContentItems[i];
-            final seen = <String>{};
-            for (final exp in g.associatedExperiences) {
-              final ck = n(exp.location.country).toLowerCase();
-              final sk = n(exp.location.state).toLowerCase();
-              final cik= n(exp.location.city).toLowerCase();
-              if (seen.add('C:$ck')) firstIndexFor.putIfAbsent('C:$ck', () => i);
-              if (seen.add('S:$ck|$sk')) firstIndexFor.putIfAbsent('S:$ck|$sk', () => i);
-              if (seen.add('I:$ck|$sk|$cik')) firstIndexFor.putIfAbsent('I:$ck|$sk|$cik', () => i);
-            }
-            if (seen.isEmpty) {
-              firstIndexFor.putIfAbsent('C:', () => i);
-              firstIndexFor.putIfAbsent('S:|', () => i);
-              firstIndexFor.putIfAbsent('I:||', () => i);
-            }
-          }
-        }
-        int cmpCountry(String a, String b) {
-          if (_contentSortType == ContentSortType.mostRecent) {
-            DateTime maxA = DateTime.fromMillisecondsSinceEpoch(0), maxB = maxA;
-            tree[a]?.forEach((sk, cities) => cities.forEach((cik, list) { final m = newestOf(list); if (m.isAfter(maxA)) maxA = m; }));
-            tree[b]?.forEach((sk, cities) => cities.forEach((cik, list) { final m = newestOf(list); if (m.isAfter(maxB)) maxB = m; }));
-            if (a.isEmpty && b.isEmpty) return 0; if (a.isEmpty) return 1; if (b.isEmpty) return -1;
-            return maxB.compareTo(maxA);
-          } else if (_contentSortType == ContentSortType.alphabetical || _contentSortType == ContentSortType.city) {
-            if (a.isEmpty && b.isEmpty) return 0; if (a.isEmpty) return 1; if (b.isEmpty) return -1;
-            return (countryDisp[a] ?? '').toLowerCase().compareTo((countryDisp[b] ?? '').toLowerCase());
-          } else {
-            if (a.isEmpty && b.isEmpty) return 0; if (a.isEmpty) return 1; if (b.isEmpty) return -1;
-            return (firstIndexFor['C:$a'] ?? 1 << 30).compareTo(firstIndexFor['C:$b'] ?? 1 << 30);
-          }
-        }
-        int cmpState(String ck, String a, String b) {
-          if (_contentSortType == ContentSortType.mostRecent) {
-            DateTime maxA = DateTime.fromMillisecondsSinceEpoch(0), maxB = maxA;
-            tree[ck]?[a]?.forEach((cik, list) { final m = newestOf(list); if (m.isAfter(maxA)) maxA = m; });
-            tree[ck]?[b]?.forEach((cik, list) { final m = newestOf(list); if (m.isAfter(maxB)) maxB = m; });
-            if (a.isEmpty && b.isEmpty) return 0; if (a.isEmpty) return 1; if (b.isEmpty) return -1;
-            return maxB.compareTo(maxA);
-          } else if (_contentSortType == ContentSortType.alphabetical || _contentSortType == ContentSortType.city) {
-            if (a.isEmpty && b.isEmpty) return 0; if (a.isEmpty) return 1; if (b.isEmpty) return -1;
-            return (stateDisp[ck]?[a] ?? '').toLowerCase().compareTo((stateDisp[ck]?[b] ?? '').toLowerCase());
-          } else {
-            if (a.isEmpty && b.isEmpty) return 0; if (a.isEmpty) return 1; if (b.isEmpty) return -1;
-            return (firstIndexFor['S:$ck|$a'] ?? 1 << 30).compareTo(firstIndexFor['S:$ck|$b'] ?? 1 << 30);
-          }
-        }
-        int cmpCity(String ck, String sk, String a, String b) {
-          if (_contentSortType == ContentSortType.mostRecent) {
-            final maxA = newestOf(tree[ck]![sk]![a]!);
-            final maxB = newestOf(tree[ck]![sk]![b]!);
-            if (a.isEmpty && b.isEmpty) return 0; if (a.isEmpty) return 1; if (b.isEmpty) return -1;
-            return maxB.compareTo(maxA);
-          } else if (_contentSortType == ContentSortType.alphabetical || _contentSortType == ContentSortType.city) {
-            if (a.isEmpty && b.isEmpty) return 0; if (a.isEmpty) return 1; if (b.isEmpty) return -1;
-            return (cityDisp[ck]?[sk]?[a] ?? '').toLowerCase().compareTo((cityDisp[ck]?[sk]?[b] ?? '').toLowerCase());
-          } else {
-            if (a.isEmpty && b.isEmpty) return 0; if (a.isEmpty) return 1; if (b.isEmpty) return -1;
-            return (firstIndexFor['I:$ck|$sk|$a'] ?? 1 << 30).compareTo(firstIndexFor['I:$ck|$sk|$b'] ?? 1 << 30);
-          }
-        }
-        final List<Map<String, Object>> flat = [];
-        // Use the collected list for No Location Specified items
-        final List<GroupedContentItem> noLocItems = noLocItemsCollected;
-        // We'll append the No Location Specified group at the end to mirror country-level
-        final countries = tree.keys.toList()..sort(cmpCountry);
-        for (final ck in countries) {
-          // Country header
-          flat.add({'header': countryDisp[ck] ?? 'Unknown country', 'level': 'country', 'key': ck});
-          final bool countryExpanded = _countryExpansionContent[ck] ?? false;
-          _countryExpansionContent.putIfAbsent(ck, () => false);
-          if (!countryExpanded) continue;
-
-          final states = tree[ck]!.keys.toList()..sort((a, b) => cmpState(ck, a, b));
-          for (final sk in states) {
-            final skKey = '$ck|$sk';
-            // State header
-            flat.add({'header': stateDisp[ck]?[sk] ?? 'Unknown state', 'level': 'state', 'key': skKey});
-            final bool stateExpanded = _stateExpansionContent[skKey] ?? false;
-            _stateExpansionContent.putIfAbsent(skKey, () => false);
-            if (!stateExpanded) continue;
-
-            final cities = tree[ck]![sk]!.keys.toList()..sort((a, b) => cmpCity(ck, sk, a, b));
-            for (final cik in cities) {
-              final ciKey = '$ck|$sk|$cik';
-              // City header
-              flat.add({'header': cityDisp[ck]?[sk]?[cik] ?? 'Unknown city', 'level': 'city', 'key': ciKey});
-              final bool cityExpanded = _cityExpansionContent[ciKey] ?? false;
-              _cityExpansionContent.putIfAbsent(ciKey, () => false);
-              if (!cityExpanded) continue;
-
-              final items = tree[ck]![sk]![cik]!;
-              if (_contentSortType == ContentSortType.alphabetical) {
-                items.sort((a, b) {
-                  if (a.associatedExperiences.isEmpty && b.associatedExperiences.isEmpty) return 0;
-                  if (a.associatedExperiences.isEmpty) return 1;
-                  if (b.associatedExperiences.isEmpty) return -1;
-                  return a.associatedExperiences.first.name.toLowerCase().compareTo(b.associatedExperiences.first.name.toLowerCase());
-                });
-              } else if (_contentSortType == ContentSortType.mostRecent || _contentSortType == ContentSortType.city) {
-                items.sort((a, b) => b.mediaItem.createdAt.compareTo(a.mediaItem.createdAt));
-              }
-              int ordinal = 1;
-              for (final g in items) {
-                flat.add({'item': g, 'pathKey': ciKey, 'ordinal': ordinal});
-                ordinal++;
-              }
-            }
-          }
-        }
-        // Append No Location Specified section at bottom (country-level look, independent expansion)
-        if (noLocItems.isNotEmpty) {
-          flat.add({'header': 'No Location Specified', 'level': 'country', 'key': 'noloc'});
-          if (_noLocationContentExpanded) {
-            int ordinal = 1;
-            for (final g in noLocItems) {
-              flat.add({'item': g, 'pathKey': 'noloc', 'ordinal': ordinal});
-              ordinal++;
-            }
-          }
-        }
+        final List<Map<String, Object>> flat = _buildDynamicContentGrouping();
         return ListView.builder(
           padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 16.0),
           itemCount: flat.length + 1,
@@ -2734,46 +2931,25 @@ final category = _categories.firstWhere(
                 child: countHeader,
               );
             }
-            final entry = flat[index - 1];
+            final Map<String, Object> entry = flat[index - 1] as Map<String, Object>;
             if (entry.containsKey('header')) {
               final display = entry['header'] as String;
               final level = entry['level'] as String;
               final key = entry['key'] as String;
-              bool isExpanded = false;
-              if (level == 'country') {
-                isExpanded = key == 'noloc'
-                    ? _noLocationContentExpanded
-                    : (_countryExpansionContent[key] ?? false);
-              } else if (level == 'state') {
-                isExpanded = _stateExpansionContent[key] ?? false;
-              } else if (level == 'city') {
-                isExpanded = _cityExpansionContent[key] ?? false;
-              } else {
-                isExpanded = _noLocationContentExpanded;
-              }
+              final bool isExpanded = _locationExpansionContent[key] ?? false;
               final TextStyle base = Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold, color: Colors.grey[700]) ?? const TextStyle(fontWeight: FontWeight.bold);
+              int depth = 0;
+              const order = ['country','L1','L2','L3','L4','L5','L6','L7','LOC'];
+              depth = order.indexOf(level);
+              depth = depth < 0 ? 0 : depth;
               final TextStyle style = level == 'country'
                   ? base.copyWith(fontSize: (base.fontSize ?? 14) + 4)
-                  : level == 'state'
-                      ? base.copyWith(fontSize: (base.fontSize ?? 14) + 2)
-                      : base;
-              final double leftPadding = level == 'country' ? 0 : level == 'state' ? 16 : 32;
+                  : base.copyWith(fontSize: (base.fontSize ?? 14) + (depth >= 1 ? 2 : 0));
+              final double leftPadding = (depth * 16).toDouble();
               return InkWell(
                 onTap: () {
                   setState(() {
-                    if (level == 'country') {
-                      if (key == 'noloc') {
-                        _noLocationContentExpanded = !isExpanded;
-                      } else {
-                        _countryExpansionContent[key] = !isExpanded;
-                      }
-                    } else if (level == 'state') {
-                      _stateExpansionContent[key] = !isExpanded;
-                    } else if (level == 'city') {
-                      _cityExpansionContent[key] = !isExpanded;
-                    } else {
-                      _noLocationContentExpanded = !isExpanded;
-                    }
+                    _locationExpansionContent[key] = !isExpanded;
                   });
                 },
                 child: Container(
@@ -2801,18 +2977,7 @@ final category = _categories.firstWhere(
             } else {
               final group = entry['item'] as GroupedContentItem;
               final pathKey = entry['pathKey'] as String;
-              bool expanded;
-              if (pathKey == 'noloc') {
-                expanded = _noLocationContentExpanded;
-              } else {
-                final parts = pathKey.split('|');
-                final ck = parts[0];
-                final sk = parts.length > 1 ? parts[1] : '';
-                final cik = parts.length > 2 ? parts[2] : '';
-                expanded = (_countryExpansionContent[ck] ?? false) &&
-                    (_stateExpansionContent['$ck|$sk'] ?? false) &&
-                    (_cityExpansionContent['$ck|$sk|$cik'] ?? false);
-              }
+              final bool expanded = _locationExpansionContent[pathKey] ?? false;
               if (!expanded) return const SizedBox.shrink();
               final int ordinal = (entry['ordinal'] as int?) ?? (index - 1);
               return _buildContentListItem(group, ordinal);
