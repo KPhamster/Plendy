@@ -57,7 +57,16 @@ class _FacebookPreviewWidgetState extends State<FacebookPreviewWidget> {
     if (kIsWeb) return;
 
     try {
-      final webViewController = WebViewController();
+      WebViewController webViewController;
+      // Create iOS controller with inline playback
+      try {
+        // Import is available only on Apple platforms in build; safe to reference at runtime
+        // ignore: undefined_prefixed_name
+        webViewController = WebViewController.fromPlatformCreationParams(const PlatformWebViewControllerCreationParams());
+      } catch (_) {
+        // Fallback for non-iOS
+        webViewController = WebViewController();
+      }
       
       if (!mounted || _isDisposed) return;
       
@@ -90,6 +99,26 @@ class _FacebookPreviewWidgetState extends State<FacebookPreviewWidget> {
                 }
               }
               
+              // Remove fullscreen permissions and enforce inline
+              try {
+                webViewController.runJavaScript('''
+                  (function(){
+                    try {
+                      var iframes = document.querySelectorAll('iframe');
+                      iframes.forEach(function(iframe){
+                        iframe.removeAttribute('allowfullscreen');
+                        var allow = iframe.getAttribute('allow') || '';
+                        allow = allow.replace(/fullscreen/g,'').trim();
+                        if (allow.length>0) { iframe.setAttribute('allow', allow); } else { iframe.removeAttribute('allow'); }
+                        iframe.setAttribute('playsinline','');
+                      });
+                      var videos = document.querySelectorAll('video');
+                      videos.forEach(function(v){ v.setAttribute('playsinline',''); v.removeAttribute('webkit-playsinline'); });
+                    } catch(e) {}
+                  })();
+                ''');
+              } catch (_) {}
+
               // Set loading to false after a short delay
               final currentLoadingOperationId = ++_loadingDelayOperationId;
               

@@ -200,13 +200,23 @@ class YouTubePreviewWidgetState extends State<YouTubePreviewWidget> {
   <div class="video-container">
     <iframe
       id="youtube-player"
-      src="https://www.youtube.com/embed/$videoId?enablejsapi=1&modestbranding=1&rel=0&showinfo=0&fs=1&playsinline=1"
+      src="https://www.youtube.com/embed/$videoId?enablejsapi=1&modestbranding=1&rel=0&showinfo=0&fs=0&playsinline=1"
       allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-      allowfullscreen>
+      playsinline>
     </iframe>
   </div>
   
   <script>
+    try {
+      var iframe = document.getElementById('youtube-player');
+      // Ensure no fullscreen token remains
+      var allow = iframe.getAttribute('allow') || '';
+      allow = allow.replace(/fullscreen/g,'').trim();
+      if (allow.length > 0) { iframe.setAttribute('allow', allow); } else { iframe.removeAttribute('allow'); }
+      iframe.removeAttribute('allowfullscreen');
+      iframe.setAttribute('playsinline','');
+    } catch(e) {}
+
     // Optional: Add YouTube IFrame API for more control
     var tag = document.createElement('script');
     tag.src = "https://www.youtube.com/iframe_api";
