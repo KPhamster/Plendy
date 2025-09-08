@@ -69,7 +69,7 @@ class InstagramWebViewState extends State<InstagramWebView> {
 
     if (Platform.isIOS) {
       final WebKitWebViewControllerCreationParams params = WebKitWebViewControllerCreationParams(
-        allowsInlineMediaPlayback: false,
+        allowsInlineMediaPlayback: true,
       );
       controller = WebViewController.fromPlatformCreationParams(params);
     } else {
@@ -104,6 +104,26 @@ class InstagramWebViewState extends State<InstagramWebView> {
             } catch (e) {
               print("Error in onPageFinished callback: $e");
             }
+            
+            // Try to strip fullscreen permissions and enforce inline playback
+            try {
+              controller.runJavaScript('''
+                (function(){
+                  try {
+                    var iframes = document.querySelectorAll('iframe');
+                    iframes.forEach(function(iframe){
+                      iframe.removeAttribute('allowfullscreen');
+                      var allow = iframe.getAttribute('allow') || '';
+                      allow = allow.replace(/fullscreen/g,'').trim();
+                      if (allow.length>0) { iframe.setAttribute('allow', allow); } else { iframe.removeAttribute('allow'); }
+                      iframe.setAttribute('playsinline','');
+                    });
+                    var videos = document.querySelectorAll('video');
+                    videos.forEach(function(v){ v.setAttribute('playsinline',''); v.removeAttribute('webkit-playsinline'); });
+                  } catch(e) {}
+                })();
+              ''');
+            } catch (_) {}
             
             // Set loading to false after a short delay to allow rendering
             final currentLoadingOperationId = ++_loadingDelayOperationId;
