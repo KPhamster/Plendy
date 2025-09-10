@@ -97,22 +97,32 @@ class AuthService extends ChangeNotifier {
   Future<UserCredential?> signInWithGoogle() async {
     UserCredential? userCredential;
     try {
-      final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
-      if (googleUser == null) {
-        print("Google Sign In cancelled by user.");
-        return null; // User cancelled the flow
+      if (kIsWeb) {
+        // On web, use Firebase Auth popup to avoid null token issues
+        final provider = GoogleAuthProvider();
+        provider.setCustomParameters({
+          'prompt': 'select_account',
+        });
+        userCredential = await _auth.signInWithPopup(provider);
+      } else {
+        // On mobile/desktop, use google_sign_in to obtain OAuth tokens
+        final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
+        if (googleUser == null) {
+          print("Google Sign In cancelled by user.");
+          return null; // User cancelled the flow
+        }
+
+        final GoogleSignInAuthentication googleAuth =
+            await googleUser.authentication;
+
+        final credential = GoogleAuthProvider.credential(
+          accessToken: googleAuth.accessToken,
+          idToken: googleAuth.idToken,
+        );
+
+        // Authenticate with Firebase
+        userCredential = await _auth.signInWithCredential(credential);
       }
-
-      final GoogleSignInAuthentication googleAuth =
-          await googleUser.authentication;
-
-      final credential = GoogleAuthProvider.credential(
-        accessToken: googleAuth.accessToken,
-        idToken: googleAuth.idToken,
-      );
-
-      // Authenticate with Firebase
-      userCredential = await _auth.signInWithCredential(credential);
       print(
           "Firebase authentication with Google successful for UID: ${userCredential.user?.uid}");
 

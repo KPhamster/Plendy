@@ -93,6 +93,42 @@ service cloud.firestore {
       );
     }
 
+    // Shares collection controlling access to shared experiences
+    //
+    // Web fallback note:
+    // - We intentionally allow unauthenticated READS only when
+    //   visibility is "public" or "unlisted" so that
+    //   https://plendy.app/shared/{token} can render a preview.
+    // - "unlisted" relies on an unguessable token stored in the share doc.
+    // - Direct shares remain private (readable only by sender/recipients).
+    // - The share doc should contain a minimal "snapshot" for preview; the
+    //   underlying /experiences docs stay protected by auth-only rules.
+    match /experience_shares/{shareId} {
+      // Anyone authenticated can create a share for their own userId
+      allow create: if request.auth != null && request.resource.data.fromUserId == request.auth.uid;
+
+      // Reads:
+      // - public/unlisted shares are readable by anyone (unlisted security relies on unguessable IDs)
+      // - direct shares are readable only by sender or listed recipients
+      allow read: if (
+        resource.data.visibility in ['public', 'unlisted']
+      ) || (
+        request.auth != null && (
+          request.auth.uid == resource.data.fromUserId ||
+          (resource.data.toUserIds is list && request.auth.uid in resource.data.toUserIds)
+        )
+      );
+
+      // Updates and deletes limited to the sender; counters can be updated by backend using admin privileges
+      allow update, delete: if request.auth != null && request.auth.uid == resource.data.fromUserId;
+    }
+
+    // Per-user denormalized received shares
+    match /users/{userId}/received_shares/{shareId} {
+      // A user can read and manage their own received shares list
+      allow read, create, update, delete: if request.auth != null && request.auth.uid == userId;
+    }
+
     match /public_experiences/{publicExperienceId} {
       allow read: if request.auth != null;
       allow write: if request.auth != null;

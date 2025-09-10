@@ -21,8 +21,12 @@ import 'providers/receive_share_provider.dart';
 import 'dart:async'; // Import dart:async for StreamSubscription
 import 'services/google_maps_service.dart'; // ADDED: Import GoogleMapsService
 import 'firebase_options.dart'; // Import Firebase options
-import 'package:flutter/foundation.dart' show kIsWeb; // Import kIsWeb
+import 'package:flutter/foundation.dart' show kIsWeb, kReleaseMode; // Import kIsWeb, kReleaseMode
 import 'package:fluttertoast/fluttertoast.dart';
+import 'package:flutter_web_plugins/url_strategy.dart';
+import 'package:app_links/app_links.dart';
+import 'package:firebase_app_check/firebase_app_check.dart';
+import 'screens/share_preview_screen.dart';
 
 // Define a GlobalKey for the Navigator
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
@@ -175,6 +179,11 @@ Future<void> _configureLocalNotifications() async {
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  if (kIsWeb) {
+    // Enable path-based URLs on web (no hash in URL)
+    usePathUrlStrategy();
+  }
+
   // Load environment variables (if .env file exists)
   try {
     await dotenv.load(fileName: ".env");
@@ -185,6 +194,43 @@ void main() async {
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
+
+  // Initialize Firebase App Check (invisible; no user prompt)
+  try {
+    if (kIsWeb) {
+      await FirebaseAppCheck.instance.activate(
+        webProvider: ReCaptchaV3Provider('6Ldt0sIrAAAAABBHbSmj07DU8gEEzqijAk70XwKA'),
+        androidProvider: AndroidProvider.playIntegrity,
+        appleProvider: AppleProvider.appAttest,
+      );
+      print('App Check activated (web + providers).');
+    } else {
+      // Use Debug provider for debug/profile builds to simplify local dev.
+      final androidProvider = kReleaseMode
+          ? AndroidProvider.playIntegrity
+          : AndroidProvider.debug;
+      final appleProvider = kReleaseMode
+          ? AppleProvider.appAttest
+          : AppleProvider.debug;
+
+      await FirebaseAppCheck.instance.activate(
+        androidProvider: androidProvider,
+        appleProvider: appleProvider,
+      );
+      print('App Check activated (native providers: ' +
+          (kReleaseMode ? 'release' : 'debug') + ')');
+    }
+    await FirebaseAppCheck.instance.setTokenAutoRefreshEnabled(true);
+    // Force initial token request so reCAPTCHA key leaves "Incomplete" and headers appear
+    try {
+      final token = await FirebaseAppCheck.instance.getToken(true);
+      print('App Check initial token fetched: ' + (token != null && token.isNotEmpty ? 'ok' : 'empty'));
+    } catch (e) {
+      print('App Check initial token fetch error: $e');
+    }
+  } catch (e) {
+    print('App Check activation error: $e');
+  }
 
   // --- ADDED: Preload user location silently --- START ---
   try {
@@ -433,6 +479,47 @@ class _MyAppState extends State<MyApp> {
         print("MAIN: App paused");
       },
     ));
+    // Deep link handling for shared links
+    _initDeepLinks();
+  }
+
+  void _initDeepLinks() async {
+    final appLinks = AppLinks();
+    // WEB: Handle current URL directly (no plugin needed)
+    if (kIsWeb) {
+      try {
+        _handleIncomingUri(Uri.base);
+      } catch (e) {
+        print('DeepLink: Error handling web Uri.base: $e');
+      }
+    }
+    // Initial link
+    try {
+      final initialUri = await appLinks.getInitialAppLink();
+      if (initialUri != null) {
+        _handleIncomingUri(initialUri);
+      }
+    } catch (e) {
+      print('DeepLink: Error getting initial app link: $e');
+    }
+    // Link stream
+    appLinks.uriLinkStream.listen((uri) {
+      _handleIncomingUri(uri);
+    }, onError: (e) {
+      print('DeepLink: Stream error: $e');
+    });
+  }
+
+  void _handleIncomingUri(Uri uri) {
+    // Expecting /shared/{token} on any host (custom domain or web.app)
+    if (uri.pathSegments.isNotEmpty && uri.pathSegments.first == 'shared') {
+      final token = uri.pathSegments.length > 1 ? uri.pathSegments[1] : null;
+      if (token != null && token.isNotEmpty) {
+        // TODO: Navigate to share preview screen with token
+        print('DeepLink: Received share token: ' + token);
+        navigatorKey.currentState?.push(MaterialPageRoute(builder: (_) => SharePreviewScreen(token: token)));
+      }
+    }
   }
 
   @override
