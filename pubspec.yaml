@@ -55,6 +55,9 @@ dependencies:
   google_maps_flutter: ^2.12.3
   geolocator: ^14.0.1
   dio: ^5.5.0+1
+  share_plus: ^10.1.2
+  app_links: ^3.5.1
+  firebase_app_check: ^0.4.0
   equatable: ^2.0.7
   shared_preferences: ^2.2.3
   flutter_typeahead: ^5.2.0

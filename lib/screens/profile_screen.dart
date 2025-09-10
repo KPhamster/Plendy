@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 import 'my_people_screen.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'browser_signin_screen.dart';
+import 'received_shares_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -142,6 +143,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               Navigator.push(
                                 context,
                                 MaterialPageRoute(builder: (context) => const MyPeopleScreen()),
+                              );
+                            },
+                          ),
+                          ListTile(
+                            leading: const Icon(Icons.inbox_outlined),
+                            title: const Text('Shared with me'),
+                            onTap: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(builder: (context) => const ReceivedSharesScreen()),
                               );
                             },
                           ),

@@ -46,6 +46,9 @@ import 'package:collection/collection.dart';
 import 'map_screen.dart'; // ADDED: Import for MapScreen
 import 'package:flutter/foundation.dart'; // ADDED for kIsWeb
 import 'package:webview_flutter/webview_flutter.dart';
+import '../services/experience_share_service.dart'; // ADDED: Import ExperienceShareService
+import 'package:share_plus/share_plus.dart';
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 
 // Convert to StatefulWidget
 class ExperiencePageScreen extends StatefulWidget {
@@ -1181,15 +1184,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                   ),
                   label: const SizedBox.shrink(),
                   labelPadding: EdgeInsets.zero,
-                  onPressed: () {
-                    // TODO: Implement Share functionality
-                    print('Share button tapped');
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                          content:
-                              Text('Share functionality not implemented yet.')),
-                    );
-                  },
+                  onPressed: _showShareBottomSheet,
                   tooltip: 'Share Experience',
                   backgroundColor: Colors.white,
                   shape: StadiumBorder(
@@ -2860,6 +2855,144 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     }
   }
   // --- END: Removal confirmation and execution ---
+
+  // --- ADD: Share bottom sheet ---
+  void _showShareBottomSheet() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Text(
+                      'Share Experience',
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+                    ),
+                    const Spacer(),
+                    IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: () => Navigator.of(ctx).pop(),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                ListTile(
+                  leading: const Icon(Icons.send_outlined),
+                  title: const Text('Share to Plendy users'),
+                  onTap: () {
+                    Navigator.of(ctx).pop();
+                    _openDirectShareDialog();
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.link_outlined),
+                  title: const Text('Get shareable link'),
+                  onTap: () {
+                    Navigator.of(ctx).pop();
+                    _createLinkShare();
+                  },
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _openDirectShareDialog() async {
+    // Minimal placeholder: inform user this will open a people picker
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Direct share coming soon.')),
+    );
+  }
+
+  void _createLinkShare() async {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Creating shareable link...')),
+    );
+    try {
+      final service = ExperienceShareService();
+      final url = await service.createLinkShare(experience: _currentExperience);
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      _showShareUrlOptions(url);
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to create link: $e')),
+      );
+    }
+  }
+  
+  void _showShareUrlOptions(String url) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Share link', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.grey[100],
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(url, style: const TextStyle(fontSize: 14)),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    ElevatedButton.icon(
+                      onPressed: () async {
+                        await Share.share(url);
+                        if (context.mounted) Navigator.of(ctx).pop();
+                      },
+                      icon: const Icon(Icons.ios_share),
+                      label: const Text('Share'),
+                      style: ElevatedButton.styleFrom(backgroundColor: Theme.of(context).primaryColor, foregroundColor: Colors.white),
+                    ),
+                    const SizedBox(width: 12),
+                    OutlinedButton.icon(
+                      onPressed: () async {
+                        await Clipboard.setData(ClipboardData(text: url));
+                        if (context.mounted) {
+                          Navigator.of(ctx).pop();
+                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Link copied')));
+                        }
+                      },
+                      icon: const Icon(Icons.copy),
+                      label: const Text('Copy'),
+                    ),
+                  ],
+                )
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+  // --- END: Share bottom sheet ---
 }
 
 // --- ADDED Helper class for SliverPersistentHeader (for TabBar) ---

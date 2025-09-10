@@ -11,7 +11,7 @@
 	<!--TODO:  Add this tag, if you want support opening urls into your app-->
 	<key>com.apple.developer.associated-domains</key>
 	<array>
-		<string>applinks:example.com</string>
+		<string>applinks:plendy.app</string>
 	</array>
 </dict>
 </plist>
