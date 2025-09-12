@@ -2,6 +2,8 @@ import 'dart:math';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../models/experience.dart';
+import '../models/shared_media_item.dart';
+import 'experience_service.dart';
 
 class ExperienceShareService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -28,7 +30,7 @@ class ExperienceShareService {
     if (userId == null) throw Exception('User not authenticated');
     if (toUserIds.isEmpty) throw Exception('No recipients provided');
 
-    final snapshot = _buildSnapshotFromExperience(experience);
+    final snapshot = await _buildSnapshotFromExperienceAsync(experience);
 
     final data = {
       'experienceId': experience.id,
@@ -55,7 +57,7 @@ class ExperienceShareService {
     if (userId == null) throw Exception('User not authenticated');
 
     final token = _generateToken();
-    final snapshot = _buildSnapshotFromExperience(experience);
+    final snapshot = await _buildSnapshotFromExperienceAsync(experience);
 
     final data = {
       'experienceId': experience.id,
@@ -77,20 +79,39 @@ class ExperienceShareService {
     return shareUrl;
   }
 
-  Map<String, dynamic> _buildSnapshotFromExperience(Experience exp) {
+  Future<Map<String, dynamic>> _buildSnapshotFromExperienceAsync(Experience exp) async {
+    // Optionally expand media into share snapshot for web preview without extra reads
+    final List<String> mediaUrls = <String>[];
+    if (exp.sharedMediaItemIds.isNotEmpty) {
+      try {
+        final items = await ExperienceService().getSharedMediaItems(exp.sharedMediaItemIds);
+        mediaUrls.addAll(items.map((SharedMediaItem i) => i.path));
+      } catch (_) {
+        // Ignore media expansion errors; preview will fall back to imageUrls
+      }
+    }
+
     return {
       'name': exp.name,
       'description': exp.description,
       'image': (exp.imageUrls.isNotEmpty ? exp.imageUrls.first : null),
+      'imageUrls': exp.imageUrls, // include gallery images
+      'mediaUrls': mediaUrls, // expanded content preview
       'plendyRating': exp.plendyRating,
       'googleRating': exp.googleRating,
       'googleReviewCount': exp.googleReviewCount,
       'priceRange': exp.priceRange,
+      'website': exp.website,
       'location': {
         'displayName': exp.location.displayName,
+        'address': exp.location.address,
         'city': exp.location.city,
         'state': exp.location.state,
         'country': exp.location.country,
+        'placeId': exp.location.placeId,
+        'latitude': exp.location.latitude,
+        'longitude': exp.location.longitude,
+        'website': exp.location.website,
       },
     };
   }

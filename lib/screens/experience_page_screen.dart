@@ -55,12 +55,18 @@ class ExperiencePageScreen extends StatefulWidget {
   final Experience experience;
   final UserCategory category;
   final List<ColorCategory> userColorCategories;
+  final List<SharedMediaItem>? initialMediaItems; // Optional media for previews
+  final bool readOnlyPreview; // Hide actions when true
+  final String? shareBannerFromUserId; // If provided, show overlay text in header
 
   const ExperiencePageScreen({
     super.key,
     required this.experience,
     required this.category,
     required this.userColorCategories,
+    this.initialMediaItems,
+    this.readOnlyPreview = false,
+    this.shareBannerFromUserId,
   });
 
   @override
@@ -81,6 +87,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   String? _errorLoadingDetails;
   Map<String, dynamic>? _placeDetailsData;
   String? _headerPhotoUrl; // ADDED: State variable for header photo
+  String? _shareBannerDisplayName; // Resolved sharer display name
   
   // ADDED: Helper to build DecorationImage using photo resource name with caching
   DecorationImage? _buildHeaderDecorationImage(Experience experience) {
@@ -183,7 +190,20 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     _fetchComments(); // Fetch comments on init
     _loadCurrentUserAndCategories(); // Fetch current user and categories
     // TODO: Fetch comment count if needed
-    _fetchMediaItems(); // ADDED: Fetch media items
+    // If preview media were provided, use them and skip fetching
+    if (widget.initialMediaItems != null) {
+      _mediaItems = List<SharedMediaItem>.from(widget.initialMediaItems!);
+      _isLoadingMedia = false;
+      // Also kick off loading of other experience data based on provided media
+      _loadOtherExperienceData();
+    } else {
+      _fetchMediaItems(); // ADDED: Fetch media items
+    }
+
+    // If this is a share preview with a fromUserId, resolve their display name
+    if (widget.shareBannerFromUserId != null && widget.shareBannerFromUserId!.isNotEmpty) {
+      _resolveSharerDisplayName(widget.shareBannerFromUserId!);
+    }
   }
 
   // --- ADDED: Scroll Listener ---
@@ -457,6 +477,9 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
 
   // ADDED: Helper to determine if the current user can edit
   bool _canEditExperience() {
+    if (widget.readOnlyPreview) {
+      return false;
+    }
     if (_isLoadingAuth || _currentUserId == null) {
       return false; // Can't edit if loading or not logged in
     }
@@ -579,6 +602,32 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
               ),
             ),
           ),
+
+          // --- ADDED: Top-center share banner text when in preview ---
+          if (widget.readOnlyPreview && _shareBannerDisplayName != null && _shareBannerDisplayName!.isNotEmpty)
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 8.0,
+              left: 64.0,
+              right: 64.0,
+              child: Center(
+                child: Text(
+                  '${_shareBannerDisplayName} wants you to check out this experience! Save it to create your own copy of the experience.',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        color: Colors.white,
+                        shadows: [
+                          Shadow(
+                            offset: const Offset(1.0, 1.0),
+                            blurRadius: 2.0,
+                            color: Colors.black.withOpacity(0.5),
+                          ),
+                        ],
+                      ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ),
 
           // --- ADDED: Positioned Back Button ---
           Positioned(
@@ -753,12 +802,11 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                       const SizedBox(width: 16), // Space between buttons
                       ElevatedButton.icon(
                         onPressed: () {
-                          // TODO: Implement Add to Itinerary logic
-                          print('Add to Itinerary button pressed');
+                          // TODO: Implement Save Experience logic
+                          print('Save Experience button pressed');
                         },
-                        icon: const Icon(
-                            Icons.calendar_today_outlined), // Itinerary icon
-                        label: const Text('Add to Itinerary'),
+                        icon: const Icon(Icons.bookmark_outline),
+                        label: const Text('Save Experience'),
                         style: ElevatedButton.styleFrom(
                           backgroundColor: const Color(0xFFD40000),
                           foregroundColor: Colors.white,
@@ -1099,7 +1147,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
 
                 // Buttons on the right
                 // 1. Map Screen Button (View Location on App Map)
-                ActionChip(
+                if (!widget.readOnlyPreview) ActionChip(
                   avatar: Icon(
                     Icons.map_outlined, // Match Collections screen map icon
                     color: Theme.of(context)
@@ -1129,7 +1177,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                 const SizedBox(width: 4), // Spacing
 
                 // 2. Google Button (View on Google Maps)
-                ActionChip(
+                if (!widget.readOnlyPreview) ActionChip(
                   avatar: Icon(
                     FontAwesomeIcons.google, // Google icon
                     color: const Color(0xFF4285F4), // Official Google Blue
@@ -1150,7 +1198,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                 const SizedBox(width: 4), // Spacing
 
                 // 3. Yelp Button (Icon Only)
-                ActionChip(
+                if (!widget.readOnlyPreview) ActionChip(
                   avatar: Icon(
                     FontAwesomeIcons.yelp,
                     color: yelpUrl != null && yelpUrl.isNotEmpty
@@ -1176,7 +1224,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                 const SizedBox(width: 4), // Spacing
 
                 // 4. Share Button
-                ActionChip(
+                if (!widget.readOnlyPreview) ActionChip(
                   avatar: Icon(
                     Icons.share_outlined,
                     color: Colors.blue, // Or another appropriate color
@@ -1195,7 +1243,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                 const SizedBox(width: 4), // Spacing
 
                 // 5. Edit Button
-                ActionChip(
+                if (!widget.readOnlyPreview) ActionChip(
                   avatar: Icon(
                     Icons.edit_outlined,
                     color: canEdit
@@ -2520,6 +2568,21 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   }
   // --- END: Helper method to launch map location --- //
 
+  Future<void> _resolveSharerDisplayName(String userId) async {
+    try {
+      final userProfile = await _experienceService.getUserProfileById(userId);
+      if (!mounted) return;
+      setState(() {
+        _shareBannerDisplayName = userProfile?.displayName ?? userProfile?.username ?? 'Someone';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _shareBannerDisplayName = 'Someone';
+      });
+    }
+  }
+
   // ADDED: Method to refresh experience data
   Future<void> _refreshExperienceData() async {
     if (!mounted) return;
@@ -3003,20 +3066,10 @@ class _SliverAppBarDelegate extends SliverPersistentHeaderDelegate {
 
   @override
   double get minExtent =>
-      kToolbarHeight +
-      MediaQueryData.fromView(
-                  WidgetsBinding.instance.platformDispatcher.views.first)
-              .padding
-              .top *
-          0.6;
+      kToolbarHeight; // Use a fixed height to avoid layout overflows
   @override
   double get maxExtent =>
-      kToolbarHeight +
-      MediaQueryData.fromView(
-                  WidgetsBinding.instance.platformDispatcher.views.first)
-              .padding
-              .top *
-          0.6;
+      kToolbarHeight; // Match minExtent exactly
 
   @override
   Widget build(

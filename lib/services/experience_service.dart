@@ -6,6 +6,7 @@ import '../models/comment.dart';
 import '../models/reel.dart';
 import '../models/user_category.dart';
 import '../models/public_experience.dart';
+import '../models/user_profile.dart';
 import '../models/shared_media_item.dart';
 // --- ADDED ---
 import '../models/color_category.dart';
@@ -32,6 +33,20 @@ class ExperienceService {
 
   // User-related operations
   String? get _currentUserId => _auth.currentUser?.uid;
+
+  /// Fetch a user profile by ID
+  Future<UserProfile?> getUserProfileById(String userId) async {
+    try {
+      final doc = await _usersCollection.doc(userId).get();
+      if (!doc.exists) return null;
+      final data = doc.data() as Map<String, dynamic>?;
+      if (data == null) return null;
+      return UserProfile.fromMap(doc.id, data);
+    } catch (e) {
+      print('getUserProfileById: Error fetching user $userId: $e');
+      return null;
+    }
+  }
 
   // Helper to get the path to a user's custom categories sub-category
   CollectionReference _userCategoriesCollection(String userId) =>
