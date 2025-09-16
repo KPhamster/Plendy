@@ -324,6 +324,7 @@ class Experience {
 
   /// Creates a copy of this Experience with updated fields
   Experience copyWith({
+    String? id,
     String? name,
     String? description,
     Location? location,
@@ -355,7 +356,7 @@ class Experience {
     List<String>? otherCategories,
   }) {
     return Experience(
-      id: id,
+      id: id ?? this.id,
       name: name ?? this.name,
       description: description ?? this.description,
       location: location ?? this.location,

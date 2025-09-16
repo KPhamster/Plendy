@@ -21,12 +21,14 @@ class EditExperienceModal extends StatefulWidget {
   final Experience experience;
   final List<UserCategory> userCategories;
   final List<ColorCategory> userColorCategories;
+  final bool enableDuplicatePrompt; // When true, check duplicate on open and allow switching to existing
 
   const EditExperienceModal({
     super.key,
     required this.experience,
     required this.userCategories,
     required this.userColorCategories,
+    this.enableDuplicatePrompt = false,
   });
 
   @override
@@ -51,17 +53,9 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
   late ValueNotifier<List<ColorCategory>> _colorCategoriesNotifier;
   // --- END ADDED ---
 
-  // --- ADDED: Constants for special dropdown values ---
-  static const String _addCategoryValue = '__add_new_category__';
-  static const String _editCategoriesValue = '__edit_categories__';
   // --- ADDED Color Category constants ---
   static const String _addColorCategoryValue = '__add_new_color_category__';
   static const String _editColorCategoriesValue = '__edit_color_categories__';
-  // --- END ADDED ---
-
-  // --- ADDED: Constants for special dialog actions ---
-  static const String _dialogActionAdd = '__add__';
-  static const String _dialogActionEdit = '__edit__';
   // --- END ADDED ---
 
   @override
@@ -102,6 +96,13 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
     // --- ADDED: Load categories on init ---
     _loadAllCategories();
     // --- END ADDED ---
+
+    // --- ADDED: Check for potential duplicate after first frame if enabled ---
+    if (widget.enableDuplicatePrompt) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _maybePromptDuplicateOnOpen();
+      });
+    }
   }
 
   @override
@@ -159,6 +160,72 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
         );
       }
     }
+  }
+
+  // --- ADDED: Duplicate handling on modal open ---
+  Future<void> _maybePromptDuplicateOnOpen() async {
+    try {
+      final placeId = _cardData.selectedLocation?.placeId;
+      if (placeId == null || placeId.isEmpty) return;
+
+      // Avoid re-prompt if we already bound to an existing experience id
+      if ((_cardData.existingExperienceId != null && _cardData.existingExperienceId!.isNotEmpty)) {
+        return;
+      }
+
+      final userExperiences = await _experienceService.getUserExperiences();
+      final duplicate = userExperiences.where((e) => e.location.placeId == placeId).cast<Experience?>().firstOrNull;
+      if (duplicate == null) return;
+
+      final bool? useExisting = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) {
+          return AlertDialog(
+            title: const Text('Potential Duplicate Found'),
+            content: Text(
+                'You already saved an experience named "${duplicate.name}" located at "${duplicate.location.address ?? 'No address provided'}." Do you want to use this existing experience?'),
+            actions: <Widget>[
+              TextButton(
+                child: const Text('Create New'),
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+              ),
+              ElevatedButton(
+                child: const Text('Use Existing'),
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+              ),
+            ],
+          );
+        },
+      );
+      if (useExisting == true && mounted) {
+        _applyExperienceToForm(duplicate);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Loaded your existing experience for editing.')),
+        );
+      }
+    } catch (e) {
+      // Non-fatal
+      // print('Duplicate check failed: $e');
+    }
+  }
+
+  void _applyExperienceToForm(Experience src) {
+    setState(() {
+      _cardData.existingExperienceId = src.id; // Switch to editing existing
+      _cardData.titleController.text = src.name;
+      _cardData.yelpUrlController.text = src.yelpUrl ?? '';
+      _cardData.websiteController.text = src.website ?? '';
+      _cardData.notesController.text = src.additionalNotes ?? '';
+      _cardData.selectedCategoryId = src.categoryId;
+      _cardData.selectedColorCategoryId = src.colorCategoryId;
+      _cardData.selectedOtherCategoryIds = List<String>.from(src.otherCategories);
+      _cardData.selectedLocation = src.location;
+      _cardData.locationEnabled.value = src.location.latitude != 0.0 || src.location.longitude != 0.0;
+      if (_cardData.selectedLocation?.address != null) {
+        _cardData.searchController.text = _cardData.selectedLocation!.address!;
+      }
+    });
   }
 
   Future<void> _loadUserCategories() async {
@@ -933,6 +1000,9 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
               address: 'No location specified'); // Default/disabled location
 
       final updatedExperience = widget.experience.copyWith(
+        id: _cardData.existingExperienceId?.isNotEmpty == true
+            ? _cardData.existingExperienceId
+            : widget.experience.id,
         name: _cardData.titleController.text.trim(),
         categoryId: _cardData.selectedCategoryId,
         location: locationToSave,
