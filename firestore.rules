@@ -86,6 +86,7 @@ service cloud.firestore {
         request.resource.data.createdBy == request.auth.uid ||
         (resource.data.editorUserIds is list && request.auth.uid in resource.data.editorUserIds)
       ) && isValidLocationData(request.resource.data.location);
+      
       // Allow deletes by creator, or the last remaining editor (when they are the only editor)
       allow delete: if request.auth != null && (
         resource.data.createdBy == request.auth.uid ||
@@ -168,4 +169,7 @@ service cloud.firestore {
       (loc.get('administrativeAreaLevel7', '') is string)
     );
   }
+  
+  // Note: link-based edit access is enforced at application layer due to
+  // Firestore rules' lack of dynamic lookup by token. We keep rules strict here.
 }

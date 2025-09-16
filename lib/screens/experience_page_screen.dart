@@ -48,6 +48,8 @@ import 'package:flutter/foundation.dart'; // ADDED for kIsWeb
 import 'package:webview_flutter/webview_flutter.dart';
 import '../services/experience_share_service.dart'; // ADDED: Import ExperienceShareService
 import 'package:share_plus/share_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../config/app_constants.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 
 // Convert to StatefulWidget
@@ -58,6 +60,7 @@ class ExperiencePageScreen extends StatefulWidget {
   final List<SharedMediaItem>? initialMediaItems; // Optional media for previews
   final bool readOnlyPreview; // Hide actions when true
   final String? shareBannerFromUserId; // If provided, show overlay text in header
+  final Future<void> Function()? onSaveExperience; // Callback handled by SharePreviewScreen
 
   const ExperiencePageScreen({
     super.key,
@@ -67,6 +70,7 @@ class ExperiencePageScreen extends StatefulWidget {
     this.initialMediaItems,
     this.readOnlyPreview = false,
     this.shareBannerFromUserId,
+    this.onSaveExperience,
   });
 
   @override
@@ -801,9 +805,10 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                       ),
                       const SizedBox(width: 16), // Space between buttons
                       ElevatedButton.icon(
-                        onPressed: () {
-                          // TODO: Implement Save Experience logic
-                          print('Save Experience button pressed');
+                        onPressed: () async {
+                          if (widget.onSaveExperience != null) {
+                            await widget.onSaveExperience!.call();
+                          }
                         },
                         icon: const Icon(Icons.bookmark_outline),
                         label: const Text('Save Experience'),
@@ -2568,6 +2573,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   }
   // --- END: Helper method to launch map location --- //
 
+  // Save handling delegated to SharePreviewScreen via onSaveExperience
+
   Future<void> _resolveSharerDisplayName(String userId) async {
     try {
       final userProfile = await _experienceService.getUserProfileById(userId);
@@ -2928,46 +2935,9 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
       builder: (ctx) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    const Text(
-                      'Share Experience',
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
-                    ),
-                    const Spacer(),
-                    IconButton(
-                      icon: const Icon(Icons.close),
-                      onPressed: () => Navigator.of(ctx).pop(),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                ListTile(
-                  leading: const Icon(Icons.send_outlined),
-                  title: const Text('Share to Plendy users'),
-                  onTap: () {
-                    Navigator.of(ctx).pop();
-                    _openDirectShareDialog();
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(Icons.link_outlined),
-                  title: const Text('Get shareable link'),
-                  onTap: () {
-                    Navigator.of(ctx).pop();
-                    _createLinkShare();
-                  },
-                ),
-              ],
-            ),
-          ),
+        return _ShareBottomSheetContent(
+          onDirectShare: _openDirectShareDialog,
+          onCreateLink: _createLinkShareWithOptions,
         );
       },
     );
@@ -2980,13 +2950,22 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     );
   }
 
-  void _createLinkShare() async {
+  Future<void> _createLinkShareWithOptions({
+    required String shareMode, // 'my_copy' | 'separate_copy'
+    required bool giveEditAccess,
+  }) async {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Creating shareable link...')),
     );
     try {
       final service = ExperienceShareService();
-      final url = await service.createLinkShare(experience: _currentExperience);
+      final DateTime expiresAt = DateTime.now().add(const Duration(days: 30));
+      final url = await service.createLinkShare(
+        experience: _currentExperience,
+        expiresAt: expiresAt,
+        linkMode: shareMode,
+        grantEdit: giveEditAccess,
+      );
       if (!mounted) return;
       Navigator.of(context).pop();
       _showShareUrlOptions(url);
@@ -3056,6 +3035,119 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     );
   }
   // --- END: Share bottom sheet ---
+}
+
+// --- ADDED: Share bottom sheet content with radio options and persistence ---
+class _ShareBottomSheetContent extends StatefulWidget {
+  final VoidCallback onDirectShare;
+  final Future<void> Function({required String shareMode, required bool giveEditAccess}) onCreateLink;
+
+  const _ShareBottomSheetContent({
+    required this.onDirectShare,
+    required this.onCreateLink,
+  });
+  @override
+  State<_ShareBottomSheetContent> createState() => _ShareBottomSheetContentState();
+}
+
+class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
+  String _shareMode = 'separate_copy'; // 'my_copy' | 'separate_copy'
+  bool _giveEditAccess = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadLastChoice();
+  }
+
+  Future<void> _loadLastChoice() async {
+    final prefs = await SharedPreferences.getInstance();
+    final lastMode = prefs.getString(AppConstants.lastShareModeKey);
+    final lastEdit = prefs.getBool(AppConstants.lastShareGiveEditAccessKey);
+    setState(() {
+      _shareMode = lastMode ?? 'separate_copy';
+      _giveEditAccess = lastEdit ?? false;
+    });
+  }
+
+  Future<void> _persistChoice() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(AppConstants.lastShareModeKey, _shareMode);
+    await prefs.setBool(AppConstants.lastShareGiveEditAccessKey, _giveEditAccess);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Text(
+                  'Share Experience',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+                ),
+                const Spacer(),
+                IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: () => Navigator.of(context).pop(),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            RadioListTile<String>(
+              value: 'my_copy',
+              groupValue: _shareMode,
+              onChanged: (v) => setState(() => _shareMode = v!),
+              title: const Text('Share my copy'),
+            ),
+            if (_shareMode == 'my_copy')
+              Padding(
+                padding: const EdgeInsets.only(left: 16.0, bottom: 8.0),
+                child: CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: _giveEditAccess,
+                  onChanged: (v) => setState(() => _giveEditAccess = v ?? false),
+                  title: const Text('Give edit access'),
+                  controlAffinity: ListTileControlAffinity.leading,
+                ),
+              ),
+            RadioListTile<String>(
+              value: 'separate_copy',
+              groupValue: _shareMode,
+              onChanged: (v) => setState(() => _shareMode = v!),
+              title: const Text('Share as separate copy'),
+            ),
+            const SizedBox(height: 8),
+            ListTile(
+              leading: const Icon(Icons.send_outlined),
+              title: const Text('Share to Plendy users'),
+              onTap: () async {
+                await _persistChoice();
+                Navigator.of(context).pop();
+                widget.onDirectShare();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.link_outlined),
+              title: const Text('Get shareable link'),
+              onTap: () async {
+                await _persistChoice();
+                await widget.onCreateLink(
+                  shareMode: _shareMode,
+                  giveEditAccess: _shareMode == 'my_copy' ? _giveEditAccess : false,
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 // --- ADDED Helper class for SliverPersistentHeader (for TabBar) ---

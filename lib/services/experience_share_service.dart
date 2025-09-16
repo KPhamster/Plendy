@@ -52,6 +52,8 @@ class ExperienceShareService {
     String? message,
     bool public = false,
     DateTime? expiresAt,
+    String linkMode = 'separate_copy', // 'my_copy' | 'separate_copy'
+    bool grantEdit = false,
   }) async {
     final userId = _currentUserId;
     if (userId == null) throw Exception('User not authenticated');
@@ -65,6 +67,8 @@ class ExperienceShareService {
       'toUserIds': [],
       'visibility': public ? 'public' : 'unlisted',
       'collaboration': false,
+      'shareType': linkMode, // 'my_copy' or 'separate_copy'
+      'accessMode': grantEdit ? 'edit' : 'view',
       if (message != null && message.isNotEmpty) 'message': message,
       'token': token,
       if (expiresAt != null) 'expiresAt': Timestamp.fromDate(expiresAt),
