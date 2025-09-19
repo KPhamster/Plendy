@@ -845,6 +845,57 @@ class ExperienceService {
     return snapshot.docs.map((doc) => Experience.fromFirestore(doc)).toList();
   }
 
+  /// Get experiences by user category ID
+  Future<List<Experience>> getExperiencesByUserCategoryId(String categoryId,
+      {int limit = 100}) async {
+    if (categoryId.isEmpty) return [];
+    final snapshot = await _experiencesCollection
+        .where('categoryId', isEqualTo: categoryId)
+        .limit(limit)
+        .get();
+    return snapshot.docs.map((doc) => Experience.fromFirestore(doc)).toList();
+  }
+
+  /// Get all experiences linked to a user category, including primary categoryId
+  /// and entries where the category is present in otherCategories array.
+  Future<List<Experience>> getExperiencesByUserCategoryAll(String categoryId,
+      {int limitPerQuery = 100}) async {
+    if (categoryId.isEmpty) return [];
+    final futures = await Future.wait([
+      _experiencesCollection
+          .where('categoryId', isEqualTo: categoryId)
+          .limit(limitPerQuery)
+          .get(),
+      _experiencesCollection
+          .where('otherCategories', arrayContains: categoryId)
+          .limit(limitPerQuery)
+          .get(),
+    ]);
+    final List<Experience> results = [];
+    final Set<String> seen = {};
+    for (final snap in futures) {
+      for (final doc in snap.docs) {
+        final exp = Experience.fromFirestore(doc);
+        if (!seen.contains(exp.id)) {
+          seen.add(exp.id);
+          results.add(exp);
+        }
+      }
+    }
+    return results;
+  }
+
+  /// Get experiences by color category ID
+  Future<List<Experience>> getExperiencesByColorCategoryId(String colorCategoryId,
+      {int limit = 100}) async {
+    if (colorCategoryId.isEmpty) return [];
+    final snapshot = await _experiencesCollection
+        .where('colorCategoryId', isEqualTo: colorCategoryId)
+        .limit(limit)
+        .get();
+    return snapshot.docs.map((doc) => Experience.fromFirestore(doc)).toList();
+  }
+
   /// Get experiences by category
   Future<List<Experience>> getExperiencesByCategory(
     String categoryName, {
@@ -852,10 +903,20 @@ class ExperienceService {
   }) async {
     final snapshot = await _experiencesCollection
         .where('category', isEqualTo: categoryName)
-        .orderBy('plendyRating', descending: true)
         .limit(limit)
         .get();
 
+    return snapshot.docs.map((doc) => Experience.fromFirestore(doc)).toList();
+  }
+
+  /// Get experiences by category name without ordering (index-free)
+  Future<List<Experience>> getExperiencesByCategoryNameUnordered(String categoryName,
+      {int limit = 100}) async {
+    if (categoryName.isEmpty) return [];
+    final snapshot = await _experiencesCollection
+        .where('category', isEqualTo: categoryName)
+        .limit(limit)
+        .get();
     return snapshot.docs.map((doc) => Experience.fromFirestore(doc)).toList();
   }
 

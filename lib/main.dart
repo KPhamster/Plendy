@@ -27,6 +27,7 @@ import 'package:flutter_web_plugins/url_strategy.dart';
 import 'package:app_links/app_links.dart';
 import 'package:firebase_app_check/firebase_app_check.dart';
 import 'screens/share_preview_screen.dart';
+import 'screens/category_share_preview_screen.dart';
 
 // Define a GlobalKey for the Navigator
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
@@ -513,11 +514,26 @@ class _MyAppState extends State<MyApp> {
   void _handleIncomingUri(Uri uri) {
     // Expecting /shared/{token} on any host (custom domain or web.app)
     if (uri.pathSegments.isNotEmpty && uri.pathSegments.first == 'shared') {
-      final token = uri.pathSegments.length > 1 ? uri.pathSegments[1] : null;
+      final rawToken = uri.pathSegments.length > 1 ? uri.pathSegments[1] : null;
+      final token = rawToken?.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '');
       if (token != null && token.isNotEmpty) {
-        // TODO: Navigate to share preview screen with token
+        if (rawToken != null && rawToken != token) {
+          print('DeepLink: Sanitized share token from ' + rawToken + ' to ' + token);
+        }
         print('DeepLink: Received share token: ' + token);
         navigatorKey.currentState?.push(MaterialPageRoute(builder: (_) => SharePreviewScreen(token: token)));
+      }
+    }
+    // Expecting /shared-category/{token}
+    if (uri.pathSegments.isNotEmpty && uri.pathSegments.first == 'shared-category') {
+      final rawToken = uri.pathSegments.length > 1 ? uri.pathSegments[1] : null;
+      final token = rawToken?.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '');
+      if (token != null && token.isNotEmpty) {
+        if (rawToken != null && rawToken != token) {
+          print('DeepLink: Sanitized category share token from ' + rawToken + ' to ' + token);
+        }
+        print('DeepLink: Received category share token: ' + token);
+        navigatorKey.currentState?.push(MaterialPageRoute(builder: (_) => CategorySharePreviewScreen(token: token)));
       }
     }
   }

@@ -61,6 +61,8 @@ class SharePreviewScreen extends StatelessWidget {
             // Put the screen into read-only mode so destructive actions are hidden
             readOnlyPreview: true,
             shareBannerFromUserId: payload.fromUserId,
+            sharePreviewType: payload.shareType,
+            shareAccessMode: payload.accessMode,
             onSaveExperience: () => _handleSaveExperience(context, payload),
           );
         },
@@ -224,6 +226,9 @@ class SharePreviewScreen extends StatelessWidget {
       'snapshot': decoded['snapshot'],
       'message': decoded['message'],
       'createdAt': decoded['createdAt'],
+      // ADDED: include share type and access mode for banner messaging
+      'shareType': decoded['shareType'], // 'my_copy' | 'separate_copy'
+      'accessMode': decoded['accessMode'], // 'view' | 'edit'
     };
   }
 
@@ -328,6 +333,8 @@ class SharePreviewScreen extends StatelessWidget {
       experience: exp,
       mediaItems: mediaItems,
       fromUserId: (mapped['fromUserId'] as String?) ?? '',
+      shareType: (mapped['shareType'] as String?),
+      accessMode: (mapped['accessMode'] as String?),
     );
   }
 
@@ -395,7 +402,9 @@ class _PreviewPayload {
   final Experience experience;
   final List<SharedMediaItem> mediaItems;
   final String fromUserId;
-  const _PreviewPayload({required this.experience, required this.mediaItems, required this.fromUserId});
+  final String? shareType; // 'my_copy' | 'separate_copy'
+  final String? accessMode; // 'view' | 'edit'
+  const _PreviewPayload({required this.experience, required this.mediaItems, required this.fromUserId, this.shareType, this.accessMode});
 }
 
 

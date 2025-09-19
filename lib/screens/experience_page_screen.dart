@@ -61,6 +61,9 @@ class ExperiencePageScreen extends StatefulWidget {
   final bool readOnlyPreview; // Hide actions when true
   final String? shareBannerFromUserId; // If provided, show overlay text in header
   final Future<void> Function()? onSaveExperience; // Callback handled by SharePreviewScreen
+  // ADDED: Share preview metadata for dynamic messaging
+  final String? sharePreviewType; // 'my_copy' | 'separate_copy'
+  final String? shareAccessMode; // 'view' | 'edit'
 
   const ExperiencePageScreen({
     super.key,
@@ -71,6 +74,8 @@ class ExperiencePageScreen extends StatefulWidget {
     this.readOnlyPreview = false,
     this.shareBannerFromUserId,
     this.onSaveExperience,
+    this.sharePreviewType,
+    this.shareAccessMode,
   });
 
   @override
@@ -172,6 +177,25 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
 
   // REMOVED: Thumbnail Cache
   // final Map<String, String?> _thumbnailCache = {};
+
+  // --- ADDED: Helper to compute share preview category label ---
+  String? _computeSharePreviewCategoryLabel() {
+    if (!widget.readOnlyPreview) return null;
+    final String sender = _shareBannerDisplayName ?? 'Someone';
+    final String? type = widget.sharePreviewType; // 'my_copy' | 'separate_copy'
+    final String? access = widget.shareAccessMode; // 'view' | 'edit'
+
+    if (type == 'my_copy') {
+      if (access == 'edit') {
+        return '$sender wants to give you edit access to their experience';
+      }
+      return '$sender wants to give you view-only access to their experience';
+    }
+    if (type == 'separate_copy') {
+      return 'Shared by $sender. Save the experience for yourself!';
+    }
+    return null;
+  }
 
   @override
   void initState() {
@@ -615,7 +639,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
               right: 64.0,
               child: Center(
                 child: Text(
-                  '${_shareBannerDisplayName} wants you to check out this experience! Save it to create your own copy of the experience.',
+                  _computeSharePreviewCategoryLabel() ?? '${_shareBannerDisplayName} wants you to check out this experience! Save it to create your own copy of the experience.',
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
                         color: Colors.white,
@@ -627,7 +651,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                           ),
                         ],
                       ),
-                  maxLines: 2,
+                  softWrap: true,
+                  maxLines: 3,
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
@@ -1126,151 +1151,156 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Modified Category Row to include buttons on the right
-          Padding(
-            padding: const EdgeInsets.only(bottom: 8.0),
-            child: Row(
-              children: [
-                // Category Icon and Name (wrapped in Expanded)
-                Expanded(
-                  child: Row(
-                    children: [
-                      Text(
-                        widget.category.icon, // Use widget.category
-                        style: const TextStyle(fontSize: 20),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        widget.category.name, // Use widget.category
-                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                              color: Colors.black87,
-                            ),
-                        overflow: TextOverflow.ellipsis, // Prevent overflow
-                      ),
-                    ],
+          if (!widget.readOnlyPreview)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8.0),
+              child: Row(
+                children: [
+                  // Category Icon and Name (wrapped in Expanded)
+                  Expanded(
+                    child: Row(
+                      children: [
+                        Text(
+                          widget.category.icon, // Use widget.category
+                          style: const TextStyle(fontSize: 20),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            _computeSharePreviewCategoryLabel() ?? widget.category.name,
+                            style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                                  color: Colors.black87,
+                                ),
+                            softWrap: true,
+                            maxLines: 3,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
 
-                // Buttons on the right
-                // 1. Map Screen Button (View Location on App Map)
-                if (!widget.readOnlyPreview) ActionChip(
-                  avatar: Icon(
-                    Icons.map_outlined, // Match Collections screen map icon
-                    color: Theme.of(context)
-                        .primaryColor, // Consistent with map icon
-                    size: 18,
+                  // Buttons on the right
+                  // 1. Map Screen Button (View Location on App Map)
+                  ActionChip(
+                    avatar: Icon(
+                      Icons.map_outlined, // Match Collections screen map icon
+                      color: Theme.of(context)
+                          .primaryColor, // Consistent with map icon
+                      size: 18,
+                    ),
+                    label: const SizedBox.shrink(),
+                    labelPadding: EdgeInsets.zero,
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => MapScreen(
+                              initialExperienceLocation:
+                                  _currentExperience.location),
+                        ),
+                      );
+                    },
+                    tooltip:
+                        'View Location on App Map', // Updated tooltip
+                    backgroundColor: Colors.white,
+                    shape: StadiumBorder(
+                        side: BorderSide(color: Colors.grey.shade300)),
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    padding: const EdgeInsets.all(4),
                   ),
-                  label: const SizedBox.shrink(),
-                  labelPadding: EdgeInsets.zero,
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => MapScreen(
-                            initialExperienceLocation:
-                                _currentExperience.location),
-                      ),
-                    );
-                  },
-                  tooltip:
-                      'View Location on App Map', // Updated tooltip
-                  backgroundColor: Colors.white,
-                  shape: StadiumBorder(
-                      side: BorderSide(color: Colors.grey.shade300)),
-                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  padding: const EdgeInsets.all(4),
-                ),
-                const SizedBox(width: 4), // Spacing
+                  const SizedBox(width: 4), // Spacing
 
-                // 2. Google Button (View on Google Maps)
-                if (!widget.readOnlyPreview) ActionChip(
-                  avatar: Icon(
-                    FontAwesomeIcons.google, // Google icon
-                    color: const Color(0xFF4285F4), // Official Google Blue
-                    size: 18,
+                  // 2. Google Button (View on Google Maps)
+                  ActionChip(
+                    avatar: Icon(
+                      FontAwesomeIcons.google, // Google icon
+                      color: const Color(0xFF4285F4), // Official Google Blue
+                      size: 18,
+                    ),
+                    label: const SizedBox.shrink(),
+                    labelPadding: EdgeInsets.zero,
+                    onPressed: () =>
+                        _launchMapLocation(_currentExperience.location),
+                    tooltip: 'View on Map',
+                    backgroundColor: Colors.white,
+                    shape: StadiumBorder(
+                        side: BorderSide(color: Colors.grey.shade300)),
+                    materialTapTargetSize:
+                        MaterialTapTargetSize.shrinkWrap, // Reduce tap area
+                    padding: const EdgeInsets.all(4), // Adjust padding
                   ),
-                  label: const SizedBox.shrink(),
-                  labelPadding: EdgeInsets.zero,
-                  onPressed: () =>
-                      _launchMapLocation(_currentExperience.location),
-                  tooltip: 'View on Map',
-                  backgroundColor: Colors.white,
-                  shape: StadiumBorder(
-                      side: BorderSide(color: Colors.grey.shade300)),
-                  materialTapTargetSize:
-                      MaterialTapTargetSize.shrinkWrap, // Reduce tap area
-                  padding: const EdgeInsets.all(4), // Adjust padding
-                ),
-                const SizedBox(width: 4), // Spacing
+                  const SizedBox(width: 4), // Spacing
 
-                // 3. Yelp Button (Icon Only)
-                if (!widget.readOnlyPreview) ActionChip(
-                  avatar: Icon(
-                    FontAwesomeIcons.yelp,
-                    color: yelpUrl != null && yelpUrl.isNotEmpty
-                        ? const Color(0xFFd32323) // Yelp Red
-                        : Colors.grey,
-                    size: 18,
+                  // 3. Yelp Button (Icon Only)
+                  ActionChip(
+                    avatar: Icon(
+                      FontAwesomeIcons.yelp,
+                      color: yelpUrl != null && yelpUrl.isNotEmpty
+                          ? const Color(0xFFd32323) // Yelp Red
+                          : Colors.grey,
+                      size: 18,
+                    ),
+                    label: const SizedBox.shrink(),
+                    labelPadding: EdgeInsets.zero,
+                    onPressed: yelpUrl != null && yelpUrl.isNotEmpty
+                        ? () => _launchUrl(yelpUrl)
+                        : null,
+                    tooltip: yelpUrl != null && yelpUrl.isNotEmpty
+                        ? 'Open Yelp Page'
+                        : 'Yelp URL not available',
+                    backgroundColor: Colors.white,
+                    shape: StadiumBorder(
+                        side: BorderSide(color: Colors.grey.shade300)),
+                    materialTapTargetSize:
+                        MaterialTapTargetSize.shrinkWrap, // Reduce tap area
+                    padding: const EdgeInsets.all(4), // Adjust padding
                   ),
-                  label: const SizedBox.shrink(),
-                  labelPadding: EdgeInsets.zero,
-                  onPressed: yelpUrl != null && yelpUrl.isNotEmpty
-                      ? () => _launchUrl(yelpUrl)
-                      : null,
-                  tooltip: yelpUrl != null && yelpUrl.isNotEmpty
-                      ? 'Open Yelp Page'
-                      : 'Yelp URL not available',
-                  backgroundColor: Colors.white,
-                  shape: StadiumBorder(
-                      side: BorderSide(color: Colors.grey.shade300)),
-                  materialTapTargetSize:
-                      MaterialTapTargetSize.shrinkWrap, // Reduce tap area
-                  padding: const EdgeInsets.all(4), // Adjust padding
-                ),
-                const SizedBox(width: 4), // Spacing
+                  const SizedBox(width: 4), // Spacing
 
-                // 4. Share Button
-                if (!widget.readOnlyPreview) ActionChip(
-                  avatar: Icon(
-                    Icons.share_outlined,
-                    color: Colors.blue, // Or another appropriate color
-                    size: 18,
+                  // 4. Share Button
+                  ActionChip(
+                    avatar: Icon(
+                      Icons.share_outlined,
+                      color: Colors.blue, // Or another appropriate color
+                      size: 18,
+                    ),
+                    label: const SizedBox.shrink(),
+                    labelPadding: EdgeInsets.zero,
+                    onPressed: _showShareBottomSheet,
+                    tooltip: 'Share Experience',
+                    backgroundColor: Colors.white,
+                    shape: StadiumBorder(
+                        side: BorderSide(color: Colors.grey.shade300)),
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    padding: const EdgeInsets.all(4),
                   ),
-                  label: const SizedBox.shrink(),
-                  labelPadding: EdgeInsets.zero,
-                  onPressed: _showShareBottomSheet,
-                  tooltip: 'Share Experience',
-                  backgroundColor: Colors.white,
-                  shape: StadiumBorder(
-                      side: BorderSide(color: Colors.grey.shade300)),
-                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  padding: const EdgeInsets.all(4),
-                ),
-                const SizedBox(width: 4), // Spacing
+                  const SizedBox(width: 4), // Spacing
 
-                // 5. Edit Button
-                if (!widget.readOnlyPreview) ActionChip(
-                  avatar: Icon(
-                    Icons.edit_outlined,
-                    color: canEdit
-                        ? Colors.orange[700]
-                        : Colors.grey, // Dynamic color
-                    size: 18,
+                  // 5. Edit Button
+                  ActionChip(
+                    avatar: Icon(
+                      Icons.edit_outlined,
+                      color: canEdit
+                          ? Colors.orange[700]
+                          : Colors.grey, // Dynamic color
+                      size: 18,
+                    ),
+                    label: const SizedBox.shrink(),
+                    labelPadding: EdgeInsets.zero,
+                    // Call _showEditExperienceModal only if canEdit is true
+                    onPressed: canEdit ? _showEditExperienceModal : null,
+                    tooltip:
+                        canEdit ? 'Edit Experience' : 'Cannot Edit (View Only)',
+                    backgroundColor: Colors.white,
+                    shape: StadiumBorder(
+                        side: BorderSide(color: Colors.grey.shade300)),
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    padding: const EdgeInsets.all(4),
                   ),
-                  label: const SizedBox.shrink(),
-                  labelPadding: EdgeInsets.zero,
-                  // Call _showEditExperienceModal only if canEdit is true
-                  onPressed: canEdit ? _showEditExperienceModal : null,
-                  tooltip:
-                      canEdit ? 'Edit Experience' : 'Cannot Edit (View Only)',
-                  backgroundColor: Colors.white,
-                  shape: StadiumBorder(
-                      side: BorderSide(color: Colors.grey.shade300)),
-                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  padding: const EdgeInsets.all(4),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
           // --- ADDED: Color Category Row (Directly) --- START ---
           Builder(
             builder: (context) {
@@ -3099,28 +3129,59 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
               ],
             ),
             const SizedBox(height: 8),
-            RadioListTile<String>(
-              value: 'my_copy',
-              groupValue: _shareMode,
-              onChanged: (v) => setState(() => _shareMode = v!),
-              title: const Text('Share my copy'),
-            ),
-            if (_shareMode == 'my_copy')
-              Padding(
-                padding: const EdgeInsets.only(left: 16.0, bottom: 8.0),
-                child: CheckboxListTile(
-                  contentPadding: EdgeInsets.zero,
-                  value: _giveEditAccess,
-                  onChanged: (v) => setState(() => _giveEditAccess = v ?? false),
-                  title: const Text('Give edit access'),
-                  controlAffinity: ListTileControlAffinity.leading,
+            ListTile(
+              contentPadding: const EdgeInsets.symmetric(horizontal: 16.0),
+              minLeadingWidth: 24,
+              leading: SizedBox(
+                width: 24,
+                child: Center(
+                  child: Radio<String>(
+                    value: 'my_copy',
+                    groupValue: _shareMode,
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    visualDensity: VisualDensity.compact,
+                    onChanged: (v) => setState(() => _shareMode = v!),
+                  ),
                 ),
               ),
-            RadioListTile<String>(
-              value: 'separate_copy',
-              groupValue: _shareMode,
-              onChanged: (v) => setState(() => _shareMode = v!),
+              title: const Text('Share my copy'),
+              onTap: () => setState(() => _shareMode = 'my_copy'),
+            ),
+            if (_shareMode == 'my_copy')
+              ListTile(
+                contentPadding: const EdgeInsets.only(left: 40.0, right: 16.0),
+                minLeadingWidth: 24,
+                leading: SizedBox(
+                  width: 24,
+                  child: Center(
+                    child: Checkbox(
+                      value: _giveEditAccess,
+                      onChanged: (v) => setState(() => _giveEditAccess = v ?? false),
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ),
+                ),
+                title: const Text('Give edit access'),
+                onTap: () => setState(() => _giveEditAccess = !_giveEditAccess),
+              ),
+            ListTile(
+              contentPadding: const EdgeInsets.symmetric(horizontal: 16.0),
+              minLeadingWidth: 24,
+              leading: SizedBox(
+                width: 24,
+                child: Center(
+                  child: Radio<String>(
+                    value: 'separate_copy',
+                    groupValue: _shareMode,
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    visualDensity: VisualDensity.compact,
+                    onChanged: (v) => setState(() => _shareMode = v!),
+                  ),
+                ),
+              ),
               title: const Text('Share as separate copy'),
+              onTap: () => setState(() => _shareMode = 'separate_copy'),
             ),
             const SizedBox(height: 8),
             ListTile(
