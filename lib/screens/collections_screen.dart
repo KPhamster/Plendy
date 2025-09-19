@@ -34,6 +34,10 @@ import 'package:flutter/foundation.dart'; // ADDED: Import for kIsWeb
 import 'package:flutter/gestures.dart'; // ADDED Import for PointerScrollEvent
 import 'package:flutter/rendering.dart'; // ADDED Import for Scrollable
 import '../services/google_maps_service.dart';
+import '../services/category_share_service.dart';
+import 'category_share_preview_screen.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 
 // Helper function to parse hex color string (copied from map_screen)
 Color _parseColor(String hexColor) {
@@ -1049,10 +1053,14 @@ if (mounted) {
             trailing: PopupMenuButton<String>(
               icon: const Icon(Icons.more_vert),
               tooltip: 'Category Options',
+              color: Colors.white,
               onSelected: (String result) {
                 switch (result) {
                   case 'edit':
                     _showEditSingleCategoryModal(category);
+                    break;
+                  case 'share':
+                    _showShareCategoryBottomSheet(category);
                     break;
                   case 'delete':
                     _showDeleteCategoryConfirmation(category);
@@ -1065,6 +1073,13 @@ if (mounted) {
                   child: ListTile(
                     leading: Icon(Icons.edit_outlined),
                     title: Text('Edit'),
+                  ),
+                ),
+                const PopupMenuItem<String>(
+                  value: 'share',
+                  child: ListTile(
+                    leading: Icon(Icons.ios_share),
+                    title: Text('Share'),
                   ),
                 ),
                 const PopupMenuItem<String>(
@@ -3676,10 +3691,14 @@ setState(() {
             trailing: PopupMenuButton<String>(
               icon: const Icon(Icons.more_vert),
               tooltip: 'Color Category Options',
+              color: Colors.white,
               onSelected: (String result) {
                 switch (result) {
                   case 'edit':
                     _showEditSingleColorCategoryModal(category);
+                    break;
+                  case 'share':
+                    _showShareColorCategoryBottomSheet(category);
                     break;
                   case 'delete':
                     _showDeleteColorCategoryConfirmation(category);
@@ -3692,6 +3711,13 @@ setState(() {
                   child: ListTile(
                     leading: Icon(Icons.edit_outlined),
                     title: Text('Edit'),
+                  ),
+                ),
+                const PopupMenuItem<String>(
+                  value: 'share',
+                  child: ListTile(
+                    leading: Icon(Icons.ios_share),
+                    title: Text('Share'),
                   ),
                 ),
                 const PopupMenuItem<String>(
@@ -4818,5 +4844,222 @@ return Container(
     } finally {
       _isExperiencesLoading = false;
     }
+  }
+
+  // --- Share Bottom Sheets for Category and Color Category ---
+  void _showShareCategoryBottomSheet(UserCategory _category) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) {
+        return _ShareBottomSheetContent(title: 'Share Category', userCategory: _category);
+      },
+    );
+  }
+
+  void _showShareColorCategoryBottomSheet(ColorCategory _colorCategory) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) {
+        return _ShareBottomSheetContent(title: 'Share Color Category', colorCategory: _colorCategory);
+      },
+    );
+  }
+}
+
+// --- Share Bottom Sheet Content (UI-only, no functionality) ---
+class _ShareBottomSheetContent extends StatefulWidget {
+  final String title; // e.g., 'Share Category' or 'Share Color Category'
+  // When provided, one of these will be non-null to identify what we're sharing
+  final UserCategory? userCategory;
+  final ColorCategory? colorCategory;
+
+  const _ShareBottomSheetContent({required this.title, this.userCategory, this.colorCategory});
+
+  @override
+  State<_ShareBottomSheetContent> createState() => _ShareBottomSheetContentState();
+}
+
+class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
+  String _shareMode = 'view_access'; // 'view_access' | 'edit_access'
+  bool _giveEditAccess = false;
+
+  void _showShareUrlOptions(BuildContext context, String url) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Share link', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.grey[100],
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(url, style: const TextStyle(fontSize: 14)),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    ElevatedButton.icon(
+                      onPressed: () async {
+                        await Share.share(url);
+                        if (ctx.mounted) Navigator.of(ctx).pop();
+                      },
+                      icon: const Icon(Icons.ios_share),
+                      label: const Text('Share'),
+                      style: ElevatedButton.styleFrom(backgroundColor: Theme.of(ctx).primaryColor, foregroundColor: Colors.white),
+                    ),
+                    const SizedBox(width: 12),
+                    OutlinedButton.icon(
+                      onPressed: () async {
+                        await Clipboard.setData(ClipboardData(text: url));
+                        if (ctx.mounted) {
+                          Navigator.of(ctx).pop();
+                          ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(content: Text('Link copied')));
+                        }
+                      },
+                      icon: const Icon(Icons.copy),
+                      label: const Text('Copy'),
+                    ),
+                  ],
+                )
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Text(
+                  widget.title,
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+                ),
+                const Spacer(),
+                IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: () => Navigator.of(context).pop(),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            ListTile(
+              contentPadding: const EdgeInsets.symmetric(horizontal: 16.0),
+              minLeadingWidth: 24,
+              leading: SizedBox(
+                width: 24,
+                child: Center(
+                  child: Radio<String>(
+                    value: 'view_access',
+                    groupValue: _shareMode,
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    visualDensity: VisualDensity.compact,
+                    onChanged: (v) => setState(() => _shareMode = v!),
+                  ),
+                ),
+              ),
+              title: const Text('Share view access only'),
+              onTap: () => setState(() => _shareMode = 'view_access'),
+            ),
+            ListTile(
+              contentPadding: const EdgeInsets.symmetric(horizontal: 16.0),
+              minLeadingWidth: 24,
+              leading: SizedBox(
+                width: 24,
+                child: Center(
+                  child: Radio<String>(
+                    value: 'edit_access',
+                    groupValue: _shareMode,
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    visualDensity: VisualDensity.compact,
+                    onChanged: (v) => setState(() => _shareMode = v!),
+                  ),
+                ),
+              ),
+              title: const Text('Share edit access'),
+              onTap: () => setState(() => _shareMode = 'edit_access'),
+            ),
+            const SizedBox(height: 8),
+            ListTile(
+              leading: const Icon(Icons.send_outlined),
+              title: const Text('Share to Plendy users'),
+              onTap: () {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Coming soon.')),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.link_outlined),
+              title: const Text('Get shareable link'),
+              onTap: () async {
+                final bool grantEdit = _shareMode == 'edit_access';
+                try {
+                  final DateTime expiresAt = DateTime.now().add(const Duration(days: 30));
+                  final shareService = CategoryShareService();
+                  late final String url;
+                  // Capture a safe context before popping the current sheet
+                  final BuildContext rootContext = Navigator.of(context, rootNavigator: true).context;
+                  if (widget.userCategory != null) {
+                    url = await shareService.createLinkShareForCategory(
+                      category: widget.userCategory!,
+                      accessMode: grantEdit ? 'edit' : 'view',
+                      expiresAt: expiresAt,
+                    );
+                  } else if (widget.colorCategory != null) {
+                    url = await shareService.createLinkShareForColorCategory(
+                      colorCategory: widget.colorCategory!,
+                      accessMode: grantEdit ? 'edit' : 'view',
+                      expiresAt: expiresAt,
+                    );
+                  } else {
+                    throw Exception('No category provided');
+                  }
+                  if (mounted) {
+                    Navigator.of(context).pop();
+                  }
+                  _showShareUrlOptions(rootContext, url);
+                } catch (e) {
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Failed to create link: $e')),
+                  );
+                }
+              },
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }

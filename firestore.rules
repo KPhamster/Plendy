@@ -124,6 +124,23 @@ service cloud.firestore {
       allow update, delete: if request.auth != null && request.auth.uid == resource.data.fromUserId;
     }
 
+    // Shares collection controlling access to shared categories (user or color)
+    // Public/unlisted are readable by anyone; direct/private readable by sender only
+    match /category_shares/{shareId} {
+      // Only the sender can create a share document for their own userId
+      allow create: if request.auth != null && request.resource.data.fromUserId == request.auth.uid;
+
+      // Reads: public/unlisted are open; otherwise only sender can read
+      allow read: if (
+        resource.data.visibility in ['public', 'unlisted']
+      ) || (
+        request.auth != null && request.auth.uid == resource.data.fromUserId
+      );
+
+      // Only the sender can modify or delete the share document
+      allow update, delete: if request.auth != null && request.auth.uid == resource.data.fromUserId;
+    }
+
     // Per-user denormalized received shares
     match /users/{userId}/received_shares/{shareId} {
       // A user can read and manage their own received shares list
