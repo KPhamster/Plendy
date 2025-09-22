@@ -9,57 +9,80 @@ import '../../firebase_options.dart';
 import '../models/experience.dart';
 import '../services/experience_service.dart';
 import '../services/auth_service.dart';
+import 'main_screen.dart';
 
 class CategorySharePreviewScreen extends StatelessWidget {
   final String token;
 
   const CategorySharePreviewScreen({super.key, required this.token});
 
+  void _navigateToMain(BuildContext context) {
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const MainScreen()),
+      (route) => false,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Shared Category', style: TextStyle(fontSize: 16)),
-        actions: [
-          if (kIsWeb)
-            Padding(
-              padding: const EdgeInsets.only(right: 8.0),
-              child: TextButton.icon(
-                style: TextButton.styleFrom(foregroundColor: Colors.black),
-                icon: const Icon(Icons.open_in_new, color: Colors.black),
-                label: const Text('Open in Plendy', style: TextStyle(color: Colors.black)),
-                onPressed: () => _handleOpenInApp(context),
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) {
+          return;
+        }
+        _navigateToMain(context);
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back),
+            onPressed: () => _navigateToMain(context),
+          ),
+          title: const Text('Shared Category', style: TextStyle(fontSize: 16)),
+          actions: [
+            if (kIsWeb)
+              Padding(
+                padding: const EdgeInsets.only(right: 8.0),
+                child: TextButton.icon(
+                  style: TextButton.styleFrom(foregroundColor: Colors.black),
+                  icon: const Icon(Icons.open_in_new, color: Colors.black),
+                  label: const Text('Open in Plendy',
+                      style: TextStyle(color: Colors.black)),
+                  onPressed: () => _handleOpenInApp(context),
+                ),
               ),
-            ),
-        ],
-      ),
-      body: FutureBuilder<_CategoryPreviewPayload>(
-        future: _fetchCategoryShare(token),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (snapshot.hasError) {
-            return Center(child: Text('Error: ${snapshot.error}'));
-          }
-          if (!snapshot.hasData) {
-            return const Center(child: Text('This share isn\'t available.'));
-          }
-           final payload = snapshot.data!;
-           return _CategoryPreviewList(
-             title: payload.categoryTitle,
-             iconOrColor: payload.iconOrColor,
-             experiences: payload.experiencesFuture,
-             fromUserId: payload.fromUserId,
-             accessMode: payload.accessMode,
-           );
-        },
+          ],
+        ),
+        body: FutureBuilder<_CategoryPreviewPayload>(
+          future: _fetchCategoryShare(token),
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            if (snapshot.hasError) {
+              return Center(child: Text('Error: ${snapshot.error}'));
+            }
+            if (!snapshot.hasData) {
+              return const Center(child: Text('This share isn\'t available.'));
+            }
+            final payload = snapshot.data!;
+            return _CategoryPreviewList(
+              title: payload.categoryTitle,
+              iconOrColor: payload.iconOrColor,
+              experiences: payload.experiencesFuture,
+              fromUserId: payload.fromUserId,
+              accessMode: payload.accessMode,
+            );
+          },
+        ),
       ),
     );
   }
 
   Future<void> _handleOpenInApp(BuildContext context) async {
-    final Uri deepLink = Uri.parse('https://plendy.app/shared-category/' + token);
+    final Uri deepLink =
+        Uri.parse('https://plendy.app/shared-category/' + token);
     final bool launchedDeepLink = await launchUrl(
       deepLink,
       mode: LaunchMode.externalApplication,
@@ -91,6 +114,7 @@ class CategorySharePreviewScreen extends StatelessWidget {
         await Future.delayed(Duration(milliseconds: d));
       }
     }
+
     if (!kIsWeb) {
       await _waitForDns('firestore.googleapis.com');
     }
@@ -130,7 +154,9 @@ class CategorySharePreviewScreen extends StatelessWidget {
           return r;
         } catch (e) {
           // Retry on common network exceptions
-          final isNet = e is SocketException || e is http.ClientException || (e is HandshakeException);
+          final isNet = e is SocketException ||
+              e is http.ClientException ||
+              (e is HandshakeException);
           if (i < delays.length - 1 && isNet) {
             await Future.delayed(Duration(milliseconds: delays[i]));
             continue;
@@ -145,7 +171,8 @@ class CategorySharePreviewScreen extends StatelessWidget {
     final byIdUrl = Uri.parse(
         'https://firestore.googleapis.com/v1/projects/$projectId/databases/(default)/documents/category_shares/$token');
     try {
-      http.Response? byIdResp = await _retryHttp(() => http.get(byIdUrl, headers: headers));
+      http.Response? byIdResp =
+          await _retryHttp(() => http.get(byIdUrl, headers: headers));
       // If not found immediately, wait briefly and try byId one more time to avoid propagation races
       if (byIdResp != null && byIdResp.statusCode == 404 && !kIsWeb) {
         await Future.delayed(const Duration(milliseconds: 600));
@@ -199,7 +226,8 @@ class CategorySharePreviewScreen extends StatelessWidget {
     // Retry the query a few times to be resilient to transient DNS/connectivity issues
     http.Response? resp;
     try {
-      resp = await _retryHttp(() => http.post(runQueryUrl, body: json.encode(payload), headers: headers));
+      resp = await _retryHttp(() =>
+          http.post(runQueryUrl, body: json.encode(payload), headers: headers));
     } catch (e) {
       throw Exception('Network error while looking up share');
     }
@@ -208,14 +236,16 @@ class CategorySharePreviewScreen extends StatelessWidget {
     }
 
     List results = json.decode(resp.body) as List;
-    Map<String, dynamic>? first = results.cast<Map<String, dynamic>?>().firstWhere(
-        (e) => e != null && e.containsKey('document'),
-        orElse: () => null);
+    Map<String, dynamic>? first = results
+        .cast<Map<String, dynamic>?>()
+        .firstWhere((e) => e != null && e.containsKey('document'),
+            orElse: () => null);
     if (first == null) {
       // Cold-start race or transient propagation; retry a couple more times with backoff
       for (final delay in [700, 1200]) {
         await Future.delayed(Duration(milliseconds: delay));
-        final retry = await _retryHttp(() => http.post(runQueryUrl, body: json.encode(payload), headers: headers));
+        final retry = await _retryHttp(() => http.post(runQueryUrl,
+            body: json.encode(payload), headers: headers));
         if (retry != null && retry.statusCode == 200) {
           results = json.decode(retry.body) as List;
           first = results.cast<Map<String, dynamic>?>().firstWhere(
@@ -236,11 +266,14 @@ class CategorySharePreviewScreen extends StatelessWidget {
     dynamic _val(Map<String, dynamic>? v) {
       if (v == null) return null;
       if (v.containsKey('stringValue')) return v['stringValue'];
-      if (v.containsKey('integerValue')) return int.tryParse(v['integerValue'] as String);
-      if (v.containsKey('doubleValue')) return (v['doubleValue'] as num).toDouble();
+      if (v.containsKey('integerValue'))
+        return int.tryParse(v['integerValue'] as String);
+      if (v.containsKey('doubleValue'))
+        return (v['doubleValue'] as num).toDouble();
       if (v.containsKey('booleanValue')) return v['booleanValue'] as bool;
       if (v.containsKey('mapValue')) {
-        final m = (v['mapValue']['fields'] as Map<String, dynamic>?) ?? const {};
+        final m =
+            (v['mapValue']['fields'] as Map<String, dynamic>?) ?? const {};
         return m.map((k, vv) => MapEntry(k, _val(vv as Map<String, dynamic>?)));
       }
       if (v.containsKey('arrayValue')) {
@@ -250,7 +283,8 @@ class CategorySharePreviewScreen extends StatelessWidget {
       return null;
     }
 
-    Map<String, dynamic> decoded = fields.map((k, v) => MapEntry(k, _val(v as Map<String, dynamic>?)));
+    Map<String, dynamic> decoded =
+        fields.map((k, v) => MapEntry(k, _val(v as Map<String, dynamic>?)));
     return decoded;
   }
 
@@ -266,43 +300,53 @@ class CategorySharePreviewScreen extends StatelessWidget {
   }
 
   _CategoryPreviewPayload _payloadFromMapped(Map<String, dynamic> mapped) {
-    final String? categoryType = mapped['categoryType'] as String?; // 'user' | 'color'
+    final String? categoryType =
+        mapped['categoryType'] as String?; // 'user' | 'color'
     final bool isColor = categoryType == 'color';
-    final String categoryId = ((isColor ? mapped['colorCategoryId'] : mapped['categoryId']) as String?) ?? '';
-    final Map<String, dynamic>? snapshot = mapped['snapshot'] as Map<String, dynamic>?;
-    final String title = (snapshot?['name'] as String?) ?? (isColor ? 'Color Category' : 'Category');
+    final String categoryId = ((isColor
+            ? mapped['colorCategoryId']
+            : mapped['categoryId']) as String?) ??
+        '';
+    final Map<String, dynamic>? snapshot =
+        mapped['snapshot'] as Map<String, dynamic>?;
+    final String title = (snapshot?['name'] as String?) ??
+        (isColor ? 'Color Category' : 'Category');
     final dynamic iconOrColor = isColor
         ? (snapshot != null ? snapshot['color'] : null)
         : (snapshot != null ? snapshot['icon'] : null);
 
     // Prefer embedded snapshots of experiences for unauthenticated preview
-    final List<dynamic> expSnaps = (snapshot?['experiences'] as List?) ?? const [];
+    final List<dynamic> expSnaps =
+        (snapshot?['experiences'] as List?) ?? const [];
     final List<_ExperiencePreview> embedded = expSnaps
         .whereType<Map<String, dynamic>>()
         .map((m) => _experienceFromSnapshot(m))
         .toList();
 
     // Fallback to fetching if no embedded snapshots (requires auth per rules)
-    final Future<List<_ExperiencePreview>> experiencesFuture = embedded.isNotEmpty
+    final Future<List<_ExperiencePreview>> experiencesFuture = embedded
+            .isNotEmpty
         ? Future.value(embedded)
-        : _fetchExperiencesForCategory(isColorCategory: isColor, categoryId: categoryId)
+        : _fetchExperiencesForCategory(
+                isColorCategory: isColor, categoryId: categoryId)
             .then((list) => list.map((e) => _experienceFromModel(e)).toList());
 
-     return _CategoryPreviewPayload(
-       categoryTitle: title,
-       iconOrColor: iconOrColor,
-       categoryId: categoryId,
-       isColorCategory: isColor,
-       experiencesFuture: experiencesFuture,
-       fromUserId: (mapped['fromUserId'] as String?) ?? '',
-       accessMode: (mapped['accessMode'] as String?) ?? 'view',
-     );
+    return _CategoryPreviewPayload(
+      categoryTitle: title,
+      iconOrColor: iconOrColor,
+      categoryId: categoryId,
+      isColorCategory: isColor,
+      experiencesFuture: experiencesFuture,
+      fromUserId: (mapped['fromUserId'] as String?) ?? '',
+      accessMode: (mapped['accessMode'] as String?) ?? 'view',
+    );
   }
 }
 
 class _CategoryPreviewPayload {
   final String categoryTitle;
-  final dynamic iconOrColor; // String icon when user category, int color value when color
+  final dynamic
+      iconOrColor; // String icon when user category, int color value when color
   final String categoryId;
   final bool isColorCategory;
   final Future<List<_ExperiencePreview>> experiencesFuture;
@@ -328,8 +372,8 @@ class _CategoryPreviewList extends StatefulWidget {
   final String accessMode;
 
   const _CategoryPreviewList({
-    required this.title, 
-    required this.iconOrColor, 
+    required this.title,
+    required this.iconOrColor,
     required this.experiences,
     required this.fromUserId,
     required this.accessMode,
@@ -356,13 +400,15 @@ class _CategoryPreviewListState extends State<_CategoryPreviewList> {
       final authService = AuthService();
       final currentUser = authService.currentUser;
       final isLoggedIn = currentUser != null;
-      
+
       // Fetch sender's display name
       String? displayName;
       if (widget.fromUserId.isNotEmpty) {
         final experienceService = ExperienceService();
-        final userProfile = await experienceService.getUserProfileById(widget.fromUserId);
-        displayName = userProfile?.displayName ?? userProfile?.username ?? 'Someone';
+        final userProfile =
+            await experienceService.getUserProfileById(widget.fromUserId);
+        displayName =
+            userProfile?.displayName ?? userProfile?.username ?? 'Someone';
       }
 
       if (mounted) {
@@ -409,9 +455,9 @@ class _CategoryPreviewListState extends State<_CategoryPreviewList> {
             child: Text(
               _getBannerText(),
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: Colors.blue[800],
-                fontWeight: FontWeight.w500,
-              ),
+                    color: Colors.blue[800],
+                    fontWeight: FontWeight.w500,
+                  ),
               textAlign: TextAlign.center,
               softWrap: true,
             ),
@@ -421,7 +467,8 @@ class _CategoryPreviewListState extends State<_CategoryPreviewList> {
           child: Row(
             children: [
               if (widget.iconOrColor is String)
-                Text(widget.iconOrColor as String, style: const TextStyle(fontSize: 24))
+                Text(widget.iconOrColor as String,
+                    style: const TextStyle(fontSize: 24))
               else if (widget.iconOrColor is int)
                 Container(
                   width: 20,
@@ -433,7 +480,8 @@ class _CategoryPreviewListState extends State<_CategoryPreviewList> {
                 ),
               const SizedBox(width: 12),
               Expanded(
-                child: Text(widget.title, style: Theme.of(context).textTheme.titleLarge),
+                child: Text(widget.title,
+                    style: Theme.of(context).textTheme.titleLarge),
               ),
             ],
           ),
@@ -448,7 +496,8 @@ class _CategoryPreviewListState extends State<_CategoryPreviewList> {
               }
               final items = snapshot.data ?? const <_ExperiencePreview>[];
               if (items.isEmpty) {
-                return const Center(child: Text('No experiences in this category.'));
+                return const Center(
+                    child: Text('No experiences in this category.'));
               }
               return ListView.builder(
                 itemCount: items.length,
@@ -474,7 +523,8 @@ class _ExperiencePreview {
   final String? subtitle;
   final String? imageUrl;
 
-  _ExperiencePreview({required this.id, required this.title, this.subtitle, this.imageUrl});
+  _ExperiencePreview(
+      {required this.id, required this.title, this.subtitle, this.imageUrl});
 }
 
 _ExperiencePreview _experienceFromSnapshot(Map<String, dynamic> snap) {
@@ -496,5 +546,3 @@ _ExperiencePreview _experienceFromModel(Experience e) {
     imageUrl: e.imageUrls.isNotEmpty ? e.imageUrls.first : null,
   );
 }
-
-

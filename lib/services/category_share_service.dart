@@ -4,18 +4,23 @@ import 'package:firebase_auth/firebase_auth.dart';
 import '../models/user_category.dart';
 import '../models/color_category.dart';
 import '../models/experience.dart';
+import '../models/enums/share_enums.dart';
 import 'experience_service.dart';
+import 'sharing_service.dart';
 
 class CategoryShareService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
+  final ExperienceService _experienceService = ExperienceService();
+  final SharingService _sharingService = SharingService();
 
   CollectionReference get _shares => _firestore.collection('category_shares');
 
   String? get _currentUserId => _auth.currentUser?.uid;
 
   String _generateToken() {
-    const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    const chars =
+        'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
     final rnd = Random.secure();
     return List.generate(12, (_) => chars[rnd.nextInt(chars.length)]).join();
   }
@@ -31,10 +36,11 @@ class CategoryShareService {
 
     final token = _generateToken();
     // Build experiences snapshot for this category (minimal fields for preview)
-    final service = ExperienceService();
     // Include both primary categoryId and otherCategories membership
-    final List<Experience> exps = await service.getExperiencesByUserCategoryAll(category.id);
-    final List<Map<String, dynamic>> experienceSnapshots = exps.map((e) => _buildExperienceSnapshot(e)).toList();
+    final List<Experience> exps =
+        await _experienceService.getExperiencesByUserCategoryAll(category.id);
+    final List<Map<String, dynamic>> experienceSnapshots =
+        exps.map((e) => _buildExperienceSnapshot(e)).toList();
 
     final data = {
       'fromUserId': userId,
@@ -67,9 +73,10 @@ class CategoryShareService {
 
     final token = _generateToken();
     // Build experiences snapshot for this color category
-    final service = ExperienceService();
-    final List<Experience> exps = await service.getExperiencesByColorCategoryId(colorCategory.id);
-    final List<Map<String, dynamic>> experienceSnapshots = exps.map((e) => _buildExperienceSnapshot(e)).toList();
+    final List<Experience> exps = await _experienceService
+        .getExperiencesByColorCategoryId(colorCategory.id);
+    final List<Map<String, dynamic>> experienceSnapshots =
+        exps.map((e) => _buildExperienceSnapshot(e)).toList();
 
     final data = {
       'fromUserId': userId,
@@ -89,6 +96,47 @@ class CategoryShareService {
 
     await _shares.doc(token).set(data);
     return 'https://plendy.app/shared-category/' + token;
+  }
+
+  Future<void> grantSharedCategoryToUser({
+    required String categoryId,
+    required String ownerUserId,
+    required String targetUserId,
+    required String accessMode,
+    required List<String> experienceIds,
+  }) async {
+    if (categoryId.isEmpty || ownerUserId.isEmpty || targetUserId.isEmpty) {
+      throw Exception('Invalid parameters for saving shared category');
+    }
+
+    final ShareAccessLevel accessLevel = accessMode.toLowerCase() == 'edit'
+        ? ShareAccessLevel.edit
+        : ShareAccessLevel.view;
+
+    await _sharingService.shareItem(
+      itemId: categoryId,
+      itemType: ShareableItemType.category,
+      ownerUserId: ownerUserId,
+      sharedWithUserId: targetUserId,
+      accessLevel: accessLevel,
+    );
+
+    final Set<String> uniqueExperienceIds =
+        experienceIds.where((id) => id.isNotEmpty).toSet();
+
+    if (uniqueExperienceIds.isEmpty) {
+      return;
+    }
+
+    await Future.wait(uniqueExperienceIds.map((experienceId) async {
+      await _sharingService.shareItem(
+        itemId: experienceId,
+        itemType: ShareableItemType.experience,
+        ownerUserId: ownerUserId,
+        sharedWithUserId: targetUserId,
+        accessLevel: accessLevel,
+      );
+    }));
   }
 
   Map<String, dynamic> _buildExperienceSnapshot(Experience exp) {
@@ -115,5 +163,3 @@ class CategoryShareService {
     };
   }
 }
-
-

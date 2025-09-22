@@ -28,6 +28,8 @@ import 'receive_share/widgets/generic_url_preview_widget.dart';
 import 'receive_share/widgets/web_url_preview_widget.dart';
 import 'receive_share/widgets/maps_preview_widget.dart';
 import '../models/shared_media_item.dart'; // ADDED Import
+import '../models/share_permission.dart'; // ADDED Import for SharePermission
+import '../models/enums/share_enums.dart'; // ADDED Import for ShareableItemType and ShareAccessLevel
 import 'package:collection/collection.dart'; // ADDED: Import for groupBy
 import 'map_screen.dart'; // ADDED: Import for MapScreen
 import 'package:flutter/foundation.dart'; // ADDED: Import for kIsWeb
@@ -35,9 +37,40 @@ import 'package:flutter/gestures.dart'; // ADDED Import for PointerScrollEvent
 import 'package:flutter/rendering.dart'; // ADDED Import for Scrollable
 import '../services/google_maps_service.dart';
 import '../services/category_share_service.dart';
+import '../services/sharing_service.dart';
 import 'category_share_preview_screen.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
+
+// Helper classes for shared data
+class _SharedCategoryData {
+  final UserCategory? userCategory;
+  final ColorCategory? colorCategory;
+  final SharePermission permission;
+  final String ownerDisplayName;
+
+  _SharedCategoryData({
+    this.userCategory,
+    this.colorCategory,
+    required this.permission,
+    required this.ownerDisplayName,
+  });
+
+  String get categoryId => userCategory?.id ?? colorCategory?.id ?? '';
+  bool get isColorCategory => colorCategory != null;
+}
+
+class _SharedExperienceData {
+  final Experience experience;
+  final SharePermission permission;
+  final String ownerDisplayName;
+
+  _SharedExperienceData({
+    required this.experience,
+    required this.permission,
+    required this.ownerDisplayName,
+  });
+}
 
 // Helper function to parse hex color string (copied from map_screen)
 Color _parseColor(String hexColor) {
@@ -98,6 +131,14 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   // ADDED: State for color categories
   List<ColorCategory> _colorCategories = [];
   bool _showingColorCategories = false; // Flag to toggle view in first tab
+  final SharingService _sharingService = SharingService();
+  final Map<String, SharePermission> _sharedCategoryPermissions = {};
+  final Map<String, SharePermission> _sharedExperiencePermissions = {};
+  final Map<String, String> _shareOwnerNames = {};
+  final Map<String, bool> _sharedCategoryIsColor = {};
+  List<UserCategory> _sharedCategories = [];
+  List<ColorCategory> _sharedColorCategories = [];
+  List<Experience> _sharedExperiences = [];
   // ADDED: State variable for experience sort type
   ExperienceSortType _experienceSortType = ExperienceSortType.mostRecent;
   // ADDED: State variable for content sort type
@@ -717,85 +758,227 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   }
 
   Future<void> _loadData() async {
-    setState(() {
-      _isLoading = true;
-    });
-    final totalSw = Stopwatch()..start();
+  setState(() {
+    _isLoading = true;
+  });
+  final totalSw = Stopwatch()..start();
 
-    final userId = _authService.currentUser?.uid;
-    try {
-      // Fetch both types of categories concurrently
-      final fetchSw = Stopwatch()..start();
-      final results = await Future.wait([
-        _experienceService.getUserCategories(),
-        _experienceService.getUserColorCategories(), // Fetch color categories
-      ]);
-      if (_perfLogs) {
-        fetchSw.stop();
-        final ms = fetchSw.elapsedMilliseconds;
-        print('[Perf][Collections] Firestore fetch (categories, color categories) took ${ms}ms');
-      }
+  final userId = _authService.currentUser?.uid;
+  try {
+    final fetchSw = Stopwatch()..start();
+    final results = await Future.wait([
+      _experienceService.getUserCategories(),
+      _experienceService.getUserColorCategories(),
+    ]);
+    if (_perfLogs) {
+      fetchSw.stop();
+      final ms = fetchSw.elapsedMilliseconds;
+      print('[Perf][Collections] Firestore fetch (categories, color categories) took ${ms}ms');
+    }
 
-      final categories = results[0] as List<UserCategory>;
-      final colorCategories =
-          results[1] as List<ColorCategory>; // Get color categories
+    final List<UserCategory> ownCategories = results[0] as List<UserCategory>;
+    final List<ColorCategory> ownColorCategories = results[1] as List<ColorCategory>;
 
-      // Defer Content tab data (media fetch + grouping) to first Content tab open
+    List<_SharedCategoryData> sharedCategoryData = [];
+    List<_SharedExperienceData> sharedExperienceData = [];
 
-      if (mounted) {
-        setState(() {
-          _categories = categories;
-          _colorCategories = colorCategories; // Store color categories
-          _groupedContentItems = []; // Lazily built when Content tab opens
-          _isLoading = false;
-          _selectedCategory = null; // Reset selected category on reload
-          _selectedColorCategory =
-              null; // Reset selected color category on reload
-          // _showingColorCategories = false; // Ensure default view on reload
+    if (userId != null) {
+      try {
+        print('[Collections] Loading shared permissions for user: $userId');
+        final sharedPermissions = await _sharingService.getSharedItemsForUser(userId);
+        print('[Collections] Found ${sharedPermissions.length} shared permissions');
+        if (sharedPermissions.isNotEmpty) {
+          final categoryPermissions = sharedPermissions
+              .where((perm) => perm.itemType == ShareableItemType.category)
+              .toList();
+          final experiencePermissions = sharedPermissions
+              .where((perm) => perm.itemType == ShareableItemType.experience)
+              .toList();
+          
+          print('[Collections] Category permissions: ${categoryPermissions.length}');
+          print('[Collections] Experience permissions: ${experiencePermissions.length}');
 
-          // Initialize filtered lists with all items initially
-          _filteredExperiences = List.from(_experiences);
-          _filteredGroupedContentItems = [];
-          _contentLoaded = false;
-        });
-        // Apply initial sorts after loading
-        final expSortSw = Stopwatch()..start();
-        _applyExperienceSort(_experienceSortType).whenComplete(() {
-          if (_perfLogs) {
-            print('[Perf][Collections] Initial experience sort took ${expSortSw.elapsedMilliseconds}ms');
+          if (categoryPermissions.isNotEmpty) {
+            print('[Collections] Resolving shared categories...');
+            sharedCategoryData = await _resolveSharedCategories(categoryPermissions);
+            print('[Collections] Resolved ${sharedCategoryData.length} shared categories');
           }
-        });
-        // Defer content sort until content is loaded
-        // Also apply to filtered lists to ensure UI displays correctly sorted data
-        final expFilteredSortSw = Stopwatch()..start();
-        _applyExperienceSort(_experienceSortType, applyToFiltered: true)
-            .whenComplete(() {
-          if (_perfLogs) {
-            print('[Perf][Collections] Filtered experience sort took ${expFilteredSortSw.elapsedMilliseconds}ms');
+          if (experiencePermissions.isNotEmpty) {
+            print('[Collections] Resolving shared experiences...');
+            sharedExperienceData = await _resolveSharedExperiences(experiencePermissions);
+            print('[Collections] Resolved ${sharedExperienceData.length} shared experiences');
           }
-        });
-        // Defer filtered content sort until content is loaded
-        if (_perfLogs) {
-          totalSw.stop();
-          print('[Perf][Collections] _loadData total time ${totalSw.elapsedMilliseconds}ms');
         }
-      }
-
-      // Start loading experiences in the background (cache-first, then server)
-      if (userId != null) {
-        _loadExperiences(userId);
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error loading data: $e')),
-        );
+      } catch (e) {
+        print('[Collections] Failed to load shared permissions: $e');
       }
     }
+
+    final List<UserCategory> sharedUserCategories = [
+      for (final data in sharedCategoryData)
+        if (!data.isColorCategory && data.userCategory != null) data.userCategory!
+    ];
+    final List<ColorCategory> sharedColorCategories = [
+      for (final data in sharedCategoryData)
+        if (data.isColorCategory && data.colorCategory != null) data.colorCategory!
+    ];
+
+    final Map<String, SharePermission> categoryPermissionMap = {};
+    final Map<String, bool> sharedCategoryIsColorMap = {};
+    for (final data in sharedCategoryData) {
+      final id = data.categoryId;
+      if (id.isEmpty) continue;
+      categoryPermissionMap[id] = data.permission;
+      sharedCategoryIsColorMap[id] = data.isColorCategory;
+    }
+
+    final Map<String, SharePermission> experiencePermissionMap = {};
+    final List<Experience> sharedExperiences = [];
+    for (final data in sharedExperienceData) {
+      final exp = data.experience;
+      experiencePermissionMap[exp.id] = data.permission;
+      sharedExperiences.add(exp);
+    }
+
+    final List<UserCategory> combinedCategories = List.of(ownCategories);
+    for (final shared in sharedUserCategories) {
+      if (!combinedCategories.any((c) => c.id == shared.id)) {
+        combinedCategories.add(shared);
+      }
+    }
+
+    final List<ColorCategory> combinedColorCategories = List.of(ownColorCategories);
+    for (final shared in sharedColorCategories) {
+      if (!combinedColorCategories.any((c) => c.id == shared.id)) {
+        combinedColorCategories.add(shared);
+      }
+    }
+
+    if (mounted) {
+      setState(() {
+        _categories = combinedCategories;
+        _sharedCategories = sharedUserCategories;
+        _colorCategories = combinedColorCategories;
+        _sharedColorCategories = sharedColorCategories;
+        _sharedCategoryPermissions
+          ..clear()
+          ..addAll(categoryPermissionMap);
+        _sharedCategoryIsColor
+          ..clear()
+          ..addAll(sharedCategoryIsColorMap);
+        _sharedExperiencePermissions
+          ..clear()
+          ..addAll(experiencePermissionMap);
+        _sharedExperiences = sharedExperiences;
+        _groupedContentItems = [];
+        _isLoading = false;
+        _selectedCategory = null;
+        _selectedColorCategory = null;
+        _filteredExperiences = List.from(_experiences);
+        _filteredGroupedContentItems = [];
+        _contentLoaded = false;
+      });
+      final expSortSw = Stopwatch()..start();
+      _applyExperienceSort(_experienceSortType).whenComplete(() {
+        if (_perfLogs) {
+          print('[Perf][Collections] Initial experience sort took ${expSortSw.elapsedMilliseconds}ms');
+        }
+      });
+      final expFilteredSortSw = Stopwatch()..start();
+      _applyExperienceSort(_experienceSortType, applyToFiltered: true).whenComplete(() {
+        if (_perfLogs) {
+          print('[Perf][Collections] Filtered experience sort took ${expFilteredSortSw.elapsedMilliseconds}ms');
+        }
+      });
+      if (_perfLogs) {
+        totalSw.stop();
+        print('[Perf][Collections] _loadData total time ${totalSw.elapsedMilliseconds}ms');
+      }
+    }
+
+    if (userId != null) {
+      _loadExperiences(userId);
+    }
+  } catch (e) {
+    if (mounted) {
+      setState(() {
+        _isLoading = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error loading data: $e')),
+      );
+    }
   }
+}
+  List<Experience> _combineExperiencesWithShared(List<Experience> base) {
+    final Map<String, Experience> experienceById = {for (final exp in base) exp.id: exp};
+    for (final shared in _sharedExperiences) {
+      experienceById.putIfAbsent(shared.id, () => shared);
+    }
+    return experienceById.values.toList();
+  }
+
+  Future<List<_SharedCategoryData>> _resolveSharedCategories(List<SharePermission> permissions) async {
+    if (permissions.isEmpty) return [];
+    final List<_SharedCategoryData> results = [];
+    for (final permission in permissions) {
+      final ownerId = permission.ownerUserId;
+      print('[Collections] Resolving category ${permission.itemId} owned by $ownerId');
+      UserCategory? userCategory =
+          await _experienceService.getUserCategoryByOwner(ownerId, permission.itemId);
+      print('[Collections] UserCategory result: ${userCategory?.name ?? 'null'}');
+      ColorCategory? colorCategory;
+      if (userCategory == null) {
+        colorCategory =
+            await _experienceService.getColorCategoryByOwner(ownerId, permission.itemId);
+        print('[Collections] ColorCategory result: ${colorCategory?.name ?? 'null'}');
+      }
+      if (userCategory == null && colorCategory == null) {
+        print('[Collections] No category found for ${permission.itemId}, skipping');
+        continue;
+      }
+      final ownerName = await _getOwnerDisplayName(ownerId);
+      results.add(_SharedCategoryData(
+        userCategory: userCategory,
+        colorCategory: colorCategory,
+        permission: permission,
+        ownerDisplayName: ownerName,
+      ));
+      print('[Collections] Added shared category: ${userCategory?.name ?? colorCategory?.name}');
+    }
+    return results;
+  }
+
+  Future<List<_SharedExperienceData>> _resolveSharedExperiences(List<SharePermission> permissions) async {
+    if (permissions.isEmpty) return [];
+    final List<_SharedExperienceData> results = [];
+    for (final permission in permissions) {
+      final experience = await _experienceService.getExperience(permission.itemId);
+      if (experience == null) {
+        continue;
+      }
+      final ownerName = await _getOwnerDisplayName(permission.ownerUserId);
+      results.add(_SharedExperienceData(
+        experience: experience,
+        permission: permission,
+        ownerDisplayName: ownerName,
+      ));
+    }
+    return results;
+  }
+
+  Future<String> _getOwnerDisplayName(String userId) async {
+    if (_shareOwnerNames.containsKey(userId)) {
+      return _shareOwnerNames[userId]!;
+    }
+    final profile = await _experienceService.getUserProfileById(userId);
+    final name = profile?.displayName ?? profile?.username ?? 'Someone';
+    _shareOwnerNames[userId] = name;
+    return name;
+  }
+
+
+
 
   Future<void> _showAddCategoryModal() async {
     final result = await showModalBottomSheet<UserCategory>(
@@ -953,168 +1136,222 @@ if (mounted) {
   }
 
   // ADDED: Widget builder for a Category Grid Item (for web)
-  Widget _buildCategoryGridItem(UserCategory category) {
-    final count = _getExperienceCountForCategory(category);
-    return Card(
-      key: ValueKey('category_grid_${category.id}'),
-      clipBehavior: Clip.antiAlias,
-      elevation: 2.0,
-      child: InkWell(
-        onTap: () {
-          setState(() {
-            _selectedCategory = category;
-            _showingColorCategories = false; 
-            _selectedColorCategory = null; 
-          });
-        },
-        child: Padding(
-          padding: const EdgeInsets.all(8.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: <Widget>[
-              Text(
-                category.icon,
-                style: const TextStyle(fontSize: 32),
+Widget _buildCategoryGridItem(UserCategory category) {
+  final count = _getExperienceCountForCategory(category);
+  final SharePermission? permission = _sharedCategoryPermissions[category.id];
+  final bool isShared = permission != null;
+  final String? ownerName = isShared ? (_shareOwnerNames[permission!.ownerUserId] ?? 'Someone') : null;
+  return Card(
+    key: ValueKey('category_grid_${category.id}'),
+    clipBehavior: Clip.antiAlias,
+    elevation: 2.0,
+    child: InkWell(
+      onTap: () {
+        setState(() {
+          _selectedCategory = category;
+          _showingColorCategories = false;
+          _selectedColorCategory = null;
+        });
+      },
+      child: Padding(
+        padding: const EdgeInsets.all(8.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: <Widget>[
+            Text(
+              category.icon,
+              style: const TextStyle(fontSize: 32),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              category.name,
+              style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '$count ${count == 1 ? "exp" : "exps"}',
+              style: Theme.of(context).textTheme.bodySmall,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            if (isShared)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  'Shared by $ownerName',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey[600]),
+                  textAlign: TextAlign.center,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
-              const SizedBox(height: 8),
-              Text(
-                category.name,
-                style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
-                textAlign: TextAlign.center,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+
+Widget _buildCategoriesList() {
+  if (_categories.isEmpty) {
+    return const Center(child: Text('No categories found.'));
+  }
+
+  final bool isDesktopWeb = kIsWeb && MediaQuery.of(context).size.width > 600;
+
+  if (isDesktopWeb) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    const double contentMaxWidth = 1200.0;
+    const double defaultPadding = 12.0;
+
+    double horizontalPadding;
+    if (screenWidth > contentMaxWidth) {
+      horizontalPadding = (screenWidth - contentMaxWidth) / 2;
+    } else {
+      horizontalPadding = defaultPadding;
+    }
+
+    return GridView.builder(
+      padding: EdgeInsets.symmetric(horizontal: horizontalPadding, vertical: defaultPadding),
+      itemCount: _categories.length,
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 5,
+        mainAxisSpacing: 10.0,
+        crossAxisSpacing: 10.0,
+        childAspectRatio: 3 / 3.5,
+      ),
+      itemBuilder: (context, index) {
+        final category = _categories[index];
+        return _buildCategoryGridItem(category);
+      },
+    );
+  } else {
+    return ReorderableListView.builder(
+      buildDefaultDragHandles: false,
+      itemCount: _categories.length,
+      itemBuilder: (context, index) {
+        final category = _categories[index];
+        final count = _getExperienceCountForCategory(category);
+        final SharePermission? permission = _sharedCategoryPermissions[category.id];
+        final bool isShared = permission != null;
+        final bool canEditCategory = !isShared || permission!.accessLevel == ShareAccessLevel.edit;
+        final bool canManageCategory = !isShared;
+        final String? ownerName = isShared ? (_shareOwnerNames[permission!.ownerUserId] ?? 'Someone') : null;
+
+        final Widget iconWidget = Text(
+          category.icon,
+          style: const TextStyle(fontSize: 24),
+        );
+
+        final Widget leadingWidget = isShared
+            ? iconWidget
+            : ReorderableDragStartListener(
+                index: index,
+                child: iconWidget,
+              );
+
+        final Widget subtitleWidget = isShared
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('$count ${count == 1 ? "experience" : "experiences"}'),
+                  Text(
+                    'Shared by $ownerName',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey[600]),
+                  ),
+                ],
+              )
+            : Text('$count ${count == 1 ? "experience" : "experiences"}');
+
+        return ListTile(
+          key: ValueKey(category.id),
+          leading: leadingWidget,
+          title: Text(category.name),
+          subtitle: subtitleWidget,
+          trailing: PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert),
+            tooltip: 'Category Options',
+            color: Colors.white,
+            onSelected: (String result) {
+              switch (result) {
+                case 'edit':
+                  _showEditSingleCategoryModal(category);
+                  break;
+                case 'share':
+                  _showShareCategoryBottomSheet(category);
+                  break;
+                case 'delete':
+                  _showDeleteCategoryConfirmation(category);
+                  break;
+              }
+            },
+            itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
+              PopupMenuItem<String>(
+                value: 'edit',
+                enabled: canEditCategory,
+                child: const ListTile(
+                  leading: Icon(Icons.edit_outlined),
+                  title: Text('Edit'),
+                ),
               ),
-              const SizedBox(height: 4),
-              Text(
-                '$count ${count == 1 ? "exp" : "exps"}',
-                style: Theme.of(context).textTheme.bodySmall,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+              PopupMenuItem<String>(
+                value: 'share',
+                enabled: canManageCategory,
+                child: const ListTile(
+                  leading: Icon(Icons.ios_share),
+                  title: Text('Share'),
+                ),
+              ),
+              PopupMenuItem<String>(
+                value: 'delete',
+                enabled: canManageCategory,
+                child: const ListTile(
+                  leading: Icon(Icons.delete_outline, color: Colors.red),
+                  title: Text('Delete', style: TextStyle(color: Colors.red)),
+                ),
               ),
             ],
           ),
-        ),
-      ),
+          onTap: () {
+            setState(() {
+              _selectedCategory = category;
+              _showingColorCategories = false;
+              _selectedColorCategory = null;
+            });
+          },
+        );
+      },
+      onReorder: (int oldIndex, int newIndex) {
+        if (newIndex > oldIndex) {
+          newIndex -= 1;
+        }
+        if (oldIndex < 0 || oldIndex >= _categories.length || newIndex < 0 || newIndex >= _categories.length) {
+          return;
+        }
+        final movingCategory = _categories[oldIndex];
+        final targetCategory = _categories[newIndex];
+        if (_sharedCategoryPermissions.containsKey(movingCategory.id) ||
+            _sharedCategoryPermissions.containsKey(targetCategory.id)) {
+          setState(() {});
+          return;
+        }
+        setState(() {
+          final UserCategory item = _categories.removeAt(oldIndex);
+          _categories.insert(newIndex, item);
+          _updateLocalOrderIndices();
+        });
+        _saveCategoryOrder();
+      },
     );
   }
+}
 
-  Widget _buildCategoriesList() {
-    if (_categories.isEmpty) {
-      return const Center(child: Text('No categories found.'));
-    }
-
-    final bool isDesktopWeb = kIsWeb && MediaQuery.of(context).size.width > 600;
-
-    if (isDesktopWeb) {
-      final screenWidth = MediaQuery.of(context).size.width;
-      const double contentMaxWidth = 1200.0;
-      const double defaultPadding = 12.0; // Original all-around padding was 12.0
-
-      double horizontalPadding;
-      if (screenWidth > contentMaxWidth) {
-        horizontalPadding = (screenWidth - contentMaxWidth) / 2;
-      } else {
-        horizontalPadding = defaultPadding;
-      }
-
-      // Web: Use GridView.builder
-      return GridView.builder(
-        padding: EdgeInsets.symmetric(horizontal: horizontalPadding, vertical: defaultPadding),
-        itemCount: _categories.length,
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 5,
-          mainAxisSpacing: 10.0,
-          crossAxisSpacing: 10.0,
-          childAspectRatio: 3/3.5, // Width : Height ratio for each item
-        ),
-        itemBuilder: (context, index) {
-          // Ensure _categories is accessed safely if it can be modified elsewhere
-          // For simplicity, assuming it's stable during build or handled by setState
-          final category = _categories[index];
-          return _buildCategoryGridItem(category);
-        },
-      );
-    } else {
-      // Mobile: Use existing ReorderableListView.builder
-      return ReorderableListView.builder(
-        itemCount: _categories.length,
-        itemBuilder: (context, index) {
-          final category = _categories[index];
-          final count = _getExperienceCountForCategory(category);
-          return ListTile(
-            key: ValueKey(category.id),
-            leading: Text(
-              category.icon,
-              style: const TextStyle(fontSize: 24),
-            ),
-            title: Text(category.name),
-            subtitle: Text('$count ${count == 1 ? "experience" : "experiences"}'),
-            trailing: PopupMenuButton<String>(
-              icon: const Icon(Icons.more_vert),
-              tooltip: 'Category Options',
-              color: Colors.white,
-              onSelected: (String result) {
-                switch (result) {
-                  case 'edit':
-                    _showEditSingleCategoryModal(category);
-                    break;
-                  case 'share':
-                    _showShareCategoryBottomSheet(category);
-                    break;
-                  case 'delete':
-                    _showDeleteCategoryConfirmation(category);
-                    break;
-                }
-              },
-              itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
-                const PopupMenuItem<String>(
-                  value: 'edit',
-                  child: ListTile(
-                    leading: Icon(Icons.edit_outlined),
-                    title: Text('Edit'),
-                  ),
-                ),
-                const PopupMenuItem<String>(
-                  value: 'share',
-                  child: ListTile(
-                    leading: Icon(Icons.ios_share),
-                    title: Text('Share'),
-                  ),
-                ),
-                const PopupMenuItem<String>(
-                  value: 'delete',
-                  child: ListTile(
-                    leading: Icon(Icons.delete_outline, color: Colors.red),
-                    title: Text('Delete', style: TextStyle(color: Colors.red)),
-                  ),
-                ),
-              ],
-            ),
-            onTap: () {
-              setState(() {
-                _selectedCategory = category;
-                _showingColorCategories = false; 
-                _selectedColorCategory = null; 
-              });
-},
-          );
-        },
-        onReorder: (int oldIndex, int newIndex) {
-          setState(() {
-            if (newIndex > oldIndex) {
-              newIndex -= 1;
-            }
-            final UserCategory item = _categories.removeAt(oldIndex);
-            _categories.insert(newIndex, item);
-
-            _updateLocalOrderIndices();
-_saveCategoryOrder();
-          });
-        },
-      );
-    }
-  }
 
   // ADDED: Method to apply sorting and save the new order
   Future<void> _applySortAndSave(CategorySortType sortType) async {
@@ -2080,173 +2317,180 @@ final category = _categories.firstWhere(
   }
 
   // REFACTORED: Extracted list item builder for reuse
-  Widget _buildExperienceListItem(Experience experience) {
-    // Find the matching category icon and name using categoryId
-    final UserCategory category = _categories.firstWhere(
-      (cat) => cat.id == experience.categoryId,
-      orElse: () => UserCategory(
-        id: '', // Default/fallback category
-        name: 'Uncategorized',
-        icon: '❓',
-        ownerUserId: '', // Should be filled if applicable, or handle differently
+Widget _buildExperienceListItem(Experience experience) {
+  // Find the matching category icon and name using categoryId
+  final UserCategory category = _categories.firstWhere(
+    (cat) => cat.id == experience.categoryId,
+    orElse: () => UserCategory(
+      id: '',
+      name: 'Uncategorized',
+      icon: '?',
+      ownerUserId: '',
+    ),
+  );
+  final categoryIcon = category.icon;
+  final categoryName = category.name;
+
+  // Get the full address
+  final fullAddress = experience.location.address;
+  // Determine leading box background color from color category with opacity
+  final colorCategoryForBox = _colorCategories.firstWhereOrNull(
+    (cc) => cc.id == experience.colorCategoryId,
+  );
+  final Color leadingBoxColor = colorCategoryForBox != null
+      ? _parseColor(colorCategoryForBox.colorHex).withOpacity(0.5)
+      : Colors.white;
+  // Number of related content items
+  final int contentCount = experience.sharedMediaItemIds.length;
+  final SharePermission? sharePermission = _sharedExperiencePermissions[experience.id];
+  final bool isShared = sharePermission != null;
+  final String? ownerName =
+      isShared ? (_shareOwnerNames[sharePermission!.ownerUserId] ?? 'Someone') : null;
+
+  return ListTile(
+    key: ValueKey(experience.id), // Use experience ID as key
+    contentPadding: const EdgeInsets.symmetric(horizontal: 8.0),
+    visualDensity: const VisualDensity(horizontal: -4),
+    leading: Container(
+      width: 56,
+      height: 56,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: leadingBoxColor,
+        borderRadius: BorderRadius.circular(8.0),
       ),
-    );
-    final categoryIcon = category.icon;
-    final categoryName = category.name;
-
-    // Get the full address
-    final fullAddress = experience.location.address;
-    // Determine leading box background color from color category with opacity
-    final colorCategoryForBox = _colorCategories.firstWhereOrNull(
-      (cc) => cc.id == experience.colorCategoryId,
-    );
-    final Color leadingBoxColor = colorCategoryForBox != null
-        ? _parseColor(colorCategoryForBox.colorHex).withOpacity(0.5)
-        : Colors.white;
-    // Number of related content items
-    final int contentCount = experience.sharedMediaItemIds.length;
-
-    return ListTile(
-      key: ValueKey(experience.id), // Use experience ID as key
-      contentPadding: const EdgeInsets.symmetric(horizontal: 8.0),
-      visualDensity: const VisualDensity(horizontal: -4),
-      leading: Container(
-        width: 56,
-        height: 56,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: leadingBoxColor,
-          borderRadius: BorderRadius.circular(8.0),
+      child: MediaQuery(
+        data: MediaQuery.of(context).copyWith(textScaleFactor: 1.0),
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.center,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                categoryIcon,
+                style: const TextStyle(fontSize: 28),
+              ),
+            ],
+          ),
         ),
-        child: MediaQuery(
-          data: MediaQuery.of(context).copyWith(textScaleFactor: 1.0),
-          child: FittedBox(
-            fit: BoxFit.scaleDown,
-            alignment: Alignment.center,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              mainAxisAlignment: MainAxisAlignment.center,
+      ),
+    ),
+    title: Text(
+      experience.name,
+      overflow: TextOverflow.ellipsis,
+      maxLines: 1,
+    ),
+    subtitle: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (isShared)
+          Text(
+            'Shared by $ownerName',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey[600]),
+          ),
+        if (fullAddress != null && fullAddress.isNotEmpty)
+          Text(
+            fullAddress,
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        if (experience.otherCategories.isNotEmpty || contentCount > 0)
+          Padding(
+            padding: const EdgeInsets.only(top: 2.0),
+            child: Row(
               children: [
-                Text(
-                  categoryIcon,
-                  style: const TextStyle(fontSize: 28),
+                Expanded(
+                  child: Wrap(
+                    spacing: 6.0,
+                    runSpacing: 2.0,
+                    children: experience.otherCategories.map((categoryId) {
+                      final otherCategory = _categories.firstWhereOrNull(
+                        (cat) => cat.id == categoryId,
+                      );
+                      if (otherCategory != null) {
+                        return Text(
+                          otherCategory.icon,
+                          style: const TextStyle(fontSize: 14),
+                        );
+                      }
+                      return const SizedBox.shrink();
+                    }).toList(),
+                  ),
                 ),
+                if (contentCount > 0)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).primaryColor,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.photo_library_outlined, size: 12, color: Colors.white),
+                        const SizedBox(width: 4),
+                        Text(
+                          '$contentCount',
+                          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Colors.white),
+                        ),
+                      ],
+                    ),
+                  ),
               ],
             ),
           ),
-        ),
-      ),
-      // --- MODIFIED: Integrate indicator into title --- START ---
-      title: Text(
-        experience.name,
-        overflow: TextOverflow.ellipsis,
-        maxLines: 1,
-      ),
-      // --- MODIFIED: Integrate indicator into title --- END ---
-      subtitle: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (fullAddress != null && fullAddress.isNotEmpty)
-            Text(
-              fullAddress, // Use full address
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-          // --- MODIFIED: Show subcategory icons and content count in the same row ---
-          if (experience.otherCategories.isNotEmpty || contentCount > 0)
-            Padding(
-              padding: const EdgeInsets.only(top: 2.0),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Wrap(
-                      spacing: 6.0,
-                      runSpacing: 2.0,
-                      children: experience.otherCategories.map((categoryId) {
-                        final otherCategory = _categories.firstWhereOrNull(
-                          (cat) => cat.id == categoryId,
-                        );
-                        if (otherCategory != null) {
-                          return Text(
-                            otherCategory.icon,
-                            style: const TextStyle(fontSize: 14),
-                          );
-                        }
-                        return const SizedBox.shrink();
-                      }).toList(),
-                    ),
+        if (experience.additionalNotes != null &&
+            experience.additionalNotes!.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 4.0),
+            child: Text(
+              experience.additionalNotes!,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    fontStyle: FontStyle.italic,
                   ),
-                  if (contentCount > 0)
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: Theme.of(context).primaryColor,
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(Icons.photo_library_outlined, size: 12, color: Colors.white),
-                          const SizedBox(width: 4),
-                          Text(
-                            '$contentCount',
-                            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Colors.white),
-                          ),
-                        ],
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          // --- END MODIFIED ---
-          // ADDED: Display notes if available
-          if (experience.additionalNotes != null &&
-              experience.additionalNotes!.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(top: 4.0), // Add some spacing
-              child: Text(
-                experience.additionalNotes!,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      fontStyle: FontStyle.italic, // Optional: Italicize notes
-                    ),
-                maxLines: 2, // Limit notes length in list view
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-          // Removed separate bottom-right badge to avoid duplication
-        ],
-      ),
-      onTap: () async {
-        // Make onTap async
-
-        // Find the matching category for the tapped experience using categoryId
-        final UserCategory resolvedCategory = _categories.firstWhere(
-          (cat) => cat.id == experience.categoryId,
-          orElse: () => UserCategory(
-            id: '',
-            name: 'Uncategorized', // Fallback name
-            icon: '❓', // Fallback icon
-            ownerUserId: '', // Needs a valid owner or handle this case
-          ),
-        );
-
-        // Await result and refresh if needed
-        final result = await Navigator.push<bool>(
-          context,
-          MaterialPageRoute(
-            builder: (context) => ExperiencePageScreen(
-              experience: experience,
-              category: resolvedCategory, // Pass the resolved category
-              userColorCategories: _colorCategories,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
             ),
           ),
-        );
-        // Refresh if deletion occurred
-        if (result == true && mounted) {
-          _loadData();
-        }
-      },
-    );
-  }
+      ],
+    ),
+    onTap: () async {
+      final bool hasEditAccess =
+          sharePermission == null || sharePermission.accessLevel == ShareAccessLevel.edit;
+
+      final UserCategory resolvedCategory = _categories.firstWhere(
+        (cat) => cat.id == experience.categoryId,
+        orElse: () => UserCategory(
+          id: '',
+          name: 'Uncategorized',
+          icon: '?',
+          ownerUserId: '',
+        ),
+      );
+
+      final result = await Navigator.push<bool>(
+        context,
+        MaterialPageRoute(
+          builder: (context) => ExperiencePageScreen(
+            experience: experience,
+            category: resolvedCategory,
+            userColorCategories: _colorCategories,
+            readOnlyPreview: sharePermission != null && !hasEditAccess,
+            shareBannerFromUserId: sharePermission?.ownerUserId,
+            shareAccessMode: sharePermission != null
+                ? (hasEditAccess ? 'edit' : 'view')
+                : null,
+          ),
+        ),
+      );
+      if (result == true && mounted) {
+        _loadData();
+      }
+    },
+  );
+}
+
 
   // ADDED: Widget builder for an Experience Grid Item (for web)
   Widget _buildExperienceGridItem(Experience experience, bool isDesktopWeb) { // ADDED isDesktopWeb parameter
@@ -2255,6 +2499,18 @@ final category = _categories.firstWhere(
     final colorCategory = _colorCategories.firstWhereOrNull((cc) => cc.id == experience.colorCategoryId);
     final color = colorCategory != null ? _parseColor(colorCategory.colorHex) : Theme.of(context).disabledColor;
     final String? locationArea = experience.location.getFormattedArea();
+    final SharePermission? sharePermission = _sharedExperiencePermissions[experience.id];
+
+    final bool hasEditAccess =
+
+        sharePermission == null || sharePermission.accessLevel == ShareAccessLevel.edit;
+
+    final String? ownerName = sharePermission != null
+
+        ? (_shareOwnerNames[sharePermission.ownerUserId] ?? 'Someone')
+
+        : null;
+
     String? photoUrl;
     if (experience.location.photoResourceName != null && experience.location.photoResourceName!.isNotEmpty) {
       photoUrl = GoogleMapsService.buildPlacePhotoUrlFromResourceName(
@@ -3595,163 +3851,221 @@ setState(() {
   // --- ADDED: Helper to count experiences for a specific color category --- END ---
 
   // --- ADDED: Widget builder for a Color Category Grid Item (for web) ---
-  Widget _buildColorCategoryGridItem(ColorCategory category) {
-    final count = _getExperienceCountForColorCategory(category);
-    return Card(
-      key: ValueKey('color_category_grid_${category.id}'),
-      clipBehavior: Clip.antiAlias,
-      elevation: 2.0,
-      child: InkWell(
-        onTap: () {
-          setState(() {
-            _selectedColorCategory = category;
-            _showingColorCategories = true; 
-            _selectedCategory = null;
-          });
-        },
-        child: Padding(
-          padding: const EdgeInsets.all(8.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: <Widget>[
-              Container(
-                width: 28, 
-                height: 28,
-                decoration: BoxDecoration(
-                  color: category.color, 
-                  shape: BoxShape.circle,
+Widget _buildColorCategoryGridItem(ColorCategory category) {
+  final count = _getExperienceCountForColorCategory(category);
+  final bool isShared = _sharedCategoryIsColor[category.id] ?? false;
+  final SharePermission? permission = isShared ? _sharedCategoryPermissions[category.id] : null;
+  final String? ownerName = isShared ? (_shareOwnerNames[permission!.ownerUserId] ?? 'Someone') : null;
+  return Card(
+    key: ValueKey('color_category_grid_${category.id}'),
+    clipBehavior: Clip.antiAlias,
+    elevation: 2.0,
+    child: InkWell(
+      onTap: () {
+        setState(() {
+          _selectedColorCategory = category;
+          _showingColorCategories = true;
+          _selectedCategory = null;
+        });
+      },
+      child: Padding(
+        padding: const EdgeInsets.all(8.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: <Widget>[
+            Container(
+              width: 28,
+              height: 28,
+              decoration: BoxDecoration(
+                color: category.color,
+                shape: BoxShape.circle,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              category.name,
+              style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '$count ${count == 1 ? "exp" : "exps"}',
+              style: Theme.of(context).textTheme.bodySmall,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            if (isShared)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  'Shared by $ownerName',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey[600]),
+                  textAlign: TextAlign.center,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
-              const SizedBox(height: 8),
-              Text(
-                category.name,
-                style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
-                textAlign: TextAlign.center,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+
+  // --- ADDED: Builder for Color Category List --- START ---
+Widget _buildColorCategoriesList() {
+  if (_colorCategories.isEmpty) {
+    return const Center(child: Text('No color categories found.'));
+  }
+
+  final bool isDesktopWeb = kIsWeb && MediaQuery.of(context).size.width > 600;
+
+  if (isDesktopWeb) {
+    return GridView.builder(
+      padding: const EdgeInsets.all(12.0),
+      itemCount: _colorCategories.length,
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 3,
+        mainAxisSpacing: 10.0,
+        crossAxisSpacing: 10.0,
+        childAspectRatio: 3 / 3,
+      ),
+      itemBuilder: (context, index) {
+        final category = _colorCategories[index];
+        return _buildColorCategoryGridItem(category);
+      },
+    );
+  } else {
+    return ReorderableListView.builder(
+      buildDefaultDragHandles: false,
+      itemCount: _colorCategories.length,
+      itemBuilder: (context, index) {
+        final category = _colorCategories[index];
+        final count = _getExperienceCountForColorCategory(category);
+        final bool isShared = _sharedCategoryIsColor[category.id] ?? false;
+        final SharePermission? permission = isShared ? _sharedCategoryPermissions[category.id] : null;
+        final bool canEditCategory = !isShared || permission!.accessLevel == ShareAccessLevel.edit;
+        final bool canManageCategory = !isShared;
+        final String? ownerName = isShared ? (_shareOwnerNames[permission!.ownerUserId] ?? 'Someone') : null;
+
+        final Widget colorDot = Container(
+          width: 24,
+          height: 24,
+          decoration: BoxDecoration(
+            color: category.color,
+            shape: BoxShape.circle,
+          ),
+        );
+
+        final Widget leadingWidget = isShared
+            ? colorDot
+            : ReorderableDragStartListener(
+                index: index,
+                child: colorDot,
+              );
+
+        final Widget subtitleWidget = isShared
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('$count ${count == 1 ? "experience" : "experiences"}'),
+                  Text(
+                    'Shared by $ownerName',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey[600]),
+                  ),
+                ],
+              )
+            : Text('$count ${count == 1 ? "experience" : "experiences"}');
+
+        return ListTile(
+          key: ValueKey(category.id),
+          leading: leadingWidget,
+          title: Text(category.name),
+          subtitle: subtitleWidget,
+          trailing: PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert),
+            tooltip: 'Color Category Options',
+            color: Colors.white,
+            onSelected: (String result) {
+              switch (result) {
+                case 'edit':
+                  _showEditSingleColorCategoryModal(category);
+                  break;
+                case 'share':
+                  _showShareColorCategoryBottomSheet(category);
+                  break;
+                case 'delete':
+                  _showDeleteColorCategoryConfirmation(category);
+                  break;
+              }
+            },
+            itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
+              PopupMenuItem<String>(
+                value: 'edit',
+                enabled: canEditCategory,
+                child: const ListTile(
+                  leading: Icon(Icons.edit_outlined),
+                  title: Text('Edit'),
+                ),
               ),
-              const SizedBox(height: 4),
-              Text(
-                '$count ${count == 1 ? "exp" : "exps"}',
-                style: Theme.of(context).textTheme.bodySmall,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+              PopupMenuItem<String>(
+                value: 'share',
+                enabled: canManageCategory,
+                child: const ListTile(
+                  leading: Icon(Icons.ios_share),
+                  title: Text('Share'),
+                ),
+              ),
+              PopupMenuItem<String>(
+                value: 'delete',
+                enabled: canManageCategory,
+                child: const ListTile(
+                  leading: Icon(Icons.delete_outline, color: Colors.red),
+                  title: Text('Delete', style: TextStyle(color: Colors.red)),
+                ),
               ),
             ],
           ),
-        ),
-      ),
+          onTap: () {
+            setState(() {
+              _selectedColorCategory = category;
+              _showingColorCategories = true;
+              _selectedCategory = null;
+            });
+          },
+        );
+      },
+      onReorder: (int oldIndex, int newIndex) {
+        if (newIndex > oldIndex) {
+          newIndex -= 1;
+        }
+        if (oldIndex < 0 || oldIndex >= _colorCategories.length || newIndex < 0 || newIndex >= _colorCategories.length) {
+          return;
+        }
+        final movingCategory = _colorCategories[oldIndex];
+        final targetCategory = _colorCategories[newIndex];
+        final bool movingShared = _sharedCategoryIsColor[movingCategory.id] ?? false;
+        final bool targetShared = _sharedCategoryIsColor[targetCategory.id] ?? false;
+        if (movingShared || targetShared) {
+          setState(() {});
+          return;
+        }
+        setState(() {
+          final ColorCategory item = _colorCategories.removeAt(oldIndex);
+          _colorCategories.insert(newIndex, item);
+          _updateLocalColorOrderIndices();
+        });
+        _saveColorCategoryOrder();
+      },
     );
   }
+}
 
-  // --- ADDED: Builder for Color Category List --- START ---
-  Widget _buildColorCategoriesList() {
-    if (_colorCategories.isEmpty) {
-      return const Center(child: Text('No color categories found.'));
-    }
-
-    final bool isDesktopWeb = kIsWeb && MediaQuery.of(context).size.width > 600;
-
-    if (isDesktopWeb) {
-      // Web: Use GridView.builder
-      return GridView.builder(
-        padding: const EdgeInsets.all(12.0),
-        itemCount: _colorCategories.length,
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 3,
-          mainAxisSpacing: 10.0,
-          crossAxisSpacing: 10.0,
-          childAspectRatio: 3/3, // Square items for color categories
-        ),
-        itemBuilder: (context, index) {
-          final category = _colorCategories[index];
-          return _buildColorCategoryGridItem(category);
-        },
-      );
-    } else {
-      // Mobile: Use existing ReorderableListView.builder
-      return ReorderableListView.builder(
-        itemCount: _colorCategories.length,
-        itemBuilder: (context, index) {
-          final category = _colorCategories[index];
-          final count = _getExperienceCountForColorCategory(category);
-          return ListTile(
-            key: ValueKey(category.id),
-            leading: Container(
-              width: 24,
-              height: 24,
-              decoration: BoxDecoration(
-                  color: category.color,
-                  shape: BoxShape.circle,
-              ),
-            ),
-            title: Text(category.name),
-            subtitle: Text('$count ${count == 1 ? "experience" : "experiences"}'),
-            trailing: PopupMenuButton<String>(
-              icon: const Icon(Icons.more_vert),
-              tooltip: 'Color Category Options',
-              color: Colors.white,
-              onSelected: (String result) {
-                switch (result) {
-                  case 'edit':
-                    _showEditSingleColorCategoryModal(category);
-                    break;
-                  case 'share':
-                    _showShareColorCategoryBottomSheet(category);
-                    break;
-                  case 'delete':
-                    _showDeleteColorCategoryConfirmation(category);
-                    break;
-                }
-              },
-              itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
-                const PopupMenuItem<String>(
-                  value: 'edit',
-                  child: ListTile(
-                    leading: Icon(Icons.edit_outlined),
-                    title: Text('Edit'),
-                  ),
-                ),
-                const PopupMenuItem<String>(
-                  value: 'share',
-                  child: ListTile(
-                    leading: Icon(Icons.ios_share),
-                    title: Text('Share'),
-                  ),
-                ),
-                const PopupMenuItem<String>(
-                  value: 'delete',
-                  child: ListTile(
-                    leading: Icon(Icons.delete_outline, color: Colors.red),
-                    title: Text('Delete', style: TextStyle(color: Colors.red)),
-                  ),
-                ),
-              ],
-            ),
-            onTap: () {
-              setState(() {
-                _selectedColorCategory = category;
-                _showingColorCategories = true; 
-                _selectedCategory = null;
-              });
-},
-          );
-        },
-        onReorder: (int oldIndex, int newIndex) {
-          setState(() {
-            if (newIndex > oldIndex) {
-              newIndex -= 1;
-            }
-            final ColorCategory item = _colorCategories.removeAt(oldIndex);
-            _colorCategories.insert(newIndex, item);
-            _updateLocalColorOrderIndices();
-_saveColorCategoryOrder();
-          });
-        },
-      );
-    }
-  }
   // --- ADDED: Builder for Color Category List --- END ---
 
   // --- ADDED: Widget to display experiences for a specific color category --- START ---
@@ -4811,33 +5125,30 @@ return Container(
   Future<void> _loadExperiences(String userId) async {
     _isExperiencesLoading = true;
     try {
-      // Try cache first for instant render if available
       try {
-        // Cache-first fetch if available (best-effort)
         final cached = await _experienceService.getExperiencesByUser(userId);
-        if (mounted && cached.isNotEmpty) {
+        final combinedCached = _combineExperiencesWithShared(cached);
+        if (mounted && combinedCached.isNotEmpty) {
           setState(() {
-            _experiences = cached;
+            _experiences = combinedCached;
             _filteredExperiences = List.from(_experiences);
           });
-          // Apply sorts on cached data
           _applyExperienceSort(_experienceSortType, applyToFiltered: true);
         }
       } catch (_) {
         // Ignore cache errors; proceed to server fetch
       }
 
-      // Fetch from server
       final fresh = await _experienceService.getExperiencesByUser(userId);
+      final combinedFresh = _combineExperiencesWithShared(fresh);
       if (mounted) {
         setState(() {
-          _experiences = fresh;
+          _experiences = combinedFresh;
           _filteredExperiences = List.from(_experiences);
         });
       }
       await _applyExperienceSort(_experienceSortType, applyToFiltered: true);
 
-      // If user is on Content tab and content not yet loaded, kick it off
       if (_tabController.index == 2 && !_contentLoaded && !_isContentLoading) {
         await _loadGroupedContent();
       }
@@ -4845,6 +5156,7 @@ return Container(
       _isExperiencesLoading = false;
     }
   }
+
 
   // --- Share Bottom Sheets for Category and Color Category ---
   void _showShareCategoryBottomSheet(UserCategory _category) {

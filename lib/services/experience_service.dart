@@ -52,10 +52,56 @@ class ExperienceService {
   CollectionReference _userCategoriesCollection(String userId) =>
       _usersCollection.doc(userId).collection('categories');
 
+  Future<UserCategory?> getUserCategoryByOwner(
+      String ownerUserId, String categoryId) async {
+    if (ownerUserId.isEmpty || categoryId.isEmpty) return null;
+    try {
+      final currentUserId = _currentUserId;
+      final expectedPermissionId = '${ownerUserId}_category_${categoryId}_${currentUserId}';
+      print('getUserCategoryByOwner: Fetching users/$ownerUserId/categories/$categoryId');
+      print('getUserCategoryByOwner: Expected permission doc ID: $expectedPermissionId');
+      final doc =
+          await _userCategoriesCollection(ownerUserId).doc(categoryId).get();
+      if (!doc.exists) {
+        print('getUserCategoryByOwner: Document does not exist');
+        return null;
+      }
+      final category = UserCategory.fromFirestore(doc);
+      print('getUserCategoryByOwner: Found category: ${category.name}');
+      return category;
+    } catch (e) {
+      print(
+          'getUserCategoryByOwner: Failed to fetch $categoryId for $ownerUserId: $e');
+      return null;
+    }
+  }
+
   // --- ADDED: Helper to get the path to a user's custom color categories sub-collection ---
   CollectionReference _userColorCategoriesCollection(String userId) =>
       _usersCollection.doc(userId).collection('color_categories');
   // --- END ADDED ---
+
+  Future<ColorCategory?> getColorCategoryByOwner(
+      String ownerUserId, String categoryId) async {
+    if (ownerUserId.isEmpty || categoryId.isEmpty) return null;
+    try {
+      print('getColorCategoryByOwner: Fetching users/$ownerUserId/color_categories/$categoryId');
+      final doc = await _userColorCategoriesCollection(ownerUserId)
+          .doc(categoryId)
+          .get();
+      if (!doc.exists) {
+        print('getColorCategoryByOwner: Document does not exist');
+        return null;
+      }
+      final category = ColorCategory.fromFirestore(doc);
+      print('getColorCategoryByOwner: Found color category: ${category.name}');
+      return category;
+    } catch (e) {
+      print(
+          'getColorCategoryByOwner: Failed to fetch $categoryId for $ownerUserId: $e');
+      return null;
+    }
+  }
 
   // ======= User Category Operations =======
 
@@ -597,7 +643,9 @@ class ExperienceService {
     // Split into chunks
     final List<List<String>> chunks = [];
     for (int i = 0; i < uniqueIds.length; i += chunkSize) {
-      final end = (i + chunkSize) > uniqueIds.length ? uniqueIds.length : (i + chunkSize);
+      final end = (i + chunkSize) > uniqueIds.length
+          ? uniqueIds.length
+          : (i + chunkSize);
       final chunk = uniqueIds.sublist(i, end);
       if (chunk.isNotEmpty) {
         chunks.add(chunk);
@@ -609,7 +657,11 @@ class ExperienceService {
     final List<SharedMediaItem> results = [];
 
     for (int i = 0; i < chunks.length; i += maxConcurrent) {
-      final batch = chunks.sublist(i, (i + maxConcurrent) > chunks.length ? chunks.length : (i + maxConcurrent));
+      final batch = chunks.sublist(
+          i,
+          (i + maxConcurrent) > chunks.length
+              ? chunks.length
+              : (i + maxConcurrent));
       final futures = batch.map((chunk) async {
         try {
           final snapshot = await _sharedMediaItemsCollection
@@ -805,13 +857,17 @@ class ExperienceService {
       if (expDoc.exists) {
         final data = expDoc.data() as Map<String, dynamic>?;
         final List<String> mediaItemIds = List<String>.from(
-          (data?['sharedMediaItemIds'] as List<dynamic>?)?.whereType<String>().toList() ?? [],
+          (data?['sharedMediaItemIds'] as List<dynamic>?)
+                  ?.whereType<String>()
+                  .toList() ??
+              [],
         );
 
         if (mediaItemIds.isNotEmpty) {
           // Use existing helper to remove link and delete orphaned media
           await Future.wait(mediaItemIds.map((mediaId) =>
-              removeExperienceLinkFromMediaItem(mediaId, experienceId, deleteIfOrphaned: true)));
+              removeExperienceLinkFromMediaItem(mediaId, experienceId,
+                  deleteIfOrphaned: true)));
         } else {
           // Fallback: query by arrayContains in case sharedMediaItemIds wasn't populated
           final querySnap = await _sharedMediaItemsCollection
@@ -819,12 +875,14 @@ class ExperienceService {
               .get();
           if (querySnap.docs.isNotEmpty) {
             await Future.wait(querySnap.docs.map((doc) =>
-                removeExperienceLinkFromMediaItem(doc.id, experienceId, deleteIfOrphaned: true)));
+                removeExperienceLinkFromMediaItem(doc.id, experienceId,
+                    deleteIfOrphaned: true)));
           }
         }
       }
     } catch (e) {
-      print("deleteExperience: Error unlinking shared media for experience $experienceId: $e");
+      print(
+          "deleteExperience: Error unlinking shared media for experience $experienceId: $e");
       // Proceed with deletion even if unlinking has partial failures
     }
 
@@ -886,7 +944,8 @@ class ExperienceService {
   }
 
   /// Get experiences by color category ID
-  Future<List<Experience>> getExperiencesByColorCategoryId(String colorCategoryId,
+  Future<List<Experience>> getExperiencesByColorCategoryId(
+      String colorCategoryId,
       {int limit = 100}) async {
     if (colorCategoryId.isEmpty) return [];
     final snapshot = await _experiencesCollection
@@ -910,7 +969,8 @@ class ExperienceService {
   }
 
   /// Get experiences by category name without ordering (index-free)
-  Future<List<Experience>> getExperiencesByCategoryNameUnordered(String categoryName,
+  Future<List<Experience>> getExperiencesByCategoryNameUnordered(
+      String categoryName,
       {int limit = 100}) async {
     if (categoryName.isEmpty) return [];
     final snapshot = await _experiencesCollection
@@ -958,15 +1018,17 @@ class ExperienceService {
       return []; // Or throw Exception('User not authenticated');
     }
     try {
-      print("getUserExperiences: Fetching all experiences for user ID: $userId");
+      print(
+          "getUserExperiences: Fetching all experiences for user ID: $userId");
       final snapshot = await _experiencesCollection
-          .where('editorUserIds', arrayContains: userId) // Check if user is an editor
-          .orderBy('updatedAt', descending: true) // Order by most recently updated
+          .where('editorUserIds',
+              arrayContains: userId) // Check if user is an editor
+          .orderBy('updatedAt',
+              descending: true) // Order by most recently updated
           .get();
 
-      final experiences = snapshot.docs
-          .map((doc) => Experience.fromFirestore(doc))
-          .toList();
+      final experiences =
+          snapshot.docs.map((doc) => Experience.fromFirestore(doc)).toList();
       print(
           "getUserExperiences: Fetched ${experiences.length} experiences for user $userId.");
       return experiences;

@@ -633,6 +633,20 @@ class SharingService {
   ///
   /// If a share already exists for this item and user, it updates the access level.
   /// Otherwise, it creates a new share permission.
+  String _permissionDocId({
+    required String ownerUserId,
+    required ShareableItemType itemType,
+    required String itemId,
+    required String sharedWithUserId,
+  }) {
+    final typeSegment = itemType == ShareableItemType.category ? 'category' : 'experience';
+    return '${ownerUserId}_${typeSegment}_${itemId}_${sharedWithUserId}';
+  }
+
+  String _itemTypeToString(ShareableItemType type) {
+    return type == ShareableItemType.category ? 'category' : 'experience';
+  }
+
   Future<void> shareItem({
     required String itemId,
     required ShareableItemType itemType,
@@ -646,58 +660,80 @@ class SharingService {
     }
     // Optional: Add check if currentUserId == ownerUserId?
 
-    final now = Timestamp.now();
-
-    // Check if a permission already exists for this specific item and user combination
-    final existingQuery = await _sharePermissionsCollection
+    final docId = _permissionDocId(
+      ownerUserId: ownerUserId,
+      itemType: itemType,
+      itemId: itemId,
+      sharedWithUserId: sharedWithUserId,
+    );
+    final docRef = _sharePermissionsCollection.doc(docId);
+    final duplicatesSnapshot = await _sharePermissionsCollection
         .where('itemId', isEqualTo: itemId)
         .where('sharedWithUserId', isEqualTo: sharedWithUserId)
-        .limit(1)
         .get();
 
-    if (existingQuery.docs.isNotEmpty) {
-      // Update existing permission
-      final existingDocId = existingQuery.docs.first.id;
-      print(
-          'Updating existing share permission $existingDocId for item $itemId with user $sharedWithUserId');
-      await _sharePermissionsCollection.doc(existingDocId).update({
+    var hasCanonical = false;
+    for (final doc in duplicatesSnapshot.docs) {
+      if (doc.id == docId) {
+        hasCanonical = true;
+      } else {
+        await doc.reference.delete();
+      }
+    }
+
+    if (hasCanonical) {
+      print('Updating existing share permission $docId for item $itemId with user $sharedWithUserId');
+      await docRef.update({
         'accessLevel': _accessLevelToString(accessLevel),
-        'updatedAt': now, // Use Timestamp.now() for update
+        'updatedAt': FieldValue.serverTimestamp(),
       });
     } else {
-      // Create new permission
-      print(
-          'Creating new share permission for item $itemId with user $sharedWithUserId');
-      final newPermission = SharePermission(
-        id: '', // Firestore generates the ID
-        itemId: itemId,
-        itemType: itemType,
-        ownerUserId: ownerUserId,
-        sharedWithUserId: sharedWithUserId,
-        accessLevel: accessLevel,
-        createdAt: now,
-        updatedAt: now,
-      );
-      final data = newPermission.toMap();
-      // Ensure timestamps are set correctly for creation
-      data['createdAt'] = FieldValue.serverTimestamp();
-      data['updatedAt'] = FieldValue.serverTimestamp();
-
-      await _sharePermissionsCollection.add(data);
+      print('Creating new share permission with ID: $docId for item $itemId with user $sharedWithUserId');
+      await docRef.set({
+        'itemId': itemId,
+        'itemType': _itemTypeToString(itemType),
+        'ownerUserId': ownerUserId,
+        'sharedWithUserId': sharedWithUserId,
+        'accessLevel': _accessLevelToString(accessLevel),
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      print('Successfully created share permission document: $docId');
+      
+      // Verify the document was actually created
+      try {
+        final verifyDoc = await docRef.get();
+        if (verifyDoc.exists) {
+          print('Verification: Document $docId exists with data: ${verifyDoc.data()}');
+        } else {
+          print('Verification: Document $docId does NOT exist after creation!');
+        }
+      } catch (e) {
+        print('Verification: Failed to verify document $docId: $e');
+      }
     }
   }
 
   /// Retrieves all items shared *with* the specified user.
   Future<List<SharePermission>> getSharedItemsForUser(String userId) async {
+    print('SharingService: Getting shared items for user: $userId');
     final snapshot = await _sharePermissionsCollection
         .where('sharedWithUserId', isEqualTo: userId)
-        // Optional: Order by createdAt or updatedAt?
-        .orderBy('createdAt', descending: true)
         .get();
 
-    return snapshot.docs
+    print('SharingService: Found ${snapshot.docs.length} share permission documents');
+    final permissions = snapshot.docs
         .map((doc) => SharePermission.fromFirestore(doc))
         .toList();
+    
+    // Sort in memory by createdAt descending
+    permissions.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    
+    for (final perm in permissions) {
+      print('SharingService: Permission - itemId: ${perm.itemId}, itemType: ${perm.itemType}, ownerUserId: ${perm.ownerUserId}');
+    }
+    
+    return permissions;
   }
 
   /// Retrieves all permissions granted *for* a specific item.
