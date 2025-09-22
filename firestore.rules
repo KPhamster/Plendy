@@ -11,11 +11,19 @@ service cloud.firestore {
       allow write: if request.auth != null && request.auth.uid == userId;
 
       match /categories/{categoryId} {
-        allow read, write: if request.auth != null && request.auth.uid == userId;
+        allow read: if request.auth != null && (
+                      request.auth.uid == userId ||
+                      canReadSharedCategory(userId, categoryId)
+                    );
+        allow write: if request.auth != null && request.auth.uid == userId;
       }
 
       match /color_categories/{colorCategoryId} {
-        allow read, write: if request.auth != null && request.auth.uid == userId;
+        allow read: if request.auth != null && (
+                      request.auth.uid == userId ||
+                      canReadSharedCategory(userId, colorCategoryId)
+                    );
+        allow write: if request.auth != null && request.auth.uid == userId;
       }
 
       // Rules for followers subcollection
@@ -163,17 +171,58 @@ service cloud.firestore {
                       resource.data.sharedWithUserId == request.auth.uid
                     );
 
-      allow create: if request.auth != null &&
-                      request.resource.data.ownerUserId == request.auth.uid;
+      // Creation rules:
+      // - Owners can always create permissions for their items
+      // - Recipients can self-save a VIEW permission for items that truly belong to the owner
+      //   (used by "Save" flow for public/unlisted shared links)
+      allow create: if request.auth != null && (
+        // Owner-granted share
+        request.resource.data.ownerUserId == request.auth.uid
+        ||
+        // Recipient self-save of a view-only permission
+        (
+          request.resource.data.sharedWithUserId == request.auth.uid &&
+          request.resource.data.accessLevel == 'view' &&
+          (
+            // Category owned by the owner (text or color category under owner namespace)
+            (
+              request.resource.data.itemType == 'category' && (
+                exists(/databases/$(database)/documents/users/$(request.resource.data.ownerUserId)/categories/$(request.resource.data.itemId)) ||
+                exists(/databases/$(database)/documents/users/$(request.resource.data.ownerUserId)/color_categories/$(request.resource.data.itemId))
+              )
+            )
+            ||
+            // Experience created by the owner
+            (
+              request.resource.data.itemType == 'experience' &&
+              exists(/databases/$(database)/documents/experiences/$(request.resource.data.itemId)) &&
+              get(/databases/$(database)/documents/experiences/$(request.resource.data.itemId)).data.createdBy == request.resource.data.ownerUserId
+            )
+          )
+        )
+      );
 
+      // Only the owner can elevate/downgrade access levels via update
       allow update: if request.auth != null &&
                       resource.data.ownerUserId == request.auth.uid &&
                       request.resource.data.diff(resource.data).affectedKeys()
                           .hasOnly(['accessLevel', 'updatedAt']);
 
-      allow delete: if request.auth != null &&
-                      resource.data.ownerUserId == request.auth.uid;
+      // Allow either owner or recipient to delete a permission
+      allow delete: if request.auth != null && (
+                      resource.data.ownerUserId == request.auth.uid ||
+                      resource.data.sharedWithUserId == request.auth.uid
+                    );
     }
+  }
+
+  function sharedPermissionDocId(ownerId, itemType, itemId, viewerId) {
+    return ownerId + '_' + itemType + '_' + itemId + '_' + viewerId;
+  }
+
+  function canReadSharedCategory(ownerId, categoryId) {
+    return request.auth != null &&
+           exists(/databases/$(database)/documents/share_permissions/$(sharedPermissionDocId(ownerId, 'category', categoryId, request.auth.uid)));
   }
 
   function isValidLocationData(loc) {

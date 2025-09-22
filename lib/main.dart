@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'dart:math' as math;
 import 'dart:io';
+import 'dart:convert';
 // import 'package:path_provider/path_provider.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -347,6 +348,141 @@ class _MyAppState extends State<MyApp> {
   bool _initialCheckComplete = false;
   bool _shouldShowReceiveShare = false;
   bool _iosShareToastShown = false; // iOS: ensure toast shows only once per session
+  bool _deepLinkStreamFired = false; // Track if a fresh deep link arrived via stream
+  static const int _maxNavigatorPushRetries = 12;
+
+  void _pushRouteWhenReady(WidgetBuilder builder, {RouteSettings? settings, int attempt = 0}) {
+    if (!mounted) {
+      return;
+    }
+    if (navigatorKey.currentState?.mounted ?? false) {
+      navigatorKey.currentState!.push(MaterialPageRoute(builder: builder, settings: settings));
+      return;
+    }
+    if (attempt >= _maxNavigatorPushRetries) {
+      print('DeepLink: Navigator not ready after ${attempt + 1} attempts; dropping deep link navigation');
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _pushRouteWhenReady(builder, settings: settings, attempt: attempt + 1);
+    });
+  }
+
+  Uri _normalizeDeepLinkUri(Uri uri) {
+    Uri current = _coerceIntentUri(uri);
+    final Set<String> visited = <String>{};
+    while (true) {
+      if (!visited.add(current.toString())) {
+        return current;
+      }
+      final Uri? nested = _tryExtractNestedUri(current);
+      if (nested == null) {
+        return current;
+      }
+      current = _coerceIntentUri(nested);
+    }
+  }
+
+  Uri _coerceIntentUri(Uri uri) {
+    if (uri.scheme != 'intent') {
+      return uri;
+    }
+    const String prefix = 'intent://';
+    final String raw = uri.toString();
+    if (!raw.startsWith(prefix)) {
+      return uri;
+    }
+    final int hashIndex = raw.indexOf('#Intent;');
+    final String core = hashIndex >= 0 ? raw.substring(prefix.length, hashIndex) : raw.substring(prefix.length);
+    if (core.isEmpty) {
+      return uri;
+    }
+    final String candidate = 'https://' + core;
+    try {
+      return Uri.parse(candidate);
+    } catch (e) {
+      print('DeepLink: Failed to coerce intent URI: ' + e.toString());
+      return uri;
+    }
+  }
+
+  Uri? _tryExtractNestedUri(Uri uri) {
+    final String? linkParam = uri.queryParameters['link'];
+    if (linkParam != null && linkParam.isNotEmpty) {
+      try {
+        final Uri nested = Uri.parse(linkParam);
+        print('DeepLink: Unwrapped link parameter -> ' + nested.toString());
+        return nested;
+      } catch (e) {
+        print('DeepLink: Failed to parse link parameter "' + linkParam + '": ' + e.toString());
+      }
+    }
+
+    final String? deepLinkId = uri.queryParameters['deep_link_id'];
+    if (deepLinkId != null && deepLinkId.isNotEmpty) {
+      try {
+        final Uri nested = Uri.parse(deepLinkId);
+        print('DeepLink: Unwrapped deep_link_id -> ' + nested.toString());
+        return nested;
+      } catch (e) {
+        print('DeepLink: Failed to parse deep_link_id "' + deepLinkId + '": ' + e.toString());
+      }
+    }
+
+    final String? applinkData = uri.queryParameters['al_applink_data'];
+    if (applinkData != null && applinkData.isNotEmpty) {
+      try {
+        final String decoded = Uri.decodeFull(applinkData);
+        final dynamic parsed = jsonDecode(decoded);
+        if (parsed is Map<String, dynamic>) {
+          final dynamic target = parsed['target_url'];
+          if (target is String && target.isNotEmpty) {
+            final Uri nested = Uri.parse(target);
+            print('DeepLink: Unwrapped al_applink_data target_url -> ' + nested.toString());
+            return nested;
+          }
+        }
+      } catch (e) {
+        print('DeepLink: Failed to parse al_applink_data: ' + e.toString());
+      }
+    }
+
+    if (uri.fragment.isNotEmpty) {
+      final String fragment = uri.fragment;
+      if (fragment.startsWith('http')) {
+        try {
+          final Uri nested = Uri.parse(fragment);
+          print('DeepLink: Unwrapped fragment URL -> ' + nested.toString());
+          return nested;
+        } catch (e) {
+          print('DeepLink: Failed to parse fragment URI "' + fragment + '": ' + e.toString());
+        }
+      } else if (uri.host.isNotEmpty) {
+        final String prefix = (uri.scheme.isEmpty ? 'https' : uri.scheme) + '://' + uri.host;
+        final String candidate = fragment.startsWith('/') ? fragment : '/' + fragment;
+        try {
+          final Uri nested = Uri.parse(prefix + candidate);
+          print('DeepLink: Composed fragment URL -> ' + nested.toString());
+          return nested;
+        } catch (e) {
+          print('DeepLink: Failed to compose fragment URI "' + fragment + '": ' + e.toString());
+        }
+      }
+    }
+
+    return null;
+  }
+
+  String? _cleanToken(String? rawToken) {
+    if (rawToken == null) {
+      return null;
+    }
+    final String trimmed = rawToken.trim();
+    if (trimmed.isEmpty) {
+      return null;
+    }
+    return trimmed.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '');
+  }
 
   @override
   void initState() {
@@ -494,49 +630,86 @@ class _MyAppState extends State<MyApp> {
         print('DeepLink: Error handling web Uri.base: $e');
       }
     }
-    // Initial link
-    try {
-      final initialUri = await appLinks.getInitialAppLink();
-      if (initialUri != null) {
-        _handleIncomingUri(initialUri);
-      }
-    } catch (e) {
-      print('DeepLink: Error getting initial app link: $e');
-    }
-    // Link stream
+
+    // Link stream - process incoming links (fresh intents)
     appLinks.uriLinkStream.listen((uri) {
+      print('DeepLink: Stream received fresh URI: $uri');
+      _deepLinkStreamFired = true;
       _handleIncomingUri(uri);
     }, onError: (e) {
       print('DeepLink: Stream error: $e');
     });
+
+    // Process initial link after a short delay; if stream already fired, skip.
+    Future.delayed(const Duration(milliseconds: 900), () async {
+      try {
+        if (_deepLinkStreamFired) {
+          print('DeepLink: Skipping delayed initial app link (stream already fired)');
+          return;
+        }
+        final initialUri = await appLinks.getInitialAppLink();
+        if (initialUri != null) {
+          print('DeepLink: Delayed initial app link: $initialUri');
+          _handleIncomingUri(initialUri);
+        } else {
+          print('DeepLink: No initial app link found');
+        }
+      } catch (e) {
+        print('DeepLink: Error getting initial app link: $e');
+      }
+    });
   }
 
   void _handleIncomingUri(Uri uri) {
-    // Expecting /shared/{token} on any host (custom domain or web.app)
-    if (uri.pathSegments.isNotEmpty && uri.pathSegments.first == 'shared') {
-      final rawToken = uri.pathSegments.length > 1 ? uri.pathSegments[1] : null;
-      final token = rawToken?.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '');
+    final Uri normalizedUri = _normalizeDeepLinkUri(uri);
+    print('DeepLink: Processing URI: ' + uri.toString());
+    if (normalizedUri != uri) {
+      print('DeepLink: Normalized URI: ' + normalizedUri.toString());
+    }
+    final List<String> segments = normalizedUri.pathSegments;
+    print('DeepLink: Path segments: ' + segments.toString());
+
+    if (segments.isEmpty) {
+      return;
+    }
+
+    final String firstSegment = segments.first.toLowerCase();
+
+    if (firstSegment == 'shared') {
+      final String? rawToken = segments.length > 1 ? segments[1] : null;
+      final String? token = _cleanToken(rawToken);
+      print('DeepLink: Experience share - rawToken: ' + rawToken.toString() + ', cleanToken: ' + token.toString());
       if (token != null && token.isNotEmpty) {
         if (rawToken != null && rawToken != token) {
           print('DeepLink: Sanitized share token from ' + rawToken + ' to ' + token);
         }
-        print('DeepLink: Received share token: ' + token);
-        navigatorKey.currentState?.push(MaterialPageRoute(builder: (_) => SharePreviewScreen(token: token)));
+        _pushRouteWhenReady(
+          (_) => SharePreviewScreen(token: token),
+          settings: RouteSettings(name: '/shared/' + token),
+        );
+      } else {
+        print('DeepLink: Experience share token missing or empty.');
       }
-    }
-    // Expecting /shared-category/{token}
-    if (uri.pathSegments.isNotEmpty && uri.pathSegments.first == 'shared-category') {
-      final rawToken = uri.pathSegments.length > 1 ? uri.pathSegments[1] : null;
-      final token = rawToken?.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '');
+    } else if (firstSegment == 'shared-category') {
+      final String? rawToken = segments.length > 1 ? segments[1] : null;
+      final String? token = _cleanToken(rawToken);
+      print('DeepLink: Category share - rawToken: ' + rawToken.toString() + ', cleanToken: ' + token.toString());
       if (token != null && token.isNotEmpty) {
         if (rawToken != null && rawToken != token) {
           print('DeepLink: Sanitized category share token from ' + rawToken + ' to ' + token);
         }
-        print('DeepLink: Received category share token: ' + token);
-        navigatorKey.currentState?.push(MaterialPageRoute(builder: (_) => CategorySharePreviewScreen(token: token)));
+        _pushRouteWhenReady(
+          (_) => CategorySharePreviewScreen(token: token),
+          settings: RouteSettings(name: '/shared-category/' + token),
+        );
+      } else {
+        print('DeepLink: Category share token missing or empty.');
       }
+    } else {
+      print('DeepLink: No handler for path segments: ' + segments.toString());
     }
   }
+
 
   @override
   void dispose() {

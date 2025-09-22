@@ -19,53 +19,75 @@ class SharePreviewScreen extends StatelessWidget {
 
   const SharePreviewScreen({super.key, required this.token});
 
+  void _navigateToMain(BuildContext context) {
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const MainScreen()),
+      (route) => false,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Shared Experience', style: TextStyle(fontSize: 16)),
-        actions: [
-          if (kIsWeb)
-            Padding(
-              padding: const EdgeInsets.only(right: 8.0),
-              child: TextButton.icon(
-                style: TextButton.styleFrom(foregroundColor: Colors.black),
-                icon: const Icon(Icons.open_in_new, color: Colors.black),
-                label: const Text('Open in Plendy', style: TextStyle(color: Colors.black)),
-                onPressed: () => _handleOpenInApp(context),
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) {
+          return;
+        }
+        _navigateToMain(context);
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back),
+            onPressed: () => _navigateToMain(context),
+          ),
+          title:
+              const Text('Shared Experience', style: TextStyle(fontSize: 16)),
+          actions: [
+            if (kIsWeb)
+              Padding(
+                padding: const EdgeInsets.only(right: 8.0),
+                child: TextButton.icon(
+                  style: TextButton.styleFrom(foregroundColor: Colors.black),
+                  icon: const Icon(Icons.open_in_new, color: Colors.black),
+                  label: const Text('Open in Plendy',
+                      style: TextStyle(color: Colors.black)),
+                  onPressed: () => _handleOpenInApp(context),
+                ),
               ),
-            ),
-        ],
-      ),
-      body: FutureBuilder<_PreviewPayload>(
-        future: _fetchExperienceFromShare(token),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (snapshot.hasError) {
-            return Center(child: Text('Error: ${snapshot.error}'));
-          }
-          if (!snapshot.hasData) {
-            return const Center(child: Text('This share isn\'t available.'));
-          }
-          final payload = snapshot.data!;
-          final experience = payload.experience;
-          final placeholderCategory =
-              UserCategory(id: 'shared', name: 'Shared', icon: '🌐', ownerUserId: '');
-          return ExperiencePageScreen(
-            experience: experience,
-            category: placeholderCategory,
-            userColorCategories: const <ColorCategory>[],
-            initialMediaItems: payload.mediaItems,
-            // Put the screen into read-only mode so destructive actions are hidden
-            readOnlyPreview: true,
-            shareBannerFromUserId: payload.fromUserId,
-            sharePreviewType: payload.shareType,
-            shareAccessMode: payload.accessMode,
-            onSaveExperience: () => _handleSaveExperience(context, payload),
-          );
-        },
+          ],
+        ),
+        body: FutureBuilder<_PreviewPayload>(
+          future: _fetchExperienceFromShare(token),
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            if (snapshot.hasError) {
+              return Center(child: Text('Error: ${snapshot.error}'));
+            }
+            if (!snapshot.hasData) {
+              return const Center(child: Text('This share isn\'t available.'));
+            }
+            final payload = snapshot.data!;
+            final experience = payload.experience;
+            final placeholderCategory = UserCategory(
+                id: 'shared', name: 'Shared', icon: '🌐', ownerUserId: '');
+            return ExperiencePageScreen(
+              experience: experience,
+              category: placeholderCategory,
+              userColorCategories: const <ColorCategory>[],
+              initialMediaItems: payload.mediaItems,
+              // Put the screen into read-only mode so destructive actions are hidden
+              readOnlyPreview: true,
+              shareBannerFromUserId: payload.fromUserId,
+              sharePreviewType: payload.shareType,
+              shareAccessMode: payload.accessMode,
+              onSaveExperience: () => _handleSaveExperience(context, payload),
+            );
+          },
+        ),
       ),
     );
   }
@@ -87,14 +109,17 @@ class SharePreviewScreen extends StatelessWidget {
       // Prefer Play Store intent; fallback to HTTPS
       final Uri intentUri = Uri.parse(
           'intent://details?id=com.plendy.app#Intent;scheme=market;package=com.android.vending;end');
-      final bool intentOk = await launchUrl(intentUri, mode: LaunchMode.externalApplication);
+      final bool intentOk =
+          await launchUrl(intentUri, mode: LaunchMode.externalApplication);
       if (intentOk) return;
-      final Uri webPlay = Uri.parse('https://play.google.com/store/apps/details?id=com.plendy.app');
+      final Uri webPlay = Uri.parse(
+          'https://play.google.com/store/apps/details?id=com.plendy.app');
       await launchUrl(webPlay);
     } else if (platform == TargetPlatform.iOS) {
       // Use itms-apps scheme first; fallback to HTTPS
       final Uri itms = Uri.parse('itms-apps://apps.apple.com');
-      final bool itmsOk = await launchUrl(itms, mode: LaunchMode.externalApplication);
+      final bool itmsOk =
+          await launchUrl(itms, mode: LaunchMode.externalApplication);
       if (itmsOk) return;
       final Uri webAppStore = Uri.parse('https://apps.apple.com');
       await launchUrl(webAppStore);
@@ -171,14 +196,16 @@ class SharePreviewScreen extends StatelessWidget {
         'limit': 1
       }
     };
-    final resp = await http.post(runQueryUrl, headers: headers, body: json.encode(payload));
+    final resp = await http.post(runQueryUrl,
+        headers: headers, body: json.encode(payload));
     if (resp.statusCode != 200) {
       throw Exception('Share lookup failed (${resp.statusCode})');
     }
     final List results = json.decode(resp.body) as List;
-    final Map<String, dynamic>? first = results.cast<Map<String, dynamic>?>().firstWhere(
-        (e) => e != null && e.containsKey('document'),
-        orElse: () => null);
+    final Map<String, dynamic>? first = results
+        .cast<Map<String, dynamic>?>()
+        .firstWhere((e) => e != null && e.containsKey('document'),
+            orElse: () => null);
     if (first == null) {
       throw Exception('Share not found');
     }
@@ -188,7 +215,8 @@ class SharePreviewScreen extends StatelessWidget {
 
   Map<String, dynamic> _mapRestDoc(Map<String, dynamic> docJson) {
     // Firestore REST returns fields under document.fields as typed values
-    final name = docJson['name'] as String?; // projects/.../documents/experience_shares/{id}
+    final name = docJson['name']
+        as String?; // projects/.../documents/experience_shares/{id}
     final shareId = name != null ? name.split('/').last : '';
     final fields = (docJson['fields'] ?? {}) as Map<String, dynamic>;
 
@@ -196,9 +224,12 @@ class SharePreviewScreen extends StatelessWidget {
       if (value is! Map<String, dynamic>) return value;
       if (value.containsKey('nullValue')) return null;
       if (value.containsKey('stringValue')) return value['stringValue'];
-      if (value.containsKey('booleanValue')) return value['booleanValue'] as bool;
-      if (value.containsKey('integerValue')) return int.tryParse(value['integerValue'] as String);
-      if (value.containsKey('doubleValue')) return (value['doubleValue'] as num).toDouble();
+      if (value.containsKey('booleanValue'))
+        return value['booleanValue'] as bool;
+      if (value.containsKey('integerValue'))
+        return int.tryParse(value['integerValue'] as String);
+      if (value.containsKey('doubleValue'))
+        return (value['doubleValue'] as num).toDouble();
       if (value.containsKey('timestampValue')) return value['timestampValue'];
       if (value.containsKey('geoPointValue')) return value['geoPointValue'];
       if (value.containsKey('arrayValue')) {
@@ -206,7 +237,8 @@ class SharePreviewScreen extends StatelessWidget {
         return list.map(_decodeValue).toList();
       }
       if (value.containsKey('mapValue')) {
-        final m = (value['mapValue']['fields'] as Map<String, dynamic>?) ?? const {};
+        final m =
+            (value['mapValue']['fields'] as Map<String, dynamic>?) ?? const {};
         return m.map((k, v) => MapEntry(k, _decodeValue(v)));
       }
       return value;
@@ -282,7 +314,8 @@ class SharePreviewScreen extends StatelessWidget {
 
     final now = DateTime.now();
     return Experience(
-      id: (mapped['experienceId'] as String?) ?? ('share_${mapped['shareId'] ?? ''}'),
+      id: (mapped['experienceId'] as String?) ??
+          ('share_${mapped['shareId'] ?? ''}'),
       name: (snap['name'] as String?) ?? 'Experience',
       description: (snap['description'] as String?) ?? '',
       location: location,
@@ -318,7 +351,8 @@ class SharePreviewScreen extends StatelessWidget {
   _PreviewPayload _payloadFromMapped(Map<String, dynamic> mapped) {
     final exp = _experienceFromMapped(mapped);
     final snap = (mapped['snapshot'] as Map<String, dynamic>?) ?? const {};
-    final mediaUrls = ((snap['mediaUrls'] as List?) ?? []).map((e) => e.toString()).toList();
+    final mediaUrls =
+        ((snap['mediaUrls'] as List?) ?? []).map((e) => e.toString()).toList();
     final List<SharedMediaItem> mediaItems = mediaUrls
         .map((u) => SharedMediaItem(
               id: 'preview_${u.hashCode}',
@@ -337,66 +371,66 @@ class SharePreviewScreen extends StatelessWidget {
       accessMode: (mapped['accessMode'] as String?),
     );
   }
-
 }
 
-  Future<void> _handleSaveExperience(BuildContext context, _PreviewPayload payload) async {
-    final expService = ExperienceService();
-    final experience = payload.experience;
+Future<void> _handleSaveExperience(
+    BuildContext context, _PreviewPayload payload) async {
+  final expService = ExperienceService();
+  final experience = payload.experience;
 
-    try {
-      // Build base for modal: clear categories; keep title/location/links/notes
-      // Set id to '' so modal treats this as a new item and runs duplicate check
-      final Experience baseForModal = experience.copyWith(
-        id: '',
-        clearCategoryId: true,
-        colorCategoryId: null,
-        otherCategories: <String>[],
-        editorUserIds: const <String>[],
+  try {
+    // Build base for modal: clear categories; keep title/location/links/notes
+    // Set id to '' so modal treats this as a new item and runs duplicate check
+    final Experience baseForModal = experience.copyWith(
+      id: '',
+      clearCategoryId: true,
+      colorCategoryId: null,
+      otherCategories: <String>[],
+      editorUserIds: const <String>[],
+    );
+
+    final Experience? result = await showModalBottomSheet<Experience>(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) {
+        return EditExperienceModal(
+          experience: baseForModal,
+          userCategories: const <UserCategory>[],
+          userColorCategories: const <ColorCategory>[],
+          enableDuplicatePrompt: true,
+        );
+      },
+    );
+
+    if (result == null) return;
+
+    // If the modal ended up editing an existing experience (id set), update; else create
+    if (result.id.isNotEmpty) {
+      await expService.updateExperience(result);
+    } else {
+      await expService.createExperience(result);
+    }
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Experience saved.')),
       );
-
-      final Experience? result = await showModalBottomSheet<Experience>(
-        context: context,
-        isScrollControlled: true,
-        shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-        ),
-        builder: (ctx) {
-          return EditExperienceModal(
-            experience: baseForModal,
-            userCategories: const <UserCategory>[],
-            userColorCategories: const <ColorCategory>[],
-            enableDuplicatePrompt: true,
-          );
-        },
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (context) => const MainScreen()),
+        (Route<dynamic> route) => false,
       );
-
-      if (result == null) return;
-
-      // If the modal ended up editing an existing experience (id set), update; else create
-      if (result.id.isNotEmpty) {
-        await expService.updateExperience(result);
-      } else {
-        await expService.createExperience(result);
-      }
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Experience saved.')),
-        );
-        Navigator.pushAndRemoveUntil(
-          context,
-          MaterialPageRoute(builder: (context) => const MainScreen()),
-          (Route<dynamic> route) => false,
-        );
-      }
-    } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to save experience: $e')),
-        );
-      }
+    }
+  } catch (e) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to save experience: $e')),
+      );
     }
   }
+}
 
 class _PreviewPayload {
   final Experience experience;
@@ -404,8 +438,10 @@ class _PreviewPayload {
   final String fromUserId;
   final String? shareType; // 'my_copy' | 'separate_copy'
   final String? accessMode; // 'view' | 'edit'
-  const _PreviewPayload({required this.experience, required this.mediaItems, required this.fromUserId, this.shareType, this.accessMode});
+  const _PreviewPayload(
+      {required this.experience,
+      required this.mediaItems,
+      required this.fromUserId,
+      this.shareType,
+      this.accessMode});
 }
-
-
-

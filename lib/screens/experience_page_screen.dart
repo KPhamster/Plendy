@@ -659,62 +659,64 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
             ),
 
           // --- ADDED: Positioned Back Button ---
-          Positioned(
-            // Position accounting for status bar height + padding
-            top: MediaQuery.of(context).padding.top + 8.0,
-            left: 8.0,
-            child: Container(
-              // Copied from SliverAppBar leading
-              margin:
-                  const EdgeInsets.all(0), // No margin needed when positioned
-              decoration: BoxDecoration(
-                color: Colors.black
-                    .withOpacity(0.4), // Slightly darker for visibility?
-                shape: BoxShape.circle,
-              ),
-              child: BackButton(
-                color: Colors.white,
-                onPressed: () => Navigator.of(context).pop(_didDataChange),
+          if (!widget.readOnlyPreview)
+            Positioned(
+              // Position accounting for status bar height + padding
+              top: MediaQuery.of(context).padding.top + 8.0,
+              left: 8.0,
+              child: Container(
+                // Copied from SliverAppBar leading
+                margin:
+                    const EdgeInsets.all(0), // No margin needed when positioned
+                decoration: BoxDecoration(
+                  color: Colors.black
+                      .withOpacity(0.4), // Slightly darker for visibility?
+                  shape: BoxShape.circle,
+                ),
+                child: BackButton(
+                  color: Colors.white,
+                  onPressed: () => Navigator.of(context).pop(_didDataChange),
+                ),
               ),
             ),
-          ),
           // --- END: Positioned Back Button ---
 
           // --- ADDED: Positioned Overflow Menu (3-dot) ---
-          Positioned(
-            top: MediaQuery.of(context).padding.top + 8.0,
-            right: 8.0,
-            child: Theme(
-              data: Theme.of(context).copyWith(
-                popupMenuTheme: const PopupMenuThemeData(color: Colors.white),
-                canvasColor: Colors.white,
-              ),
-              child: PopupMenuButton<String>(
-                onSelected: (value) {
-                  if (value == 'remove') {
-                    _promptRemoveExperience();
-                  }
-                },
-                itemBuilder: (context) => [
-                  const PopupMenuItem<String>(
-                    value: 'remove',
-                    child: Text('Remove Experience'),
-                  ),
-                ],
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.4),
-                    shape: BoxShape.circle,
-                  ),
-                  padding: const EdgeInsets.all(8.0),
-                  child: const Icon(
-                    Icons.more_vert,
-                    color: Colors.white,
+          if (!widget.readOnlyPreview)
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 8.0,
+              right: 8.0,
+              child: Theme(
+                data: Theme.of(context).copyWith(
+                  popupMenuTheme: const PopupMenuThemeData(color: Colors.white),
+                  canvasColor: Colors.white,
+                ),
+                child: PopupMenuButton<String>(
+                  onSelected: (value) {
+                    if (value == 'remove') {
+                      _promptRemoveExperience();
+                    }
+                  },
+                  itemBuilder: (context) => [
+                    const PopupMenuItem<String>(
+                      value: 'remove',
+                      child: Text('Remove Experience'),
+                    ),
+                  ],
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.4),
+                      shape: BoxShape.circle,
+                    ),
+                    padding: const EdgeInsets.all(8.0),
+                    child: const Icon(
+                      Icons.more_vert,
+                      color: Colors.white,
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
           // --- END: Positioned Overflow Menu (3-dot) ---
 
           // 3. Content (Positioned to add padding)
