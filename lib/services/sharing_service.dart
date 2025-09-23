@@ -725,14 +725,31 @@ class SharingService {
     final permissions = snapshot.docs
         .map((doc) => SharePermission.fromFirestore(doc))
         .toList();
-    
+
     // Sort in memory by createdAt descending
     permissions.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-    
+
     for (final perm in permissions) {
       print('SharingService: Permission - itemId: ${perm.itemId}, itemType: ${perm.itemType}, ownerUserId: ${perm.ownerUserId}');
     }
-    
+
+    return permissions;
+  }
+
+  /// Retrieves all share permissions owned by the specified user.
+  Future<List<SharePermission>> getOwnedSharePermissions(String ownerUserId) async {
+    print('SharingService: Getting owned share permissions for user: $ownerUserId');
+    final snapshot = await _sharePermissionsCollection
+        .where('ownerUserId', isEqualTo: ownerUserId)
+        .get();
+
+    print('SharingService: Found ${snapshot.docs.length} owned share permission documents');
+    final permissions = snapshot.docs
+        .map((doc) => SharePermission.fromFirestore(doc))
+        .toList();
+
+    permissions.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
     return permissions;
   }
 

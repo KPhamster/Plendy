@@ -1010,6 +1010,41 @@ class ExperienceService {
     return snapshot.docs.map((doc) => Experience.fromFirestore(doc)).toList();
   }
 
+  /// Get multiple experiences by their document IDs (handles Firestore whereIn limits)
+  Future<List<Experience>> getExperiencesByIds(
+      List<String> experienceIds,
+      {int chunkSize = 30}) async {
+    if (experienceIds.isEmpty) {
+      return [];
+    }
+
+    final List<String> uniqueIds = experienceIds.toSet().toList();
+
+    final List<List<String>> chunks = [];
+    for (int i = 0; i < uniqueIds.length; i += chunkSize) {
+      final end = (i + chunkSize) > uniqueIds.length ? uniqueIds.length : (i + chunkSize);
+      chunks.add(uniqueIds.sublist(i, end));
+    }
+
+    final List<Experience> results = [];
+    for (final chunk in chunks) {
+      try {
+        final snapshot = await _experiencesCollection
+            .where(FieldPath.documentId, whereIn: chunk)
+            .get();
+        results.addAll(snapshot.docs.map((doc) => Experience.fromFirestore(doc)));
+      } catch (e) {
+        print("getExperiencesByIds: Error fetching chunk of size ${chunk.length}: $e");
+      }
+    }
+
+    // Deduplicate in case of overlaps
+    final Map<String, Experience> byId = {
+      for (final exp in results) exp.id: exp,
+    };
+    return byId.values.toList();
+  }
+
   /// Get all experiences created by the current user.
   Future<List<Experience>> getUserExperiences() async {
     final userId = _currentUserId;
