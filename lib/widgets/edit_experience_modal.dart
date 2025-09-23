@@ -182,6 +182,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
         barrierDismissible: false,
         builder: (dialogContext) {
           return AlertDialog(
+            backgroundColor: Colors.white,
             title: const Text('Potential Duplicate Found'),
             content: Text(
                 'You already saved an experience named "${duplicate.name}" located at "${duplicate.location.address ?? 'No address provided'}." Do you want to use this existing experience?'),
@@ -369,6 +370,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
         return StatefulBuilder(
           builder: (stfContext, stfSetState) {
             return Dialog(
+              backgroundColor: Colors.white,
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(16.0)),
               child: ConstrainedBox(
@@ -422,6 +424,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                               // Handle add category and refresh dialog
                               final newCategory = await showModalBottomSheet<UserCategory>(
                                 context: stfContext,
+                                backgroundColor: Colors.white,
                                 builder: (context) => const AddCategoryModal(),
                                 isScrollControlled: true,
                                 shape: const RoundedRectangleBorder(
@@ -454,6 +457,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                             onPressed: () async {
                               final bool? categoriesChanged = await showModalBottomSheet<bool>(
                                 context: stfContext,
+                                backgroundColor: Colors.white,
                                 builder: (context) => const EditCategoriesModal(),
                                 isScrollControlled: true,
                                 shape: const RoundedRectangleBorder(
@@ -727,6 +731,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
     FocusScope.of(context).unfocus();
     final newCategory = await showModalBottomSheet<ColorCategory>(
       context: context,
+      backgroundColor: Colors.white,
       builder: (context) => const AddColorCategoryModal(), // Use the modal
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
@@ -757,6 +762,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
     FocusScope.of(context).unfocus();
     final bool? categoriesChanged = await showModalBottomSheet<bool>(
       context: context,
+      backgroundColor: Colors.white,
       builder: (context) => const EditColorCategoriesModal(), // Use the modal
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
@@ -802,6 +808,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
       context: context,
       builder: (BuildContext context) {
         return Dialog(
+          backgroundColor: Colors.white,
           shape:
               RoundedRectangleBorder(borderRadius: BorderRadius.circular(16.0)),
           child: ConstrainedBox(
@@ -928,6 +935,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
           onEditCategories: () async {
             final bool? categoriesChanged = await showModalBottomSheet<bool>(
               context: dialogContext,
+              backgroundColor: Colors.white,
               builder: (context) => const EditCategoriesModal(),
               isScrollControlled: true,
               shape: const RoundedRectangleBorder(
@@ -958,6 +966,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
           onAddCategory: () async {
             final newCategory = await showModalBottomSheet<UserCategory>(
               context: dialogContext,
+              backgroundColor: Colors.white,
               builder: (context) => const AddCategoryModal(),
               isScrollControlled: true,
               shape: const RoundedRectangleBorder(
@@ -1039,16 +1048,18 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
   @override
   Widget build(BuildContext context) {
     // Make modal content scrollable and handle keyboard padding
-    return Padding(
-      padding: EdgeInsets.only(
-          bottom: MediaQuery.of(context).viewInsets.bottom,
-          left: 16,
-          right: 16,
-          top: 16),
-      child: SingleChildScrollView(
-        child: Form(
-          key: _formKey,
-          child: Column(
+    return Material(
+      color: Colors.white,
+      child: Padding(
+        padding: EdgeInsets.only(
+            bottom: MediaQuery.of(context).viewInsets.bottom,
+            left: 16,
+            right: 16,
+            top: 16),
+        child: SingleChildScrollView(
+          child: Form(
+            key: _formKey,
+            child: Column(
             mainAxisSize: MainAxisSize.min, // Fit content vertically
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -1072,6 +1083,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                             : Colors.grey.shade300),
                     borderRadius: BorderRadius.circular(4),
                   ),
+                  color: Colors.white,
                   padding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                   child: Row(
                     children: [
@@ -1145,6 +1157,8 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                   labelText: 'Experience Title',
                   border: OutlineInputBorder(),
                   prefixIcon: Icon(Icons.title),
+                  filled: true,
+                  fillColor: Colors.white,
                 ),
                 validator: (value) {
                   if (value == null || value.isEmpty) {
@@ -1172,6 +1186,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                       borderRadius: BorderRadius.circular(8.0)),
                   side: BorderSide(color: Colors.grey),
                   alignment: Alignment.centerLeft,
+                  backgroundColor: Colors.white,
                 ),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -1215,6 +1230,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                       borderRadius: BorderRadius.circular(8.0)),
                   side: BorderSide(color: Colors.grey),
                   alignment: Alignment.centerLeft,
+                  backgroundColor: Colors.white,
                 ),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -1264,6 +1280,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                   border: Border.all(color: Colors.grey),
                   borderRadius: BorderRadius.circular(8.0),
                 ),
+                color: Colors.white,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -1329,6 +1346,8 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                     labelText: 'Yelp URL (optional)',
                     border: OutlineInputBorder(),
                     prefixIcon: Icon(FontAwesomeIcons.yelp),
+                    filled: true,
+                    fillColor: Colors.white,
                     // --- ADDED: Suffix Icons ---
                     suffixIconConstraints: BoxConstraints.tightFor(
                         width: 110, // Keep width for three icons
@@ -1403,6 +1422,8 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                     labelText: 'Official Website (optional)',
                     border: OutlineInputBorder(),
                     prefixIcon: Icon(Icons.language),
+                    filled: true,
+                    fillColor: Colors.white,
                     // --- MODIFIED: Add Paste button to suffix ---
                     suffixIconConstraints: BoxConstraints.tightFor(
                         width: 110, // Keep width for three icons
@@ -1488,6 +1509,8 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                   border: OutlineInputBorder(),
                   prefixIcon: Icon(Icons.notes),
                   alignLabelWithHint: true,
+                  filled: true,
+                  fillColor: Colors.white,
                 ),
                 keyboardType: TextInputType.multiline,
                 minLines: 3,
@@ -1615,6 +1638,7 @@ class _OtherCategoriesSelectionDialogState
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
+      backgroundColor: Colors.white,
       title: const Text('Select Other Categories'),
       contentPadding: const EdgeInsets.fromLTRB(0, 20, 0, 0),
       content: SizedBox(

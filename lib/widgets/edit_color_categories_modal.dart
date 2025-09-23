@@ -106,6 +106,7 @@ class _EditColorCategoriesModalState extends State<EditColorCategoriesModal> {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
+        backgroundColor: Colors.white,
         title: const Text('Delete Color Category?'),
         content: Text(
             'Are you sure you want to delete the "${category.name}" category? This cannot be undone.'),
@@ -153,6 +154,7 @@ class _EditColorCategoriesModalState extends State<EditColorCategoriesModal> {
   Future<void> _editCategory(ColorCategory category) async {
     final updatedCategory = await showModalBottomSheet<ColorCategory>(
       context: context,
+      backgroundColor: Colors.white,
       builder: (context) => AddColorCategoryModal(categoryToEdit: category),
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
@@ -173,6 +175,7 @@ class _EditColorCategoriesModalState extends State<EditColorCategoriesModal> {
   Future<void> _addNewCategory() async {
     final newCategory = await showModalBottomSheet<ColorCategory>(
       context: context,
+      backgroundColor: Colors.white,
       builder: (context) => const AddColorCategoryModal(),
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
@@ -210,6 +213,7 @@ class _EditColorCategoriesModalState extends State<EditColorCategoriesModal> {
         constraints: BoxConstraints(
           maxHeight: maxHeight,
         ),
+        color: Colors.white,
         child: Padding(
           padding: EdgeInsets.only(
             left: 16.0,

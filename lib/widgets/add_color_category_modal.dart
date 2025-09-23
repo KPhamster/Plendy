@@ -49,6 +49,7 @@ class _AddColorCategoryModalState extends State<AddColorCategoryModal> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
+        backgroundColor: Colors.white,
         title: const Text('Pick a color'),
         content: SingleChildScrollView(
           child: ColorPicker(
@@ -139,20 +140,22 @@ class _AddColorCategoryModalState extends State<AddColorCategoryModal> {
   Widget build(BuildContext context) {
     final bottomPadding = MediaQuery.of(context).viewInsets.bottom;
 
-    return Padding(
-      padding: EdgeInsets.only(
-        left: 16.0,
-        right: 16.0,
-        top: 20.0,
-        bottom: bottomPadding + 20.0,
-      ),
-      child: Form(
-        key: _formKey,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
+    return Material(
+      color: Colors.white,
+      child: Padding(
+        padding: EdgeInsets.only(
+          left: 16.0,
+          right: 16.0,
+          top: 20.0,
+          bottom: bottomPadding + 20.0,
+        ),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(
@@ -175,6 +178,8 @@ class _AddColorCategoryModalState extends State<AddColorCategoryModal> {
                     ? 'Edit category name'
                     : 'Name your new color category',
                 border: OutlineInputBorder(),
+                filled: true,
+                fillColor: Colors.white,
               ),
               textCapitalization: TextCapitalization.sentences,
               validator: (value) {

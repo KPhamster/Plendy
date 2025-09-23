@@ -9,6 +9,8 @@ import '../../firebase_options.dart';
 import '../models/experience.dart';
 import '../services/experience_service.dart';
 import '../services/auth_service.dart';
+import '../services/category_share_service.dart';
+import 'auth_screen.dart';
 import 'main_screen.dart';
 
 class CategorySharePreviewScreen extends StatelessWidget {
@@ -73,6 +75,7 @@ class CategorySharePreviewScreen extends StatelessWidget {
               experiences: payload.experiencesFuture,
               fromUserId: payload.fromUserId,
               accessMode: payload.accessMode,
+              categoryId: payload.categoryId,
             );
           },
         ),
@@ -370,6 +373,7 @@ class _CategoryPreviewList extends StatefulWidget {
   final Future<List<_ExperiencePreview>> experiences;
   final String fromUserId;
   final String accessMode;
+  final String categoryId;
 
   const _CategoryPreviewList({
     required this.title,
@@ -377,6 +381,7 @@ class _CategoryPreviewList extends StatefulWidget {
     required this.experiences,
     required this.fromUserId,
     required this.accessMode,
+    required this.categoryId,
   });
 
   @override
@@ -387,6 +392,7 @@ class _CategoryPreviewListState extends State<_CategoryPreviewList> {
   String? _senderDisplayName;
   bool _isLoggedIn = false;
   bool _isLoadingUserInfo = true;
+  bool _isSaving = false;
 
   @override
   void initState() {
@@ -395,6 +401,11 @@ class _CategoryPreviewListState extends State<_CategoryPreviewList> {
   }
 
   Future<void> _loadUserInfo() async {
+    if (mounted) {
+      setState(() {
+        _isLoadingUserInfo = true;
+      });
+    }
     try {
       // Check if user is logged in
       final authService = AuthService();
@@ -441,6 +452,93 @@ class _CategoryPreviewListState extends State<_CategoryPreviewList> {
     return "Check out $senderName's experience list!";
   }
 
+  Future<void> _handleSaveCategory() async {
+    if (_isSaving) {
+      return;
+    }
+
+    final authService = AuthService();
+    String? currentUserId = authService.currentUser?.uid;
+
+    if (currentUserId == null) {
+      if (!mounted) {
+        return;
+      }
+      await Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const AuthScreen()),
+      );
+      if (!mounted) {
+        return;
+      }
+      await _loadUserInfo();
+      currentUserId = authService.currentUser?.uid;
+      if (currentUserId == null) {
+        return;
+      }
+    }
+
+    if (widget.categoryId.isEmpty || widget.fromUserId.isEmpty) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('Unable to save this category right now.')),
+      );
+      return;
+    }
+
+    setState(() {
+      _isSaving = true;
+    });
+
+    try {
+      final previews = await widget.experiences;
+      final experienceIds = previews
+          .map((exp) => exp.id)
+          .where((id) => id.isNotEmpty)
+          .toSet()
+          .toList();
+
+      final service = CategoryShareService();
+      await service.grantSharedCategoryToUser(
+        categoryId: widget.categoryId,
+        ownerUserId: widget.fromUserId,
+        targetUserId: currentUserId,
+        accessMode: widget.accessMode,
+        experienceIds: experienceIds,
+      );
+
+      if (!mounted) {
+        return;
+      }
+
+      final accessLabel =
+          widget.accessMode.toLowerCase() == 'edit' ? 'edit' : 'view';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Category saved with $accessLabel access.')),
+      );
+
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const MainScreen()),
+        (route) => false,
+      );
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to save category: $e')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSaving = false;
+        });
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Column(
@@ -482,6 +580,11 @@ class _CategoryPreviewListState extends State<_CategoryPreviewList> {
               Expanded(
                 child: Text(widget.title,
                     style: Theme.of(context).textTheme.titleLarge),
+              ),
+              const SizedBox(width: 12),
+              ElevatedButton(
+                onPressed: _isSaving ? null : _handleSaveCategory,
+                child: Text(_isSaving ? 'Saving...' : 'Save'),
               ),
             ],
           ),

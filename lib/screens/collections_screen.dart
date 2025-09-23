@@ -254,6 +254,9 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       []; // To hold filtered content for tab 2
   // --- END Filter State ---
 
+  bool get _hasActiveFilters =>
+      _selectedCategoryIds.isNotEmpty || _selectedColorCategoryIds.isNotEmpty;
+
   @override
   void initState() {
     super.initState();
@@ -854,6 +857,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       }
     }
 
+    final bool hadFilters = _hasActiveFilters;
+
     if (mounted) {
       setState(() {
         _categories = combinedCategories;
@@ -870,12 +875,15 @@ class _CollectionsScreenState extends State<CollectionsScreen>
           ..clear()
           ..addAll(experiencePermissionMap);
         _sharedExperiences = sharedExperiences;
+        _experiences = _combineExperiencesWithShared(_experiences);
+        if (!hadFilters) {
+          _filteredExperiences = List.from(_experiences);
+        }
         _groupedContentItems = [];
+        _filteredGroupedContentItems = [];
         _isLoading = false;
         _selectedCategory = null;
         _selectedColorCategory = null;
-        _filteredExperiences = List.from(_experiences);
-        _filteredGroupedContentItems = [];
         _contentLoaded = false;
       });
       final expSortSw = Stopwatch()..start();
@@ -884,12 +892,16 @@ class _CollectionsScreenState extends State<CollectionsScreen>
           print('[Perf][Collections] Initial experience sort took ${expSortSw.elapsedMilliseconds}ms');
         }
       });
-      final expFilteredSortSw = Stopwatch()..start();
-      _applyExperienceSort(_experienceSortType, applyToFiltered: true).whenComplete(() {
-        if (_perfLogs) {
-          print('[Perf][Collections] Filtered experience sort took ${expFilteredSortSw.elapsedMilliseconds}ms');
-        }
-      });
+      if (hadFilters) {
+        _applyFiltersAndUpdateLists();
+      } else {
+        final expFilteredSortSw = Stopwatch()..start();
+        _applyExperienceSort(_experienceSortType, applyToFiltered: true).whenComplete(() {
+          if (_perfLogs) {
+            print('[Perf][Collections] Filtered experience sort took ${expFilteredSortSw.elapsedMilliseconds}ms');
+          }
+        });
+      }
       if (_perfLogs) {
         totalSw.stop();
         print('[Perf][Collections] _loadData total time ${totalSw.elapsedMilliseconds}ms');
@@ -5129,11 +5141,19 @@ return Container(
         final cached = await _experienceService.getExperiencesByUser(userId);
         final combinedCached = _combineExperiencesWithShared(cached);
         if (mounted && combinedCached.isNotEmpty) {
+          final bool hadFilters = _hasActiveFilters;
           setState(() {
             _experiences = combinedCached;
-            _filteredExperiences = List.from(_experiences);
+            if (!hadFilters) {
+              _filteredExperiences = List.from(_experiences);
+            }
           });
-          _applyExperienceSort(_experienceSortType, applyToFiltered: true);
+          await _applyExperienceSort(_experienceSortType);
+          if (hadFilters) {
+            _applyFiltersAndUpdateLists();
+          } else {
+            await _applyExperienceSort(_experienceSortType, applyToFiltered: true);
+          }
         }
       } catch (_) {
         // Ignore cache errors; proceed to server fetch
@@ -5142,15 +5162,26 @@ return Container(
       final fresh = await _experienceService.getExperiencesByUser(userId);
       final combinedFresh = _combineExperiencesWithShared(fresh);
       if (mounted) {
+        final bool hadFilters = _hasActiveFilters;
         setState(() {
           _experiences = combinedFresh;
-          _filteredExperiences = List.from(_experiences);
+          if (!hadFilters) {
+            _filteredExperiences = List.from(_experiences);
+          }
         });
+        await _applyExperienceSort(_experienceSortType);
+        if (hadFilters) {
+          _applyFiltersAndUpdateLists();
+        } else {
+          await _applyExperienceSort(_experienceSortType, applyToFiltered: true);
+        }
       }
-      await _applyExperienceSort(_experienceSortType, applyToFiltered: true);
 
       if (_tabController.index == 2 && !_contentLoaded && !_isContentLoading) {
         await _loadGroupedContent();
+        if (_hasActiveFilters) {
+          _applyFiltersAndUpdateLists();
+        }
       }
     } finally {
       _isExperiencesLoading = false;
