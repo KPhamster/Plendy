@@ -9,6 +9,7 @@ import 'my_people_screen.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'browser_signin_screen.dart';
 import 'received_shares_screen.dart';
+import 'auth_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -183,6 +184,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
               child: ElevatedButton(
                 onPressed: () async {
                   await authService.signOut();
+                  if (!mounted) return;
+                  Navigator.of(context).pushAndRemoveUntil(
+                    MaterialPageRoute(
+                      builder: (context) => const AuthScreen(),
+                    ),
+                    (route) => false,
+                  );
                 },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Theme.of(context).primaryColor,
