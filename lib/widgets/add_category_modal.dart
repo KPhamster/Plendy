@@ -168,20 +168,22 @@ class _AddCategoryModalState extends State<AddCategoryModal> {
   Widget build(BuildContext context) {
     final bottomPadding = MediaQuery.of(context).viewInsets.bottom;
 
-    return Padding(
-      padding: EdgeInsets.only(
-        left: 16.0,
-        right: 16.0,
-        top: 20.0,
-        bottom: bottomPadding + 20.0,
-      ),
-      child: Form(
-        key: _formKey,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
+    return Material(
+      color: Colors.white,
+      child: Padding(
+        padding: EdgeInsets.only(
+          left: 16.0,
+          right: 16.0,
+          top: 20.0,
+          bottom: bottomPadding + 20.0,
+        ),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(_isEditing ? 'Edit Category' : 'Create a New Category',
@@ -200,6 +202,8 @@ class _AddCategoryModalState extends State<AddCategoryModal> {
                     ? 'Edit category name'
                     : 'Name your new category',
                 border: OutlineInputBorder(),
+                filled: true,
+                fillColor: Colors.white,
               ),
               textCapitalization: TextCapitalization.sentences,
               validator: (value) {

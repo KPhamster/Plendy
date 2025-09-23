@@ -531,6 +531,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     final result = await showModalBottomSheet<Experience?>(
       context: context,
       isScrollControlled: true, // Important for keyboard handling
+      backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(
         // Optional: Rounded corners
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
