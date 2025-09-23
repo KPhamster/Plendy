@@ -1077,13 +1077,13 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                 onTap: (_cardData.locationEnabled.value) ? _showLocationPicker : null,
                 child: Container(
                   decoration: BoxDecoration(
+                    color: Colors.white,
                     border: Border.all(
                         color: _cardData.locationEnabled.value
                             ? Colors.grey
                             : Colors.grey.shade300),
                     borderRadius: BorderRadius.circular(4),
                   ),
-                  color: Colors.white,
                   padding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                   child: Row(
                     children: [
@@ -1277,10 +1277,10 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                 width: double.infinity, // Ensure it takes full width
                 padding: const EdgeInsets.all(12.0),
                 decoration: BoxDecoration(
+                  color: Colors.white,
                   border: Border.all(color: Colors.grey),
                   borderRadius: BorderRadius.circular(8.0),
                 ),
-                color: Colors.white,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -1543,6 +1543,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
           ),
         ),
       ),
+    ),
     );
   }
 

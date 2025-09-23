@@ -511,13 +511,11 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     if (_isLoadingAuth || _currentUserId == null) {
       return false; // Can't edit if loading or not logged in
     }
-    // Check if current user is the owner
-    // return _currentExperience.ownerUserId == _currentUserId; // OLD Check
-    // NEW Check: See if current user ID is in the list of editors
-    return _currentExperience.editorUserIds.contains(_currentUserId);
-    // TODO: Add logic here later to check SharePermission for edit access
-    // if (isOwner) return true;
-    // else { Check share permissions... }
+    if (_currentExperience.editorUserIds.contains(_currentUserId)) {
+      return true;
+    }
+    final String? accessMode = widget.shareAccessMode?.toLowerCase();
+    return accessMode == 'edit';
   }
 
   // ADDED: Method stub to show the edit modal
@@ -3248,3 +3246,4 @@ class _SliverAppBarDelegate extends SliverPersistentHeaderDelegate {
   }
   }
   // --- End Helper Class ---
+

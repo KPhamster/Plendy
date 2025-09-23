@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_typeahead/flutter_typeahead.dart';
 import '../models/experience.dart';
 import '../models/user_category.dart';
@@ -82,10 +83,10 @@ Color _parseColor(String hexColor) {
     try {
       return Color(int.parse("0x$hexColor"));
     } catch (e) {
-return Colors.grey; // Default color on parsing error
+      return Colors.grey; // Default color on parsing error
     }
   }
-return Colors.grey; // Default color on invalid format
+  return Colors.grey; // Default color on invalid format
 }
 
 // ADDED: Enum for experience sort types
@@ -139,13 +140,106 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   List<UserCategory> _sharedCategories = [];
   List<ColorCategory> _sharedColorCategories = [];
   List<Experience> _sharedExperiences = [];
+
+  bool _isSharedCategory(UserCategory category) =>
+      _sharedCategoryPermissions.containsKey(category.id);
+
+  Timestamp? _sharedCategoryCreatedAt(UserCategory category) =>
+      _sharedCategoryPermissions[category.id]?.createdAt;
+
+  bool _isSharedExperience(Experience experience) =>
+      _sharedExperiencePermissions.containsKey(experience.id);
+
+  DateTime _sharedExperienceUpdatedAt(Experience experience) =>
+      experience.updatedAt;
+
+  UserCategory _resolveCategoryForExperience(Experience experience) {
+    final existing = _categories.firstWhereOrNull(
+        (cat) => cat.id == experience.categoryId);
+    if (existing != null) {
+      return existing;
+    }
+
+    final fallbackName = experience.categoryId != null
+        ? 'Category Not Found'
+        : 'Uncategorized';
+
+    return UserCategory(
+      id: experience.categoryId ?? 'uncategorized',
+      name: fallbackName,
+      icon: existing?.icon ?? '?',
+      ownerUserId: existing?.ownerUserId ??
+          _authService.currentUser?.uid ??
+          'system_default',
+      orderIndex: existing?.orderIndex ?? 9999,
+    );
+  }
+
+  Future<void> _openExperience(Experience experience) async {
+    final sharePermission = _sharedExperiencePermissions[experience.id];
+    final bool isShared = sharePermission != null;
+    final bool hasEditAccess =
+        sharePermission?.accessLevel == ShareAccessLevel.edit;
+
+    final UserCategory resolvedCategory =
+        _resolveCategoryForExperience(experience);
+
+    final result = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ExperiencePageScreen(
+          experience: experience,
+          category: resolvedCategory,
+          userColorCategories: _colorCategories,
+          shareBannerFromUserId: sharePermission?.ownerUserId,
+          shareAccessMode:
+              isShared ? (hasEditAccess ? 'edit' : 'view') : null,
+        ),
+      ),
+    );
+
+    if (result == true && mounted) {
+      _loadData();
+    }
+  }
+
+  int _compareCategoriesForSort(
+      UserCategory a, UserCategory b, CategorySortType sortType) {
+    if (sortType == CategorySortType.alphabetical) {
+      final cmp = a.name.toLowerCase().compareTo(b.name.toLowerCase());
+      if (cmp != 0) return cmp;
+      return a.id.compareTo(b.id);
+    }
+
+    if (sortType == CategorySortType.mostRecent) {
+      final tsA = _isSharedCategory(a)
+          ? _sharedCategoryCreatedAt(a)
+          : a.lastUsedTimestamp;
+      final tsB = _isSharedCategory(b)
+          ? _sharedCategoryCreatedAt(b)
+          : b.lastUsedTimestamp;
+
+      if (tsA == null && tsB == null) {
+        return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+      }
+      if (tsA == null) return 1;
+      if (tsB == null) return -1;
+      final cmp = tsB.compareTo(tsA);
+      if (cmp != 0) return cmp;
+      return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+    }
+
+    return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+  }
+
   // ADDED: State variable for experience sort type
   ExperienceSortType _experienceSortType = ExperienceSortType.mostRecent;
   // ADDED: State variable for content sort type
   ContentSortType _contentSortType = ContentSortType.mostRecent;
-    // ADDED: State variables for category sort types
+  // ADDED: State variables for category sort types
   CategorySortType _categorySortType = CategorySortType.mostRecent;
-  ColorCategorySortType _colorCategorySortType = ColorCategorySortType.mostRecent;
+  ColorCategorySortType _colorCategorySortType =
+      ColorCategorySortType.mostRecent;
   String? _userEmail;
   // ADDED: State variable to track the selected category in the first tab
   UserCategory? _selectedCategory;
@@ -190,7 +284,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   bool _isContentLoading = false;
   bool _isExperiencesLoading = false;
   // ADDED: Background refresh helper for photo resource names
-  Future<void> _refreshPhotoResourceNameForExperience(Experience experience) async {
+  Future<void> _refreshPhotoResourceNameForExperience(
+      Experience experience) async {
     try {
       final placeId = experience.location.placeId;
       if (placeId == null || placeId.isEmpty) return;
@@ -229,7 +324,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
             if (idx != -1) {
               _experiences[idx] = updated;
             }
-            final fidx = _filteredExperiences.indexWhere((e) => e.id == experience.id);
+            final fidx =
+                _filteredExperiences.indexWhere((e) => e.id == experience.id);
             if (fidx != -1) {
               _filteredExperiences[fidx] = updated;
             }
@@ -361,14 +457,20 @@ class _CollectionsScreenState extends State<CollectionsScreen>
             if (d.isAfter(maxB)) maxB = d;
           }
           return maxB.compareTo(maxA);
-        } else if (_experienceSortType == ExperienceSortType.alphabetical || _experienceSortType == ExperienceSortType.city) {
-          final dispA = (byCountry[a]!.first['labels'] as Map<String, String?>)['C'] ?? '';
-          final dispB = (byCountry[b]!.first['labels'] as Map<String, String?>)['C'] ?? '';
+        } else if (_experienceSortType == ExperienceSortType.alphabetical ||
+            _experienceSortType == ExperienceSortType.city) {
+          final dispA =
+              (byCountry[a]!.first['labels'] as Map<String, String?>)['C'] ??
+                  '';
+          final dispB =
+              (byCountry[b]!.first['labels'] as Map<String, String?>)['C'] ??
+                  '';
           if (dispA.isEmpty && dispB.isEmpty) return 0;
           if (dispA.isEmpty) return 1;
           if (dispB.isEmpty) return -1;
           return dispA.toLowerCase().compareTo(dispB.toLowerCase());
-        } else { // distanceFromMe
+        } else {
+          // distanceFromMe
           int minA = 1 << 30;
           for (final p in byCountry[a]!) {
             final idx = expIndexMap[(p['data'] as Experience).id];
@@ -383,20 +485,24 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         }
       });
     for (final ck in countries) {
-      final dispCountry = (byCountry[ck]!.first['labels'] as Map<String, String?>)['C'] ?? 'Unknown country';
+      final dispCountry =
+          (byCountry[ck]!.first['labels'] as Map<String, String?>)['C'] ??
+              'Unknown country';
       final countryKey = 'C:$ck';
       flat.add({'header': dispCountry, 'level': 'country', 'key': countryKey});
       _locationExpansionExperiences.putIfAbsent(countryKey, () => false);
       if (!(_locationExpansionExperiences[countryKey] ?? false)) continue;
 
       // Determine which levels exist in this country
-      final levels = ['L1','L2','L3','L4','L5','L6','L7','LOC'];
+      final levels = ['L1', 'L2', 'L3', 'L4', 'L5', 'L6', 'L7', 'LOC'];
       final List<String> presentLevels = levels.where((lvl) {
-        return byCountry[ck]!.any((p) => n((p['labels'] as Map<String, String?>)[lvl]).isNotEmpty);
+        return byCountry[ck]!.any(
+            (p) => n((p['labels'] as Map<String, String?>)[lvl]).isNotEmpty);
       }).toList();
 
       // Recursive build
-      void buildLevel(String prefixKey, String level, List<Map<String, dynamic>> items) {
+      void buildLevel(
+          String prefixKey, String level, List<Map<String, dynamic>> items) {
         // Find the next present level starting from the requested level
         String useLevel = level;
         while (!presentLevels.contains(useLevel)) {
@@ -407,7 +513,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         if (useLevel == '__end__') {
           final leaf = items.map((p) => p['data'] as Experience).toList();
           if (_experienceSortType == ExperienceSortType.alphabetical) {
-            leaf.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+            leaf.sort(
+                (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
           } else if (_experienceSortType == ExperienceSortType.mostRecent) {
             leaf.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
           }
@@ -439,14 +546,18 @@ class _CollectionsScreenState extends State<CollectionsScreen>
               if (a.isEmpty) return 1;
               if (b.isEmpty) return -1;
               return maxB.compareTo(maxA);
-            } else if (_experienceSortType == ExperienceSortType.alphabetical || _experienceSortType == ExperienceSortType.city) {
-              final dispA = n((buckets[a]!.first['labels'] as Map<String, String?>)[useLevel]);
-              final dispB = n((buckets[b]!.first['labels'] as Map<String, String?>)[useLevel]);
+            } else if (_experienceSortType == ExperienceSortType.alphabetical ||
+                _experienceSortType == ExperienceSortType.city) {
+              final dispA = n((buckets[a]!.first['labels']
+                  as Map<String, String?>)[useLevel]);
+              final dispB = n((buckets[b]!.first['labels']
+                  as Map<String, String?>)[useLevel]);
               if (dispA.isEmpty && dispB.isEmpty) return 0;
               if (dispA.isEmpty) return 1;
               if (dispB.isEmpty) return -1;
               return dispA.toLowerCase().compareTo(dispB.toLowerCase());
-            } else { // distanceFromMe
+            } else {
+              // distanceFromMe
               int minA = 1 << 30;
               for (final p in buckets[a]!) {
                 final idx = expIndexMap[(p['data'] as Experience).id];
@@ -464,7 +575,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
             }
           });
         for (final k in keys) {
-          final disp = n((buckets[k]!.first['labels'] as Map<String, String?>)[useLevel]);
+          final disp = n(
+              (buckets[k]!.first['labels'] as Map<String, String?>)[useLevel]);
           if (disp.isEmpty) {
             // Missing level for these items: drop deeper to next present level/leaf
             buildLevel(prefixKey, _nextLevel(useLevel), buckets[k]!);
@@ -483,12 +595,14 @@ class _CollectionsScreenState extends State<CollectionsScreen>
 
     if (noLoc.isNotEmpty) {
       final key = 'C:noloc';
-      flat.add({'header': 'No Location Specified', 'level': 'country', 'key': key});
+      flat.add(
+          {'header': 'No Location Specified', 'level': 'country', 'key': key});
       _locationExpansionExperiences.putIfAbsent(key, () => false);
       if (_locationExpansionExperiences[key] ?? false) {
         final items = List<Experience>.from(noLoc);
         if (_experienceSortType == ExperienceSortType.alphabetical) {
-          items.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+          items.sort(
+              (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
         } else if (_experienceSortType == ExperienceSortType.mostRecent) {
           items.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
         }
@@ -523,7 +637,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         if (loc.isEmpty && displayName.isNotEmpty) {
           loc = displayName;
         }
-        return [c,l1,l2,l3,l4,l5,l6,l7,loc].every((v) => v.isEmpty);
+        return [c, l1, l2, l3, l4, l5, l6, l7, loc].every((v) => v.isEmpty);
       });
       if (anyNoLoc) {
         noLoc.add(group);
@@ -533,7 +647,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       // Otherwise, place this group under all location paths for its associated experiences
       for (final exp in group.associatedExperiences) {
         final c = n(exp.location.country);
-        if (c.isEmpty) continue; // without country, treat as noloc but we already handled
+        if (c.isEmpty)
+          continue; // without country, treat as noloc but we already handled
         String l1 = n(exp.location.state);
         final l2 = n(exp.location.administrativeAreaLevel2);
         final l3 = n(exp.location.administrativeAreaLevel3);
@@ -580,7 +695,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       }
     }
     final countries = byCountry.keys.toList()
-      ..sort((a,b){
+      ..sort((a, b) {
         if (a.isEmpty && b.isEmpty) return 0;
         if (a.isEmpty) return 1;
         if (b.isEmpty) return -1;
@@ -596,41 +711,53 @@ class _CollectionsScreenState extends State<CollectionsScreen>
             if (d.isAfter(maxB)) maxB = d;
           }
           return maxB.compareTo(maxA);
-        } else if (_contentSortType == ContentSortType.alphabetical || _contentSortType == ContentSortType.city) {
-          final dispA = (byCountry[a]!.first['labels'] as Map<String, String?>)['C'] ?? '';
-          final dispB = (byCountry[b]!.first['labels'] as Map<String, String?>)['C'] ?? '';
+        } else if (_contentSortType == ContentSortType.alphabetical ||
+            _contentSortType == ContentSortType.city) {
+          final dispA =
+              (byCountry[a]!.first['labels'] as Map<String, String?>)['C'] ??
+                  '';
+          final dispB =
+              (byCountry[b]!.first['labels'] as Map<String, String?>)['C'] ??
+                  '';
           if (dispA.isEmpty && dispB.isEmpty) return 0;
           if (dispA.isEmpty) return 1;
           if (dispB.isEmpty) return -1;
           return dispA.toLowerCase().compareTo(dispB.toLowerCase());
-        } else { // distanceFromMe
+        } else {
+          // distanceFromMe
           int minA = 1 << 30;
           for (final p in byCountry[a]!) {
-            final idx = contentIndexMap[(p['gid'] as String?) ?? (p['data'] as GroupedContentItem).mediaItem.id];
+            final idx = contentIndexMap[(p['gid'] as String?) ??
+                (p['data'] as GroupedContentItem).mediaItem.id];
             if (idx != null && idx < minA) minA = idx;
           }
           int minB = 1 << 30;
           for (final p in byCountry[b]!) {
-            final idx = contentIndexMap[(p['gid'] as String?) ?? (p['data'] as GroupedContentItem).mediaItem.id];
+            final idx = contentIndexMap[(p['gid'] as String?) ??
+                (p['data'] as GroupedContentItem).mediaItem.id];
             if (idx != null && idx < minB) minB = idx;
           }
           return minA.compareTo(minB);
         }
       });
     for (final ck in countries) {
-      final dispCountry = (byCountry[ck]!.first['labels'] as Map<String, String?>)['C'] ?? 'Unknown country';
+      final dispCountry =
+          (byCountry[ck]!.first['labels'] as Map<String, String?>)['C'] ??
+              'Unknown country';
       final countryKey = 'C:$ck';
       flat.add({'header': dispCountry, 'level': 'country', 'key': countryKey});
       _locationExpansionContent.putIfAbsent(countryKey, () => false);
       if (!(_locationExpansionContent[countryKey] ?? false)) continue;
 
       // Determine which levels exist in this country
-      final levels = ['L1','L2','L3','L4','L5','L6','L7','LOC'];
+      final levels = ['L1', 'L2', 'L3', 'L4', 'L5', 'L6', 'L7', 'LOC'];
       final List<String> presentLevels = levels.where((lvl) {
-        return byCountry[ck]!.any((p) => n((p['labels'] as Map<String, String?>)[lvl]).isNotEmpty);
+        return byCountry[ck]!.any(
+            (p) => n((p['labels'] as Map<String, String?>)[lvl]).isNotEmpty);
       }).toList();
 
-      void buildLevel(String prefixKey, String level, List<Map<String, dynamic>> items) {
+      void buildLevel(
+          String prefixKey, String level, List<Map<String, dynamic>> items) {
         // Find the next present level starting from the requested level
         String useLevel = level;
         while (!presentLevels.contains(useLevel)) {
@@ -641,18 +768,24 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         if (useLevel == '__end__') {
           final Map<String, GroupedContentItem> seen = {};
           for (final p in items) {
-            final gid = p['gid'] as String? ?? (p['data'] as GroupedContentItem).mediaItem.id;
+            final gid = p['gid'] as String? ??
+                (p['data'] as GroupedContentItem).mediaItem.id;
             seen.putIfAbsent(gid, () => p['data'] as GroupedContentItem);
           }
           final leaf = seen.values.toList();
           if (_contentSortType == ContentSortType.alphabetical) {
-            leaf.sort((a,b){
-              final an = a.associatedExperiences.isNotEmpty ? a.associatedExperiences.first.name.toLowerCase() : '';
-              final bn = b.associatedExperiences.isNotEmpty ? b.associatedExperiences.first.name.toLowerCase() : '';
+            leaf.sort((a, b) {
+              final an = a.associatedExperiences.isNotEmpty
+                  ? a.associatedExperiences.first.name.toLowerCase()
+                  : '';
+              final bn = b.associatedExperiences.isNotEmpty
+                  ? b.associatedExperiences.first.name.toLowerCase()
+                  : '';
               return an.compareTo(bn);
             });
           } else {
-            leaf.sort((a,b)=>b.mediaItem.createdAt.compareTo(a.mediaItem.createdAt));
+            leaf.sort((a, b) =>
+                b.mediaItem.createdAt.compareTo(a.mediaItem.createdAt));
           }
           int ordinal = 1;
           for (final g in leaf) {
@@ -669,7 +802,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
           buckets.putIfAbsent(k, () => []).add(p);
         }
         final keys = buckets.keys.toList()
-          ..sort((a,b){
+          ..sort((a, b) {
             if (_contentSortType == ContentSortType.mostRecent) {
               DateTime maxA = DateTime.fromMillisecondsSinceEpoch(0);
               for (final p in buckets[a]!) {
@@ -685,23 +818,29 @@ class _CollectionsScreenState extends State<CollectionsScreen>
               if (a.isEmpty) return 1;
               if (b.isEmpty) return -1;
               return maxB.compareTo(maxA);
-            } else if (_contentSortType == ContentSortType.alphabetical || _contentSortType == ContentSortType.city) {
-              final dispA = n((buckets[a]!.first['labels'] as Map<String, String?>)[useLevel]);
-              final dispB = n((buckets[b]!.first['labels'] as Map<String, String?>)[useLevel]);
+            } else if (_contentSortType == ContentSortType.alphabetical ||
+                _contentSortType == ContentSortType.city) {
+              final dispA = n((buckets[a]!.first['labels']
+                  as Map<String, String?>)[useLevel]);
+              final dispB = n((buckets[b]!.first['labels']
+                  as Map<String, String?>)[useLevel]);
               if (dispA.isEmpty && dispB.isEmpty) return 0;
               if (dispA.isEmpty) return 1;
               if (dispB.isEmpty) return -1;
               return dispA.toLowerCase().compareTo(dispB.toLowerCase());
-            } else { // distanceFromMe
+            } else {
+              // distanceFromMe
               int minA = 1 << 30;
               for (final p in buckets[a]!) {
-                final gid = (p['gid'] as String?) ?? (p['data'] as GroupedContentItem).mediaItem.id;
+                final gid = (p['gid'] as String?) ??
+                    (p['data'] as GroupedContentItem).mediaItem.id;
                 final idx = contentIndexMap[gid];
                 if (idx != null && idx < minA) minA = idx;
               }
               int minB = 1 << 30;
               for (final p in buckets[b]!) {
-                final gid = (p['gid'] as String?) ?? (p['data'] as GroupedContentItem).mediaItem.id;
+                final gid = (p['gid'] as String?) ??
+                    (p['data'] as GroupedContentItem).mediaItem.id;
                 final idx = contentIndexMap[gid];
                 if (idx != null && idx < minB) minB = idx;
               }
@@ -712,7 +851,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
             }
           });
         for (final k in keys) {
-          final disp = n((buckets[k]!.first['labels'] as Map<String, String?>)[useLevel]);
+          final disp = n(
+              (buckets[k]!.first['labels'] as Map<String, String?>)[useLevel]);
           if (disp.isEmpty) {
             buildLevel(prefixKey, _nextLevel(useLevel), buckets[k]!);
           } else {
@@ -730,18 +870,24 @@ class _CollectionsScreenState extends State<CollectionsScreen>
 
     if (noLoc.isNotEmpty) {
       final key = 'C:noloc';
-      flat.add({'header': 'No Location Specified', 'level': 'country', 'key': key});
+      flat.add(
+          {'header': 'No Location Specified', 'level': 'country', 'key': key});
       _locationExpansionContent.putIfAbsent(key, () => false);
       if (_locationExpansionContent[key] ?? false) {
         final items = List<GroupedContentItem>.from(noLoc);
         if (_contentSortType == ContentSortType.alphabetical) {
-          items.sort((a,b){
-            final an = a.associatedExperiences.isNotEmpty ? a.associatedExperiences.first.name.toLowerCase() : '';
-            final bn = b.associatedExperiences.isNotEmpty ? b.associatedExperiences.first.name.toLowerCase() : '';
+          items.sort((a, b) {
+            final an = a.associatedExperiences.isNotEmpty
+                ? a.associatedExperiences.first.name.toLowerCase()
+                : '';
+            final bn = b.associatedExperiences.isNotEmpty
+                ? b.associatedExperiences.first.name.toLowerCase()
+                : '';
             return an.compareTo(bn);
           });
         } else {
-          items.sort((a,b)=>b.mediaItem.createdAt.compareTo(a.mediaItem.createdAt));
+          items.sort(
+              (a, b) => b.mediaItem.createdAt.compareTo(a.mediaItem.createdAt));
         }
         int ordinal = 1;
         for (final g in items) {
@@ -755,198 +901,223 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   }
 
   String _nextLevel(String level) {
-    const order = ['L1','L2','L3','L4','L5','L6','L7','LOC'];
+    const order = ['L1', 'L2', 'L3', 'L4', 'L5', 'L6', 'L7', 'LOC'];
     final i = order.indexOf(level);
     return i >= 0 && i < order.length - 1 ? order[i + 1] : '__end__';
   }
 
   Future<void> _loadData() async {
-  setState(() {
-    _isLoading = true;
-  });
-  final totalSw = Stopwatch()..start();
+    setState(() {
+      _isLoading = true;
+    });
+    final totalSw = Stopwatch()..start();
 
-  final userId = _authService.currentUser?.uid;
-  try {
-    final fetchSw = Stopwatch()..start();
-    final results = await Future.wait([
-      _experienceService.getUserCategories(),
-      _experienceService.getUserColorCategories(),
-    ]);
-    if (_perfLogs) {
-      fetchSw.stop();
-      final ms = fetchSw.elapsedMilliseconds;
-      print('[Perf][Collections] Firestore fetch (categories, color categories) took ${ms}ms');
-    }
+    final userId = _authService.currentUser?.uid;
+    try {
+      final fetchSw = Stopwatch()..start();
+      final results = await Future.wait([
+        _experienceService.getUserCategories(),
+        _experienceService.getUserColorCategories(),
+      ]);
+      if (_perfLogs) {
+        fetchSw.stop();
+        final ms = fetchSw.elapsedMilliseconds;
+        print(
+            '[Perf][Collections] Firestore fetch (categories, color categories) took ${ms}ms');
+      }
 
-    final List<UserCategory> ownCategories = results[0] as List<UserCategory>;
-    final List<ColorCategory> ownColorCategories = results[1] as List<ColorCategory>;
+      final List<UserCategory> ownCategories = results[0] as List<UserCategory>;
+      final List<ColorCategory> ownColorCategories =
+          results[1] as List<ColorCategory>;
 
-    List<_SharedCategoryData> sharedCategoryData = [];
-    List<_SharedExperienceData> sharedExperienceData = [];
+      List<_SharedCategoryData> sharedCategoryData = [];
+      List<_SharedExperienceData> sharedExperienceData = [];
 
-    if (userId != null) {
-      try {
-        print('[Collections] Loading shared permissions for user: $userId');
-        final sharedPermissions = await _sharingService.getSharedItemsForUser(userId);
-        print('[Collections] Found ${sharedPermissions.length} shared permissions');
-        if (sharedPermissions.isNotEmpty) {
-          final categoryPermissions = sharedPermissions
-              .where((perm) => perm.itemType == ShareableItemType.category)
-              .toList();
-          final experiencePermissions = sharedPermissions
-              .where((perm) => perm.itemType == ShareableItemType.experience)
-              .toList();
-          
-          print('[Collections] Category permissions: ${categoryPermissions.length}');
-          print('[Collections] Experience permissions: ${experiencePermissions.length}');
+      if (userId != null) {
+        try {
+          print('[Collections] Loading shared permissions for user: $userId');
+          final sharedPermissions =
+              await _sharingService.getSharedItemsForUser(userId);
+          print(
+              '[Collections] Found ${sharedPermissions.length} shared permissions');
+          if (sharedPermissions.isNotEmpty) {
+            final categoryPermissions = sharedPermissions
+                .where((perm) => perm.itemType == ShareableItemType.category)
+                .toList();
+            final experiencePermissions = sharedPermissions
+                .where((perm) => perm.itemType == ShareableItemType.experience)
+                .toList();
 
-          if (categoryPermissions.isNotEmpty) {
-            print('[Collections] Resolving shared categories...');
-            sharedCategoryData = await _resolveSharedCategories(categoryPermissions);
-            print('[Collections] Resolved ${sharedCategoryData.length} shared categories');
+            print(
+                '[Collections] Category permissions: ${categoryPermissions.length}');
+            print(
+                '[Collections] Experience permissions: ${experiencePermissions.length}');
+
+            if (categoryPermissions.isNotEmpty) {
+              print('[Collections] Resolving shared categories...');
+              sharedCategoryData =
+                  await _resolveSharedCategories(categoryPermissions);
+              print(
+                  '[Collections] Resolved ${sharedCategoryData.length} shared categories');
+            }
+            if (experiencePermissions.isNotEmpty) {
+              print('[Collections] Resolving shared experiences...');
+              sharedExperienceData =
+                  await _resolveSharedExperiences(experiencePermissions);
+              print(
+                  '[Collections] Resolved ${sharedExperienceData.length} shared experiences');
+            }
           }
-          if (experiencePermissions.isNotEmpty) {
-            print('[Collections] Resolving shared experiences...');
-            sharedExperienceData = await _resolveSharedExperiences(experiencePermissions);
-            print('[Collections] Resolved ${sharedExperienceData.length} shared experiences');
+        } catch (e) {
+          print('[Collections] Failed to load shared permissions: $e');
+        }
+      }
+
+      final List<UserCategory> sharedUserCategories = [
+        for (final data in sharedCategoryData)
+          if (!data.isColorCategory && data.userCategory != null)
+            data.userCategory!
+      ];
+      final List<ColorCategory> sharedColorCategories = [
+        for (final data in sharedCategoryData)
+          if (data.isColorCategory && data.colorCategory != null)
+            data.colorCategory!
+      ];
+
+      final Map<String, SharePermission> categoryPermissionMap = {};
+      final Map<String, bool> sharedCategoryIsColorMap = {};
+      for (final data in sharedCategoryData) {
+        final id = data.categoryId;
+        if (id.isEmpty) continue;
+        categoryPermissionMap[id] = data.permission;
+        sharedCategoryIsColorMap[id] = data.isColorCategory;
+      }
+
+      final Map<String, SharePermission> experiencePermissionMap = {};
+      final List<Experience> sharedExperiences = [];
+      for (final data in sharedExperienceData) {
+        final exp = data.experience;
+        experiencePermissionMap[exp.id] = data.permission;
+        sharedExperiences.add(exp);
+      }
+
+      final List<UserCategory> combinedCategories = List.of(ownCategories);
+      for (final shared in sharedUserCategories) {
+        if (!combinedCategories.any((c) => c.id == shared.id)) {
+          combinedCategories.add(shared);
+        }
+      }
+
+      final List<ColorCategory> combinedColorCategories =
+          List.of(ownColorCategories);
+      for (final shared in sharedColorCategories) {
+        if (!combinedColorCategories.any((c) => c.id == shared.id)) {
+          combinedColorCategories.add(shared);
+        }
+      }
+
+      final bool hadFilters = _hasActiveFilters;
+
+      if (mounted) {
+        setState(() {
+          _categories = combinedCategories;
+          _sharedCategories = sharedUserCategories;
+          _colorCategories = combinedColorCategories;
+          _sharedColorCategories = sharedColorCategories;
+          _sharedCategoryPermissions
+            ..clear()
+            ..addAll(categoryPermissionMap);
+          _sharedCategoryIsColor
+            ..clear()
+            ..addAll(sharedCategoryIsColorMap);
+          _sharedExperiencePermissions
+            ..clear()
+            ..addAll(experiencePermissionMap);
+          _sharedExperiences = sharedExperiences;
+          _experiences = _combineExperiencesWithShared(_experiences);
+          if (!hadFilters) {
+            _filteredExperiences = List.from(_experiences);
           }
-        }
-      } catch (e) {
-        print('[Collections] Failed to load shared permissions: $e');
-      }
-    }
-
-    final List<UserCategory> sharedUserCategories = [
-      for (final data in sharedCategoryData)
-        if (!data.isColorCategory && data.userCategory != null) data.userCategory!
-    ];
-    final List<ColorCategory> sharedColorCategories = [
-      for (final data in sharedCategoryData)
-        if (data.isColorCategory && data.colorCategory != null) data.colorCategory!
-    ];
-
-    final Map<String, SharePermission> categoryPermissionMap = {};
-    final Map<String, bool> sharedCategoryIsColorMap = {};
-    for (final data in sharedCategoryData) {
-      final id = data.categoryId;
-      if (id.isEmpty) continue;
-      categoryPermissionMap[id] = data.permission;
-      sharedCategoryIsColorMap[id] = data.isColorCategory;
-    }
-
-    final Map<String, SharePermission> experiencePermissionMap = {};
-    final List<Experience> sharedExperiences = [];
-    for (final data in sharedExperienceData) {
-      final exp = data.experience;
-      experiencePermissionMap[exp.id] = data.permission;
-      sharedExperiences.add(exp);
-    }
-
-    final List<UserCategory> combinedCategories = List.of(ownCategories);
-    for (final shared in sharedUserCategories) {
-      if (!combinedCategories.any((c) => c.id == shared.id)) {
-        combinedCategories.add(shared);
-      }
-    }
-
-    final List<ColorCategory> combinedColorCategories = List.of(ownColorCategories);
-    for (final shared in sharedColorCategories) {
-      if (!combinedColorCategories.any((c) => c.id == shared.id)) {
-        combinedColorCategories.add(shared);
-      }
-    }
-
-    final bool hadFilters = _hasActiveFilters;
-
-    if (mounted) {
-      setState(() {
-        _categories = combinedCategories;
-        _sharedCategories = sharedUserCategories;
-        _colorCategories = combinedColorCategories;
-        _sharedColorCategories = sharedColorCategories;
-        _sharedCategoryPermissions
-          ..clear()
-          ..addAll(categoryPermissionMap);
-        _sharedCategoryIsColor
-          ..clear()
-          ..addAll(sharedCategoryIsColorMap);
-        _sharedExperiencePermissions
-          ..clear()
-          ..addAll(experiencePermissionMap);
-        _sharedExperiences = sharedExperiences;
-        _experiences = _combineExperiencesWithShared(_experiences);
-        if (!hadFilters) {
-          _filteredExperiences = List.from(_experiences);
-        }
-        _groupedContentItems = [];
-        _filteredGroupedContentItems = [];
-        _isLoading = false;
-        _selectedCategory = null;
-        _selectedColorCategory = null;
-        _contentLoaded = false;
-      });
-      final expSortSw = Stopwatch()..start();
-      _applyExperienceSort(_experienceSortType).whenComplete(() {
-        if (_perfLogs) {
-          print('[Perf][Collections] Initial experience sort took ${expSortSw.elapsedMilliseconds}ms');
-        }
-      });
-      if (hadFilters) {
-        _applyFiltersAndUpdateLists();
-      } else {
-        final expFilteredSortSw = Stopwatch()..start();
-        _applyExperienceSort(_experienceSortType, applyToFiltered: true).whenComplete(() {
+          _groupedContentItems = [];
+          _filteredGroupedContentItems = [];
+          _isLoading = false;
+          _selectedCategory = null;
+          _selectedColorCategory = null;
+          _contentLoaded = false;
+        });
+        final expSortSw = Stopwatch()..start();
+        _applyExperienceSort(_experienceSortType).whenComplete(() {
           if (_perfLogs) {
-            print('[Perf][Collections] Filtered experience sort took ${expFilteredSortSw.elapsedMilliseconds}ms');
+            print(
+                '[Perf][Collections] Initial experience sort took ${expSortSw.elapsedMilliseconds}ms');
           }
         });
+        if (hadFilters) {
+          _applyFiltersAndUpdateLists();
+        } else {
+          final expFilteredSortSw = Stopwatch()..start();
+          _applyExperienceSort(_experienceSortType, applyToFiltered: true)
+              .whenComplete(() {
+            if (_perfLogs) {
+              print(
+                  '[Perf][Collections] Filtered experience sort took ${expFilteredSortSw.elapsedMilliseconds}ms');
+            }
+          });
+        }
+        if (_perfLogs) {
+          totalSw.stop();
+          print(
+              '[Perf][Collections] _loadData total time ${totalSw.elapsedMilliseconds}ms');
+        }
       }
-      if (_perfLogs) {
-        totalSw.stop();
-        print('[Perf][Collections] _loadData total time ${totalSw.elapsedMilliseconds}ms');
-      }
-    }
 
-    if (userId != null) {
-      _loadExperiences(userId);
-    }
-  } catch (e) {
-    if (mounted) {
-      setState(() {
-        _isLoading = false;
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error loading data: $e')),
-      );
+      if (userId != null) {
+        _loadExperiences(userId);
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error loading data: $e')),
+        );
+      }
     }
   }
-}
+
   List<Experience> _combineExperiencesWithShared(List<Experience> base) {
-    final Map<String, Experience> experienceById = {for (final exp in base) exp.id: exp};
+    final Map<String, Experience> experienceById = {
+      for (final exp in base) exp.id: exp
+    };
     for (final shared in _sharedExperiences) {
       experienceById.putIfAbsent(shared.id, () => shared);
     }
     return experienceById.values.toList();
   }
 
-  Future<List<_SharedCategoryData>> _resolveSharedCategories(List<SharePermission> permissions) async {
+  Future<List<_SharedCategoryData>> _resolveSharedCategories(
+      List<SharePermission> permissions) async {
     if (permissions.isEmpty) return [];
     final List<_SharedCategoryData> results = [];
     for (final permission in permissions) {
       final ownerId = permission.ownerUserId;
-      print('[Collections] Resolving category ${permission.itemId} owned by $ownerId');
-      UserCategory? userCategory =
-          await _experienceService.getUserCategoryByOwner(ownerId, permission.itemId);
-      print('[Collections] UserCategory result: ${userCategory?.name ?? 'null'}');
+      print(
+          '[Collections] Resolving category ${permission.itemId} owned by $ownerId');
+      UserCategory? userCategory = await _experienceService
+          .getUserCategoryByOwner(ownerId, permission.itemId);
+      print(
+          '[Collections] UserCategory result: ${userCategory?.name ?? 'null'}');
       ColorCategory? colorCategory;
       if (userCategory == null) {
-        colorCategory =
-            await _experienceService.getColorCategoryByOwner(ownerId, permission.itemId);
-        print('[Collections] ColorCategory result: ${colorCategory?.name ?? 'null'}');
+        colorCategory = await _experienceService.getColorCategoryByOwner(
+            ownerId, permission.itemId);
+        print(
+            '[Collections] ColorCategory result: ${colorCategory?.name ?? 'null'}');
       }
       if (userCategory == null && colorCategory == null) {
-        print('[Collections] No category found for ${permission.itemId}, skipping');
+        print(
+            '[Collections] No category found for ${permission.itemId}, skipping');
         continue;
       }
       final ownerName = await _getOwnerDisplayName(ownerId);
@@ -956,16 +1127,19 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         permission: permission,
         ownerDisplayName: ownerName,
       ));
-      print('[Collections] Added shared category: ${userCategory?.name ?? colorCategory?.name}');
+      print(
+          '[Collections] Added shared category: ${userCategory?.name ?? colorCategory?.name}');
     }
     return results;
   }
 
-  Future<List<_SharedExperienceData>> _resolveSharedExperiences(List<SharePermission> permissions) async {
+  Future<List<_SharedExperienceData>> _resolveSharedExperiences(
+      List<SharePermission> permissions) async {
     if (permissions.isEmpty) return [];
     final List<_SharedExperienceData> results = [];
     for (final permission in permissions) {
-      final experience = await _experienceService.getExperience(permission.itemId);
+      final experience =
+          await _experienceService.getExperience(permission.itemId);
       if (experience == null) {
         continue;
       }
@@ -989,9 +1163,6 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     return name;
   }
 
-
-
-
   Future<void> _showAddCategoryModal() async {
     final result = await showModalBottomSheet<UserCategory>(
       context: context,
@@ -1003,9 +1174,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     );
 
     if (result != null) {
-_loadData();
-    } else {
-}
+      _loadData();
+    } else {}
   }
 
   // ADDED: Method to show add experience modal
@@ -1023,9 +1193,8 @@ _loadData();
     );
 
     if (result != null) {
-_loadData();
-    } else {
-}
+      _loadData();
+    } else {}
   }
 
   Future<void> _showEditSingleCategoryModal(UserCategory category) async {
@@ -1039,9 +1208,8 @@ _loadData();
     );
 
     if (result != null) {
-_loadData();
-    } else {
-}
+      _loadData();
+    } else {}
   }
 
   Future<void> _showDeleteCategoryConfirmation(UserCategory category) async {
@@ -1067,14 +1235,14 @@ _loadData();
     if (confirm == true && mounted) {
       try {
         await _experienceService.deleteUserCategory(category.id);
-if (mounted) {
+        if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('"${category.name}" category deleted.')),
           );
           _loadData();
         }
       } catch (e) {
-if (mounted) {
+        if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('Error deleting category: $e')),
           );
@@ -1085,54 +1253,48 @@ if (mounted) {
 
   // ADDED: Helper to update local orderIndex properties
   void _updateLocalOrderIndices() {
+    int nextOrder = 0;
     for (int i = 0; i < _categories.length; i++) {
-      // Create a new UserCategory instance with the updated index
-      // Directly modifying the object in the list might not trigger updates
-      // if UserCategory relies on equatable/identity.
-      _categories[i] = _categories[i].copyWith(orderIndex: i);
+      final category = _categories[i];
+      if (_isSharedCategory(category)) {
+        continue;
+      }
+      _categories[i] = category.copyWith(orderIndex: nextOrder);
+      nextOrder++;
     }
-}
+  }
 
   // ADDED: Method to save the new category order to Firestore
   Future<void> _saveCategoryOrder() async {
-    // Show loading indicator during save
-    // We might want a more subtle indicator than the main screen one
-    // but for now, let's signal activity.
-    setState(() => _isLoading = true);
-
     final List<Map<String, dynamic>> updates = [];
     for (final category in _categories) {
+      if (_isSharedCategory(category)) {
+        continue;
+      }
       if (category.id.isNotEmpty && category.orderIndex != null) {
         updates.add({
           'id': category.id,
           'orderIndex': category.orderIndex!,
         });
-      } else {
-}
+      }
     }
 
     if (updates.isEmpty) {
-setState(() => _isLoading = false);
       return;
     }
 
+    setState(() => _isLoading = true);
+
     try {
-await _experienceService.updateCategoryOrder(updates);
-if (mounted) {
-        // Optionally show a success message (might be too noisy)
-        // ScaffoldMessenger.of(context).showSnackBar(
-        //   const SnackBar(content: Text('Category order saved.'), duration: Duration(seconds: 1)),
-        // );
-        // No need to call _loadData here if we are confident the local state is correct
-        // and the save was successful. We just turn off the indicator.
+      await _experienceService.updateCategoryOrder(updates);
+      if (mounted) {
         setState(() => _isLoading = false);
       }
     } catch (e) {
-if (mounted) {
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text("Error saving category order: $e")),
         );
-        // If save failed, reload data to revert to the last known good state
         setState(() => _isLoading = false);
         _loadData();
       }
@@ -1141,256 +1303,259 @@ if (mounted) {
 
   int _getExperienceCountForCategory(UserCategory category) {
     // MODIFIED: Include experiences with this category as primary OR in otherCategories
-    return _experiences.where((exp) => 
-      exp.categoryId == category.id || 
-      exp.otherCategories.contains(category.id)
-    ).length;
+    return _experiences
+        .where((exp) =>
+            exp.categoryId == category.id ||
+            exp.otherCategories.contains(category.id))
+        .length;
   }
 
   // ADDED: Widget builder for a Category Grid Item (for web)
-Widget _buildCategoryGridItem(UserCategory category) {
-  final count = _getExperienceCountForCategory(category);
-  final SharePermission? permission = _sharedCategoryPermissions[category.id];
-  final bool isShared = permission != null;
-  final String? ownerName = isShared ? (_shareOwnerNames[permission!.ownerUserId] ?? 'Someone') : null;
-  return Card(
-    key: ValueKey('category_grid_${category.id}'),
-    clipBehavior: Clip.antiAlias,
-    elevation: 2.0,
-    child: InkWell(
-      onTap: () {
-        setState(() {
-          _selectedCategory = category;
-          _showingColorCategories = false;
-          _selectedColorCategory = null;
-        });
-      },
-      child: Padding(
-        padding: const EdgeInsets.all(8.0),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: <Widget>[
-            Text(
-              category.icon,
-              style: const TextStyle(fontSize: 32),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              category.name,
-              style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
-              textAlign: TextAlign.center,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-            ),
-            const SizedBox(height: 4),
-            Text(
-              '$count ${count == 1 ? "exp" : "exps"}',
-              style: Theme.of(context).textTheme.bodySmall,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-            if (isShared)
-              Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: Text(
-                  'Shared by $ownerName',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey[600]),
-                  textAlign: TextAlign.center,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
+  Widget _buildCategoryGridItem(UserCategory category) {
+    final count = _getExperienceCountForCategory(category);
+    final SharePermission? permission = _sharedCategoryPermissions[category.id];
+    final bool isShared = permission != null;
+    final String? ownerName = isShared
+        ? (_shareOwnerNames[permission!.ownerUserId] ?? 'Someone')
+        : null;
+    return Card(
+      key: ValueKey('category_grid_${category.id}'),
+      clipBehavior: Clip.antiAlias,
+      elevation: 2.0,
+      child: InkWell(
+        onTap: () {
+          setState(() {
+            _selectedCategory = category;
+            _showingColorCategories = false;
+            _selectedColorCategory = null;
+          });
+        },
+        child: Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: <Widget>[
+              Text(
+                category.icon,
+                style: const TextStyle(fontSize: 32),
               ),
-          ],
-        ),
-      ),
-    ),
-  );
-}
-
-
-Widget _buildCategoriesList() {
-  if (_categories.isEmpty) {
-    return const Center(child: Text('No categories found.'));
-  }
-
-  final bool isDesktopWeb = kIsWeb && MediaQuery.of(context).size.width > 600;
-
-  if (isDesktopWeb) {
-    final screenWidth = MediaQuery.of(context).size.width;
-    const double contentMaxWidth = 1200.0;
-    const double defaultPadding = 12.0;
-
-    double horizontalPadding;
-    if (screenWidth > contentMaxWidth) {
-      horizontalPadding = (screenWidth - contentMaxWidth) / 2;
-    } else {
-      horizontalPadding = defaultPadding;
-    }
-
-    return GridView.builder(
-      padding: EdgeInsets.symmetric(horizontal: horizontalPadding, vertical: defaultPadding),
-      itemCount: _categories.length,
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 5,
-        mainAxisSpacing: 10.0,
-        crossAxisSpacing: 10.0,
-        childAspectRatio: 3 / 3.5,
-      ),
-      itemBuilder: (context, index) {
-        final category = _categories[index];
-        return _buildCategoryGridItem(category);
-      },
-    );
-  } else {
-    return ReorderableListView.builder(
-      buildDefaultDragHandles: false,
-      itemCount: _categories.length,
-      itemBuilder: (context, index) {
-        final category = _categories[index];
-        final count = _getExperienceCountForCategory(category);
-        final SharePermission? permission = _sharedCategoryPermissions[category.id];
-        final bool isShared = permission != null;
-        final bool canEditCategory = !isShared || permission!.accessLevel == ShareAccessLevel.edit;
-        final bool canManageCategory = !isShared;
-        final String? ownerName = isShared ? (_shareOwnerNames[permission!.ownerUserId] ?? 'Someone') : null;
-
-        final Widget iconWidget = Text(
-          category.icon,
-          style: const TextStyle(fontSize: 24),
-        );
-
-        final Widget leadingWidget = isShared
-            ? iconWidget
-            : ReorderableDragStartListener(
-                index: index,
-                child: iconWidget,
-              );
-
-        final Widget subtitleWidget = isShared
-            ? Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text('$count ${count == 1 ? "experience" : "experiences"}'),
-                  Text(
+              const SizedBox(height: 8),
+              Text(
+                category.name,
+                style: Theme.of(context)
+                    .textTheme
+                    .titleSmall
+                    ?.copyWith(fontWeight: FontWeight.bold),
+                textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '$count ${count == 1 ? "exp" : "exps"}',
+                style: Theme.of(context).textTheme.bodySmall,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              if (isShared)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
                     'Shared by $ownerName',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey[600]),
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodySmall
+                        ?.copyWith(color: Colors.grey[600]),
+                    textAlign: TextAlign.center,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
-                ],
-              )
-            : Text('$count ${count == 1 ? "experience" : "experiences"}');
-
-        return ListTile(
-          key: ValueKey(category.id),
-          leading: leadingWidget,
-          title: Text(category.name),
-          subtitle: subtitleWidget,
-          trailing: PopupMenuButton<String>(
-            icon: const Icon(Icons.more_vert),
-            tooltip: 'Category Options',
-            color: Colors.white,
-            onSelected: (String result) {
-              switch (result) {
-                case 'edit':
-                  _showEditSingleCategoryModal(category);
-                  break;
-                case 'share':
-                  _showShareCategoryBottomSheet(category);
-                  break;
-                case 'delete':
-                  _showDeleteCategoryConfirmation(category);
-                  break;
-              }
-            },
-            itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
-              PopupMenuItem<String>(
-                value: 'edit',
-                enabled: canEditCategory,
-                child: const ListTile(
-                  leading: Icon(Icons.edit_outlined),
-                  title: Text('Edit'),
                 ),
-              ),
-              PopupMenuItem<String>(
-                value: 'share',
-                enabled: canManageCategory,
-                child: const ListTile(
-                  leading: Icon(Icons.ios_share),
-                  title: Text('Share'),
-                ),
-              ),
-              PopupMenuItem<String>(
-                value: 'delete',
-                enabled: canManageCategory,
-                child: const ListTile(
-                  leading: Icon(Icons.delete_outline, color: Colors.red),
-                  title: Text('Delete', style: TextStyle(color: Colors.red)),
-                ),
-              ),
             ],
           ),
-          onTap: () {
-            setState(() {
-              _selectedCategory = category;
-              _showingColorCategories = false;
-              _selectedColorCategory = null;
-            });
-          },
-        );
-      },
-      onReorder: (int oldIndex, int newIndex) {
-        if (newIndex > oldIndex) {
-          newIndex -= 1;
-        }
-        if (oldIndex < 0 || oldIndex >= _categories.length || newIndex < 0 || newIndex >= _categories.length) {
-          return;
-        }
-        final movingCategory = _categories[oldIndex];
-        final targetCategory = _categories[newIndex];
-        if (_sharedCategoryPermissions.containsKey(movingCategory.id) ||
-            _sharedCategoryPermissions.containsKey(targetCategory.id)) {
-          setState(() {});
-          return;
-        }
-        setState(() {
-          final UserCategory item = _categories.removeAt(oldIndex);
-          _categories.insert(newIndex, item);
-          _updateLocalOrderIndices();
-        });
-        _saveCategoryOrder();
-      },
+        ),
+      ),
     );
   }
-}
 
+  Widget _buildCategoriesList() {
+    if (_categories.isEmpty) {
+      return const Center(child: Text('No categories found.'));
+    }
+
+    final bool isDesktopWeb = kIsWeb && MediaQuery.of(context).size.width > 600;
+
+    if (isDesktopWeb) {
+      final screenWidth = MediaQuery.of(context).size.width;
+      const double contentMaxWidth = 1200.0;
+      const double defaultPadding = 12.0;
+
+      double horizontalPadding;
+      if (screenWidth > contentMaxWidth) {
+        horizontalPadding = (screenWidth - contentMaxWidth) / 2;
+      } else {
+        horizontalPadding = defaultPadding;
+      }
+
+      return GridView.builder(
+        padding: EdgeInsets.symmetric(
+            horizontal: horizontalPadding, vertical: defaultPadding),
+        itemCount: _categories.length,
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 5,
+          mainAxisSpacing: 10.0,
+          crossAxisSpacing: 10.0,
+          childAspectRatio: 3 / 3.5,
+        ),
+        itemBuilder: (context, index) {
+          final category = _categories[index];
+          return _buildCategoryGridItem(category);
+        },
+      );
+    } else {
+      return ReorderableListView.builder(
+        buildDefaultDragHandles: false,
+        itemCount: _categories.length,
+        itemBuilder: (context, index) {
+          final category = _categories[index];
+          final count = _getExperienceCountForCategory(category);
+          final SharePermission? permission =
+              _sharedCategoryPermissions[category.id];
+          final bool isShared = permission != null;
+          final bool canEditCategory =
+              !isShared || permission!.accessLevel == ShareAccessLevel.edit;
+          final bool canManageCategory = !isShared;
+          final String? ownerName = isShared
+              ? (_shareOwnerNames[permission!.ownerUserId] ?? 'Someone')
+              : null;
+
+          final Widget iconWidget = Text(
+            category.icon,
+            style: const TextStyle(fontSize: 24),
+          );
+
+          final Widget leadingWidget = isShared
+              ? iconWidget
+              : ReorderableDragStartListener(
+                  index: index,
+                  child: iconWidget,
+                );
+
+          final Widget subtitleWidget = isShared
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('$count ${count == 1 ? "experience" : "experiences"}'),
+                    Text(
+                      'Shared by $ownerName',
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodySmall
+                          ?.copyWith(color: Colors.grey[600]),
+                    ),
+                  ],
+                )
+              : Text('$count ${count == 1 ? "experience" : "experiences"}');
+
+          return ListTile(
+            key: ValueKey(category.id),
+            leading: leadingWidget,
+            title: Text(category.name),
+            subtitle: subtitleWidget,
+            trailing: PopupMenuButton<String>(
+              icon: const Icon(Icons.more_vert),
+              tooltip: 'Category Options',
+              color: Colors.white,
+              onSelected: (String result) {
+                switch (result) {
+                  case 'edit':
+                    _showEditSingleCategoryModal(category);
+                    break;
+                  case 'share':
+                    _showShareCategoryBottomSheet(category);
+                    break;
+                  case 'delete':
+                    _showDeleteCategoryConfirmation(category);
+                    break;
+                }
+              },
+              itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
+                PopupMenuItem<String>(
+                  value: 'edit',
+                  enabled: canEditCategory,
+                  child: const ListTile(
+                    leading: Icon(Icons.edit_outlined),
+                    title: Text('Edit'),
+                  ),
+                ),
+                PopupMenuItem<String>(
+                  value: 'share',
+                  enabled: canManageCategory,
+                  child: const ListTile(
+                    leading: Icon(Icons.ios_share),
+                    title: Text('Share'),
+                  ),
+                ),
+                PopupMenuItem<String>(
+                  value: 'delete',
+                  enabled: canManageCategory,
+                  child: const ListTile(
+                    leading: Icon(Icons.delete_outline, color: Colors.red),
+                    title: Text('Delete', style: TextStyle(color: Colors.red)),
+                  ),
+                ),
+              ],
+            ),
+            onTap: () {
+              setState(() {
+                _selectedCategory = category;
+                _showingColorCategories = false;
+                _selectedColorCategory = null;
+              });
+            },
+          );
+        },
+        onReorder: (int oldIndex, int newIndex) {
+          if (newIndex > oldIndex) {
+            newIndex -= 1;
+          }
+          if (oldIndex < 0 ||
+              oldIndex >= _categories.length ||
+              newIndex < 0 ||
+              newIndex >= _categories.length) {
+            return;
+          }
+          final movingCategory = _categories[oldIndex];
+          final targetCategory = _categories[newIndex];
+          if (_sharedCategoryPermissions.containsKey(movingCategory.id) ||
+              _sharedCategoryPermissions.containsKey(targetCategory.id)) {
+            setState(() {});
+            return;
+          }
+          setState(() {
+            final UserCategory item = _categories.removeAt(oldIndex);
+            _categories.insert(newIndex, item);
+            _updateLocalOrderIndices();
+          });
+          _saveCategoryOrder();
+        },
+      );
+    }
+  }
 
   // ADDED: Method to apply sorting and save the new order
   Future<void> _applySortAndSave(CategorySortType sortType) async {
-setState(() {
-      if (sortType == CategorySortType.alphabetical) {
-        _categories.sort(
-            (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-      } else if (sortType == CategorySortType.mostRecent) {
-        _categories.sort((a, b) {
-          // Handle null timestamps gracefully during sort
-          final tsA = a.lastUsedTimestamp;
-          final tsB = b.lastUsedTimestamp;
-          if (tsA == null && tsB == null) {
-            // If both null, maintain relative order based on name for stability
-            return a.name.toLowerCase().compareTo(b.name.toLowerCase());
-          }
-          if (tsA == null) return 1; // Treat null as oldest
-          if (tsB == null) return -1; // Treat null as oldest
-          return tsB.compareTo(tsA); // Sort descending (most recent first)
-        });
-      }
+    final List<UserCategory> sorted = List<UserCategory>.from(_categories);
+    sorted.sort((a, b) => _compareCategoriesForSort(a, b, sortType));
 
-      // Update local indices based on the new sort order
+    setState(() {
+      _categorySortType = sortType;
+      _categories = sorted;
       _updateLocalOrderIndices();
     });
 
-    // Persist the newly assigned order indices
     await _saveCategoryOrder();
   }
 
@@ -1427,8 +1592,11 @@ setState(() {
             (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
       } else if (sortType == ExperienceSortType.mostRecent) {
         listToSort.sort((a, b) {
-          // Sort descending by last update time (most recently updated first)
-          return b.updatedAt.compareTo(a.updatedAt);
+          final DateTime tsA = _sharedExperienceUpdatedAt(a);
+          final DateTime tsB = _sharedExperienceUpdatedAt(b);
+          final int cmp = tsB.compareTo(tsA);
+          if (cmp != 0) return cmp;
+          return a.name.toLowerCase().compareTo(b.name.toLowerCase());
         });
       } else if (sortType == ExperienceSortType.distanceFromMe) {
         // --- MODIFIED: Distance Sorting Logic now operates on listToSort ---
@@ -1456,11 +1624,13 @@ setState(() {
           _filteredExperiences.sort(
               (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
         } else if (sortType == ExperienceSortType.mostRecent) {
-          _filteredExperiences.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+          _filteredExperiences
+              .sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
         } else if (sortType == ExperienceSortType.distanceFromMe) {
           await _sortExperiencesByDistance(_filteredExperiences);
         } else if (sortType == ExperienceSortType.city) {
-          String normalizeCity(String? city) => (city ?? '').trim().toLowerCase();
+          String normalizeCity(String? city) =>
+              (city ?? '').trim().toLowerCase();
           _filteredExperiences.sort((a, b) {
             final ca = normalizeCity(a.location.city);
             final cb = normalizeCity(b.location.city);
@@ -1477,7 +1647,7 @@ setState(() {
       }
       // Add other sort types here if needed
     } catch (e) {
-if (mounted) {
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error sorting experiences: $e')),
         );
@@ -1490,13 +1660,13 @@ if (mounted) {
         });
       }
     }
-}
+  }
 
   // --- ADDED: Method to sort experiences by distance ---
   // MODIFIED: Takes the list to sort as a parameter
   Future<void> _sortExperiencesByDistance(
       List<Experience> experiencesToSort) async {
-Position? currentPosition;
+    Position? currentPosition;
     bool locationPermissionGranted = false;
 
     try {
@@ -1528,13 +1698,13 @@ Position? currentPosition;
       locationPermissionGranted = true;
 
       // 3. Get Current Location (with timeout)
-currentPosition = await Geolocator.getCurrentPosition(
+      currentPosition = await Geolocator.getCurrentPosition(
         desiredAccuracy:
             LocationAccuracy.medium, // Medium accuracy is often faster
         timeLimit: Duration(seconds: 10), // Add a timeout
       );
-} catch (e) {
-if (mounted) {
+    } catch (e) {
+      if (mounted) {
         String message = 'Could not get current location.';
         if (e is TimeoutException) {
           message = 'Could not get current location: Request timed out.';
@@ -1568,10 +1738,10 @@ if (mounted) {
             exp.location.longitude,
           );
         } catch (e) {
-distance = null; // Treat calculation error as unknown distance
+          distance = null; // Treat calculation error as unknown distance
         }
       } else {
-distance = null; // No coordinates, unknown distance
+        distance = null; // No coordinates, unknown distance
       }
       experiencesWithDistance.add({'experience': exp, 'distance': distance});
     }
@@ -1595,15 +1765,14 @@ distance = null; // No coordinates, unknown distance
     experiencesToSort.addAll(experiencesWithDistance
         .map((item) => item['experience'] as Experience)
         .toList());
-
-}
+  }
   // --- END ADDED ---
 
   // --- REFACTORED: Method to apply sorting to the grouped content items list ---
   // ADDED: Optional parameter to apply sort to the filtered list
   Future<void> _applyContentSort(ContentSortType sortType,
       {bool applyToFiltered = false}) async {
-setState(() {
+    setState(() {
       _contentSortType = sortType;
       // Show loading only for distance sort on the main list
       if (sortType == ContentSortType.distanceFromMe && !applyToFiltered) {
@@ -1614,33 +1783,40 @@ setState(() {
     // Determine which list to sort
     List<GroupedContentItem> listToSort =
         applyToFiltered ? _filteredGroupedContentItems : _groupedContentItems;
-    
-try {
+
+    try {
       if (sortType == ContentSortType.mostRecent) {
         // Sort by media item creation date (descending)
-listToSort.sort((a, b) {
-          final comparison = b.mediaItem.createdAt.compareTo(a.mediaItem.createdAt);
+        listToSort.sort((a, b) {
+          final comparison =
+              b.mediaItem.createdAt.compareTo(a.mediaItem.createdAt);
           // Show first few comparisons for debugging
           if (listToSort.indexOf(a) < 5 || listToSort.indexOf(b) < 5) {
-            final aPath = a.mediaItem.path.length > 30 ? a.mediaItem.path.substring(0, 30) + "..." : a.mediaItem.path;
-            final bPath = b.mediaItem.path.length > 30 ? b.mediaItem.path.substring(0, 30) + "..." : b.mediaItem.path;
-}
+            final aPath = a.mediaItem.path.length > 30
+                ? a.mediaItem.path.substring(0, 30) + "..."
+                : a.mediaItem.path;
+            final bPath = b.mediaItem.path.length > 30
+                ? b.mediaItem.path.substring(0, 30) + "..."
+                : b.mediaItem.path;
+          }
           return comparison;
         });
-        
+
         // Debug logging to show final sort order with more detail
-for (int i = 0; i < listToSort.length && i < 20; i++) {
+        for (int i = 0; i < listToSort.length && i < 20; i++) {
           final item = listToSort[i];
-          final expNames = item.associatedExperiences.map((e) => e.name).join(', ');
-}
-        
+          final expNames =
+              item.associatedExperiences.map((e) => e.name).join(', ');
+        }
+
         // Also search for specific items we're interested in
         for (int i = 0; i < listToSort.length; i++) {
           final item = listToSort[i];
-          if (item.mediaItem.createdAt.toString().contains('23:53:15') || 
+          if (item.mediaItem.createdAt.toString().contains('23:53:15') ||
               item.mediaItem.createdAt.toString().contains('23:52:19')) {
-            final expNames = item.associatedExperiences.map((e) => e.name).join(', ');
-}
+            final expNames =
+                item.associatedExperiences.map((e) => e.name).join(', ');
+          }
         }
       } else if (sortType == ContentSortType.alphabetical) {
         // Sort by the name of the *first* associated experience (ascending)
@@ -1670,6 +1846,7 @@ for (int i = 0; i < listToSort.length && i < 20; i++) {
           }
           return '';
         }
+
         listToSort.sort((a, b) {
           final ca = cityOf(a);
           final cb = cityOf(b);
@@ -1688,7 +1865,7 @@ for (int i = 0; i < listToSort.length && i < 20; i++) {
         await _applyContentSort(sortType, applyToFiltered: true);
       }
     } catch (e, stackTrace) {
-if (mounted) {
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error sorting content: $e')),
         );
@@ -1705,18 +1882,19 @@ if (mounted) {
     if (mounted && sortType != ContentSortType.distanceFromMe) {
       setState(() {});
     }
-final displayList = applyToFiltered ? _filteredGroupedContentItems : _groupedContentItems;
-for (int i = 0; i < displayList.length && i < 10; i++) {
+    final displayList =
+        applyToFiltered ? _filteredGroupedContentItems : _groupedContentItems;
+    for (int i = 0; i < displayList.length && i < 10; i++) {
       final item = displayList[i];
       final expNames = item.associatedExperiences.map((e) => e.name).join(', ');
-}
+    }
   }
 
   // --- REFACTORED: Method to sort grouped content items by distance --- ///
   // MODIFIED: Takes the list to sort as a parameter
   Future<void> _sortContentByDistance(
       List<GroupedContentItem> contentToSort) async {
-Position? currentPosition;
+    Position? currentPosition;
     bool locationPermissionGranted = false;
 
     // Much of this logic is duplicated from _sortExperiencesByDistance
@@ -1747,12 +1925,12 @@ Position? currentPosition;
 
       locationPermissionGranted = true;
 
-currentPosition = await Geolocator.getCurrentPosition(
+      currentPosition = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.medium,
         timeLimit: Duration(seconds: 10),
       );
-} catch (e) {
-if (mounted) {
+    } catch (e) {
+      if (mounted) {
         String message = 'Could not get current location.';
         if (e is TimeoutException) {
           message = 'Could not get current location: Request timed out.';
@@ -1785,10 +1963,8 @@ if (mounted) {
             if (minGroupDistance == null || distance < minGroupDistance) {
               minGroupDistance = distance;
             }
-          } catch (e) {
-          }
-        } else {
-}
+          } catch (e) {}
+        } else {}
       }
       // Store the calculated minimum distance in the object
       group.minDistance = minGroupDistance;
@@ -1807,8 +1983,7 @@ if (mounted) {
 
       return distA.compareTo(distB); // Sort by distance ascending
     });
-
-}
+  }
   // --- END REFACTORED ---
 
   @override
@@ -1919,7 +2094,8 @@ if (mounted) {
                 PopupMenuItem<ExperienceSortType>(
                   onTap: () {
                     setState(() {
-                      _groupByLocationExperiences = !_groupByLocationExperiences;
+                      _groupByLocationExperiences =
+                          !_groupByLocationExperiences;
                       _countryExpansionExperiences.clear();
                       _stateExpansionExperiences.clear();
                       _cityExpansionExperiences.clear();
@@ -1933,7 +2109,9 @@ if (mounted) {
                         onChanged: (_) {},
                       ),
                       const SizedBox(width: 8),
-                      const Expanded(child: Text('Group by Location (Country > State > City)')),
+                      const Expanded(
+                          child: Text(
+                              'Group by Location (Country > State > City)')),
                     ],
                   ),
                 ),
@@ -1991,7 +2169,9 @@ if (mounted) {
                         onChanged: (_) {},
                       ),
                       const SizedBox(width: 8),
-                      const Expanded(child: Text('Group by Location (Country > State > City)')),
+                      const Expanded(
+                          child: Text(
+                              'Group by Location (Country > State > City)')),
                     ],
                   ),
                 ),
@@ -2019,11 +2199,12 @@ if (mounted) {
               color: Colors.white,
               child: Column(
                 children: [
-                // ADDED: Search Bar Area
-                Builder( // ADDED Builder for conditional width
-                  builder: (context) {
-                    final bool isDesktopWeb = kIsWeb && MediaQuery.of(context).size.width > 600;
-                    
+                  // ADDED: Search Bar Area
+                  Builder(// ADDED Builder for conditional width
+                      builder: (context) {
+                    final bool isDesktopWeb =
+                        kIsWeb && MediaQuery.of(context).size.width > 600;
+
                     // Original search bar widget (TypeAheadField wrapped in Padding)
                     // This definition includes the original Padding and TypeAheadField configuration.
                     Widget searchBarWidget = Padding(
@@ -2034,214 +2215,202 @@ if (mounted) {
                           cardColor: Colors.white,
                           canvasColor: Colors.white,
                           colorScheme: Theme.of(context).colorScheme.copyWith(
-                            surface: Colors.white,
-                            background: Colors.white,
+                                surface: Colors.white,
+                                background: Colors.white,
+                              ),
+                        ),
+                        child: TypeAheadField<Experience>(
+                          builder: (context, controller, focusNode) {
+                            // ADDED: Clear the TypeAhead controller when requested
+                            if (_clearSearchOnNextBuild) {
+                              controller.clear();
+                              focusNode.unfocus();
+                              WidgetsBinding.instance.addPostFrameCallback((_) {
+                                if (mounted) {
+                                  setState(() {
+                                    _clearSearchOnNextBuild = false;
+                                  });
+                                }
+                              });
+                            }
+                            return TextField(
+                              controller:
+                                  controller, // This is TypeAhead's controller
+                              focusNode: focusNode,
+                              autofocus: false,
+                              decoration: InputDecoration(
+                                labelText: 'Search your experiences',
+                                prefixIcon: Icon(Icons.search,
+                                    color: Theme.of(context).primaryColor),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(25.0),
+                                ),
+                                suffixIcon: IconButton(
+                                  icon: const Icon(Icons.clear),
+                                  tooltip: 'Clear Search',
+                                  onPressed: () {
+                                    controller
+                                        .clear(); // Clear TypeAhead's controller
+                                    _searchController
+                                        .clear(); // Clear state's controller
+                                    FocusScope.of(context).unfocus();
+                                    // setState(() {}); // Removed as TypeAheadField/TextField should update with controller
+                                  },
+                                ),
+                              ),
+                            );
+                          },
+                          suggestionsCallback: (pattern) async {
+                            return await _getExperienceSuggestions(pattern);
+                          },
+                          itemBuilder: (context, suggestion) {
+                            return Container(
+                              color: Colors.white,
+                              child: ListTile(
+                                leading: const Icon(Icons.history),
+                                title: Text(suggestion.name),
+                              ),
+                            );
+                          },
+                          onSelected: (suggestion) async {
+                            await _openExperience(suggestion);
+                            if (mounted) {
+                              setState(() {
+                                _clearSearchOnNextBuild = true;
+                              });
+                            }
+                            _searchController.clear();
+                            FocusScope.of(context).unfocus();
+                          },
+                          emptyBuilder: (context) => const Padding(
+                            padding: EdgeInsets.all(8.0),
+                            child: Text('No experiences found.',
+                                style: TextStyle(color: Colors.grey)),
                           ),
-                        ),
-                      child: TypeAheadField<Experience>(
-                        builder: (context, controller, focusNode) {
-                          // ADDED: Clear the TypeAhead controller when requested
-                          if (_clearSearchOnNextBuild) {
-                            controller.clear();
-                            focusNode.unfocus();
-                            WidgetsBinding.instance.addPostFrameCallback((_) {
-                              if (mounted) {
-                                setState(() {
-                                  _clearSearchOnNextBuild = false;
-                                });
-                              }
-                            });
-                          }
-                          return TextField(
-                            controller: controller, // This is TypeAhead's controller
-                            focusNode: focusNode,
-                            autofocus: false,
-                            decoration: InputDecoration(
-                              labelText: 'Search your experiences',
-                              prefixIcon: Icon(Icons.search, color: Theme.of(context).primaryColor),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(25.0),
-                              ),
-                              suffixIcon: IconButton(
-                                icon: const Icon(Icons.clear),
-                                tooltip: 'Clear Search',
-                                onPressed: () {
-                                  controller.clear(); // Clear TypeAhead's controller
-                                  _searchController.clear(); // Clear state's controller
-                                  FocusScope.of(context).unfocus();
-                                  // setState(() {}); // Removed as TypeAheadField/TextField should update with controller
-                                },
-                              ),
-                            ),
-                          );
-                        },
-                        suggestionsCallback: (pattern) async {
-                          return await _getExperienceSuggestions(pattern);
-                        },
-                        itemBuilder: (context, suggestion) {
-                          return Container(
-                            color: Colors.white,
-                            child: ListTile(
-                            leading: const Icon(Icons.history),
-                            title: Text(suggestion.name),
-                            ),
-                          );
-                        },
-                        onSelected: (suggestion) async {
-final category = _categories.firstWhere(
-                              (cat) => cat.id == suggestion.categoryId, 
-                              orElse: () => UserCategory(
-                                  id: '', 
-                                  name: suggestion.categoryId != null 
-                                      ? 'Category Not Found' 
-                                      : 'Uncategorized', 
-                                  icon: '❓', 
-                                  ownerUserId: '' 
-                              )
-                          );
-
-                          final result = await Navigator.push<bool>(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => ExperiencePageScreen(
-                                experience: suggestion,
-                                category: category, 
-                                userColorCategories: _colorCategories,
-                              ),
-                            ),
-                          );
-                          if (mounted) {
-                            setState(() {
-                              _clearSearchOnNextBuild = true;
-                            });
-                          }
-                          _searchController.clear(); 
-                          FocusScope.of(context).unfocus();
-                          if (result == true && mounted) {
-                            _loadData();
-                          }
-                        },
-                        emptyBuilder: (context) => const Padding(
-                          padding: EdgeInsets.all(8.0),
-                          child: Text('No experiences found.',
-                              style: TextStyle(color: Colors.grey)),
-                        ),
                         ),
                       ),
                     );
 
                     if (isDesktopWeb) {
-                      return Center( // Center the search bar on desktop
+                      return Center(
+                        // Center the search bar on desktop
                         child: SizedBox(
-                          width: MediaQuery.of(context).size.width * 0.3, // 50% of screen width
+                          width: MediaQuery.of(context).size.width *
+                              0.3, // 50% of screen width
                           child: searchBarWidget,
                         ),
                       );
                     } else {
                       return searchBarWidget; // Original layout for mobile/mobile-web
                     }
-                  }
-                ),
-                // ADDED: TabBar placed here in the body's Column
-                Container(
-                  color: Colors.white,
-                  child: TabBar(
-                    controller: _tabController,
-                    tabs: const [
-                      Tab(text: 'Categories'),
-                      Tab(text: 'Experiences'),
-                      Tab(text: 'Content'),
-                    ],
-                    labelColor: Theme.of(context).primaryColor,
-                    unselectedLabelColor: Colors.grey,
-                    indicatorColor: Theme.of(context).primaryColor,
+                  }),
+                  // ADDED: TabBar placed here in the body's Column
+                  Container(
+                    color: Colors.white,
+                    child: TabBar(
+                      controller: _tabController,
+                      tabs: const [
+                        Tab(text: 'Categories'),
+                        Tab(text: 'Experiences'),
+                        Tab(text: 'Content'),
+                      ],
+                      labelColor: Theme.of(context).primaryColor,
+                      unselectedLabelColor: Colors.grey,
+                      indicatorColor: Theme.of(context).primaryColor,
+                    ),
                   ),
-                ),
-                // Existing TabBarView wrapped in Expanded
-                Expanded(
-                  child: TabBarView(
-                    controller: _tabController,
-                    children: [
-                      // MODIFIED: Conditionally show category list or category experiences
-                      // _selectedCategory == null
-                      //     ? _buildCategoriesList()
-                      //     : _buildCategoryExperiencesList(_selectedCategory!),
-                      // --- MODIFIED: First tab now uses Column and toggle ---
-                      Container(
-                        color: Colors.white,
-                        child: Column(
-                          children: [
-                            Padding(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 16.0, vertical: 8.0),
-                              child: Align(
-                                alignment: Alignment.centerRight,
-                                child: TextButton.icon(
-                                  icon: Icon(_showingColorCategories
-                                      ? Icons.category_outlined
-                                      : Icons.color_lens_outlined),
-                                  label: Text(_showingColorCategories
-                                      ? 'Categories'
-                                      : 'Color Categories'),
-                                  onPressed: () {
-                                    setState(() {
-                                      _showingColorCategories =
-                                          !_showingColorCategories;
-                                      _selectedCategory =
-                                          null; // Clear selected text category when switching views
-                                      _selectedColorCategory =
-                                          null; // Clear selected color category when switching views
-                                    });
-                                  },
-                                ),
-                              ),
-                            ),
-                            // Show reorder hint only when viewing main category lists (not individual category experiences)
-                            // and only on mobile devices where reordering is available
-                            if (_selectedCategory == null && _selectedColorCategory == null && !(kIsWeb && MediaQuery.of(context).size.width > 600))
+                  // Existing TabBarView wrapped in Expanded
+                  Expanded(
+                    child: TabBarView(
+                      controller: _tabController,
+                      children: [
+                        // MODIFIED: Conditionally show category list or category experiences
+                        // _selectedCategory == null
+                        //     ? _buildCategoriesList()
+                        //     : _buildCategoryExperiencesList(_selectedCategory!),
+                        // --- MODIFIED: First tab now uses Column and toggle ---
+                        Container(
+                          color: Colors.white,
+                          child: Column(
+                            children: [
                               Padding(
-                                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
-                                child: Text(
-                                  'Tap and hold to reorder',
-                                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                    color: Colors.grey[600],
-                                    fontStyle: FontStyle.italic,
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 16.0, vertical: 8.0),
+                                child: Align(
+                                  alignment: Alignment.centerRight,
+                                  child: TextButton.icon(
+                                    icon: Icon(_showingColorCategories
+                                        ? Icons.category_outlined
+                                        : Icons.color_lens_outlined),
+                                    label: Text(_showingColorCategories
+                                        ? 'Categories'
+                                        : 'Color Categories'),
+                                    onPressed: () {
+                                      setState(() {
+                                        _showingColorCategories =
+                                            !_showingColorCategories;
+                                        _selectedCategory =
+                                            null; // Clear selected text category when switching views
+                                        _selectedColorCategory =
+                                            null; // Clear selected color category when switching views
+                                      });
+                                    },
                                   ),
-                                  textAlign: TextAlign.center,
                                 ),
                               ),
-                            Expanded(
-                              child: _selectedCategory != null
-                                  ? _buildCategoryExperiencesList(
-                                      _selectedCategory!) // Still show experiences if a text category was selected
-                                  // --- MODIFIED: Check for selected color category first --- START ---
-                                  : _selectedColorCategory != null
-                                      ? _buildColorCategoryExperiencesList(
-                                          _selectedColorCategory!) // Show color experiences
-                                      : _showingColorCategories
-                                          ? _buildColorCategoriesList() // Show color list
-                                          : _buildCategoriesList(), // Show text list
-                              // --- MODIFIED: Check for selected color category first --- END ---
-                            ),
-                          ],
+                              // Show reorder hint only when viewing main category lists (not individual category experiences)
+                              // and only on mobile devices where reordering is available
+                              if (_selectedCategory == null &&
+                                  _selectedColorCategory == null &&
+                                  !(kIsWeb &&
+                                      MediaQuery.of(context).size.width > 600))
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 16.0, vertical: 4.0),
+                                  child: Text(
+                                    'Tap and hold to reorder',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .bodySmall
+                                        ?.copyWith(
+                                          color: Colors.grey[600],
+                                          fontStyle: FontStyle.italic,
+                                        ),
+                                    textAlign: TextAlign.center,
+                                  ),
+                                ),
+                              Expanded(
+                                child: _selectedCategory != null
+                                    ? _buildCategoryExperiencesList(
+                                        _selectedCategory!) // Still show experiences if a text category was selected
+                                    // --- MODIFIED: Check for selected color category first --- START ---
+                                    : _selectedColorCategory != null
+                                        ? _buildColorCategoryExperiencesList(
+                                            _selectedColorCategory!) // Show color experiences
+                                        : _showingColorCategories
+                                            ? _buildColorCategoriesList() // Show color list
+                                            : _buildCategoriesList(), // Show text list
+                                // --- MODIFIED: Check for selected color category first --- END ---
+                              ),
+                            ],
+                          ),
                         ),
-                      ),
-                      // --- END MODIFIED ---
-                      Container(
-                        color: Colors.white,
-                        child: _buildExperiencesListView(),
-                      ),
-                      // MODIFIED: Call builder for Content tab
-                      Container(
-                        color: Colors.white,
-                        child: _buildContentTabBody(),
-                      ),
-                    ],
+                        // --- END MODIFIED ---
+                        Container(
+                          color: Colors.white,
+                          child: _buildExperiencesListView(),
+                        ),
+                        // MODIFIED: Call builder for Content tab
+                        Container(
+                          color: Colors.white,
+                          child: _buildContentTabBody(),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
       floatingActionButton: FloatingActionButton(
         onPressed: _showAddMenu,
         tooltip: 'Add',
@@ -2313,7 +2482,8 @@ final category = _categories.firstWhere(
               child: Container(
                 decoration: BoxDecoration(
                   color: Theme.of(context).scaffoldBackgroundColor,
-                  borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+                  borderRadius:
+                      const BorderRadius.vertical(top: Radius.circular(16)),
                 ),
                 child: ReceiveShareScreen(
                   sharedFiles: const [],
@@ -2329,202 +2499,185 @@ final category = _categories.firstWhere(
   }
 
   // REFACTORED: Extracted list item builder for reuse
-Widget _buildExperienceListItem(Experience experience) {
-  // Find the matching category icon and name using categoryId
-  final UserCategory category = _categories.firstWhere(
-    (cat) => cat.id == experience.categoryId,
-    orElse: () => UserCategory(
-      id: '',
-      name: 'Uncategorized',
-      icon: '?',
-      ownerUserId: '',
-    ),
-  );
-  final categoryIcon = category.icon;
-  final categoryName = category.name;
-
-  // Get the full address
-  final fullAddress = experience.location.address;
-  // Determine leading box background color from color category with opacity
-  final colorCategoryForBox = _colorCategories.firstWhereOrNull(
-    (cc) => cc.id == experience.colorCategoryId,
-  );
-  final Color leadingBoxColor = colorCategoryForBox != null
-      ? _parseColor(colorCategoryForBox.colorHex).withOpacity(0.5)
-      : Colors.white;
-  // Number of related content items
-  final int contentCount = experience.sharedMediaItemIds.length;
-  final SharePermission? sharePermission = _sharedExperiencePermissions[experience.id];
-  final bool isShared = sharePermission != null;
-  final String? ownerName =
-      isShared ? (_shareOwnerNames[sharePermission!.ownerUserId] ?? 'Someone') : null;
-
-  return ListTile(
-    key: ValueKey(experience.id), // Use experience ID as key
-    contentPadding: const EdgeInsets.symmetric(horizontal: 8.0),
-    visualDensity: const VisualDensity(horizontal: -4),
-    leading: Container(
-      width: 56,
-      height: 56,
-      alignment: Alignment.center,
-      decoration: BoxDecoration(
-        color: leadingBoxColor,
-        borderRadius: BorderRadius.circular(8.0),
+  Widget _buildExperienceListItem(Experience experience) {
+    // Find the matching category icon and name using categoryId
+    final UserCategory category = _categories.firstWhere(
+      (cat) => cat.id == experience.categoryId,
+      orElse: () => UserCategory(
+        id: '',
+        name: 'Uncategorized',
+        icon: '?',
+        ownerUserId: '',
       ),
-      child: MediaQuery(
-        data: MediaQuery.of(context).copyWith(textScaleFactor: 1.0),
-        child: FittedBox(
-          fit: BoxFit.scaleDown,
-          alignment: Alignment.center,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Text(
-                categoryIcon,
-                style: const TextStyle(fontSize: 28),
-              ),
-            ],
-          ),
+    );
+    final categoryIcon = category.icon;
+    final categoryName = category.name;
+
+    // Get the full address
+    final fullAddress = experience.location.address;
+    // Determine leading box background color from color category with opacity
+    final colorCategoryForBox = _colorCategories.firstWhereOrNull(
+      (cc) => cc.id == experience.colorCategoryId,
+    );
+    final Color leadingBoxColor = colorCategoryForBox != null
+        ? _parseColor(colorCategoryForBox.colorHex).withOpacity(0.5)
+        : Colors.white;
+    // Number of related content items
+    final int contentCount = experience.sharedMediaItemIds.length;
+    final SharePermission? sharePermission =
+        _sharedExperiencePermissions[experience.id];
+    final bool isShared = sharePermission != null;
+    final String? ownerName = isShared
+        ? (_shareOwnerNames[sharePermission!.ownerUserId] ?? 'Someone')
+        : null;
+
+    return ListTile(
+      key: ValueKey(experience.id), // Use experience ID as key
+      contentPadding: const EdgeInsets.symmetric(horizontal: 8.0),
+      visualDensity: const VisualDensity(horizontal: -4),
+      leading: Container(
+        width: 56,
+        height: 56,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: leadingBoxColor,
+          borderRadius: BorderRadius.circular(8.0),
         ),
-      ),
-    ),
-    title: Text(
-      experience.name,
-      overflow: TextOverflow.ellipsis,
-      maxLines: 1,
-    ),
-    subtitle: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        if (isShared)
-          Text(
-            'Shared by $ownerName',
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey[600]),
-          ),
-        if (fullAddress != null && fullAddress.isNotEmpty)
-          Text(
-            fullAddress,
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-        if (experience.otherCategories.isNotEmpty || contentCount > 0)
-          Padding(
-            padding: const EdgeInsets.only(top: 2.0),
-            child: Row(
+        child: MediaQuery(
+          data: MediaQuery.of(context).copyWith(textScaleFactor: 1.0),
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.center,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Expanded(
-                  child: Wrap(
-                    spacing: 6.0,
-                    runSpacing: 2.0,
-                    children: experience.otherCategories.map((categoryId) {
-                      final otherCategory = _categories.firstWhereOrNull(
-                        (cat) => cat.id == categoryId,
-                      );
-                      if (otherCategory != null) {
-                        return Text(
-                          otherCategory.icon,
-                          style: const TextStyle(fontSize: 14),
-                        );
-                      }
-                      return const SizedBox.shrink();
-                    }).toList(),
-                  ),
+                Text(
+                  categoryIcon,
+                  style: const TextStyle(fontSize: 28),
                 ),
-                if (contentCount > 0)
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: Theme.of(context).primaryColor,
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(Icons.photo_library_outlined, size: 12, color: Colors.white),
-                        const SizedBox(width: 4),
-                        Text(
-                          '$contentCount',
-                          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Colors.white),
-                        ),
-                      ],
-                    ),
-                  ),
               ],
             ),
           ),
-        if (experience.additionalNotes != null &&
-            experience.additionalNotes!.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.only(top: 4.0),
-            child: Text(
-              experience.additionalNotes!,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    fontStyle: FontStyle.italic,
-                  ),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
+        ),
+      ),
+      title: Text(
+        experience.name,
+        overflow: TextOverflow.ellipsis,
+        maxLines: 1,
+      ),
+      subtitle: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (isShared)
+            Text(
+              'Shared by $ownerName',
+              style: Theme.of(context)
+                  .textTheme
+                  .bodySmall
+                  ?.copyWith(color: Colors.grey[600]),
             ),
-          ),
-      ],
-    ),
-    onTap: () async {
-      final bool hasEditAccess =
-          sharePermission == null || sharePermission.accessLevel == ShareAccessLevel.edit;
-
-      final UserCategory resolvedCategory = _categories.firstWhere(
-        (cat) => cat.id == experience.categoryId,
-        orElse: () => UserCategory(
-          id: '',
-          name: 'Uncategorized',
-          icon: '?',
-          ownerUserId: '',
-        ),
-      );
-
-      final result = await Navigator.push<bool>(
-        context,
-        MaterialPageRoute(
-          builder: (context) => ExperiencePageScreen(
-            experience: experience,
-            category: resolvedCategory,
-            userColorCategories: _colorCategories,
-            readOnlyPreview: sharePermission != null && !hasEditAccess,
-            shareBannerFromUserId: sharePermission?.ownerUserId,
-            shareAccessMode: sharePermission != null
-                ? (hasEditAccess ? 'edit' : 'view')
-                : null,
-          ),
-        ),
-      );
-      if (result == true && mounted) {
-        _loadData();
-      }
-    },
-  );
-}
-
+          if (fullAddress != null && fullAddress.isNotEmpty)
+            Text(
+              fullAddress,
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          if (experience.otherCategories.isNotEmpty || contentCount > 0)
+            Padding(
+              padding: const EdgeInsets.only(top: 2.0),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Wrap(
+                      spacing: 6.0,
+                      runSpacing: 2.0,
+                      children: experience.otherCategories.map((categoryId) {
+                        final otherCategory = _categories.firstWhereOrNull(
+                          (cat) => cat.id == categoryId,
+                        );
+                        if (otherCategory != null) {
+                          return Text(
+                            otherCategory.icon,
+                            style: const TextStyle(fontSize: 14),
+                          );
+                        }
+                        return const SizedBox.shrink();
+                      }).toList(),
+                    ),
+                  ),
+                  if (contentCount > 0)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).primaryColor,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.photo_library_outlined,
+                              size: 12, color: Colors.white),
+                          const SizedBox(width: 4),
+                          Text(
+                            '$contentCount',
+                            style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w700,
+                                color: Colors.white),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          if (experience.additionalNotes != null &&
+              experience.additionalNotes!.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 4.0),
+              child: Text(
+                experience.additionalNotes!,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      fontStyle: FontStyle.italic,
+                    ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+        ],
+      ),
+      onTap: () async {
+        await _openExperience(experience);
+      },
+    );
+  }
 
   // ADDED: Widget builder for an Experience Grid Item (for web)
-  Widget _buildExperienceGridItem(Experience experience, bool isDesktopWeb) { // ADDED isDesktopWeb parameter
-    final category = _categories.firstWhereOrNull((cat) => cat.id == experience.categoryId);
+  Widget _buildExperienceGridItem(Experience experience, bool isDesktopWeb) {
+    // ADDED isDesktopWeb parameter
+    final category =
+        _categories.firstWhereOrNull((cat) => cat.id == experience.categoryId);
     final categoryIcon = category?.icon ?? '❓';
-    final colorCategory = _colorCategories.firstWhereOrNull((cc) => cc.id == experience.colorCategoryId);
-    final color = colorCategory != null ? _parseColor(colorCategory.colorHex) : Theme.of(context).disabledColor;
+    final colorCategory = _colorCategories
+        .firstWhereOrNull((cc) => cc.id == experience.colorCategoryId);
+    final color = colorCategory != null
+        ? _parseColor(colorCategory.colorHex)
+        : Theme.of(context).disabledColor;
     final String? locationArea = experience.location.getFormattedArea();
-    final SharePermission? sharePermission = _sharedExperiencePermissions[experience.id];
+    final SharePermission? sharePermission =
+        _sharedExperiencePermissions[experience.id];
 
-    final bool hasEditAccess =
-
-        sharePermission == null || sharePermission.accessLevel == ShareAccessLevel.edit;
+    final bool hasEditAccess = sharePermission == null ||
+        sharePermission.accessLevel == ShareAccessLevel.edit;
 
     final String? ownerName = sharePermission != null
-
         ? (_shareOwnerNames[sharePermission.ownerUserId] ?? 'Someone')
-
         : null;
 
     String? photoUrl;
-    if (experience.location.photoResourceName != null && experience.location.photoResourceName!.isNotEmpty) {
+    if (experience.location.photoResourceName != null &&
+        experience.location.photoResourceName!.isNotEmpty) {
       photoUrl = GoogleMapsService.buildPlacePhotoUrlFromResourceName(
         experience.location.photoResourceName,
         maxWidthPx: 600,
@@ -2533,7 +2686,8 @@ Widget _buildExperienceListItem(Experience experience) {
     }
     photoUrl ??= experience.location.photoUrl;
     if ((photoUrl == null || photoUrl.isEmpty) &&
-        (experience.location.placeId != null && experience.location.placeId!.isNotEmpty) &&
+        (experience.location.placeId != null &&
+            experience.location.placeId!.isNotEmpty) &&
         !_photoRefreshAttempts.contains(experience.id)) {
       _photoRefreshAttempts.add(experience.id);
       _refreshPhotoResourceNameForExperience(experience);
@@ -2544,20 +2698,26 @@ Widget _buildExperienceListItem(Experience experience) {
       color: color.withOpacity(0.15),
       padding: const EdgeInsets.symmetric(horizontal: 8.0), // Add some padding
       child: Center(
-        child: Row( // MODIFIED: Use a Row for icon and text on the same line
+        child: Row(
+          // MODIFIED: Use a Row for icon and text on the same line
           mainAxisAlignment: MainAxisAlignment.center,
           crossAxisAlignment: CrossAxisAlignment.center,
           children: <Widget>[
             Text(
               categoryIcon,
-              style: TextStyle(fontSize: 20, color: color), // MODIFIED: Smaller icon size
+              style: TextStyle(
+                  fontSize: 20, color: color), // MODIFIED: Smaller icon size
             ),
             const SizedBox(width: 8), // Space between icon and text
             if (category != null) // Add category name if category exists
-              Expanded( // Use Expanded to handle long names
+              Expanded(
+                // Use Expanded to handle long names
                 child: Text(
                   category.name,
-                  style: TextStyle(fontSize: 14, color: color.withOpacity(0.9)), // MODIFIED: Style for name
+                  style: TextStyle(
+                      fontSize: 14,
+                      color:
+                          color.withOpacity(0.9)), // MODIFIED: Style for name
                   textAlign: TextAlign.left, // Align to left after icon
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
@@ -2594,18 +2754,22 @@ Widget _buildExperienceListItem(Experience experience) {
               overflow: TextOverflow.ellipsis,
             ),
           ),
-        const Spacer(), 
+        const Spacer(),
         if (colorCategory != null)
           Padding(
             padding: const EdgeInsets.all(8.0),
             child: Row(
               children: [
-                Icon(Icons.circle, color: colorCategory.color /* Use parsed color from model */, size: 10),
+                Icon(Icons.circle,
+                    color:
+                        colorCategory.color /* Use parsed color from model */,
+                    size: 10),
                 const SizedBox(width: 4),
                 Expanded(
                   child: Text(
                     colorCategory.name,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(color: colorCategory.color /* Use parsed color */),
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: colorCategory.color /* Use parsed color */),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -2639,24 +2803,30 @@ Widget _buildExperienceListItem(Experience experience) {
               padding: const EdgeInsets.symmetric(horizontal: 8.0),
               child: Text(
                 locationArea,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.white70), // White text
+                style: Theme.of(context)
+                    .textTheme
+                    .bodySmall
+                    ?.copyWith(color: Colors.white70), // White text
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
             ),
-          const Spacer(), 
+          const Spacer(),
           if (colorCategory != null)
             Padding(
               padding: const EdgeInsets.all(8.0),
               child: Row(
                 children: [
                   // Use a white circle or icon if colorCategory.color is too dark for the overlay
-                  Icon(Icons.circle, color: colorCategory.color, size: 10), // MODIFIED: Use actual category color
+                  Icon(Icons.circle,
+                      color: colorCategory.color,
+                      size: 10), // MODIFIED: Use actual category color
                   const SizedBox(width: 4),
                   Expanded(
                     child: Text(
                       colorCategory.name,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.white), // White text for label
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Colors.white), // White text for label
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -2666,7 +2836,7 @@ Widget _buildExperienceListItem(Experience experience) {
             ),
         ],
       );
-      
+
       lowerSectionContent = Stack(
         fit: StackFit.expand,
         children: [
@@ -2676,28 +2846,34 @@ Widget _buildExperienceListItem(Experience experience) {
               fit: BoxFit.cover,
               loadingBuilder: (context, child, loadingProgress) {
                 if (loadingProgress == null) return child;
-                return const Center(child: CircularProgressIndicator(strokeWidth: 2.0));
+                return const Center(
+                    child: CircularProgressIndicator(strokeWidth: 2.0));
               },
               errorBuilder: (context, error, stackTrace) {
                 if (!_photoRefreshAttempts.contains(experience.id) &&
-                    (experience.location.placeId != null && experience.location.placeId!.isNotEmpty)) {
+                    (experience.location.placeId != null &&
+                        experience.location.placeId!.isNotEmpty)) {
                   _photoRefreshAttempts.add(experience.id);
                   _refreshPhotoResourceNameForExperience(experience);
                 }
                 return Container(
                   color: Colors.grey[300], // Placeholder if image fails
-                  child: Center(child: Icon(Icons.broken_image_outlined, color: Colors.grey[500])),
+                  child: Center(
+                      child: Icon(Icons.broken_image_outlined,
+                          color: Colors.grey[500])),
                 );
               },
             ),
           ),
           Positioned.fill(
             child: Container(
-              color: Colors.black.withOpacity(0.5), // Dark overlay for text readability
+              color: Colors.black
+                  .withOpacity(0.5), // Dark overlay for text readability
             ),
           ),
           Padding(
-            padding: const EdgeInsets.all(0), // Padding is handled by textContentWithWhiteColor
+            padding: const EdgeInsets.all(
+                0), // Padding is handled by textContentWithWhiteColor
             child: textContentWithWhiteColor,
           ),
         ],
@@ -2713,33 +2889,15 @@ Widget _buildExperienceListItem(Experience experience) {
       elevation: 2.0,
       child: InkWell(
         onTap: () {
-          final resolvedCategory = category ?? UserCategory(
-            id: experience.categoryId ?? 'uncategorized',
-            name: category?.name ?? 'Uncategorized', // Use category name if available
-            icon: categoryIcon, // Use resolved icon
-            ownerUserId: category?.ownerUserId ?? _authService.currentUser?.uid ?? 'system_default',
-            orderIndex: category?.orderIndex ?? 9999, // Use category orderIndex or default
-          );
-          Navigator.push<bool>(
-            context,
-            MaterialPageRoute(
-              builder: (context) => ExperiencePageScreen(
-                experience: experience,
-                category: resolvedCategory,
-                userColorCategories: _colorCategories,
-              ),
-            ),
-          ).then((result) {
-            if (result == true && mounted) {
-              _loadData();
-            }
-          });
+          _openExperience(experience);
         },
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
             categoryIconWidget, // Category icon always on top
-            Expanded(child: lowerSectionContent), // Lower section takes remaining space
+            Expanded(
+                child:
+                    lowerSectionContent), // Lower section takes remaining space
             // Padding(
             //   padding: const EdgeInsets.fromLTRB(8.0, 8.0, 8.0, 4.0),
             //   child: Text(
@@ -2773,9 +2931,9 @@ Widget _buildExperienceListItem(Experience experience) {
       child: Text(
         '${_filteredExperiences.length} ${_filteredExperiences.length == 1 ? 'Experience' : 'Experiences'}',
         style: Theme.of(context).textTheme.titleMedium?.copyWith(
-          fontWeight: FontWeight.w400,
-          color: Colors.grey,
-        ),
+              fontWeight: FontWeight.w400,
+              color: Colors.grey,
+            ),
         textAlign: TextAlign.center,
       ),
     );
@@ -2797,7 +2955,8 @@ Widget _buildExperienceListItem(Experience experience) {
         slivers: [
           SliverToBoxAdapter(child: countHeader),
           SliverPadding(
-            padding: EdgeInsets.symmetric(horizontal: horizontalPadding, vertical: defaultPadding),
+            padding: EdgeInsets.symmetric(
+                horizontal: horizontalPadding, vertical: defaultPadding),
             sliver: SliverGrid(
               gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: 3,
@@ -2807,7 +2966,8 @@ Widget _buildExperienceListItem(Experience experience) {
               ),
               delegate: SliverChildBuilderDelegate(
                 (context, index) {
-                  return _buildExperienceGridItem(_filteredExperiences[index], isDesktopWeb);
+                  return _buildExperienceGridItem(
+                      _filteredExperiences[index], isDesktopWeb);
                 },
                 childCount: _filteredExperiences.length,
               ),
@@ -2837,7 +2997,8 @@ Widget _buildExperienceListItem(Experience experience) {
           if (_experienceSortType == ExperienceSortType.mostRecent) {
             list.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
           } else if (_experienceSortType == ExperienceSortType.alphabetical) {
-            list.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+            list.sort(
+                (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
           } else if (_experienceSortType == ExperienceSortType.distanceFromMe) {
             // Keep the global order, which is already distance-ascending due to prior sort
             // So no per-city re-sort is needed
@@ -2847,8 +3008,12 @@ Widget _buildExperienceListItem(Experience experience) {
         List<String> cityKeys = cityItems.keys.toList();
         if (_experienceSortType == ExperienceSortType.mostRecent) {
           cityKeys.sort((ka, kb) {
-            final maxA = cityItems[ka]!.map((e) => e.updatedAt).fold<DateTime?>(null, (p, c) => p == null || c.isAfter(p) ? c : p) ?? DateTime.fromMillisecondsSinceEpoch(0);
-            final maxB = cityItems[kb]!.map((e) => e.updatedAt).fold<DateTime?>(null, (p, c) => p == null || c.isAfter(p) ? c : p) ?? DateTime.fromMillisecondsSinceEpoch(0);
+            final maxA = cityItems[ka]!.map((e) => e.updatedAt).fold<DateTime?>(
+                    null, (p, c) => p == null || c.isAfter(p) ? c : p) ??
+                DateTime.fromMillisecondsSinceEpoch(0);
+            final maxB = cityItems[kb]!.map((e) => e.updatedAt).fold<DateTime?>(
+                    null, (p, c) => p == null || c.isAfter(p) ? c : p) ??
+                DateTime.fromMillisecondsSinceEpoch(0);
             if (ka.isEmpty && kb.isEmpty) return 0;
             if (ka.isEmpty) return 1; // Unknown last
             if (kb.isEmpty) return -1;
@@ -2859,7 +3024,9 @@ Widget _buildExperienceListItem(Experience experience) {
             if (ka.isEmpty && kb.isEmpty) return 0;
             if (ka.isEmpty) return 1;
             if (kb.isEmpty) return -1;
-            return cityDisplay[ka]!.toLowerCase().compareTo(cityDisplay[kb]!.toLowerCase());
+            return cityDisplay[ka]!
+                .toLowerCase()
+                .compareTo(cityDisplay[kb]!.toLowerCase());
           });
         } else if (_experienceSortType == ExperienceSortType.distanceFromMe) {
           // Use the index of the first occurrence in the globally distance-sorted list
@@ -2873,7 +3040,8 @@ Widget _buildExperienceListItem(Experience experience) {
             if (ka.isEmpty && kb.isEmpty) return 0;
             if (ka.isEmpty) return 1;
             if (kb.isEmpty) return -1;
-            return (firstIndex[ka] ?? 1 << 30).compareTo(firstIndex[kb] ?? 1 << 30);
+            return (firstIndex[ka] ?? 1 << 30)
+                .compareTo(firstIndex[kb] ?? 1 << 30);
           });
         }
         // Build flattened list
@@ -2902,7 +3070,8 @@ Widget _buildExperienceListItem(Experience experience) {
           if (_experienceSortType == ExperienceSortType.mostRecent) {
             list.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
           } else if (_experienceSortType == ExperienceSortType.alphabetical) {
-            list.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+            list.sort(
+                (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
           } else if (_experienceSortType == ExperienceSortType.distanceFromMe) {
             // Keep the global order (no per-country re-sort needed)
           }
@@ -2911,8 +3080,16 @@ Widget _buildExperienceListItem(Experience experience) {
         List<String> countryKeys = countryItems.keys.toList();
         if (_experienceSortType == ExperienceSortType.mostRecent) {
           countryKeys.sort((ka, kb) {
-            final maxA = countryItems[ka]!.map((e) => e.updatedAt).fold<DateTime?>(null, (p, c) => p == null || c.isAfter(p) ? c : p) ?? DateTime.fromMillisecondsSinceEpoch(0);
-            final maxB = countryItems[kb]!.map((e) => e.updatedAt).fold<DateTime?>(null, (p, c) => p == null || c.isAfter(p) ? c : p) ?? DateTime.fromMillisecondsSinceEpoch(0);
+            final maxA = countryItems[ka]!
+                    .map((e) => e.updatedAt)
+                    .fold<DateTime?>(
+                        null, (p, c) => p == null || c.isAfter(p) ? c : p) ??
+                DateTime.fromMillisecondsSinceEpoch(0);
+            final maxB = countryItems[kb]!
+                    .map((e) => e.updatedAt)
+                    .fold<DateTime?>(
+                        null, (p, c) => p == null || c.isAfter(p) ? c : p) ??
+                DateTime.fromMillisecondsSinceEpoch(0);
             if (ka.isEmpty && kb.isEmpty) return 0;
             if (ka.isEmpty) return 1; // Unknown last
             if (kb.isEmpty) return -1;
@@ -2923,7 +3100,9 @@ Widget _buildExperienceListItem(Experience experience) {
             if (ka.isEmpty && kb.isEmpty) return 0;
             if (ka.isEmpty) return 1;
             if (kb.isEmpty) return -1;
-            return (countryDisplay[ka] ?? '').toLowerCase().compareTo((countryDisplay[kb] ?? '').toLowerCase());
+            return (countryDisplay[ka] ?? '')
+                .toLowerCase()
+                .compareTo((countryDisplay[kb] ?? '').toLowerCase());
           });
         } else if (_experienceSortType == ExperienceSortType.distanceFromMe) {
           // Use the index of the first occurrence in the globally distance-sorted list
@@ -2937,7 +3116,8 @@ Widget _buildExperienceListItem(Experience experience) {
             if (ka.isEmpty && kb.isEmpty) return 0;
             if (ka.isEmpty) return 1;
             if (kb.isEmpty) return -1;
-            return (firstIndex[ka] ?? 1 << 30).compareTo(firstIndex[kb] ?? 1 << 30);
+            return (firstIndex[ka] ?? 1 << 30)
+                .compareTo(firstIndex[kb] ?? 1 << 30);
           });
         }
         // Build flattened list
@@ -2953,7 +3133,10 @@ Widget _buildExperienceListItem(Experience experience) {
       }
 
       return ListView.builder(
-        itemCount: (expRegionStructured != null ? expRegionStructured.length : _filteredExperiences.length) + 1, // +1 for header
+        itemCount: (expRegionStructured != null
+                ? expRegionStructured.length
+                : _filteredExperiences.length) +
+            1, // +1 for header
         itemBuilder: (context, index) {
           if (index == 0) {
             return countHeader;
@@ -2966,14 +3149,32 @@ Widget _buildExperienceListItem(Experience experience) {
               final displayRegion = entry['header'] as String;
               if (_groupByLocationExperiences && level != null) {
                 // Dynamic grouping: use unified expansion map and hierarchical levels
-                final bool isExpanded = _locationExpansionExperiences[key] ?? false;
-                final TextStyle base = Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold, color: Colors.grey[700]) ?? const TextStyle(fontWeight: FontWeight.bold);
-                const order = ['country','L1','L2','L3','L4','L5','L6','L7','LOC'];
+                final bool isExpanded =
+                    _locationExpansionExperiences[key] ?? false;
+                final TextStyle base = Theme.of(context)
+                        .textTheme
+                        .titleSmall
+                        ?.copyWith(
+                            fontWeight: FontWeight.bold,
+                            color: Colors.grey[700]) ??
+                    const TextStyle(fontWeight: FontWeight.bold);
+                const order = [
+                  'country',
+                  'L1',
+                  'L2',
+                  'L3',
+                  'L4',
+                  'L5',
+                  'L6',
+                  'L7',
+                  'LOC'
+                ];
                 int depth = order.indexOf(level);
                 depth = depth < 0 ? 0 : depth;
                 final TextStyle style = level == 'country'
                     ? base.copyWith(fontSize: (base.fontSize ?? 14) + 4)
-                    : base.copyWith(fontSize: (base.fontSize ?? 14) + (depth >= 1 ? 2 : 0));
+                    : base.copyWith(
+                        fontSize: (base.fontSize ?? 14) + (depth >= 1 ? 2 : 0));
                 final double leftPadding = (depth * 16).toDouble();
                 return InkWell(
                   onTap: () {
@@ -2987,7 +3188,8 @@ Widget _buildExperienceListItem(Experience experience) {
                     padding: EdgeInsets.fromLTRB(16 + leftPadding, 12, 16, 6),
                     child: Row(
                       children: [
-                        Icon(isExpanded ? Icons.expand_less : Icons.expand_more, color: Colors.grey[700], size: 18),
+                        Icon(isExpanded ? Icons.expand_less : Icons.expand_more,
+                            color: Colors.grey[700], size: 18),
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
@@ -3008,13 +3210,23 @@ Widget _buildExperienceListItem(Experience experience) {
                         : (level == 'city')
                             ? (_cityExpansionExperiences[key] ?? false)
                             : (_noLocationExperiencesExpanded);
-                final TextStyle base = Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold, color: Colors.grey[700]) ?? const TextStyle(fontWeight: FontWeight.bold);
+                final TextStyle base = Theme.of(context)
+                        .textTheme
+                        .titleSmall
+                        ?.copyWith(
+                            fontWeight: FontWeight.bold,
+                            color: Colors.grey[700]) ??
+                    const TextStyle(fontWeight: FontWeight.bold);
                 final TextStyle style = level == 'country'
                     ? base.copyWith(fontSize: (base.fontSize ?? 14) + 4)
                     : level == 'state'
                         ? base.copyWith(fontSize: (base.fontSize ?? 14) + 2)
                         : base;
-                final double leftPadding = level == 'country' ? 0 : level == 'state' ? 16 : 32;
+                final double leftPadding = level == 'country'
+                    ? 0
+                    : level == 'state'
+                        ? 16
+                        : 32;
                 return InkWell(
                   onTap: () {
                     setState(() {
@@ -3035,7 +3247,8 @@ Widget _buildExperienceListItem(Experience experience) {
                     padding: EdgeInsets.fromLTRB(16 + leftPadding, 12, 16, 6),
                     child: Row(
                       children: [
-                        Icon(isExpanded ? Icons.expand_less : Icons.expand_more, color: Colors.grey[700], size: 18),
+                        Icon(isExpanded ? Icons.expand_less : Icons.expand_more,
+                            color: Colors.grey[700], size: 18),
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
@@ -3064,10 +3277,10 @@ Widget _buildExperienceListItem(Experience experience) {
   // ADDED: Widget to display experiences for a specific category
   Widget _buildCategoryExperiencesList(UserCategory category) {
     final categoryExperiences = _experiences
-        .where((exp) => 
-          exp.categoryId == category.id || 
-          exp.otherCategories.contains(category.id)
-        ) // MODIFIED: Include experiences with this category as primary OR in otherCategories
+        .where((exp) =>
+            exp.categoryId == category.id ||
+            exp.otherCategories.contains(category
+                .id)) // MODIFIED: Include experiences with this category as primary OR in otherCategories
         .toList(); // Filter experiences
 
     // Apply the current experience sort order to this sublist
@@ -3140,10 +3353,12 @@ Widget _buildExperienceListItem(Experience experience) {
       );
     }
     if (_filteredGroupedContentItems.isEmpty) {
-      final bool filtersActive = _selectedCategoryIds.isNotEmpty || _selectedColorCategoryIds.isNotEmpty;
-      return Center(child: Text(filtersActive
-          ? 'No content matches the current filters.'
-          : 'No shared content found across experiences.'));
+      final bool filtersActive = _selectedCategoryIds.isNotEmpty ||
+          _selectedColorCategoryIds.isNotEmpty;
+      return Center(
+          child: Text(filtersActive
+              ? 'No content matches the current filters.'
+              : 'No shared content found across experiences.'));
     }
 
     final bool isDesktopWeb = kIsWeb && MediaQuery.of(context).size.width > 600;
@@ -3158,9 +3373,9 @@ Widget _buildExperienceListItem(Experience experience) {
       child: Text(
         '${_filteredGroupedContentItems.length} ${_filteredGroupedContentItems.length == 1 ? 'Saved Content' : 'Saved Content'}',
         style: Theme.of(context).textTheme.titleMedium?.copyWith(
-          fontWeight: FontWeight.w400,
-          color: Colors.grey,
-        ),
+              fontWeight: FontWeight.w400,
+              color: Colors.grey,
+            ),
         textAlign: TextAlign.center,
       ),
     );
@@ -3182,7 +3397,8 @@ Widget _buildExperienceListItem(Experience experience) {
         slivers: [
           SliverToBoxAdapter(child: countHeader),
           SliverPadding(
-            padding: EdgeInsets.symmetric(horizontal: horizontalPadding, vertical: defaultPadding),
+            padding: EdgeInsets.symmetric(
+                horizontal: horizontalPadding, vertical: defaultPadding),
             sliver: SliverGrid(
               gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: 3,
@@ -3192,7 +3408,8 @@ Widget _buildExperienceListItem(Experience experience) {
               ),
               delegate: SliverChildBuilderDelegate(
                 (context, index) {
-                  return _buildContentGridItem(_filteredGroupedContentItems[index], index);
+                  return _buildContentGridItem(
+                      _filteredGroupedContentItems[index], index);
                 },
                 childCount: _filteredGroupedContentItems.length,
               ),
@@ -3214,20 +3431,38 @@ Widget _buildExperienceListItem(Experience experience) {
                 child: countHeader,
               );
             }
-            final Map<String, Object> entry = flat[index - 1] as Map<String, Object>;
+            final Map<String, Object> entry =
+                flat[index - 1] as Map<String, Object>;
             if (entry.containsKey('header')) {
               final display = entry['header'] as String;
               final level = entry['level'] as String;
               final key = entry['key'] as String;
               final bool isExpanded = _locationExpansionContent[key] ?? false;
-              final TextStyle base = Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold, color: Colors.grey[700]) ?? const TextStyle(fontWeight: FontWeight.bold);
+              final TextStyle base = Theme.of(context)
+                      .textTheme
+                      .titleSmall
+                      ?.copyWith(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.grey[700]) ??
+                  const TextStyle(fontWeight: FontWeight.bold);
               int depth = 0;
-              const order = ['country','L1','L2','L3','L4','L5','L6','L7','LOC'];
+              const order = [
+                'country',
+                'L1',
+                'L2',
+                'L3',
+                'L4',
+                'L5',
+                'L6',
+                'L7',
+                'LOC'
+              ];
               depth = order.indexOf(level);
               depth = depth < 0 ? 0 : depth;
               final TextStyle style = level == 'country'
                   ? base.copyWith(fontSize: (base.fontSize ?? 14) + 4)
-                  : base.copyWith(fontSize: (base.fontSize ?? 14) + (depth >= 1 ? 2 : 0));
+                  : base.copyWith(
+                      fontSize: (base.fontSize ?? 14) + (depth >= 1 ? 2 : 0));
               final double leftPadding = (depth * 16).toDouble();
               return InkWell(
                 onTap: () {
@@ -3285,14 +3520,17 @@ Widget _buildExperienceListItem(Experience experience) {
           final isExpanded = _contentExpansionStates[mediaPath] ?? false;
           final bool isInstagramUrl =
               mediaPath.toLowerCase().contains('instagram.com');
-          final bool isTikTokUrl = mediaPath.toLowerCase().contains('tiktok.com') ||
-              mediaPath.toLowerCase().contains('vm.tiktok.com');
-          final bool isFacebookUrl = mediaPath.toLowerCase().contains('facebook.com') ||
-              mediaPath.toLowerCase().contains('fb.com') ||
-              mediaPath.toLowerCase().contains('fb.watch');
-          final bool isYouTubeUrl = mediaPath.toLowerCase().contains('youtube.com') ||
-              mediaPath.toLowerCase().contains('youtu.be') ||
-              mediaPath.toLowerCase().contains('youtube.com/shorts');
+          final bool isTikTokUrl =
+              mediaPath.toLowerCase().contains('tiktok.com') ||
+                  mediaPath.toLowerCase().contains('vm.tiktok.com');
+          final bool isFacebookUrl =
+              mediaPath.toLowerCase().contains('facebook.com') ||
+                  mediaPath.toLowerCase().contains('fb.com') ||
+                  mediaPath.toLowerCase().contains('fb.watch');
+          final bool isYouTubeUrl =
+              mediaPath.toLowerCase().contains('youtube.com') ||
+                  mediaPath.toLowerCase().contains('youtu.be') ||
+                  mediaPath.toLowerCase().contains('youtube.com/shorts');
           bool isNetworkUrl =
               mediaPath.startsWith('http') || mediaPath.startsWith('https');
 
@@ -3339,9 +3577,9 @@ Widget _buildExperienceListItem(Experience experience) {
                   return const Center(child: CircularProgressIndicator());
                 },
                 errorBuilder: (context, error, stackTrace) {
-return Container(
+                  return Container(
                     color: Colors.grey[200],
-                    height: 200, 
+                    height: 200,
                     child: Center(
                         child: Icon(Icons.broken_image_outlined,
                             color: Colors.grey[600], size: 40)),
@@ -3356,7 +3594,8 @@ return Container(
                   lower.contains('g.co/kgs/') ||
                   lower.contains('share.google/');
               // Yelp: use the same WebView preview style as Experience page content tab
-              if (lower.contains('yelp.com/biz') || lower.contains('yelp.to/')) {
+              if (lower.contains('yelp.com/biz') ||
+                  lower.contains('yelp.to/')) {
                 mediaWidget = WebUrlPreviewWidget(
                   url: mediaPath,
                   launchUrlCallback: _launchUrl,
@@ -3394,9 +3633,10 @@ return Container(
           } else {
             mediaWidget = Container(
               color: Colors.grey[300],
-              height: 150, 
+              height: 150,
               child: Center(
-                  child: Icon(Icons.description, color: Colors.grey[700], size: 40)),
+                  child: Icon(Icons.description,
+                      color: Colors.grey[700], size: 40)),
             );
           }
 
@@ -3433,7 +3673,8 @@ return Container(
                       BoxShadow(
                         color: Colors.black.withOpacity(0.1),
                         blurRadius: 4.0,
-                        offset: const Offset(0, -2), // Negative Y for top shadow
+                        offset:
+                            const Offset(0, -2), // Negative Y for top shadow
                       ),
                       // Bottom shadow (matching other cards)
                       BoxShadow(
@@ -3470,8 +3711,8 @@ return Container(
                               final category = _categories.firstWhereOrNull(
                                   (cat) => cat.id == exp.categoryId);
                               final categoryIcon = category?.icon ?? '❓';
-                              final colorCategory = _colorCategories
-                                  .firstWhereOrNull(
+                              final colorCategory =
+                                  _colorCategories.firstWhereOrNull(
                                       (cc) => cc.id == exp.colorCategoryId);
                               final color = colorCategory != null
                                   ? _parseColor(colorCategory.colorHex)
@@ -3479,47 +3720,34 @@ return Container(
 
                               return InkWell(
                                 onTap: () {
-                                  final resolvedCategory = category ?? UserCategory(
-                                    id: exp.categoryId ?? 'uncategorized',
-                                    name: category?.name ?? 'Uncategorized',
-                                    icon: categoryIcon,
-                                    ownerUserId: category?.ownerUserId ?? _authService.currentUser?.uid ?? 'system_default',
-                                    orderIndex: category?.orderIndex ?? 9999,
-                                  );
-                                  Navigator.push<bool>(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (context) => ExperiencePageScreen(
-                                        experience: exp,
-                                        category: resolvedCategory,
-                                        userColorCategories: _colorCategories,
-                                      ),
-                                    ),
-                                  ).then((result) {
-                                    if (result == true && mounted) {
-                                      _loadData();
-                                    }
-                                  });
+                                  _openExperience(exp);
                                 },
                                 child: Padding(
-                                  padding: const EdgeInsets.symmetric(vertical: 4.0),
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 4.0),
                                   child: Row(
                                     children: [
-                                      Text(categoryIcon, style: const TextStyle(fontSize: 16)),
+                                      Text(categoryIcon,
+                                          style: const TextStyle(fontSize: 16)),
                                       const SizedBox(width: 6),
                                       if (colorCategory != null)
                                         Padding(
-                                          padding: const EdgeInsets.only(right: 6.0),
-                                          child: Icon(Icons.circle, color: color, size: 10),
+                                          padding:
+                                              const EdgeInsets.only(right: 6.0),
+                                          child: Icon(Icons.circle,
+                                              color: color, size: 10),
                                         ),
                                       Expanded(
                                         child: Text(
                                           exp.name,
-                                          style: Theme.of(context).textTheme.bodyMedium,
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .bodyMedium,
                                           overflow: TextOverflow.ellipsis,
                                         ),
                                       ),
-                                      const Icon(Icons.chevron_right, color: Colors.grey, size: 18),
+                                      const Icon(Icons.chevron_right,
+                                          color: Colors.grey, size: 18),
                                     ],
                                   ),
                                 ),
@@ -3527,7 +3755,8 @@ return Container(
                             }),
                             if (associatedExperiences.isEmpty)
                               const Text('No linked experiences.',
-                                  style: TextStyle(fontStyle: FontStyle.italic)),
+                                  style:
+                                      TextStyle(fontStyle: FontStyle.italic)),
                           ],
                         ),
                       ),
@@ -3558,7 +3787,8 @@ return Container(
                             ],
                           ),
                         ),
-                      if (mediaPath.toLowerCase().contains('yelp.com/biz') || mediaPath.toLowerCase().contains('yelp.to/'))
+                      if (mediaPath.toLowerCase().contains('yelp.com/biz') ||
+                          mediaPath.toLowerCase().contains('yelp.to/'))
                         Container(
                           padding: const EdgeInsets.symmetric(vertical: 8),
                           child: Row(
@@ -3632,13 +3862,19 @@ return Container(
             Text(
               mediaItem.path.contains('instagram.com')
                   ? 'Instagram Post'
-                  : mediaItem.path.contains('facebook.com') || mediaItem.path.contains('fb.com') || mediaItem.path.contains('fb.watch')
-                    ? 'Facebook Post'
-                    : mediaItem.path.contains('tiktok.com') || mediaItem.path.contains('vm.tiktok.com')
-                      ? 'TikTok Post'
-                      : mediaItem.path.contains('youtube.com') || mediaItem.path.contains('youtu.be')
-                          ? 'YouTube Video'
-                          : mediaItem.path.split('/').last, // Show filename if possible
+                  : mediaItem.path.contains('facebook.com') ||
+                          mediaItem.path.contains('fb.com') ||
+                          mediaItem.path.contains('fb.watch')
+                      ? 'Facebook Post'
+                      : mediaItem.path.contains('tiktok.com') ||
+                              mediaItem.path.contains('vm.tiktok.com')
+                          ? 'TikTok Post'
+                          : mediaItem.path.contains('youtube.com') ||
+                                  mediaItem.path.contains('youtu.be')
+                              ? 'YouTube Video'
+                              : mediaItem.path
+                                  .split('/')
+                                  .last, // Show filename if possible
               style: Theme.of(context)
                   .textTheme
                   .bodyMedium
@@ -3697,7 +3933,7 @@ return Container(
           associatedExperiences.map((e) => e.id).toList(),
         );
 
-if (mounted) {
+        if (mounted) {
           // Hide loading indicator
           setState(() => _isLoading = false);
           ScaffoldMessenger.of(context).showSnackBar(
@@ -3706,7 +3942,7 @@ if (mounted) {
           _loadData(); // Refresh the screen
         }
       } catch (e) {
-if (mounted) {
+        if (mounted) {
           // Hide loading indicator
           setState(() => _isLoading = false);
           ScaffoldMessenger.of(context).showSnackBar(
@@ -3731,7 +3967,7 @@ if (mounted) {
     );
 
     if (result != null) {
-_loadData(); // Refresh both lists
+      _loadData(); // Refresh both lists
     }
   }
 
@@ -3746,9 +3982,8 @@ _loadData(); // Refresh both lists
     );
 
     if (result != null) {
-_loadData();
-    } else {
-}
+      _loadData();
+    } else {}
   }
 
   Future<void> _showDeleteColorCategoryConfirmation(
@@ -3775,14 +4010,14 @@ _loadData();
     if (confirm == true && mounted) {
       try {
         await _experienceService.deleteColorCategory(category.id);
-if (mounted) {
+        if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('"${category.name}" category deleted.')),
           );
           _loadData(); // Refresh data
         }
       } catch (e) {
-if (mounted) {
+        if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('Error deleting color category: $e')),
           );
@@ -3795,7 +4030,7 @@ if (mounted) {
     for (int i = 0; i < _colorCategories.length; i++) {
       _colorCategories[i] = _colorCategories[i].copyWith(orderIndex: i);
     }
-}
+  }
 
   Future<void> _saveColorCategoryOrder() async {
     setState(() => _isLoading = true);
@@ -3806,22 +4041,21 @@ if (mounted) {
           'id': category.id,
           'orderIndex': category.orderIndex!,
         });
-      } else {
-}
+      } else {}
     }
 
     if (updates.isEmpty) {
-setState(() => _isLoading = false);
+      setState(() => _isLoading = false);
       return;
     }
 
     try {
-await _experienceService.updateColorCategoryOrder(updates);
-if (mounted) {
+      await _experienceService.updateColorCategoryOrder(updates);
+      if (mounted) {
         setState(() => _isLoading = false);
       }
     } catch (e) {
-if (mounted) {
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text("Error saving color category order: $e")),
         );
@@ -3832,7 +4066,7 @@ if (mounted) {
   }
 
   Future<void> _applyColorSortAndSave(ColorCategorySortType sortType) async {
-setState(() {
+    setState(() {
       if (sortType == ColorCategorySortType.alphabetical) {
         _colorCategories.sort(
             (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
@@ -3863,220 +4097,240 @@ setState(() {
   // --- ADDED: Helper to count experiences for a specific color category --- END ---
 
   // --- ADDED: Widget builder for a Color Category Grid Item (for web) ---
-Widget _buildColorCategoryGridItem(ColorCategory category) {
-  final count = _getExperienceCountForColorCategory(category);
-  final bool isShared = _sharedCategoryIsColor[category.id] ?? false;
-  final SharePermission? permission = isShared ? _sharedCategoryPermissions[category.id] : null;
-  final String? ownerName = isShared ? (_shareOwnerNames[permission!.ownerUserId] ?? 'Someone') : null;
-  return Card(
-    key: ValueKey('color_category_grid_${category.id}'),
-    clipBehavior: Clip.antiAlias,
-    elevation: 2.0,
-    child: InkWell(
-      onTap: () {
-        setState(() {
-          _selectedColorCategory = category;
-          _showingColorCategories = true;
-          _selectedCategory = null;
-        });
-      },
-      child: Padding(
-        padding: const EdgeInsets.all(8.0),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: <Widget>[
-            Container(
-              width: 28,
-              height: 28,
-              decoration: BoxDecoration(
-                color: category.color,
-                shape: BoxShape.circle,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              category.name,
-              style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
-              textAlign: TextAlign.center,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-            ),
-            const SizedBox(height: 4),
-            Text(
-              '$count ${count == 1 ? "exp" : "exps"}',
-              style: Theme.of(context).textTheme.bodySmall,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-            if (isShared)
-              Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: Text(
-                  'Shared by $ownerName',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey[600]),
-                  textAlign: TextAlign.center,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+  Widget _buildColorCategoryGridItem(ColorCategory category) {
+    final count = _getExperienceCountForColorCategory(category);
+    final bool isShared = _sharedCategoryIsColor[category.id] ?? false;
+    final SharePermission? permission =
+        isShared ? _sharedCategoryPermissions[category.id] : null;
+    final String? ownerName = isShared
+        ? (_shareOwnerNames[permission!.ownerUserId] ?? 'Someone')
+        : null;
+    return Card(
+      key: ValueKey('color_category_grid_${category.id}'),
+      clipBehavior: Clip.antiAlias,
+      elevation: 2.0,
+      child: InkWell(
+        onTap: () {
+          setState(() {
+            _selectedColorCategory = category;
+            _showingColorCategories = true;
+            _selectedCategory = null;
+          });
+        },
+        child: Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: <Widget>[
+              Container(
+                width: 28,
+                height: 28,
+                decoration: BoxDecoration(
+                  color: category.color,
+                  shape: BoxShape.circle,
                 ),
               ),
-          ],
-        ),
-      ),
-    ),
-  );
-}
-
-
-  // --- ADDED: Builder for Color Category List --- START ---
-Widget _buildColorCategoriesList() {
-  if (_colorCategories.isEmpty) {
-    return const Center(child: Text('No color categories found.'));
-  }
-
-  final bool isDesktopWeb = kIsWeb && MediaQuery.of(context).size.width > 600;
-
-  if (isDesktopWeb) {
-    return GridView.builder(
-      padding: const EdgeInsets.all(12.0),
-      itemCount: _colorCategories.length,
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 3,
-        mainAxisSpacing: 10.0,
-        crossAxisSpacing: 10.0,
-        childAspectRatio: 3 / 3,
-      ),
-      itemBuilder: (context, index) {
-        final category = _colorCategories[index];
-        return _buildColorCategoryGridItem(category);
-      },
-    );
-  } else {
-    return ReorderableListView.builder(
-      buildDefaultDragHandles: false,
-      itemCount: _colorCategories.length,
-      itemBuilder: (context, index) {
-        final category = _colorCategories[index];
-        final count = _getExperienceCountForColorCategory(category);
-        final bool isShared = _sharedCategoryIsColor[category.id] ?? false;
-        final SharePermission? permission = isShared ? _sharedCategoryPermissions[category.id] : null;
-        final bool canEditCategory = !isShared || permission!.accessLevel == ShareAccessLevel.edit;
-        final bool canManageCategory = !isShared;
-        final String? ownerName = isShared ? (_shareOwnerNames[permission!.ownerUserId] ?? 'Someone') : null;
-
-        final Widget colorDot = Container(
-          width: 24,
-          height: 24,
-          decoration: BoxDecoration(
-            color: category.color,
-            shape: BoxShape.circle,
-          ),
-        );
-
-        final Widget leadingWidget = isShared
-            ? colorDot
-            : ReorderableDragStartListener(
-                index: index,
-                child: colorDot,
-              );
-
-        final Widget subtitleWidget = isShared
-            ? Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text('$count ${count == 1 ? "experience" : "experiences"}'),
-                  Text(
+              const SizedBox(height: 8),
+              Text(
+                category.name,
+                style: Theme.of(context)
+                    .textTheme
+                    .titleSmall
+                    ?.copyWith(fontWeight: FontWeight.bold),
+                textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '$count ${count == 1 ? "exp" : "exps"}',
+                style: Theme.of(context).textTheme.bodySmall,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              if (isShared)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
                     'Shared by $ownerName',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey[600]),
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodySmall
+                        ?.copyWith(color: Colors.grey[600]),
+                    textAlign: TextAlign.center,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
-                ],
-              )
-            : Text('$count ${count == 1 ? "experience" : "experiences"}');
-
-        return ListTile(
-          key: ValueKey(category.id),
-          leading: leadingWidget,
-          title: Text(category.name),
-          subtitle: subtitleWidget,
-          trailing: PopupMenuButton<String>(
-            icon: const Icon(Icons.more_vert),
-            tooltip: 'Color Category Options',
-            color: Colors.white,
-            onSelected: (String result) {
-              switch (result) {
-                case 'edit':
-                  _showEditSingleColorCategoryModal(category);
-                  break;
-                case 'share':
-                  _showShareColorCategoryBottomSheet(category);
-                  break;
-                case 'delete':
-                  _showDeleteColorCategoryConfirmation(category);
-                  break;
-              }
-            },
-            itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
-              PopupMenuItem<String>(
-                value: 'edit',
-                enabled: canEditCategory,
-                child: const ListTile(
-                  leading: Icon(Icons.edit_outlined),
-                  title: Text('Edit'),
                 ),
-              ),
-              PopupMenuItem<String>(
-                value: 'share',
-                enabled: canManageCategory,
-                child: const ListTile(
-                  leading: Icon(Icons.ios_share),
-                  title: Text('Share'),
-                ),
-              ),
-              PopupMenuItem<String>(
-                value: 'delete',
-                enabled: canManageCategory,
-                child: const ListTile(
-                  leading: Icon(Icons.delete_outline, color: Colors.red),
-                  title: Text('Delete', style: TextStyle(color: Colors.red)),
-                ),
-              ),
             ],
           ),
-          onTap: () {
-            setState(() {
-              _selectedColorCategory = category;
-              _showingColorCategories = true;
-              _selectedCategory = null;
-            });
-          },
-        );
-      },
-      onReorder: (int oldIndex, int newIndex) {
-        if (newIndex > oldIndex) {
-          newIndex -= 1;
-        }
-        if (oldIndex < 0 || oldIndex >= _colorCategories.length || newIndex < 0 || newIndex >= _colorCategories.length) {
-          return;
-        }
-        final movingCategory = _colorCategories[oldIndex];
-        final targetCategory = _colorCategories[newIndex];
-        final bool movingShared = _sharedCategoryIsColor[movingCategory.id] ?? false;
-        final bool targetShared = _sharedCategoryIsColor[targetCategory.id] ?? false;
-        if (movingShared || targetShared) {
-          setState(() {});
-          return;
-        }
-        setState(() {
-          final ColorCategory item = _colorCategories.removeAt(oldIndex);
-          _colorCategories.insert(newIndex, item);
-          _updateLocalColorOrderIndices();
-        });
-        _saveColorCategoryOrder();
-      },
+        ),
+      ),
     );
   }
-}
+
+  // --- ADDED: Builder for Color Category List --- START ---
+  Widget _buildColorCategoriesList() {
+    if (_colorCategories.isEmpty) {
+      return const Center(child: Text('No color categories found.'));
+    }
+
+    final bool isDesktopWeb = kIsWeb && MediaQuery.of(context).size.width > 600;
+
+    if (isDesktopWeb) {
+      return GridView.builder(
+        padding: const EdgeInsets.all(12.0),
+        itemCount: _colorCategories.length,
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 3,
+          mainAxisSpacing: 10.0,
+          crossAxisSpacing: 10.0,
+          childAspectRatio: 3 / 3,
+        ),
+        itemBuilder: (context, index) {
+          final category = _colorCategories[index];
+          return _buildColorCategoryGridItem(category);
+        },
+      );
+    } else {
+      return ReorderableListView.builder(
+        buildDefaultDragHandles: false,
+        itemCount: _colorCategories.length,
+        itemBuilder: (context, index) {
+          final category = _colorCategories[index];
+          final count = _getExperienceCountForColorCategory(category);
+          final bool isShared = _sharedCategoryIsColor[category.id] ?? false;
+          final SharePermission? permission =
+              isShared ? _sharedCategoryPermissions[category.id] : null;
+          final bool canEditCategory =
+              !isShared || permission!.accessLevel == ShareAccessLevel.edit;
+          final bool canManageCategory = !isShared;
+          final String? ownerName = isShared
+              ? (_shareOwnerNames[permission!.ownerUserId] ?? 'Someone')
+              : null;
+
+          final Widget colorDot = Container(
+            width: 24,
+            height: 24,
+            decoration: BoxDecoration(
+              color: category.color,
+              shape: BoxShape.circle,
+            ),
+          );
+
+          final Widget leadingWidget = isShared
+              ? colorDot
+              : ReorderableDragStartListener(
+                  index: index,
+                  child: colorDot,
+                );
+
+          final Widget subtitleWidget = isShared
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('$count ${count == 1 ? "experience" : "experiences"}'),
+                    Text(
+                      'Shared by $ownerName',
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodySmall
+                          ?.copyWith(color: Colors.grey[600]),
+                    ),
+                  ],
+                )
+              : Text('$count ${count == 1 ? "experience" : "experiences"}');
+
+          return ListTile(
+            key: ValueKey(category.id),
+            leading: leadingWidget,
+            title: Text(category.name),
+            subtitle: subtitleWidget,
+            trailing: PopupMenuButton<String>(
+              icon: const Icon(Icons.more_vert),
+              tooltip: 'Color Category Options',
+              color: Colors.white,
+              onSelected: (String result) {
+                switch (result) {
+                  case 'edit':
+                    _showEditSingleColorCategoryModal(category);
+                    break;
+                  case 'share':
+                    _showShareColorCategoryBottomSheet(category);
+                    break;
+                  case 'delete':
+                    _showDeleteColorCategoryConfirmation(category);
+                    break;
+                }
+              },
+              itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
+                PopupMenuItem<String>(
+                  value: 'edit',
+                  enabled: canEditCategory,
+                  child: const ListTile(
+                    leading: Icon(Icons.edit_outlined),
+                    title: Text('Edit'),
+                  ),
+                ),
+                PopupMenuItem<String>(
+                  value: 'share',
+                  enabled: canManageCategory,
+                  child: const ListTile(
+                    leading: Icon(Icons.ios_share),
+                    title: Text('Share'),
+                  ),
+                ),
+                PopupMenuItem<String>(
+                  value: 'delete',
+                  enabled: canManageCategory,
+                  child: const ListTile(
+                    leading: Icon(Icons.delete_outline, color: Colors.red),
+                    title: Text('Delete', style: TextStyle(color: Colors.red)),
+                  ),
+                ),
+              ],
+            ),
+            onTap: () {
+              setState(() {
+                _selectedColorCategory = category;
+                _showingColorCategories = true;
+                _selectedCategory = null;
+              });
+            },
+          );
+        },
+        onReorder: (int oldIndex, int newIndex) {
+          if (newIndex > oldIndex) {
+            newIndex -= 1;
+          }
+          if (oldIndex < 0 ||
+              oldIndex >= _colorCategories.length ||
+              newIndex < 0 ||
+              newIndex >= _colorCategories.length) {
+            return;
+          }
+          final movingCategory = _colorCategories[oldIndex];
+          final targetCategory = _colorCategories[newIndex];
+          final bool movingShared =
+              _sharedCategoryIsColor[movingCategory.id] ?? false;
+          final bool targetShared =
+              _sharedCategoryIsColor[targetCategory.id] ?? false;
+          if (movingShared || targetShared) {
+            setState(() {});
+            return;
+          }
+          setState(() {
+            final ColorCategory item = _colorCategories.removeAt(oldIndex);
+            _colorCategories.insert(newIndex, item);
+            _updateLocalColorOrderIndices();
+          });
+          _saveColorCategoryOrder();
+        },
+      );
+    }
+  }
 
   // --- ADDED: Builder for Color Category List --- END ---
 
@@ -4121,8 +4375,8 @@ Widget _buildColorCategoriesList() {
                 width: 20,
                 height: 20,
                 decoration: BoxDecoration(
-                    color: category.color,
-                    shape: BoxShape.circle,
+                  color: category.color,
+                  shape: BoxShape.circle,
                 ),
               ),
               const SizedBox(width: 8),
@@ -4255,9 +4509,9 @@ Widget _buildColorCategoriesList() {
                               width: 16,
                               height: 16,
                               decoration: BoxDecoration(
-                                  color: _parseColor(
-                                      colorCategory.colorHex), // Use helper
-                                  shape: BoxShape.circle,
+                                color: _parseColor(
+                                    colorCategory.colorHex), // Use helper
+                                shape: BoxShape.circle,
                               ),
                             ),
                             const SizedBox(width: 8),
@@ -4332,7 +4586,8 @@ Widget _buildColorCategoriesList() {
       final bool categoryMatch = _selectedCategoryIds.isEmpty ||
           (exp.categoryId != null &&
               _selectedCategoryIds.contains(exp.categoryId)) ||
-          (exp.otherCategories.any((catId) => _selectedCategoryIds.contains(catId)));
+          (exp.otherCategories
+              .any((catId) => _selectedCategoryIds.contains(catId)));
 
       final bool colorMatch = _selectedColorCategoryIds.isEmpty ||
           (exp.colorCategoryId != null &&
@@ -4349,7 +4604,8 @@ Widget _buildColorCategoriesList() {
         final bool categoryMatch = _selectedCategoryIds.isEmpty ||
             (exp.categoryId != null &&
                 _selectedCategoryIds.contains(exp.categoryId)) ||
-            (exp.otherCategories.any((catId) => _selectedCategoryIds.contains(catId)));
+            (exp.otherCategories
+                .any((catId) => _selectedCategoryIds.contains(catId)));
 
         final bool colorMatch = _selectedColorCategoryIds.isEmpty ||
             (exp.colorCategoryId != null &&
@@ -4374,20 +4630,20 @@ Widget _buildColorCategoriesList() {
   // --- ADDED: Helper method for launching URLs (restored) ---
   Future<void> _launchUrl(String urlString) async {
     // Skip invalid URLs
-    if (urlString.isEmpty || 
-        urlString == 'about:blank' || 
+    if (urlString.isEmpty ||
+        urlString == 'about:blank' ||
         urlString == 'https://about:blank') {
       print('Skipping invalid URL: $urlString');
       return;
     }
-    
+
     // Ensure URL starts with http/https for launchUrl
     String launchableUrl = urlString;
     if (!launchableUrl.startsWith('http://') &&
         !launchableUrl.startsWith('https://')) {
       // Assume https if no scheme provided
       launchableUrl = 'https://$launchableUrl';
-}
+    }
 
     try {
       final Uri uri = Uri.parse(launchableUrl);
@@ -4430,7 +4686,8 @@ Widget _buildColorCategoriesList() {
         return a.name.toLowerCase().compareTo(b.name.toLowerCase());
       });
     } else {
-        suggestions.sort((a,b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+      suggestions
+          .sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
     }
     return suggestions;
   }
@@ -4466,7 +4723,7 @@ Widget _buildColorCategoriesList() {
         onWebViewCreated: (_) {},
         onPageFinished: (_) {},
       );
-      if (kIsWeb) { 
+      if (kIsWeb) {
         mediaDisplayWidget = Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 360),
@@ -4502,9 +4759,9 @@ Widget _buildColorCategoriesList() {
             return const Center(child: CircularProgressIndicator());
           },
           errorBuilder: (context, error, stackTrace) {
-return Container(
+            return Container(
               color: Colors.grey[200],
-              height: 200, 
+              height: 200,
               child: Center(
                   child: Icon(Icons.broken_image_outlined,
                       color: Colors.grey[600], size: 40)),
@@ -4521,26 +4778,30 @@ return Container(
     } else {
       mediaDisplayWidget = Container(
         color: Colors.grey[300],
-        height: 150, 
+        height: 150,
         child: Center(
             child: Icon(Icons.description, color: Colors.grey[700], size: 40)),
       );
     }
 
-    return Card( // Card is the root, making the whole area clickable via InkWell
+    return Card(
+      // Card is the root, making the whole area clickable via InkWell
       key: ValueKey('content_grid_${mediaItem.id}_$index'),
       clipBehavior: Clip.antiAlias,
       elevation: 2.0,
-      margin: EdgeInsets.zero, // Remove card's own margin to better fit GridView cell
+      margin: EdgeInsets
+          .zero, // Remove card's own margin to better fit GridView cell
       child: InkWell(
         onTap: () {
           _showMediaDetailsDialog(group);
         },
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch, // Ensure children fill width
+          crossAxisAlignment:
+              CrossAxisAlignment.stretch, // Ensure children fill width
           children: <Widget>[
             Padding(
-              padding: const EdgeInsets.fromLTRB(8.0, 8.0, 8.0, 4.0), // Text padding
+              padding:
+                  const EdgeInsets.fromLTRB(8.0, 8.0, 8.0, 4.0), // Text padding
               child: Text(
                 'Linked Experiences (${group.associatedExperiences.length})',
                 style: Theme.of(context).textTheme.bodySmall,
@@ -4564,12 +4825,14 @@ return Container(
     final mediaPath = mediaItem.path;
     final associatedExperiences = group.associatedExperiences;
     final isExpanded = _contentExpansionStates[mediaPath] ?? false;
-    final bool isInstagramUrl = mediaPath.toLowerCase().contains('instagram.com');
+    final bool isInstagramUrl =
+        mediaPath.toLowerCase().contains('instagram.com');
     final bool isTikTokUrl = mediaPath.toLowerCase().contains('tiktok.com') ||
         mediaPath.toLowerCase().contains('vm.tiktok.com');
-    final bool isFacebookUrl = mediaPath.toLowerCase().contains('facebook.com') ||
-        mediaPath.toLowerCase().contains('fb.com') ||
-        mediaPath.toLowerCase().contains('fb.watch');
+    final bool isFacebookUrl =
+        mediaPath.toLowerCase().contains('facebook.com') ||
+            mediaPath.toLowerCase().contains('fb.com') ||
+            mediaPath.toLowerCase().contains('fb.watch');
     final bool isYouTubeUrl = mediaPath.toLowerCase().contains('youtube.com') ||
         mediaPath.toLowerCase().contains('youtu.be') ||
         mediaPath.toLowerCase().contains('youtube.com/shorts');
@@ -4742,55 +5005,39 @@ return Container(
                         final category = _categories.firstWhereOrNull(
                             (cat) => cat.id == exp.categoryId);
                         final categoryIcon = category?.icon ?? '❓';
-                        final colorCategory = _colorCategories
-                            .firstWhereOrNull((cc) => cc.id == exp.colorCategoryId);
+                        final colorCategory = _colorCategories.firstWhereOrNull(
+                            (cc) => cc.id == exp.colorCategoryId);
                         final color = colorCategory != null
                             ? _parseColor(colorCategory.colorHex)
                             : Theme.of(context).disabledColor;
 
                         return InkWell(
                           onTap: () {
-                            final resolvedCategory = category ?? UserCategory(
-                              id: exp.categoryId ?? 'uncategorized',
-                              name: category?.name ?? 'Uncategorized',
-                              icon: categoryIcon,
-                              ownerUserId: category?.ownerUserId ?? _authService.currentUser?.uid ?? 'system_default',
-                              orderIndex: category?.orderIndex ?? 9999,
-                            );
-                            Navigator.push<bool>(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) => ExperiencePageScreen(
-                                  experience: exp,
-                                  category: resolvedCategory,
-                                  userColorCategories: _colorCategories,
-                                ),
-                              ),
-                            ).then((result) {
-                              if (result == true && mounted) {
-                                _loadData();
-                              }
-                            });
+                            _openExperience(exp);
                           },
                           child: Padding(
                             padding: const EdgeInsets.symmetric(vertical: 4.0),
                             child: Row(
                               children: [
-                                Text(categoryIcon, style: const TextStyle(fontSize: 16)),
+                                Text(categoryIcon,
+                                    style: const TextStyle(fontSize: 16)),
                                 const SizedBox(width: 6),
                                 if (colorCategory != null)
                                   Padding(
                                     padding: const EdgeInsets.only(right: 6.0),
-                                    child: Icon(Icons.circle, color: color, size: 10),
+                                    child: Icon(Icons.circle,
+                                        color: color, size: 10),
                                   ),
                                 Expanded(
                                   child: Text(
                                     exp.name,
-                                    style: Theme.of(context).textTheme.bodyMedium,
+                                    style:
+                                        Theme.of(context).textTheme.bodyMedium,
                                     overflow: TextOverflow.ellipsis,
                                   ),
                                 ),
-                                const Icon(Icons.chevron_right, color: Colors.grey, size: 18),
+                                const Icon(Icons.chevron_right,
+                                    color: Colors.grey, size: 18),
                               ],
                             ),
                           ),
@@ -4829,7 +5076,8 @@ return Container(
                       ],
                     ),
                   ),
-                if (mediaPath.toLowerCase().contains('yelp.com/biz') || mediaPath.toLowerCase().contains('yelp.to/'))
+                if (mediaPath.toLowerCase().contains('yelp.com/biz') ||
+                    mediaPath.toLowerCase().contains('yelp.to/'))
                   Container(
                     padding: const EdgeInsets.symmetric(vertical: 8),
                     child: Row(
@@ -4882,26 +5130,36 @@ return Container(
   void _showMediaDetailsDialog(GroupedContentItem group) {
     showDialog(
       context: context, // This 'context' is from _CollectionsScreenState
-      builder: (BuildContext dialogContext) { // Use a different name for dialog's own context
+      builder: (BuildContext dialogContext) {
+        // Use a different name for dialog's own context
         return AlertDialog(
           title: Text(group.mediaItem.path.contains("instagram.com")
               ? "Instagram Post Details"
-              : group.mediaItem.path.contains('facebook.com') || group.mediaItem.path.contains('fb.com') || group.mediaItem.path.contains('fb.watch')
+              : group.mediaItem.path.contains('facebook.com') ||
+                      group.mediaItem.path.contains('fb.com') ||
+                      group.mediaItem.path.contains('fb.watch')
                   ? 'Facebook Post Details'
-                  : group.mediaItem.path.contains('tiktok.com') || group.mediaItem.path.contains('vm.tiktok.com')
+                  : group.mediaItem.path.contains('tiktok.com') ||
+                          group.mediaItem.path.contains('vm.tiktok.com')
                       ? 'TikTok Post Details'
-                      : group.mediaItem.path.contains('youtube.com') || group.mediaItem.path.contains('youtu.be')
+                      : group.mediaItem.path.contains('youtube.com') ||
+                              group.mediaItem.path.contains('youtu.be')
                           ? 'YouTube Video Details'
                           : "Shared Media Details"),
-          content: SizedBox( // Wrap the Column with SizedBox to constrain its width
-            width: MediaQuery.of(dialogContext).size.width * 0.2, // Example: 80% of screen width
+          content: SizedBox(
+            // Wrap the Column with SizedBox to constrain its width
+            width: MediaQuery.of(dialogContext).size.width *
+                0.2, // Example: 80% of screen width
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
                 Text(
                   "Linked Experiences (${group.associatedExperiences.length}):",
-                  style: Theme.of(dialogContext).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                  style: Theme.of(dialogContext)
+                      .textTheme
+                      .titleMedium
+                      ?.copyWith(fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 12),
                 if (group.associatedExperiences.isEmpty)
@@ -4911,41 +5169,52 @@ return Container(
                   ),
                 if (group.associatedExperiences.isNotEmpty)
                   ListView.builder(
-                    shrinkWrap: true, 
+                    shrinkWrap: true,
                     itemCount: group.associatedExperiences.length,
-                    itemBuilder: (context, index) { 
+                    itemBuilder: (context, index) {
                       final exp = group.associatedExperiences[index];
-                      final category = _categories.firstWhereOrNull((cat) => cat.id == exp.categoryId);
+                      final category = _categories
+                          .firstWhereOrNull((cat) => cat.id == exp.categoryId);
                       final categoryIcon = category?.icon ?? '❓';
-                      final colorCategory = _colorCategories.firstWhereOrNull((cc) => cc.id == exp.colorCategoryId);
-                      final color = colorCategory != null ? _parseColor(colorCategory.colorHex) : Theme.of(dialogContext).disabledColor;
+                      final colorCategory = _colorCategories.firstWhereOrNull(
+                          (cc) => cc.id == exp.colorCategoryId);
+                      final color = colorCategory != null
+                          ? _parseColor(colorCategory.colorHex)
+                          : Theme.of(dialogContext).disabledColor;
 
                       return ListTile(
                         leading: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Text(categoryIcon, style: const TextStyle(fontSize: 20)),
+                            Text(categoryIcon,
+                                style: const TextStyle(fontSize: 20)),
                             if (colorCategory != null) ...[
                               const SizedBox(width: 4),
                               Icon(Icons.circle, color: color, size: 12),
                             ]
                           ],
                         ),
-                        title: Text(exp.name, style: Theme.of(dialogContext).textTheme.bodyLarge),
+                        title: Text(exp.name,
+                            style: Theme.of(dialogContext).textTheme.bodyLarge),
                         trailing: const Icon(Icons.chevron_right),
                         onTap: () {
-                          Navigator.of(dialogContext).pop(); // Close dialog first
-                          final resolvedCategory = category ?? UserCategory(
-                            id: exp.categoryId ?? 'uncategorized',
-                            name: category?.name ?? 'Uncategorized',
-                            icon: categoryIcon,
-                            ownerUserId: category?.ownerUserId ?? _authService.currentUser?.uid ?? 'system_default',
-                            orderIndex: category?.orderIndex ?? 9999,
-                          );
+                          Navigator.of(dialogContext)
+                              .pop(); // Close dialog first
+                          final resolvedCategory = category ??
+                              UserCategory(
+                                id: exp.categoryId ?? 'uncategorized',
+                                name: category?.name ?? 'Uncategorized',
+                                icon: categoryIcon,
+                                ownerUserId: category?.ownerUserId ??
+                                    _authService.currentUser?.uid ??
+                                    'system_default',
+                                orderIndex: category?.orderIndex ?? 9999,
+                              );
                           Navigator.push<bool>(
                             this.context, // Use _CollectionsScreenState's context for navigation
                             MaterialPageRoute(
-                              builder: (ctx) => ExperiencePageScreen( // Use 'ctx' for clarity
+                              builder: (ctx) => ExperiencePageScreen(
+                                // Use 'ctx' for clarity
                                 experience: exp,
                                 category: resolvedCategory,
                                 userColorCategories: _colorCategories,
@@ -4999,7 +5268,8 @@ return Container(
               .getSharedMediaItems(allMediaItemIds.toList());
           if (_perfLogs) {
             mediaFetchSw.stop();
-            print('[Perf][Collections] sharedMediaItems fetch (${allMediaItemIds.length} ids) took ${mediaFetchSw.elapsedMilliseconds}ms');
+            print(
+                '[Perf][Collections] sharedMediaItems fetch (${allMediaItemIds.length} ids) took ${mediaFetchSw.elapsedMilliseconds}ms');
           }
 
           final Map<String, SharedMediaItem> mediaItemMap = {
@@ -5043,7 +5313,8 @@ return Container(
       }
       if (_perfLogs) {
         groupSw.stop();
-        print('[Perf][Collections] Grouping content took ${groupSw.elapsedMilliseconds}ms (items=${groupedContent.length})');
+        print(
+            '[Perf][Collections] Grouping content took ${groupSw.elapsedMilliseconds}ms (items=${groupedContent.length})');
       }
 
       if (mounted) {
@@ -5082,7 +5353,7 @@ return Container(
     String? placeIdToLookup;
 
     try {
-      String searchQuery = resolvedUrl; 
+      String searchQuery = resolvedUrl;
       try {
         final Uri uri = Uri.parse(resolvedUrl);
         final placeSegmentIndex = uri.pathSegments.indexOf('place');
@@ -5152,7 +5423,8 @@ return Container(
           if (hadFilters) {
             _applyFiltersAndUpdateLists();
           } else {
-            await _applyExperienceSort(_experienceSortType, applyToFiltered: true);
+            await _applyExperienceSort(_experienceSortType,
+                applyToFiltered: true);
           }
         }
       } catch (_) {
@@ -5173,7 +5445,8 @@ return Container(
         if (hadFilters) {
           _applyFiltersAndUpdateLists();
         } else {
-          await _applyExperienceSort(_experienceSortType, applyToFiltered: true);
+          await _applyExperienceSort(_experienceSortType,
+              applyToFiltered: true);
         }
       }
 
@@ -5188,7 +5461,6 @@ return Container(
     }
   }
 
-
   // --- Share Bottom Sheets for Category and Color Category ---
   void _showShareCategoryBottomSheet(UserCategory _category) {
     showModalBottomSheet(
@@ -5198,7 +5470,8 @@ return Container(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
       builder: (ctx) {
-        return _ShareBottomSheetContent(title: 'Share Category', userCategory: _category);
+        return _ShareBottomSheetContent(
+            title: 'Share Category', userCategory: _category);
       },
     );
   }
@@ -5211,7 +5484,8 @@ return Container(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
       builder: (ctx) {
-        return _ShareBottomSheetContent(title: 'Share Color Category', colorCategory: _colorCategory);
+        return _ShareBottomSheetContent(
+            title: 'Share Color Category', colorCategory: _colorCategory);
       },
     );
   }
@@ -5224,10 +5498,12 @@ class _ShareBottomSheetContent extends StatefulWidget {
   final UserCategory? userCategory;
   final ColorCategory? colorCategory;
 
-  const _ShareBottomSheetContent({required this.title, this.userCategory, this.colorCategory});
+  const _ShareBottomSheetContent(
+      {required this.title, this.userCategory, this.colorCategory});
 
   @override
-  State<_ShareBottomSheetContent> createState() => _ShareBottomSheetContentState();
+  State<_ShareBottomSheetContent> createState() =>
+      _ShareBottomSheetContentState();
 }
 
 class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
@@ -5249,7 +5525,9 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('Share link', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+                const Text('Share link',
+                    style:
+                        TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
                 const SizedBox(height: 8),
                 Container(
                   padding: const EdgeInsets.all(12),
@@ -5269,7 +5547,9 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
                       },
                       icon: const Icon(Icons.ios_share),
                       label: const Text('Share'),
-                      style: ElevatedButton.styleFrom(backgroundColor: Theme.of(ctx).primaryColor, foregroundColor: Colors.white),
+                      style: ElevatedButton.styleFrom(
+                          backgroundColor: Theme.of(ctx).primaryColor,
+                          foregroundColor: Colors.white),
                     ),
                     const SizedBox(width: 12),
                     OutlinedButton.icon(
@@ -5277,7 +5557,8 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
                         await Clipboard.setData(ClipboardData(text: url));
                         if (ctx.mounted) {
                           Navigator.of(ctx).pop();
-                          ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(content: Text('Link copied')));
+                          ScaffoldMessenger.of(ctx).showSnackBar(
+                              const SnackBar(content: Text('Link copied')));
                         }
                       },
                       icon: const Icon(Icons.copy),
@@ -5306,7 +5587,8 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
               children: [
                 Text(
                   widget.title,
-                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+                  style: const TextStyle(
+                      fontSize: 18, fontWeight: FontWeight.w600),
                 ),
                 const Spacer(),
                 IconButton(
@@ -5368,11 +5650,13 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
               onTap: () async {
                 final bool grantEdit = _shareMode == 'edit_access';
                 try {
-                  final DateTime expiresAt = DateTime.now().add(const Duration(days: 30));
+                  final DateTime expiresAt =
+                      DateTime.now().add(const Duration(days: 30));
                   final shareService = CategoryShareService();
                   late final String url;
                   // Capture a safe context before popping the current sheet
-                  final BuildContext rootContext = Navigator.of(context, rootNavigator: true).context;
+                  final BuildContext rootContext =
+                      Navigator.of(context, rootNavigator: true).context;
                   if (widget.userCategory != null) {
                     url = await shareService.createLinkShareForCategory(
                       category: widget.userCategory!,
@@ -5406,3 +5690,6 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
     );
   }
 }
+
+
+
