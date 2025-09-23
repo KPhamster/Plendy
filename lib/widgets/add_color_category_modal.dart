@@ -245,6 +245,7 @@ class _AddColorCategoryModalState extends State<AddColorCategoryModal> {
           ],
         ),
       ),
-    );
+    ),
+  );
   }
 }

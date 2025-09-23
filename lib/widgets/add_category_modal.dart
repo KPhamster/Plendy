@@ -281,6 +281,7 @@ class _AddCategoryModalState extends State<AddCategoryModal> {
           ],
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 }
