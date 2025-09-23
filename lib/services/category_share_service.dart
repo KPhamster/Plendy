@@ -25,6 +25,61 @@ class CategoryShareService {
     return List.generate(12, (_) => chars[rnd.nextInt(chars.length)]).join();
   }
 
+  Future<List<Experience>> _collectShareableExperiences({
+    UserCategory? category,
+    ColorCategory? colorCategory,
+  }) async {
+    final userId = _currentUserId;
+    if (userId == null) {
+      throw Exception('User not authenticated');
+    }
+
+    bool matches(Experience exp) {
+      if (category != null) {
+        if (exp.categoryId == category.id) {
+          return true;
+        }
+        final otherCats = exp.otherCategories;
+        return otherCats.contains(category.id);
+      }
+      if (colorCategory != null) {
+        return exp.colorCategoryId == colorCategory.id;
+      }
+      return false;
+    }
+
+    final List<Experience> collected = [];
+    final Set<String> seenIds = {};
+
+    void addMatching(Iterable<Experience> experiences) {
+      for (final exp in experiences) {
+        if (!matches(exp)) {
+          continue;
+        }
+        if (seenIds.add(exp.id)) {
+          collected.add(exp);
+        }
+      }
+    }
+
+    try {
+      final editorExperiences = await _experienceService.getUserExperiences();
+      addMatching(editorExperiences);
+    } catch (e) {
+      print('CategoryShareService: Failed to load editor experiences: $e');
+    }
+
+    try {
+      final createdExperiences =
+          await _experienceService.getExperiencesByUser(userId, limit: 500);
+      addMatching(createdExperiences);
+    } catch (e) {
+      print('CategoryShareService: Failed to load created experiences: $e');
+    }
+
+    return collected;
+  }
+
   Future<String> createLinkShareForCategory({
     required UserCategory category,
     String accessMode = 'view', // 'view' | 'edit'
@@ -38,7 +93,7 @@ class CategoryShareService {
     // Build experiences snapshot for this category (minimal fields for preview)
     // Include both primary categoryId and otherCategories membership
     final List<Experience> exps =
-        await _experienceService.getExperiencesByUserCategoryAll(category.id);
+        await _collectShareableExperiences(category: category);
     final List<Map<String, dynamic>> experienceSnapshots =
         exps.map((e) => _buildExperienceSnapshot(e)).toList();
 
@@ -73,8 +128,8 @@ class CategoryShareService {
 
     final token = _generateToken();
     // Build experiences snapshot for this color category
-    final List<Experience> exps = await _experienceService
-        .getExperiencesByColorCategoryId(colorCategory.id);
+    final List<Experience> exps =
+        await _collectShareableExperiences(colorCategory: colorCategory);
     final List<Map<String, dynamic>> experienceSnapshots =
         exps.map((e) => _buildExperienceSnapshot(e)).toList();
 

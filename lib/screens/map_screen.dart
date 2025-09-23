@@ -8,6 +8,8 @@ import '../widgets/google_maps_widget.dart';
 import '../services/experience_service.dart'; // Import ExperienceService
 import '../services/auth_service.dart'; // Import AuthService
 import '../services/google_maps_service.dart'; // Import GoogleMapsService
+import '../services/sharing_service.dart'; // ADDED: SharingService for shared experiences
+import '../models/enums/share_enums.dart'; // ADDED: ShareableItemType enum
 import '../models/experience.dart'; // Import Experience model (includes Location)
 import '../models/user_category.dart'; // Import UserCategory model
 import '../models/color_category.dart'; // Import ColorCategory model
@@ -151,8 +153,44 @@ class _MapScreenState extends State<MapScreen> {
       print(
           "🗺️ MAP SCREEN: Loaded ${_experiences.length} experiences and ${_categories.length} categories.");
 
-      // Initial marker generation using the refactored function
-      // This will display all markers initially, respecting no filters
+      // ADDED: Load shared experiences and merge
+      try {
+        final sharingService = SharingService();
+        final sharedPermissions =
+            await sharingService.getSharedItemsForUser(userId);
+        final sharedExperienceIds = sharedPermissions
+            .where((perm) => perm.itemType == ShareableItemType.experience)
+            .map((perm) => perm.itemId)
+            .where((id) => id.isNotEmpty)
+            .toSet()
+            .toList();
+
+        print(
+            "🗺️ MAP SCREEN: Found ${sharedExperienceIds.length} shared experience IDs for current user.");
+
+        if (sharedExperienceIds.isNotEmpty) {
+          final sharedExperiences = await _experienceService
+              .getExperiencesByIds(sharedExperienceIds);
+          print(
+              "🗺️ MAP SCREEN: Loaded ${sharedExperiences.length} shared experiences.");
+
+          // Merge owned and shared, de-duplicating by ID
+          final Map<String, Experience> combined = {
+            for (final e in _experiences) e.id: e,
+          };
+          for (final e in sharedExperiences) {
+            combined[e.id] = e;
+          }
+          _experiences = combined.values.toList();
+          print(
+              "🗺️ MAP SCREEN: Combined experiences total: ${_experiences.length}");
+        }
+      } catch (e) {
+        print(
+            "🗺️ MAP SCREEN: Error loading shared experiences: $e. Proceeding with owned experiences only.");
+      }
+
+      // Generate markers from the merged experiences list
       await _generateMarkersFromExperiences(_experiences);
 
       /* --- REMOVED Marker generation loop (moved to _generateMarkersFromExperiences) ---
