@@ -164,7 +164,9 @@ class CategoryShareService {
       throw Exception('Invalid parameters for saving shared category');
     }
 
-    final ShareAccessLevel accessLevel = accessMode.toLowerCase() == 'edit'
+    final mode = accessMode.toLowerCase();
+    const editModes = {'edit', 'edit_category', 'edit_color_category'};
+    final ShareAccessLevel accessLevel = editModes.contains(mode)
         ? ShareAccessLevel.edit
         : ShareAccessLevel.view;
 

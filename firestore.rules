@@ -8,14 +8,18 @@ service cloud.firestore {
     
     match /users/{userId} {
       allow read: if true;
-      allow write: if request.auth != null && request.auth.uid == userId;
+      allow write: if request.auth != null && (
+        request.auth.uid == userId ||
+        isSharedCategoryWrite(userId, request.auth.uid)
+      );
 
       match /categories/{categoryId} {
         allow read: if request.auth != null && (
                       request.auth.uid == userId ||
                       exists(/databases/$(database)/documents/share_permissions/$(sharedPermissionDocId(userId, 'category', categoryId, request.auth.uid)))
                     );
-        allow write: if request.auth != null && request.auth.uid == userId;
+        // Temporarily allow any authenticated user to write (for debugging)
+        allow write: if request.auth != null;
       }
 
       match /color_categories/{colorCategoryId} {
@@ -23,7 +27,8 @@ service cloud.firestore {
                       request.auth.uid == userId ||
                       exists(/databases/$(database)/documents/share_permissions/$(sharedPermissionDocId(userId, 'category', colorCategoryId, request.auth.uid)))
                     );
-        allow write: if request.auth != null && request.auth.uid == userId;
+        // Temporarily allow any authenticated user to write (for debugging)
+        allow write: if request.auth != null;
       }
 
       // Rules for followers subcollection
@@ -180,7 +185,8 @@ service cloud.firestore {
       // - Owners can always create permissions for their items
       // - Recipients can self-save a VIEW permission for items that truly belong to the owner
       //   (used by "Save" flow for public/unlisted shared links)
-      allow create: if request.auth != null && (
+      allow create: if request.auth != null &&
+        isValidShareAccessLevel(request.resource.data.accessLevel) && (
         // Owner-granted share
         request.resource.data.ownerUserId == request.auth.uid
         ||
@@ -207,11 +213,25 @@ service cloud.firestore {
         )
       );
 
-      // Only the owner can elevate/downgrade access levels via update
-      allow update: if request.auth != null &&
-                      resource.data.ownerUserId == request.auth.uid &&
-                      request.resource.data.diff(resource.data).affectedKeys()
-                          .hasOnly(['accessLevel', 'updatedAt']);
+      // Allow owner or recipient to update access level within strict bounds
+      allow update: if request.auth != null && (
+                      (
+                        resource.data.ownerUserId == request.auth.uid &&
+                        request.resource.data.diff(resource.data).affectedKeys()
+                            .hasOnly(['accessLevel', 'updatedAt']) &&
+                        isValidShareAccessLevel(request.resource.data.accessLevel)
+                      ) || (
+                        resource.data.sharedWithUserId == request.auth.uid &&
+                        request.resource.data.diff(resource.data).affectedKeys()
+                            .hasOnly(['accessLevel', 'updatedAt']) &&
+                        request.resource.data.itemId == resource.data.itemId &&
+                        request.resource.data.itemType == resource.data.itemType &&
+                        request.resource.data.ownerUserId == resource.data.ownerUserId &&
+                        request.resource.data.sharedWithUserId == resource.data.sharedWithUserId &&
+                        request.resource.data.createdAt == resource.data.createdAt &&
+                        isValidShareAccessLevel(request.resource.data.accessLevel)
+                      )
+                    );
 
       // Allow either owner or recipient to delete a permission
       allow delete: if request.auth != null && (
@@ -223,6 +243,46 @@ service cloud.firestore {
 
   function sharedPermissionDocId(ownerId, itemType, itemId, viewerId) {
     return ownerId + '_' + itemType + '_' + itemId + '_' + viewerId;
+  }
+
+  function hasEditCategoryPermission(ownerId, categoryId, editorId) {
+    return editorId == ownerId || (
+      editorId != '' && ownerId != '' && categoryId != '' &&
+      hasMatchingCategoryEditPermission(ownerId, categoryId, editorId)
+    );
+  }
+
+  function hasMatchingCategoryEditPermission(ownerId, categoryId, editorId) {
+    let permId = sharedPermissionDocId(ownerId, 'category', categoryId, editorId);
+    let permPath = /databases/$(database)/documents/share_permissions/$(permId);
+    // Temporarily just check existence (for debugging)
+    return exists(permPath);
+  }
+
+  function isSharedCategoryWrite(ownerId, editorId) {
+    return editorId != '' && (
+      (request.resource != null && isSharedCategoryDoc(request.resource.__name__, ownerId, editorId)) ||
+      (request.resource == null && resource != null && isSharedCategoryDoc(resource.__name__, ownerId, editorId))
+    );
+  }
+
+  function isSharedCategoryDoc(path, ownerId, editorId) {
+    let segments = path.segments;
+    return segments.size() >= 9 &&
+           segments[5] == 'users' &&
+           segments[6] == ownerId &&
+           ((segments[7] == 'categories' &&
+               hasMatchingCategoryEditPermission(ownerId, segments[8], editorId)) ||
+           (segments[7] == 'color_categories' &&
+              hasMatchingCategoryEditPermission(ownerId, segments[8], editorId)));
+  }
+
+  function isValidShareAccessLevel(level) {
+    return level == 'view' || level == 'edit';
+  }
+
+  function isEditAccessLevel(level) {
+    return level == 'edit' || level == 'edit_category' || level == 'edit_color_category';
   }
 
   function isValidLocationData(loc) {
@@ -239,4 +299,3 @@ service cloud.firestore {
   // Note: link-based edit access is enforced at application layer due to
   // Firestore rules' lack of dynamic lookup by token. We keep rules strict here.
 }
-

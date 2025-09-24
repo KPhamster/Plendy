@@ -441,14 +441,18 @@ class _CategoryPreviewListState extends State<_CategoryPreviewList> {
 
   String _getBannerText() {
     final senderName = _senderDisplayName ?? 'Someone';
-    if (widget.accessMode == 'view') {
+    final mode = widget.accessMode.toLowerCase();
+    if (mode == 'view') {
       if (_isLoggedIn) {
         return "Check out $senderName's experience list! Save the list to get view-only access.";
       } else {
         return "Check out $senderName's experience list! Log into Plendy to get view-only access.";
       }
     }
-    // For edit access or other modes, you can add more cases here
+    const editModes = {'edit', 'edit_category', 'edit_color_category'};
+    if (editModes.contains(mode)) {
+      return "Check out $senderName's experience list! Save the list to get edit access.";
+    }
     return "Check out $senderName's experience list!";
   }
 

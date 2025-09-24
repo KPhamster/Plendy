@@ -10,6 +10,7 @@ import '../services/auth_service.dart'; // Import AuthService
 import '../services/google_maps_service.dart'; // Import GoogleMapsService
 import '../services/sharing_service.dart'; // ADDED: SharingService for shared experiences
 import '../models/enums/share_enums.dart'; // ADDED: ShareableItemType enum
+import '../models/user_profile.dart'; // ADDED: UserProfile for owner names
 import '../models/experience.dart'; // Import Experience model (includes Location)
 import '../models/user_category.dart'; // Import UserCategory model
 import '../models/color_category.dart'; // Import ColorCategory model
@@ -52,6 +53,8 @@ class _MapScreenState extends State<MapScreen> {
   List<Experience> _experiences = [];
   List<UserCategory> _categories = [];
   List<ColorCategory> _colorCategories = [];
+  // ADDED: Cache of owner display names for shared categories
+  final Map<String, String> _ownerNameByUserId = {};
   final Completer<GoogleMapController> _mapControllerCompleter =
       Completer<GoogleMapController>();
   // ADDED: Cache for generated category icons
@@ -165,6 +168,16 @@ class _MapScreenState extends State<MapScreen> {
             .toSet()
             .toList();
 
+        // Build map from shared experience ID -> owner user ID
+        final Map<String, String> sharedExpOwnerById = {};
+        for (final perm in sharedPermissions) {
+          if (perm.itemType == ShareableItemType.experience &&
+              perm.itemId.isNotEmpty &&
+              perm.ownerUserId.isNotEmpty) {
+            sharedExpOwnerById[perm.itemId] = perm.ownerUserId;
+          }
+        }
+
         print(
             "🗺️ MAP SCREEN: Found ${sharedExperienceIds.length} shared experience IDs for current user.");
 
@@ -173,6 +186,123 @@ class _MapScreenState extends State<MapScreen> {
               .getExperiencesByIds(sharedExperienceIds);
           print(
               "🗺️ MAP SCREEN: Loaded ${sharedExperiences.length} shared experiences.");
+
+          // ADDED: Fetch owners' categories and color categories referenced by shared experiences
+          final Set<String> existingCategoryIds =
+              _categories.map((c) => c.id).toSet();
+          final Set<String> existingColorCategoryIds =
+              _colorCategories.map((c) => c.id).toSet();
+
+          final Set<String> requestedCategoryPairKeys = {};
+          final Set<String> requestedColorPairKeys = {};
+          final List<Future<UserCategory?>> categoryFetches = [];
+          final List<Future<ColorCategory?>> colorFetches = [];
+
+          for (final exp in sharedExperiences) {
+            final ownerId = sharedExpOwnerById[exp.id];
+            if (ownerId == null || ownerId.isEmpty) continue;
+
+            // Primary category
+            final String? catId = exp.categoryId;
+            if (catId != null && catId.isNotEmpty &&
+                !existingCategoryIds.contains(catId)) {
+              final key = ownerId + '|' + catId;
+              if (requestedCategoryPairKeys.add(key)) {
+                categoryFetches.add(
+                    _experienceService.getUserCategoryByOwner(ownerId, catId));
+              }
+            }
+
+            // Other categories
+            for (final oc in exp.otherCategories) {
+              if (oc.isEmpty || existingCategoryIds.contains(oc)) continue;
+              final key = ownerId + '|' + oc;
+              if (requestedCategoryPairKeys.add(key)) {
+                categoryFetches.add(
+                    _experienceService.getUserCategoryByOwner(ownerId, oc));
+              }
+            }
+
+            // Color category
+            final String? colorId = exp.colorCategoryId;
+            if (colorId != null && colorId.isNotEmpty &&
+                !existingColorCategoryIds.contains(colorId)) {
+              final key = ownerId + '|' + colorId;
+              if (requestedColorPairKeys.add(key)) {
+                colorFetches.add(_experienceService
+                    .getColorCategoryByOwner(ownerId, colorId));
+              }
+            }
+          }
+
+          if (categoryFetches.isNotEmpty) {
+            try {
+              final fetchedCats = await Future.wait(categoryFetches);
+              final newCats = fetchedCats.whereType<UserCategory>().toList();
+              if (newCats.isNotEmpty) {
+                _categories.addAll(newCats);
+                print(
+                    "🗺️ MAP SCREEN: Added ${newCats.length} shared user categories to local list (for icons & filters).");
+              }
+            } catch (e) {
+              print(
+                  "🗺️ MAP SCREEN: Error fetching shared user categories: $e");
+            }
+          }
+
+          if (colorFetches.isNotEmpty) {
+            try {
+              final fetchedColors = await Future.wait(colorFetches);
+              final newColors =
+                  fetchedColors.whereType<ColorCategory>().toList();
+              if (newColors.isNotEmpty) {
+                _colorCategories.addAll(newColors);
+                print(
+                    "🗺️ MAP SCREEN: Added ${newColors.length} shared color categories to local list (for icons & filters).");
+              }
+            } catch (e) {
+              print(
+                  "🗺️ MAP SCREEN: Error fetching shared color categories: $e");
+            }
+          }
+
+          // ADDED: Fetch owner display names for shared categories/color categories
+          try {
+            final Set<String> ownerIdsToFetch = {};
+            for (final c in _categories) {
+              if (c.ownerUserId.isNotEmpty &&
+                  c.ownerUserId != userId &&
+                  !_ownerNameByUserId.containsKey(c.ownerUserId)) {
+                ownerIdsToFetch.add(c.ownerUserId);
+              }
+            }
+            for (final cc in _colorCategories) {
+              if (cc.ownerUserId.isNotEmpty &&
+                  cc.ownerUserId != userId &&
+                  !_ownerNameByUserId.containsKey(cc.ownerUserId)) {
+                ownerIdsToFetch.add(cc.ownerUserId);
+              }
+            }
+
+            if (ownerIdsToFetch.isNotEmpty) {
+              final List<UserProfile?> profiles = await Future.wait(ownerIdsToFetch
+                  .map((oid) => _experienceService.getUserProfileById(oid)));
+              final Map<String, String> newNames = {};
+              for (final p in profiles) {
+                if (p != null) {
+                  final name = (p.displayName ?? p.username ?? 'Unknown');
+                  newNames[p.id] = name;
+                }
+              }
+              if (newNames.isNotEmpty && mounted) {
+                setState(() {
+                  _ownerNameByUserId.addAll(newNames);
+                });
+              }
+            }
+          } catch (e) {
+            print("🗺️ MAP SCREEN: Error fetching owner display names: $e");
+          }
 
           // Merge owned and shared, de-duplicating by ID
           final Map<String, Experience> combined = {
@@ -434,12 +564,41 @@ class _MapScreenState extends State<MapScreen> {
                       ...(_categories.toList()
                             ..sort((a, b) => a.name.compareTo(b.name)))
                           .map((category) {
+                        final bool isSharedOwner = category.ownerUserId != _authService.currentUser?.uid;
+                        final String? ownerName = isSharedOwner ? _ownerNameByUserId[category.ownerUserId] : null;
                         // This map returns a Widget (CheckboxListTile)
                         return CheckboxListTile(
-                          title: Text(
-                            '${category.icon} ${category.name}',
-                            overflow: TextOverflow.ellipsis,
+                          title: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  SizedBox(
+                                    width: 16,
+                                    child: Center(child: Text(category.icon)),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Text(
+                                      category.name,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              if (isSharedOwner && ownerName != null && ownerName.isNotEmpty)
+                                Padding(
+                                  padding: const EdgeInsets.only(left: 28),
+                                  child: Text(
+                                    'Shared by ${ownerName}',
+                                    style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                                  ),
+                                ),
+                            ],
                           ),
+                          subtitle: null,
                           value: tempSelectedCategoryIds.contains(category.id),
                           onChanged: (bool? selected) {
                             setStateDialog(() {
@@ -459,28 +618,45 @@ class _MapScreenState extends State<MapScreen> {
                       ...(_colorCategories.toList()
                             ..sort((a, b) => a.name.compareTo(b.name)))
                           .map((colorCategory) {
+                        final bool isSharedOwner = colorCategory.ownerUserId != _authService.currentUser?.uid;
+                        final String? ownerName = isSharedOwner ? _ownerNameByUserId[colorCategory.ownerUserId] : null;
                         // This map returns a Widget (CheckboxListTile)
                         return CheckboxListTile(
-                          title: Row(
+                          title: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Container(
-                                width: 16,
-                                height: 16,
-                                decoration: BoxDecoration(
-                                    color: _parseColor(colorCategory.colorHex),
-                                    shape: BoxShape.circle,
-                                    border: Border.all(color: Colors.grey)),
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Container(
+                                    width: 16,
+                                    height: 16,
+                                    decoration: BoxDecoration(
+                                        color: _parseColor(colorCategory.colorHex),
+                                        shape: BoxShape.circle,
+                                        border: Border.all(color: Colors.grey)),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Text(
+                                      colorCategory.name,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                ],
                               ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Text(
-                                  colorCategory.name,
-                                  overflow: TextOverflow.ellipsis,
+                              if (isSharedOwner && ownerName != null && ownerName.isNotEmpty)
+                                Padding(
+                                  padding: const EdgeInsets.only(left: 28),
+                                  child: Text(
+                                    'Shared by ${ownerName}',
+                                    style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                                  ),
                                 ),
-                              ),
                             ],
                           ),
+                          subtitle: null,
                           value: tempSelectedColorCategoryIds
                               .contains(colorCategory.id),
                           onChanged: (bool? selected) {
