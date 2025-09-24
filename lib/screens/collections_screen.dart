@@ -181,8 +181,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   Future<void> _openExperience(Experience experience) async {
     final sharePermission = _sharedExperiencePermissions[experience.id];
     final bool isShared = sharePermission != null;
-    final bool hasEditAccess =
-        sharePermission?.accessLevel == ShareAccessLevel.edit;
+    final bool hasEditAccess = _experienceHasEditAccess(experience);
 
     final UserCategory resolvedCategory =
         _resolveCategoryForExperience(experience);
@@ -290,10 +289,80 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   String _buildSharedByLabel({
     required SharePermission permission,
     required String ownerName,
+    ShareAccessLevel? overrideAccessLevel,
   }) {
+    final ShareAccessLevel accessLevel =
+        overrideAccessLevel ?? permission.accessLevel;
     final String accessText =
-        permission.accessLevel == ShareAccessLevel.edit ? 'edit access' : 'view access';
+        accessLevel == ShareAccessLevel.edit ? 'edit access' : 'view access';
     return 'Shared by $ownerName ($accessText)';
+  }
+
+  bool _experienceHasEditAccess(Experience experience) {
+    final SharePermission? directPermission =
+        _sharedExperiencePermissions[experience.id];
+    if (directPermission == null) {
+      return true;
+    }
+    if (directPermission.accessLevel == ShareAccessLevel.edit) {
+      return true;
+    }
+
+    bool categoryGrantsEdit(String? categoryId) {
+      if (categoryId == null || categoryId.isEmpty) {
+        return false;
+      }
+      final SharePermission? permission =
+          _sharedCategoryPermissions[categoryId];
+      if (permission == null) {
+        return false;
+      }
+      final bool isColorCategory =
+          _sharedCategoryIsColor[categoryId] ?? false;
+      if (isColorCategory) {
+        return false;
+      }
+      return permission.accessLevel == ShareAccessLevel.edit;
+    }
+
+    if (categoryGrantsEdit(experience.categoryId)) {
+      return true;
+    }
+
+    for (final otherCategoryId in experience.otherCategories) {
+      if (categoryGrantsEdit(otherCategoryId)) {
+        return true;
+      }
+    }
+
+    bool colorCategoryGrantsEdit(String? colorCategoryId) {
+      if (colorCategoryId == null || colorCategoryId.isEmpty) {
+        return false;
+      }
+      final SharePermission? permission =
+          _sharedCategoryPermissions[colorCategoryId];
+      if (permission == null) {
+        return false;
+      }
+      final bool isColorCategory =
+          _sharedCategoryIsColor[colorCategoryId] ?? false;
+      if (!isColorCategory) {
+        return false;
+      }
+      return permission.accessLevel == ShareAccessLevel.edit;
+    }
+
+    if (colorCategoryGrantsEdit(experience.colorCategoryId)) {
+      return true;
+    }
+
+    return false;
+  }
+
+  ShareAccessLevel _effectiveAccessLevelForExperience(Experience experience) {
+    return _experienceHasEditAccess(experience)
+        ? ShareAccessLevel.edit
+        : ShareAccessLevel.view;
   }
   // ADDED: Background refresh helper for photo resource names
   Future<void> _refreshPhotoResourceNameForExperience(
@@ -2585,10 +2654,13 @@ Widget _buildCategoryGridItem(UserCategory category) {
   final bool isOwnerShared = _ownedSharedExperienceIds.contains(experience.id);
   final String? ownerName =
       isShared ? (_shareOwnerNames[sharePermission!.ownerUserId] ?? 'Someone') : null;
+  final ShareAccessLevel effectiveAccessLevel =
+      _effectiveAccessLevelForExperience(experience);
   final String? shareLabel = isShared
       ? _buildSharedByLabel(
           permission: sharePermission!,
           ownerName: ownerName ?? 'Someone',
+          overrideAccessLevel: effectiveAccessLevel,
         )
       : (isOwnerShared ? 'Shared' : null);
 
@@ -2596,6 +2668,8 @@ Widget _buildCategoryGridItem(UserCategory category) {
     key: ValueKey(experience.id), // Use experience ID as key
     contentPadding: const EdgeInsets.symmetric(horizontal: 8.0),
     visualDensity: const VisualDensity(horizontal: -4),
+    isThreeLine: true,
+    titleAlignment: ListTileTitleAlignment.threeLine,
     leading: Container(
       width: 56,
       height: 56,
@@ -2641,27 +2715,57 @@ Widget _buildCategoryGridItem(UserCategory category) {
             fullAddress,
             style: Theme.of(context).textTheme.bodySmall,
           ),
-        if (experience.otherCategories.isNotEmpty || contentCount > 0)
+        // Row for subcategory icons and/or content count; also lift notes here when no subcategories
+        if (experience.otherCategories.isNotEmpty || contentCount > 0 ||
+            ((experience.additionalNotes != null && experience.additionalNotes!.isNotEmpty) && experience.otherCategories.isEmpty))
           Padding(
             padding: const EdgeInsets.only(top: 2.0),
             child: Row(
               children: [
                 Expanded(
-                  child: Wrap(
-                    spacing: 6.0,
-                    runSpacing: 2.0,
-                    children: experience.otherCategories.map((categoryId) {
-                      final otherCategory = _categories.firstWhereOrNull(
-                        (cat) => cat.id == categoryId,
-                      );
-                      if (otherCategory != null) {
-                        return Text(
-                          otherCategory.icon,
-                          style: const TextStyle(fontSize: 14),
-                        );
-                      }
-                      return const SizedBox.shrink();
-                    }).toList(),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (experience.otherCategories.isNotEmpty)
+                        Wrap(
+                          spacing: 6.0,
+                          runSpacing: 2.0,
+                          children: experience.otherCategories.map((categoryId) {
+                            final otherCategory = _categories.firstWhereOrNull(
+                              (cat) => cat.id == categoryId,
+                            );
+                            if (otherCategory != null) {
+                              return Text(
+                                otherCategory.icon,
+                                style: const TextStyle(fontSize: 14),
+                              );
+                            }
+                            return const SizedBox.shrink();
+                          }).toList(),
+                        ),
+                      if (experience.additionalNotes != null && experience.additionalNotes!.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 2.0),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              Icon(Icons.notes, size: 14, color: Colors.grey[600]),
+                              const SizedBox(width: 4),
+                              Expanded(
+                                child: Text(
+                                  experience.additionalNotes!,
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .bodySmall
+                                      ?.copyWith(fontStyle: FontStyle.italic),
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                    ],
                   ),
                 ),
                 if (contentCount > 0)
@@ -2686,8 +2790,10 @@ Widget _buildCategoryGridItem(UserCategory category) {
               ],
             ),
           ),
+        // Separate notes block is suppressed because notes render in the subcategory row
         if (experience.additionalNotes != null &&
-            experience.additionalNotes!.isNotEmpty)
+            experience.additionalNotes!.isNotEmpty &&
+            false)
           Padding(
             padding: const EdgeInsets.only(top: 4.0),
             child: Text(
@@ -2722,9 +2828,6 @@ Widget _buildCategoryGridItem(UserCategory category) {
     final String? locationArea = experience.location.getFormattedArea();
     final SharePermission? sharePermission =
         _sharedExperiencePermissions[experience.id];
-
-    final bool hasEditAccess = sharePermission == null ||
-        sharePermission.accessLevel == ShareAccessLevel.edit;
 
     final String? ownerName = sharePermission != null
         ? (_shareOwnerNames[sharePermission.ownerUserId] ?? 'Someone')
@@ -3367,13 +3470,111 @@ Widget _buildCategoryGridItem(UserCategory category) {
                 },
               ),
               const SizedBox(width: 8),
-              Text(
-                '${category.icon} ${category.name}',
-                style: Theme.of(context).textTheme.titleLarge,
+              // Category title with icon, and optional shared-by subtext
+              Expanded(
+                child: Builder(builder: (context) {
+                  final SharePermission? permission =
+                      _sharedCategoryPermissions[category.id];
+                  final bool isShared = permission != null;
+                  final String? ownerName = isShared
+                      ? (_shareOwnerNames[permission!.ownerUserId] ?? 'Someone')
+                      : null;
+                  final String? shareLabel = isShared
+                      ? _buildSharedByLabel(
+                          permission: permission!,
+                          ownerName: ownerName ?? 'Someone',
+                        )
+                      : null;
+
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          SizedBox(
+                            width: 16,
+                            child: Center(child: Text(category.icon)),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              category.name,
+                              style: Theme.of(context).textTheme.titleLarge,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (shareLabel != null)
+                        Padding(
+                          padding: const EdgeInsets.only(left: 28),
+                          child: Text(
+                            shareLabel,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey[600],
+                            ),
+                          ),
+                        ),
+                    ],
+                  );
+                }),
               ),
-              const Spacer(), // Pushes sort button to the right if added later
-              // Optional: Add a sort button specific to this view if needed
-              // PopupMenuButton<ExperienceSortType>(...)
+              
+              Builder(builder: (context) {
+                final SharePermission? permission =
+                    _sharedCategoryPermissions[category.id];
+                final bool isShared = permission != null;
+                final bool canEditCategory =
+                    !isShared || permission!.accessLevel == ShareAccessLevel.edit;
+                final bool canManageCategory = !isShared;
+                return PopupMenuButton<String>(
+                  icon: const Icon(Icons.more_vert),
+                  tooltip: 'Category Options',
+                  color: Colors.white,
+                  onSelected: (String result) {
+                    switch (result) {
+                      case 'edit':
+                        _showEditSingleCategoryModal(category);
+                        break;
+                      case 'share':
+                        _showShareCategoryBottomSheet(category);
+                        break;
+                      case 'delete':
+                        _showDeleteCategoryConfirmation(category);
+                        break;
+                    }
+                  },
+                  itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
+                    PopupMenuItem<String>(
+                      value: 'edit',
+                      enabled: canEditCategory,
+                      child: const ListTile(
+                        leading: Icon(Icons.edit_outlined),
+                        title: Text('Edit'),
+                      ),
+                    ),
+                    PopupMenuItem<String>(
+                      value: 'share',
+                      enabled: canManageCategory,
+                      child: const ListTile(
+                        leading: Icon(Icons.ios_share),
+                        title: Text('Share'),
+                      ),
+                    ),
+                    PopupMenuItem<String>(
+                      value: 'delete',
+                      enabled: canManageCategory,
+                      child: const ListTile(
+                        leading: Icon(Icons.delete_outline, color: Colors.red),
+                        title: Text('Delete', style: TextStyle(color: Colors.red)),
+                      ),
+                    ),
+                  ],
+                );
+              }),
             ],
           ),
         ),
@@ -4433,22 +4634,115 @@ Widget _buildColorCategoryGridItem(ColorCategory category) {
                 },
               ),
               const SizedBox(width: 8),
-              // Show color circle and name
-              Container(
-                width: 20,
-                height: 20,
-                decoration: BoxDecoration(
-                  color: category.color,
-                  shape: BoxShape.circle,
-                ),
+              Expanded(
+                child: Builder(builder: (context) {
+                  final SharePermission? permission =
+                      _sharedCategoryPermissions[category.id];
+                  final bool isShared = permission != null;
+                  final String? ownerName = isShared
+                      ? (_shareOwnerNames[permission!.ownerUserId] ?? 'Someone')
+                      : null;
+                  final String? shareLabel = isShared
+                      ? _buildSharedByLabel(
+                          permission: permission!,
+                          ownerName: ownerName ?? 'Someone',
+                        )
+                      : null;
+
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            width: 16,
+                            height: 16,
+                            decoration: BoxDecoration(
+                              color: category.color,
+                              shape: BoxShape.circle,
+                              border: Border.all(color: Colors.grey),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              category.name,
+                              style: Theme.of(context).textTheme.titleLarge,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (shareLabel != null)
+                        Padding(
+                          padding: const EdgeInsets.only(left: 28),
+                          child: Text(
+                            shareLabel,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey[600],
+                            ),
+                          ),
+                        ),
+                    ],
+                  );
+                }),
               ),
-              const SizedBox(width: 8),
-              Text(
-                category.name,
-                style: Theme.of(context).textTheme.titleLarge,
-              ),
-              const Spacer(),
-              // Optional: Add sort button specific to this filtered view
+              
+              Builder(builder: (context) {
+                final SharePermission? permission =
+                    _sharedCategoryPermissions[category.id];
+                final bool isShared = permission != null;
+                final bool canEditCategory =
+                    !isShared || permission!.accessLevel == ShareAccessLevel.edit;
+                final bool canManageCategory = !isShared;
+                return PopupMenuButton<String>(
+                  icon: const Icon(Icons.more_vert),
+                  tooltip: 'Color Category Options',
+                  color: Colors.white,
+                  onSelected: (String result) {
+                    switch (result) {
+                      case 'edit':
+                        _showEditSingleColorCategoryModal(category);
+                        break;
+                      case 'share':
+                        _showShareColorCategoryBottomSheet(category);
+                        break;
+                      case 'delete':
+                        _showDeleteColorCategoryConfirmation(category);
+                        break;
+                    }
+                  },
+                  itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
+                    PopupMenuItem<String>(
+                      value: 'edit',
+                      enabled: canEditCategory,
+                      child: const ListTile(
+                        leading: Icon(Icons.edit_outlined),
+                        title: Text('Edit'),
+                      ),
+                    ),
+                    PopupMenuItem<String>(
+                      value: 'share',
+                      enabled: canManageCategory,
+                      child: const ListTile(
+                        leading: Icon(Icons.ios_share),
+                        title: Text('Share'),
+                      ),
+                    ),
+                    PopupMenuItem<String>(
+                      value: 'delete',
+                      enabled: canManageCategory,
+                      child: const ListTile(
+                        leading: Icon(Icons.delete_outline, color: Colors.red),
+                        title: Text('Delete', style: TextStyle(color: Colors.red)),
+                      ),
+                    ),
+                  ],
+                );
+              }),
             ],
           ),
         ),
@@ -4532,8 +4826,49 @@ Widget _buildColorCategoryGridItem(ColorCategory category) {
                     ...(_categories.toList()
                           ..sort((a, b) => a.name.compareTo(b.name)))
                         .map((category) {
+                      final SharePermission? permission =
+                          _sharedCategoryPermissions[category.id];
+                      final bool isShared = permission != null;
+                      final String? ownerName = isShared
+                          ? (_shareOwnerNames[permission!.ownerUserId] ?? 'Someone')
+                          : null;
+                      final String? shareLabel = isShared
+                          ? 'Shared by ${ownerName ?? 'Someone'}'
+                          : null;
+
                       return CheckboxListTile(
-                        title: Text('${category.icon} ${category.name}'),
+                        title: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                SizedBox(
+                                  width: 16,
+                                  child: Center(child: Text(category.icon)),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Text(
+                                    category.name,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            if (shareLabel != null)
+                              Padding(
+                                padding: const EdgeInsets.only(left: 28),
+                                child: Text(
+                                  shareLabel,
+                                  style: TextStyle(
+                                      fontSize: 12, color: Colors.grey[600]),
+                                ),
+                              ),
+                          ],
+                        ),
+                        subtitle: null,
                         value: tempSelectedCategoryIds.contains(category.id),
                         controlAffinity:
                             ListTileControlAffinity.leading, // Checkbox on left
@@ -4560,29 +4895,59 @@ Widget _buildColorCategoryGridItem(ColorCategory category) {
                     ...(_colorCategories.toList()
                           ..sort((a, b) => a.name.compareTo(b.name)))
                         .map((colorCategory) {
+                      final SharePermission? permission =
+                          _sharedCategoryPermissions[colorCategory.id];
+                      final bool isShared = permission != null;
+                      final String? ownerName = isShared
+                          ? (_shareOwnerNames[permission!.ownerUserId] ?? 'Someone')
+                          : null;
+                      final String? shareLabel = isShared
+                          ? 'Shared by ${ownerName ?? 'Someone'}'
+                          : null;
+
                       return CheckboxListTile(
                         controlAffinity:
                             ListTileControlAffinity.leading, // Checkbox on left
                         contentPadding:
                             EdgeInsets.zero, // Remove default padding
-                        title: Row(
+                        title: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Container(
-                              width: 16,
-                              height: 16,
-                              decoration: BoxDecoration(
-                                color: _parseColor(
-                                    colorCategory.colorHex), // Use helper
-                                shape: BoxShape.circle,
-                              ),
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Container(
+                                  width: 16,
+                                  height: 16,
+                                  decoration: BoxDecoration(
+                                    color: _parseColor(
+                                        colorCategory.colorHex), // Use helper
+                                    shape: BoxShape.circle,
+                                    border: Border.all(color: Colors.grey),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Text(
+                                    colorCategory.name,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
                             ),
-                            const SizedBox(width: 8),
-                            Flexible(
-                                child: Text(colorCategory.name,
-                                    overflow: TextOverflow.ellipsis)),
+                            if (shareLabel != null)
+                              Padding(
+                                padding: const EdgeInsets.only(left: 28),
+                                child: Text(
+                                  shareLabel,
+                                  style: TextStyle(
+                                      fontSize: 12, color: Colors.grey[600]),
+                                ),
+                              ),
                           ],
                         ),
+                        subtitle: null,
                         value: tempSelectedColorCategoryIds
                             .contains(colorCategory.id),
                         onChanged: (bool? selected) {
@@ -5753,7 +6118,3 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
     );
   }
 }
-
-
-
-

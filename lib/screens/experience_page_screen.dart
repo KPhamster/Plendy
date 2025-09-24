@@ -197,6 +197,18 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     return null;
   }
 
+  bool _isLocationUnset(Experience experience) {
+    final String? address = experience.location.address;
+    if (address != null && address.trim().toLowerCase() == 'no location specified') {
+      return true;
+    }
+    final String? displayName = experience.location.displayName;
+    if (displayName != null && displayName.trim().toLowerCase() == 'no location specified') {
+      return true;
+    }
+    return false;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -276,7 +288,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       if (mounted) {
         setState(() {
           _isLoadingDetails = false;
-          _errorLoadingDetails = 'Missing Place ID for details.';
+          _errorLoadingDetails = null;
         });
       }
       return;
@@ -1144,6 +1156,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     final String? yelpUrl = experience.yelpUrl;
     // Determine if edit is allowed
     final bool canEdit = _canEditExperience();
+    final bool hideLocationDetails = _isLocationUnset(experience);
 
     return Container(
       color: Colors.white,
@@ -1369,41 +1382,43 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
           ),
           // --- END Notes Row ---
           // Make the address row tappable
-          GestureDetector(
-            onTap: () => _launchMapLocation(_currentExperience.location),
-            child: _buildDetailRow(
+          if (!hideLocationDetails) ...[
+            GestureDetector(
+              onTap: () => _launchMapLocation(_currentExperience.location),
+              child: _buildDetailRow(
+                context,
+                Icons.location_on_outlined,
+                'Location',
+                _currentExperience.location.address,
+                showLabel: false, // HIDE label
+              ),
+            ),
+            _buildStatusRow(
               context,
-              Icons.location_on_outlined,
-              'Location',
-              _currentExperience.location.address,
+              getDetail('businessStatus'),
+              getDetail('currentOpeningHours'),
+            ),
+            _buildExpandableHoursRow(
+              context,
+              getDetail('regularOpeningHours'), // Weekly descriptions
+              getDetail('businessStatus'), // For temporary/permanent closures
+              getDetail('currentOpeningHours'), // For live open/closed
+            ),
+            _buildDetailRow(
+              context,
+              Icons.event_available_outlined,
+              'Reservable',
+              formattedReservable, // Use pre-formatted value
               showLabel: false, // HIDE label
             ),
-          ),
-          _buildStatusRow(
-            context,
-            getDetail('businessStatus'),
-            getDetail('currentOpeningHours'),
-          ),
-          _buildExpandableHoursRow(
-            context,
-            getDetail('regularOpeningHours'), // Weekly descriptions
-            getDetail('businessStatus'), // For temporary/permanent closures
-            getDetail('currentOpeningHours'), // For live open/closed
-          ),
-          _buildDetailRow(
-            context,
-            Icons.event_available_outlined,
-            'Reservable',
-            formattedReservable, // Use pre-formatted value
-            showLabel: false, // HIDE label
-          ),
-          _buildDetailRow(
-            context,
-            Icons.local_parking_outlined,
-            'Parking',
-            formattedParking, // Use pre-formatted value
-            showLabel: false, // HIDE label
-          ),
+            _buildDetailRow(
+              context,
+              Icons.local_parking_outlined,
+              'Parking',
+              formattedParking, // Use pre-formatted value
+              showLabel: false, // HIDE label
+            ),
+          ],
           // --- ADDED: Other Categories Row ---
           _buildOtherCategoriesRow(context, _currentExperience),
           // --- END ADDED ---

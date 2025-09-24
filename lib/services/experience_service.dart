@@ -262,8 +262,11 @@ class ExperienceService {
     if (userId == null) {
       throw Exception('User not authenticated');
     }
-    // Add check: Ensure the user owns this type? (Maybe not needed if path includes userId)
-    await _userCategoriesCollection(userId)
+    final targetUserId =
+        category.ownerUserId.isNotEmpty ? category.ownerUserId : userId;
+    print(
+        'ExperienceService.updateUserCategory: currentUser=$userId, targetUserId=$targetUserId, categoryOwner=${category.ownerUserId}, categoryId=${category.id}');
+    await _userCategoriesCollection(targetUserId)
         .doc(category.id)
         .update(category.toMap());
   }
@@ -1624,7 +1627,30 @@ class ExperienceService {
     if (userId == null) {
       throw Exception('User not authenticated');
     }
-    await _userColorCategoriesCollection(userId)
+    final targetUserId =
+        category.ownerUserId.isNotEmpty ? category.ownerUserId : userId;
+    print(
+        'ExperienceService.updateColorCategory: currentUser=$userId, targetUserId=$targetUserId, categoryOwner=${category.ownerUserId}, categoryId=${category.id}');
+    
+    // If updating someone else's category, check if permission exists
+    if (targetUserId != userId) {
+      final expectedPermissionId = '${targetUserId}_category_${category.id}_$userId';
+      print('ExperienceService.updateColorCategory: Expected permission doc ID: $expectedPermissionId');
+      
+      try {
+        final permissionDoc = await _firestore.collection('share_permissions').doc(expectedPermissionId).get();
+        if (permissionDoc.exists) {
+          final data = permissionDoc.data() as Map<String, dynamic>;
+          print('ExperienceService.updateColorCategory: Permission doc exists with accessLevel: ${data['accessLevel']}');
+        } else {
+          print('ExperienceService.updateColorCategory: Permission doc does NOT exist!');
+        }
+      } catch (e) {
+        print('ExperienceService.updateColorCategory: Error checking permission doc: $e');
+      }
+    }
+    
+    await _userColorCategoriesCollection(targetUserId)
         .doc(category.id)
         .update(category.toMap());
   }
