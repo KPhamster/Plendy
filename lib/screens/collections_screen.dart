@@ -176,6 +176,9 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   List<ColorCategory> _sharedColorCategories = [];
   List<Experience> _sharedExperiences = [];
 
+  // Selection mode for Categories/Color Categories in the first tab
+  bool _isSelectingCategories = false;
+
   bool _isSharedCategory(UserCategory category) =>
       _sharedCategoryPermissions.containsKey(category.id);
 
@@ -1485,63 +1488,93 @@ class _CollectionsScreenState extends State<CollectionsScreen>
             ownerName: ownerName ?? 'Someone',
           )
         : (isOwnerShared ? 'Shared' : null);
+    final bool isSelected = _selectedCategoryIds.contains(category.id);
     return Card(
       key: ValueKey('category_grid_${category.id}'),
       clipBehavior: Clip.antiAlias,
       elevation: 2.0,
-      child: InkWell(
-        onTap: () {
-          setState(() {
-            _selectedCategory = category;
-            _showingColorCategories = false;
-            _selectedColorCategory = null;
-          });
-        },
-        child: Padding(
-          padding: const EdgeInsets.all(8.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: <Widget>[
-              Text(
-                category.icon,
-                style: const TextStyle(fontSize: 32),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                category.name,
-                style: Theme.of(context)
-                    .textTheme
-                    .titleSmall
-                    ?.copyWith(fontWeight: FontWeight.bold),
-                textAlign: TextAlign.center,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-              const SizedBox(height: 4),
-              Text(
-                '$count ${count == 1 ? "exp" : "exps"}',
-                style: Theme.of(context).textTheme.bodySmall,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              if (shareLabel != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Text(
-                    shareLabel,
+      child: Stack(
+        children: [
+          InkWell(
+            onTap: () {
+              setState(() {
+                if (_isSelectingCategories) {
+                  if (isSelected) {
+                    _selectedCategoryIds.remove(category.id);
+                  } else {
+                    _selectedCategoryIds.add(category.id);
+                  }
+                } else {
+                  _selectedCategory = category;
+                  _showingColorCategories = false;
+                  _selectedColorCategory = null;
+                }
+              });
+            },
+            child: Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: <Widget>[
+                  Text(
+                    category.icon,
+                    style: const TextStyle(fontSize: 32),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    category.name,
                     style: Theme.of(context)
                         .textTheme
-                        .bodySmall
-                        ?.copyWith(color: Colors.grey[600]),
+                        .titleSmall
+                        ?.copyWith(fontWeight: FontWeight.bold),
                     textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '$count ${count == 1 ? "exp" : "exps"}',
+                    style: Theme.of(context).textTheme.bodySmall,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
-                ),
-            ],
+                  if (shareLabel != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(
+                        shareLabel,
+                        style: Theme.of(context)
+                            .textTheme
+                            .bodySmall
+                            ?.copyWith(color: Colors.grey[600]),
+                        textAlign: TextAlign.center,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                ],
+              ),
+            ),
           ),
-        ),
+          if (_isSelectingCategories)
+            Positioned(
+              top: 4,
+              left: 4,
+              child: Checkbox(
+                value: isSelected,
+                onChanged: (bool? value) {
+                  setState(() {
+                    if (value == true) {
+                      _selectedCategoryIds.add(category.id);
+                    } else {
+                      _selectedCategoryIds.remove(category.id);
+                    }
+                  });
+                },
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -1608,18 +1641,43 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                   ownerName: ownerName ?? 'Someone',
                 )
               : (isOwnerShared ? 'Shared' : null);
+          final bool isSelected = _selectedCategoryIds.contains(category.id);
 
-          final Widget iconWidget = Text(
-            category.icon,
-            style: const TextStyle(fontSize: 24),
+          final Widget iconWidget = Padding(
+            padding: const EdgeInsets.only(left: 8.0),
+            child: Text(
+              category.icon,
+              style: const TextStyle(fontSize: 24),
+            ),
           );
 
-          final Widget leadingWidget = isShared
+          final Widget dragOrIcon = isShared || _isSelectingCategories
               ? iconWidget
               : ReorderableDragStartListener(
                   index: index,
                   child: iconWidget,
                 );
+
+          final Widget leadingWidget = _isSelectingCategories
+              ? Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Checkbox(
+                      value: isSelected,
+                      onChanged: (bool? value) {
+                        setState(() {
+                          if (value == true) {
+                            _selectedCategoryIds.add(category.id);
+                          } else {
+                            _selectedCategoryIds.remove(category.id);
+                          }
+                        });
+                      },
+                    ),
+                    dragOrIcon,
+                  ],
+                )
+              : dragOrIcon;
 
           final Widget subtitleWidget = shareLabel != null
               ? Column(
@@ -1640,6 +1698,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
 
           return ListTile(
             key: ValueKey(category.id),
+            contentPadding: const EdgeInsets.symmetric(horizontal: 7.0),
+            minLeadingWidth: 24,
             leading: leadingWidget,
             title: Text(category.name),
             subtitle: subtitleWidget,
@@ -1689,9 +1749,17 @@ class _CollectionsScreenState extends State<CollectionsScreen>
             ),
             onTap: () {
               setState(() {
-                _selectedCategory = category;
-                _showingColorCategories = false;
-                _selectedColorCategory = null;
+                if (_isSelectingCategories) {
+                  if (isSelected) {
+                    _selectedCategoryIds.remove(category.id);
+                  } else {
+                    _selectedCategoryIds.add(category.id);
+                  }
+                } else {
+                  _selectedCategory = category;
+                  _showingColorCategories = false;
+                  _selectedColorCategory = null;
+                }
               });
             },
           );
@@ -2514,33 +2582,125 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                             children: [
                               Padding(
                                 padding: const EdgeInsets.symmetric(
-                                    horizontal: 16.0, vertical: 8.0),
-                                child: Align(
-                                  alignment: Alignment.centerRight,
-                                  child: TextButton.icon(
-                                    icon: Icon(_showingColorCategories
-                                        ? Icons.category_outlined
-                                        : Icons.color_lens_outlined),
-                                    label: Text(_showingColorCategories
-                                        ? 'Categories'
-                                        : 'Color Categories'),
-                                    onPressed: () {
-                                      setState(() {
-                                        _showingColorCategories =
-                                            !_showingColorCategories;
-                                        _selectedCategory =
-                                            null; // Clear selected text category when switching views
-                                        _selectedColorCategory =
-                                            null; // Clear selected color category when switching views
-                                      });
-                                    },
-                                  ),
+                                    horizontal: 7.0, vertical: 8.0),
+                                child: Row(
+                                  children: [
+                                    if (_selectedCategory == null &&
+                                        _selectedColorCategory == null)
+                                      Builder(builder: (context) {
+                                        final bool isViewingColor =
+                                            _showingColorCategories;
+                                        final int totalCount = isViewingColor
+                                            ? _colorCategories.length
+                                            : _categories.length;
+                                        final int selectedCount = isViewingColor
+                                            ? _selectedColorCategoryIds.length
+                                            : _selectedCategoryIds.length;
+                                        final bool allSelected = totalCount > 0 &&
+                                            selectedCount == totalCount;
+                                        final bool someSelected =
+                                            selectedCount > 0 &&
+                                                selectedCount < totalCount;
+
+                                        if (_isSelectingCategories) {
+                                          return Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              // Space to align with icon column (checkbox width ~40px + padding)
+                                              Checkbox(
+                                                value: allSelected
+                                                    ? true
+                                                    : (someSelected
+                                                        ? null
+                                                        : false),
+                                                tristate: true,
+                                                onChanged: (bool? newValue) {
+                                                  setState(() {
+                                                    // Interpret tap based on current aggregate state for intuitive UX
+                                                    final bool selectAllNow = someSelected
+                                                        ? true // some -> all
+                                                        : (allSelected
+                                                            ? false // all -> none
+                                                            : (newValue == true)); // none -> all
+
+                                                    if (isViewingColor) {
+                                                      if (selectAllNow) {
+                                                        _selectedColorCategoryIds
+                                                          ..clear()
+                                                          ..addAll(_colorCategories.map((c) => c.id));
+                                                      } else {
+                                                        _selectedColorCategoryIds.clear();
+                                                      }
+                                                    } else {
+                                                      if (selectAllNow) {
+                                                        _selectedCategoryIds
+                                                          ..clear()
+                                                          ..addAll(_categories.map((c) => c.id));
+                                                      } else {
+                                                        _selectedCategoryIds.clear();
+                                                      }
+                                                    }
+                                                  });
+                                                },
+                                              ),
+                                              const SizedBox(width: 6),
+                                              IconButton(
+                                                tooltip: 'Cancel selection',
+                                                icon: const Icon(Icons.close),
+                                                onPressed: () {
+                                                  setState(() {
+                                                    _isSelectingCategories = false;
+                                                    _selectedCategoryIds.clear();
+                                                    _selectedColorCategoryIds.clear();
+                                                  });
+                                                },
+                                              ),
+                                            ],
+                                          );
+                                        }
+                                        return Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            IconButton(
+                                              tooltip: 'Select',
+                                              icon: const Icon(
+                                                  Icons.check_box_outlined),
+                                              onPressed: () {
+                                                setState(() {
+                                                  _isSelectingCategories = true;
+                                                });
+                                              },
+                                            ),
+                                          ],
+                                        );
+                                      }),
+                                    const Spacer(),
+                                    TextButton.icon(
+                                      icon: Icon(_showingColorCategories
+                                          ? Icons.category_outlined
+                                          : Icons.color_lens_outlined),
+                                      label: Text(_showingColorCategories
+                                          ? 'Categories'
+                                          : 'Color Categories'),
+                                      onPressed: () {
+                                        setState(() {
+                                          _showingColorCategories =
+                                              !_showingColorCategories;
+                                          _selectedCategory =
+                                              null; // Clear selected text category when switching views
+                                          _selectedColorCategory =
+                                              null; // Clear selected color category when switching views
+                                        });
+                                      },
+                                    ),
+                                  ],
                                 ),
                               ),
                               // Show reorder hint only when viewing main category lists (not individual category experiences)
                               // and only on mobile devices where reordering is available
                               if (_selectedCategory == null &&
                                   _selectedColorCategory == null &&
+                                  !_isSelectingCategories &&
                                   !(kIsWeb &&
                                       MediaQuery.of(context).size.width > 600))
                                 Padding(
@@ -4445,67 +4605,97 @@ class _CollectionsScreenState extends State<CollectionsScreen>
             ownerName: ownerName ?? 'Someone',
           )
         : (isOwnerShared ? 'Shared' : null);
+    final bool isSelected = _selectedColorCategoryIds.contains(category.id);
     return Card(
       key: ValueKey('color_category_grid_${category.id}'),
       clipBehavior: Clip.antiAlias,
       elevation: 2.0,
-      child: InkWell(
-        onTap: () {
-          setState(() {
-            _selectedColorCategory = category;
-            _showingColorCategories = true;
-            _selectedCategory = null;
-          });
-        },
-        child: Padding(
-          padding: const EdgeInsets.all(8.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: <Widget>[
-              Container(
-                width: 28,
-                height: 28,
-                decoration: BoxDecoration(
-                  color: category.color,
-                  shape: BoxShape.circle,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                category.name,
-                style: Theme.of(context)
-                    .textTheme
-                    .titleSmall
-                    ?.copyWith(fontWeight: FontWeight.bold),
-                textAlign: TextAlign.center,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-              const SizedBox(height: 4),
-              Text(
-                '$count ${count == 1 ? "exp" : "exps"}',
-                style: Theme.of(context).textTheme.bodySmall,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              if (shareLabel != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Text(
-                    shareLabel,
+      child: Stack(
+        children: [
+          InkWell(
+            onTap: () {
+              setState(() {
+                if (_isSelectingCategories) {
+                  if (isSelected) {
+                    _selectedColorCategoryIds.remove(category.id);
+                  } else {
+                    _selectedColorCategoryIds.add(category.id);
+                  }
+                } else {
+                  _selectedColorCategory = category;
+                  _showingColorCategories = true;
+                  _selectedCategory = null;
+                }
+              });
+            },
+            child: Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: <Widget>[
+                  Container(
+                    width: 28,
+                    height: 28,
+                    decoration: BoxDecoration(
+                      color: category.color,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    category.name,
                     style: Theme.of(context)
                         .textTheme
-                        .bodySmall
-                        ?.copyWith(color: Colors.grey[600]),
+                        .titleSmall
+                        ?.copyWith(fontWeight: FontWeight.bold),
                     textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '$count ${count == 1 ? "exp" : "exps"}',
+                    style: Theme.of(context).textTheme.bodySmall,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
-                ),
-            ],
+                  if (shareLabel != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(
+                        shareLabel,
+                        style: Theme.of(context)
+                            .textTheme
+                            .bodySmall
+                            ?.copyWith(color: Colors.grey[600]),
+                        textAlign: TextAlign.center,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                ],
+              ),
+            ),
           ),
-        ),
+          if (_isSelectingCategories)
+            Positioned(
+              top: 4,
+              left: 4,
+              child: Checkbox(
+                value: isSelected,
+                onChanged: (bool? value) {
+                  setState(() {
+                    if (value == true) {
+                      _selectedColorCategoryIds.add(category.id);
+                    } else {
+                      _selectedColorCategoryIds.remove(category.id);
+                    }
+                  });
+                },
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -4558,22 +4748,47 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                   ownerName: ownerName ?? 'Someone',
                 )
               : (isOwnerShared ? 'Shared' : null);
+          final bool isSelected = _selectedColorCategoryIds.contains(category.id);
 
-          final Widget colorDot = Container(
-            width: 24,
-            height: 24,
-            decoration: BoxDecoration(
-              color: category.color,
-              shape: BoxShape.circle,
+          final Widget colorDot = Padding(
+            padding: const EdgeInsets.only(left: 9.0),
+            child: Container(
+              width: 24,
+              height: 24,
+              decoration: BoxDecoration(
+                color: category.color,
+                shape: BoxShape.circle,
+              ),
             ),
           );
 
-          final Widget leadingWidget = isShared
+          final Widget dragOrDot = isShared || _isSelectingCategories
               ? colorDot
               : ReorderableDragStartListener(
                   index: index,
                   child: colorDot,
                 );
+
+          final Widget leadingWidget = _isSelectingCategories
+              ? Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Checkbox(
+                      value: isSelected,
+                      onChanged: (bool? value) {
+                        setState(() {
+                          if (value == true) {
+                            _selectedColorCategoryIds.add(category.id);
+                          } else {
+                            _selectedColorCategoryIds.remove(category.id);
+                          }
+                        });
+                      },
+                    ),
+                    dragOrDot,
+                  ],
+                )
+              : dragOrDot;
 
           final Widget subtitleWidget = shareLabel != null
               ? Column(
@@ -4594,6 +4809,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
 
           return ListTile(
             key: ValueKey(category.id),
+            contentPadding: const EdgeInsets.symmetric(horizontal: 7.0),
+            minLeadingWidth: 24,
             leading: leadingWidget,
             title: Text(category.name),
             subtitle: subtitleWidget,
@@ -4643,9 +4860,17 @@ class _CollectionsScreenState extends State<CollectionsScreen>
             ),
             onTap: () {
               setState(() {
-                _selectedColorCategory = category;
-                _showingColorCategories = true;
-                _selectedCategory = null;
+                if (_isSelectingCategories) {
+                  if (isSelected) {
+                    _selectedColorCategoryIds.remove(category.id);
+                  } else {
+                    _selectedColorCategoryIds.add(category.id);
+                  }
+                } else {
+                  _selectedColorCategory = category;
+                  _showingColorCategories = true;
+                  _selectedCategory = null;
+                }
               });
             },
           );
