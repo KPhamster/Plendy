@@ -3143,62 +3143,7 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
                   onPressed: () => Navigator.of(context).pop(),
                 ),
               ],
-            ),
-            const SizedBox(height: 8),
-            ListTile(
-              contentPadding: const EdgeInsets.symmetric(horizontal: 16.0),
-              minLeadingWidth: 24,
-              leading: SizedBox(
-                width: 24,
-                child: Center(
-                  child: Radio<String>(
-                    value: 'my_copy',
-                    groupValue: _shareMode,
-                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    visualDensity: VisualDensity.compact,
-                    onChanged: (v) => setState(() => _shareMode = v!),
-                  ),
-                ),
-              ),
-              title: const Text('Share my copy'),
-              onTap: () => setState(() => _shareMode = 'my_copy'),
-            ),
-            if (_shareMode == 'my_copy')
-              ListTile(
-                contentPadding: const EdgeInsets.only(left: 40.0, right: 16.0),
-                minLeadingWidth: 24,
-                leading: SizedBox(
-                  width: 24,
-                  child: Center(
-                    child: Checkbox(
-                      value: _giveEditAccess,
-                      onChanged: (v) => setState(() => _giveEditAccess = v ?? false),
-                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      visualDensity: VisualDensity.compact,
-                    ),
-                  ),
-                ),
-                title: const Text('Give edit access'),
-                onTap: () => setState(() => _giveEditAccess = !_giveEditAccess),
-              ),
-            ListTile(
-              contentPadding: const EdgeInsets.symmetric(horizontal: 16.0),
-              minLeadingWidth: 24,
-              leading: SizedBox(
-                width: 24,
-                child: Center(
-                  child: Radio<String>(
-                    value: 'separate_copy',
-                    groupValue: _shareMode,
-                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    visualDensity: VisualDensity.compact,
-                    onChanged: (v) => setState(() => _shareMode = v!),
-                  ),
-                ),
-              ),
-              title: const Text('Share as separate copy'),
-              onTap: () => setState(() => _shareMode = 'separate_copy'),
-            ),
+            ),            
             const SizedBox(height: 8),
             ListTile(
               leading: const Icon(Icons.send_outlined),

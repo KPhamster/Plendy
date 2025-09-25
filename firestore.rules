@@ -178,7 +178,8 @@ service cloud.firestore {
     match /share_permissions/{permissionId} {
       allow read: if request.auth != null && (
                       resource.data.ownerUserId == request.auth.uid ||
-                      resource.data.sharedWithUserId == request.auth.uid
+                      resource.data.sharedWithUserId == request.auth.uid ||
+                      exists(/databases/$(database)/documents/share_permissions/$(sharedPermissionDocId(resource.data.ownerUserId, resource.data.itemType, resource.data.itemId, request.auth.uid)))
                     );
 
       // Creation rules:
