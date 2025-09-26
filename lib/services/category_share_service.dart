@@ -153,6 +153,70 @@ class CategoryShareService {
     return 'https://plendy.app/shared-category/' + token;
   }
 
+  Future<String> createLinkShareForMultiple({
+    List<UserCategory> userCategories = const [],
+    List<ColorCategory> colorCategories = const [],
+    String accessMode = 'view', // 'view' | 'edit'
+    bool public = false,
+    DateTime? expiresAt,
+  }) async {
+    final userId = _currentUserId;
+    if (userId == null) throw Exception('User not authenticated');
+    if (userCategories.isEmpty && colorCategories.isEmpty) {
+      throw Exception('No categories selected');
+    }
+
+    final token = _generateToken();
+
+    // Build snapshots per category
+    final List<Map<String, dynamic>> userCategorySnapshots = [];
+    for (final category in userCategories) {
+      final List<Experience> exps =
+          await _collectShareableExperiences(category: category);
+      final List<Map<String, dynamic>> experienceSnapshots =
+          exps.map((e) => _buildExperienceSnapshot(e)).toList();
+      userCategorySnapshots.add({
+        'id': category.id,
+        'name': category.name,
+        'icon': category.icon,
+        'experiences': experienceSnapshots,
+      });
+    }
+
+    final List<Map<String, dynamic>> colorCategorySnapshots = [];
+    for (final colorCategory in colorCategories) {
+      final List<Experience> exps =
+          await _collectShareableExperiences(colorCategory: colorCategory);
+      final List<Map<String, dynamic>> experienceSnapshots =
+          exps.map((e) => _buildExperienceSnapshot(e)).toList();
+      colorCategorySnapshots.add({
+        'id': colorCategory.id,
+        'name': colorCategory.name,
+        'color': colorCategory.color.value,
+        'experiences': experienceSnapshots,
+      });
+    }
+
+    final data = {
+      'fromUserId': userId,
+      'token': token,
+      'visibility': public ? 'public' : 'unlisted',
+      'accessMode': accessMode,
+      'categoryType': 'multi',
+      'userCategoryIds': userCategories.map((c) => c.id).toList(),
+      'colorCategoryIds': colorCategories.map((c) => c.id).toList(),
+      'snapshot': {
+        'userCategories': userCategorySnapshots,
+        'colorCategories': colorCategorySnapshots,
+      },
+      if (expiresAt != null) 'expiresAt': Timestamp.fromDate(expiresAt),
+      'createdAt': FieldValue.serverTimestamp(),
+    };
+
+    await _shares.doc(token).set(data);
+    return 'https://plendy.app/shared-category/' + token;
+  }
+
   Future<void> grantSharedCategoryToUser({
     required String categoryId,
     required String ownerUserId,

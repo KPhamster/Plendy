@@ -2655,6 +2655,30 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                                                   });
                                                 },
                                               ),
+                                              const SizedBox(width: 6),
+                                              TextButton.icon(
+                                                icon: const Icon(Icons.ios_share),
+                                                label: const Text('Share'),
+                                                onPressed: selectedCount == 0
+                                                    ? null
+                                                    : () {
+                                                        if (isViewingColor) {
+                                                          final List<ColorCategory> selected = _colorCategories
+                                                              .where((c) => _selectedColorCategoryIds.contains(c.id))
+                                                              .toList();
+                                                          _showShareSelectedCategoriesBottomSheet(
+                                                            colorCategories: selected,
+                                                          );
+                                                        } else {
+                                                          final List<UserCategory> selected = _categories
+                                                              .where((c) => _selectedCategoryIds.contains(c.id))
+                                                              .toList();
+                                                          _showShareSelectedCategoriesBottomSheet(
+                                                            userCategories: selected,
+                                                          );
+                                                        }
+                                                      },
+                                              ),
                                             ],
                                           );
                                         }
@@ -6231,6 +6255,25 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       },
     );
   }
+
+  void _showShareSelectedCategoriesBottomSheet({
+    List<UserCategory>? userCategories,
+    List<ColorCategory>? colorCategories,
+  }) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) {
+        return _BulkShareBottomSheetContent(
+          userCategories: userCategories,
+          colorCategories: colorCategories,
+        );
+      },
+    );
+  }
 }
 
 // --- Share Bottom Sheet Content (UI-only, no functionality) ---
@@ -6948,6 +6991,207 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
                   );
                 }
               },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _BulkShareBottomSheetContent extends StatefulWidget {
+  final List<UserCategory>? userCategories;
+  final List<ColorCategory>? colorCategories;
+
+  const _BulkShareBottomSheetContent({
+    this.userCategories,
+    this.colorCategories,
+  });
+
+  @override
+  State<_BulkShareBottomSheetContent> createState() => _BulkShareBottomSheetContentState();
+}
+
+class _BulkShareBottomSheetContentState extends State<_BulkShareBottomSheetContent> {
+  String _shareMode = 'view_access';
+  bool _creating = false;
+
+  void _showShareUrlOptionsLocal(BuildContext context, String url) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Share link',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.grey[100],
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(url, style: const TextStyle(fontSize: 14)),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    ElevatedButton.icon(
+                      onPressed: () async {
+                        await Share.share(url);
+                        if (ctx.mounted) Navigator.of(ctx).pop();
+                      },
+                      icon: const Icon(Icons.ios_share),
+                      label: const Text('Share'),
+                      style: ElevatedButton.styleFrom(
+                          backgroundColor: Theme.of(ctx).primaryColor,
+                          foregroundColor: Colors.white),
+                    ),
+                    const SizedBox(width: 12),
+                    OutlinedButton.icon(
+                      onPressed: () async {
+                        await Clipboard.setData(ClipboardData(text: url));
+                        if (ctx.mounted) {
+                          Navigator.of(ctx).pop();
+                          ScaffoldMessenger.of(ctx)
+                              .showSnackBar(const SnackBar(content: Text('Link copied')));
+                        }
+                      },
+                      icon: const Icon(Icons.copy),
+                      label: const Text('Copy'),
+                    ),
+                  ],
+                )
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final int count = (widget.userCategories?.length ?? 0) + (widget.colorCategories?.length ?? 0);
+    return SafeArea(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Text('Share ${count} ${count == 1 ? 'category' : 'categories'}',
+                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+                const Spacer(),
+                IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: () => Navigator.of(context).pop(),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            if ((widget.userCategories?.isNotEmpty ?? false) || (widget.colorCategories?.isNotEmpty ?? false))
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12.0),
+                child: Text(
+                  'Selected:',
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+              ),
+            if (widget.userCategories != null)
+              ...widget.userCategories!.map((c) => ListTile(
+                    dense: true,
+                    visualDensity: const VisualDensity(horizontal: -4, vertical: -4),
+                    leading: const Icon(Icons.label_outline),
+                    title: Text(c.name, overflow: TextOverflow.ellipsis),
+                    subtitle: Text('Category', style: Theme.of(context).textTheme.bodySmall),
+                  )),
+            if (widget.colorCategories != null)
+              ...widget.colorCategories!.map((c) => ListTile(
+                    dense: true,
+                    visualDensity: const VisualDensity(horizontal: -4, vertical: -4),
+                    leading: const Icon(Icons.color_lens_outlined),
+                    title: Text(c.name, overflow: TextOverflow.ellipsis),
+                    subtitle: Text('Color Category', style: Theme.of(context).textTheme.bodySmall),
+                  )),
+            const Divider(height: 24),
+            ListTile(
+              contentPadding: const EdgeInsets.symmetric(horizontal: 16.0),
+              minLeadingWidth: 24,
+              leading: SizedBox(
+                width: 24,
+                child: Center(
+                  child: Radio<String>(
+                    value: 'view_access',
+                    groupValue: _shareMode,
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    visualDensity: VisualDensity.compact,
+                    onChanged: (v) => setState(() => _shareMode = v!),
+                  ),
+                ),
+              ),
+              title: const Text('Share view access only'),
+              onTap: () => setState(() => _shareMode = 'view_access'),
+            ),
+            ListTile(
+              contentPadding: const EdgeInsets.symmetric(horizontal: 16.0),
+              minLeadingWidth: 24,
+              leading: SizedBox(
+                width: 24,
+                child: Center(
+                  child: Radio<String>(
+                    value: 'edit_access',
+                    groupValue: _shareMode,
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    visualDensity: VisualDensity.compact,
+                    onChanged: (v) => setState(() => _shareMode = v!),
+                  ),
+                ),
+              ),
+              title: const Text('Share edit access'),
+              onTap: () => setState(() => _shareMode = 'edit_access'),
+            ),
+            const SizedBox(height: 8),
+            ListTile(
+              leading: const Icon(Icons.link_outlined),
+              title: Text(_creating ? 'Creating link...' : 'Get shareable link'),
+              onTap: _creating
+                  ? null
+                  : () async {
+                      setState(() => _creating = true);
+                      try {
+                        final service = CategoryShareService();
+                        final DateTime expiresAt = DateTime.now().add(const Duration(days: 30));
+                        final String mode = _shareMode == 'edit_access' ? 'edit' : 'view';
+                        final String url = await service.createLinkShareForMultiple(
+                          userCategories: widget.userCategories ?? const [],
+                          colorCategories: widget.colorCategories ?? const [],
+                          accessMode: mode,
+                          expiresAt: expiresAt,
+                        );
+                        if (!mounted) return;
+                        Navigator.of(context).pop();
+                        _showShareUrlOptionsLocal(context, url);
+                      } catch (e) {
+                        if (!mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('Failed to create link: ' + e.toString())),
+                        );
+                      } finally {
+                        if (mounted) setState(() => _creating = false);
+                      }
+                    },
             ),
           ],
         ),
