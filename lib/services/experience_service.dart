@@ -1037,7 +1037,26 @@ class ExperienceService {
             .get();
         results.addAll(snapshot.docs.map((doc) => Experience.fromFirestore(doc)));
       } catch (e) {
-        print("getExperiencesByIds: Error fetching chunk of size ${chunk.length}: $e");
+        // Some environments will fail the entire whereIn query if any single
+        // document in the chunk is not readable by the current user (per rules).
+        // Fall back to per-doc fetches so we still retrieve the allowed ones.
+        print(
+            "getExperiencesByIds: Error fetching chunk of size ${chunk.length}: $e. Falling back to per-doc reads.");
+
+        for (final id in chunk) {
+          try {
+            final doc = await _experiencesCollection.doc(id).get();
+            if (doc.exists) {
+              // Guard: Firestore rules may still block certain docs individually.
+              // Only add those we could read.
+              results.add(Experience.fromFirestore(doc));
+            }
+          } catch (inner) {
+            // Ignore docs we cannot read due to permissions; continue.
+            print(
+                "getExperiencesByIds: Skipping $id due to error on per-doc read: $inner");
+          }
+        }
       }
     }
 
