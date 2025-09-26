@@ -592,7 +592,7 @@ class _MapScreenState extends State<MapScreen> {
                                 Padding(
                                   padding: const EdgeInsets.only(left: 28),
                                   child: Text(
-                                    'Shared by ${ownerName}',
+                                    '(Shared by ${ownerName})',
                                     style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                                   ),
                                 ),
@@ -650,7 +650,7 @@ class _MapScreenState extends State<MapScreen> {
                                 Padding(
                                   padding: const EdgeInsets.only(left: 28),
                                   child: Text(
-                                    'Shared by ${ownerName}',
+                                    '(Shared by ${ownerName})',
                                     style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                                   ),
                                 ),
