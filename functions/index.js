@@ -171,6 +171,148 @@ exports.sendNewFollowerNotificationV2 = onDocumentCreated(
   });
 
 /**
+ * Sends a notification when a new message is sent (2nd Gen).
+ */
+exports.sendMessageNotificationV2 = onDocumentCreated(
+  "message_threads/{threadId}/messages/{messageId}",
+  async (event) => {
+    const snapshot = event.data;
+    if (!snapshot) {
+      functions.logger.log("No data associated with the event");
+      return;
+    }
+
+    const threadId = event.params.threadId;
+    const messageId = event.params.messageId;
+    const messageData = snapshot.data();
+
+    functions.logger.log(
+      `V2: New message ${messageId} in thread ${threadId} from ${messageData.senderId}`,
+    );
+
+    try {
+      // Get the thread data to find participants
+      const threadDoc = await db.collection("message_threads").doc(threadId).get();
+      if (!threadDoc.exists) {
+        functions.logger.error("V2: Thread not found:", threadId);
+        return;
+      }
+
+      const threadData = threadDoc.data();
+      const participants = threadData.participants || [];
+      const participantProfiles = threadData.participantProfiles || {};
+
+      // Get sender info
+      const senderId = messageData.senderId;
+      const senderProfile = participantProfiles[senderId];
+      const senderName = senderProfile?.displayName || senderProfile?.username || "Someone";
+
+      // Determine thread title for notification
+      let threadTitle = "Chat";
+      const otherParticipants = participants.filter((p) => p !== senderId);
+      if (otherParticipants.length === 1) {
+        // One-on-one chat - use sender name
+        threadTitle = senderName;
+      } else if (otherParticipants.length > 1) {
+        // Group chat - show group info
+        const participantNames = otherParticipants
+          .slice(0, 2)
+          .map((p) => participantProfiles[p]?.displayName || participantProfiles[p]?.username || "User")
+          .join(", ");
+        if (otherParticipants.length > 2) {
+          threadTitle = `${senderName}, ${participantNames} and ${otherParticipants.length - 2} others`;
+        } else {
+          threadTitle = `${senderName}, ${participantNames}`;
+        }
+      }
+
+      // Get message preview (truncate if too long)
+      const messageText = messageData.text || "";
+      const messagePreview = messageText.length > 50 ?
+        messageText.substring(0, 47) + "..." :
+        messageText;
+
+      // Send notifications to all participants except the sender
+      const notificationPromises = participants
+        .filter((participantId) => participantId !== senderId)
+        .map(async (participantId) => {
+          const tokensSnapshot = await db
+            .collection("users")
+            .doc(participantId)
+            .collection("fcmTokens")
+            .get();
+
+          if (tokensSnapshot.empty) {
+            functions.logger.log("V2: No FCM tokens for user:", participantId);
+            return;
+          }
+
+          const tokens = tokensSnapshot.docs.map((doc) => doc.id);
+          const messages = tokens.map((token) => ({
+            token: token,
+            notification: {
+              title: threadTitle,
+              body: `${senderName}: ${messagePreview}`,
+            },
+            data: {
+              type: "new_message",
+              threadId: threadId,
+              senderId: senderId,
+              screen: "/messages",
+            },
+            android: {
+              notification: {
+                channelId: "messages",
+                priority: "high",
+                defaultSound: true,
+              },
+            },
+            apns: {
+              payload: {
+                aps: {
+                  category: "message",
+                  sound: "default",
+                },
+              },
+            },
+          }));
+
+          functions.logger.log("V2: Sending message notification to", participantId, "tokens:", tokens.length);
+          const response = await messaging.sendEach(messages);
+          const successCount = response.successCount;
+          const failureCount = response.failureCount;
+          functions.logger.log("V2: Message notification sent:", successCount, "failed:", failureCount);
+
+          // Handle failed tokens
+          const tokensToRemovePromises = [];
+          response.responses.forEach((result, index) => {
+            if (!result.success) {
+              const error = result.error;
+              functions.logger.error("V2: Failure sending to", tokens[index], error);
+              if (
+                error?.code === "messaging/invalid-registration-token" ||
+                error?.code === "messaging/registration-token-not-registered"
+              ) {
+                tokensToRemovePromises.push(
+                  db.collection("users").doc(participantId).collection("fcmTokens").doc(tokens[index]).delete(),
+                );
+              }
+            }
+          });
+          await Promise.all(tokensToRemovePromises);
+          if (tokensToRemovePromises.length > 0) {
+            functions.logger.log("V2: Deleted invalid tokens:", tokensToRemovePromises.length);
+          }
+        });
+
+      await Promise.all(notificationPromises);
+      functions.logger.log("V2: Message notifications sent to all participants");
+    } catch (error) {
+      functions.logger.error("V2: Error sending message notification:", error);
+    }
+  });
+
+/**
  * Minimal test function to diagnose FCM 404 issue (1st Gen)
  */
 exports.testFcmSend1stGen = functions.https.onRequest(async (req, res) => {

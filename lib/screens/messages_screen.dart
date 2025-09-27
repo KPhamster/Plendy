@@ -21,31 +21,6 @@ class _MessagesScreenState extends State<MessagesScreen> {
   void initState() {
     super.initState();
     _messageService = MessageService();
-    print('MessagesScreen: initState - initializing MessageService');
-    
-    // Auto-trigger debug test after a short delay to let auth settle
-    Future.delayed(const Duration(milliseconds: 500), () {
-      final authService = Provider.of<AuthService>(context, listen: false);
-      final currentUser = authService.currentUser;
-      if (currentUser != null) {
-        _debugCreateTestThread(currentUser.uid);
-      }
-    });
-  }
-
-  // Debug function to test Firestore access
-  Future<void> _debugCreateTestThread(String currentUserId) async {
-    try {
-      print('DEBUG: Attempting to create test thread...');
-      final thread = await _messageService.createOrGetThread(
-        currentUserId: currentUserId,
-        participantIds: [], // Just the current user
-        initialMessage: 'Test message',
-      );
-      print('DEBUG: Test thread created successfully: ${thread.id}');
-    } catch (e) {
-      print('DEBUG: Failed to create test thread: $e');
-    }
   }
 
   Future<void> _openNewChat(BuildContext context, String currentUserId) async {
@@ -81,11 +56,6 @@ class _MessagesScreenState extends State<MessagesScreen> {
   Widget build(BuildContext context) {
     final authService = Provider.of<AuthService>(context);
     final currentUser = authService.currentUser;
-    
-    print('MessagesScreen: build() called');
-    print('MessagesScreen: AuthService current user: ${currentUser?.uid}');
-    print('MessagesScreen: User email: ${currentUser?.email}');
-    print('MessagesScreen: User is anonymous: ${currentUser?.isAnonymous}');
 
     if (currentUser == null) {
       return const Scaffold(
@@ -98,14 +68,6 @@ class _MessagesScreenState extends State<MessagesScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Messages'),
-        actions: [
-          // Debug button to test Firestore access
-          IconButton(
-            icon: const Icon(Icons.bug_report),
-            onPressed: () => _debugCreateTestThread(currentUser.uid),
-            tooltip: 'Debug: Test Firestore Access',
-          ),
-        ],
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: () => _openNewChat(context, currentUser.uid),
@@ -115,9 +77,6 @@ class _MessagesScreenState extends State<MessagesScreen> {
         stream: _messageService.watchThreadsForUser(currentUser.uid),
         builder: (context, snapshot) {
           if (snapshot.hasError) {
-            print('MessagesScreen: Stream error: ${snapshot.error}');
-            print('MessagesScreen: Error type: ${snapshot.error.runtimeType}');
-            print('MessagesScreen: Current user: ${currentUser.uid}');
             return Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,

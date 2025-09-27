@@ -13,6 +13,7 @@ import 'screens/auth_screen.dart';
 import 'screens/main_screen.dart';
 import 'screens/receive_share_screen.dart';
 import 'screens/follow_requests_screen.dart'; // Import FollowRequestsScreen
+import 'screens/messages_screen.dart'; // Import MessagesScreen
 import 'services/auth_service.dart';
 import 'services/sharing_service.dart';
 import 'models/shared_media_compat.dart';
@@ -312,6 +313,22 @@ void main() async {
           // if (followerId != null) {
           //   // Navigate to user profile screen with followerId
           // }
+        } else if (type == 'new_message' && screen == '/messages') {
+          // Navigate to Messages screen, and potentially to the specific chat
+          final threadId = message.data['threadId'] as String?;
+          final senderId = message.data['senderId'] as String?;
+          
+          print("FCM: New message notification - threadId: $threadId, senderId: $senderId");
+          
+          // Navigate to Messages screen first
+          navigatorKey.currentState!.push(
+            MaterialPageRoute(
+              builder: (context) => const MessagesScreen(),
+            ),
+          );
+          
+          // TODO: If threadId is provided, you could navigate directly to the chat
+          // This would require updating the MessagesScreen to accept navigation parameters
         }
       }
     });
