@@ -1198,9 +1198,6 @@ class _CollectionsScreenState extends State<CollectionsScreen>
           _ownedSharedExperienceIds
             ..clear()
             ..addAll(ownedSharedExperienceIds);
-          if (!hadFilters) {
-            _filteredExperiences = List.from(_experiences);
-          }
           _groupedContentItems = [];
           _filteredGroupedContentItems = [];
           _isLoading = false;
@@ -1209,24 +1206,22 @@ class _CollectionsScreenState extends State<CollectionsScreen>
           _contentLoaded = false;
         });
         final expSortSw = Stopwatch()..start();
-        _applyExperienceSort(_experienceSortType).whenComplete(() {
+        _applyExperienceSort(_experienceSortType, applyToFiltered: false).whenComplete(() async {
           if (_perfLogs) {
             print(
                 '[Perf][Collections] Initial experience sort took ${expSortSw.elapsedMilliseconds}ms');
           }
+          // Ensure filtered list reflects current filters and is sorted on first load
+          if (_hasActiveFilters) {
+            _applyFiltersAndUpdateLists();
+          } else {
+            // No filters: mirror sorted main list into filtered list
+            setState(() {
+              _filteredExperiences = List.from(_experiences);
+            });
+            await _applyExperienceSort(_experienceSortType, applyToFiltered: true);
+          }
         });
-        if (hadFilters) {
-          _applyFiltersAndUpdateLists();
-        } else {
-          final expFilteredSortSw = Stopwatch()..start();
-          _applyExperienceSort(_experienceSortType, applyToFiltered: true)
-              .whenComplete(() {
-            if (_perfLogs) {
-              print(
-                  '[Perf][Collections] Filtered experience sort took ${expFilteredSortSw.elapsedMilliseconds}ms');
-            }
-          });
-        }
         if (_perfLogs) {
           totalSw.stop();
           print(
@@ -2656,28 +2651,34 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                                                 },
                                               ),
                                               const SizedBox(width: 6),
-                                              TextButton.icon(
-                                                icon: const Icon(Icons.ios_share),
-                                                label: const Text('Share'),
-                                                onPressed: selectedCount == 0
-                                                    ? null
-                                                    : () {
-                                                        if (isViewingColor) {
-                                                          final List<ColorCategory> selected = _colorCategories
-                                                              .where((c) => _selectedColorCategoryIds.contains(c.id))
-                                                              .toList();
-                                                          _showShareSelectedCategoriesBottomSheet(
-                                                            colorCategories: selected,
-                                                          );
-                                                        } else {
-                                                          final List<UserCategory> selected = _categories
-                                                              .where((c) => _selectedCategoryIds.contains(c.id))
-                                                              .toList();
-                                                          _showShareSelectedCategoriesBottomSheet(
-                                                            userCategories: selected,
-                                                          );
-                                                        }
-                                                      },
+                                              Builder(
+                                                builder: (context) {
+                                                  final VoidCallback? onSharePressed = selectedCount == 0
+                                                      ? null
+                                                      : () {
+                                                          if (isViewingColor) {
+                                                            final List<ColorCategory> selected = _colorCategories
+                                                                .where((c) => _selectedColorCategoryIds.contains(c.id))
+                                                                .toList();
+                                                            _showShareSelectedCategoriesBottomSheet(
+                                                              colorCategories: selected,
+                                                            );
+                                                          } else {
+                                                            final List<UserCategory> selected = _categories
+                                                                .where((c) => _selectedCategoryIds.contains(c.id))
+                                                                .toList();
+                                                            _showShareSelectedCategoriesBottomSheet(
+                                                              userCategories: selected,
+                                                            );
+                                                          }
+                                                        };
+                                                  // In selection mode, always use compact icon-only to avoid overflow
+                                                  return IconButton(
+                                                    tooltip: 'Share',
+                                                    icon: const Icon(Icons.ios_share),
+                                                    onPressed: onSharePressed,
+                                                  );
+                                                },
                                               ),
                                             ],
                                           );
@@ -2698,24 +2699,39 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                                           ],
                                         );
                                       }),
-                                    const Spacer(),
-                                    TextButton.icon(
-                                      icon: Icon(_showingColorCategories
-                                          ? Icons.category_outlined
-                                          : Icons.color_lens_outlined),
-                                      label: Text(_showingColorCategories
-                                          ? 'Categories'
-                                          : 'Color Categories'),
-                                      onPressed: () {
-                                        setState(() {
-                                          _showingColorCategories =
-                                              !_showingColorCategories;
-                                          _selectedCategory =
-                                              null; // Clear selected text category when switching views
-                                          _selectedColorCategory =
-                                              null; // Clear selected color category when switching views
-                                        });
-                                      },
+                                    Expanded(child: SizedBox()),
+                                    Flexible(
+                                      child: Builder(
+                                        builder: (context) {
+                                          final IconData toggleIcon = _showingColorCategories
+                                              ? Icons.category_outlined
+                                              : Icons.color_lens_outlined;
+                                          final String toggleLabel =
+                                              _showingColorCategories ? 'Categories' : 'Color Categories';
+                                          void onToggle() {
+                                            setState(() {
+                                              _showingColorCategories = !_showingColorCategories;
+                                              _selectedCategory = null; // Clear selected text category when switching views
+                                              _selectedColorCategory = null; // Clear selected color category when switching views
+                                            });
+                                          }
+                                          return Align(
+                                            alignment: Alignment.centerRight,
+                                            child: FittedBox(
+                                              fit: BoxFit.scaleDown,
+                                              child: TextButton.icon(
+                                                style: TextButton.styleFrom(
+                                                  visualDensity: const VisualDensity(horizontal: -2, vertical: -2),
+                                                  padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                                                ),
+                                                icon: Icon(toggleIcon),
+                                                label: Text(toggleLabel),
+                                                onPressed: onToggle,
+                                              ),
+                                            ),
+                                          );
+                                        },
+                                      ),
                                     ),
                                   ],
                                 ),
@@ -6093,6 +6109,10 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       }
 
       await _applyContentSort(_contentSortType);
+      // Ensure Content tab reflects filters on initial load as well
+      if (_hasActiveFilters) {
+        _applyFiltersAndUpdateLists();
+      }
     } catch (e) {
       _isContentLoading = false;
       if (mounted) {
