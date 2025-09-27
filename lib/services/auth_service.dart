@@ -275,25 +275,32 @@ class AuthService extends ChangeNotifier {
 
   Future<void> _setupFcmToken(String userId) async {
     try {
+      print('DEBUG: Getting FCM token for user $userId...');
       String? token = await _firebaseMessaging.getToken();
       if (token != null) {
+        print('DEBUG: Got FCM token: ${token.substring(0, 50)}...'); // Show first 50 chars
         await _saveTokenToFirestore(userId, token);
         
         // Listen for token refresh
         _firebaseMessaging.onTokenRefresh.listen((newToken) {
+          print('DEBUG: FCM token refreshed: ${newToken.substring(0, 50)}...');
           _saveTokenToFirestore(userId, newToken);
         });
       } else {
-        print('Failed to get FCM token');
+        print('DEBUG: Failed to get FCM token - token is null');
       }
     } catch (e) {
-      print("Error setting up FCM token for user $userId: $e");
+      print("DEBUG: Error setting up FCM token for user $userId: $e");
     }
   }
 
   Future<void> _saveTokenToFirestore(String userId, String token) async {
-    if (userId.isEmpty || token.isEmpty) return;
+    if (userId.isEmpty || token.isEmpty) {
+      print("DEBUG: Cannot save FCM token - userId: '${userId}', token: '${token.isEmpty ? 'empty' : 'not empty'}'");
+      return;
+    }
     try {
+      print('DEBUG: Saving FCM token to Firestore for user $userId...');
       await _firestore
           .collection('users')
           .doc(userId)
@@ -303,9 +310,70 @@ class AuthService extends ChangeNotifier {
             'createdAt': FieldValue.serverTimestamp(),
             'platform': defaultTargetPlatform.toString(), // Optional: store platform
           });
-      print("FCM token saved for user $userId: $token");
+      print("DEBUG: FCM token successfully saved for user $userId");
     } catch (e) {
-      print("Error saving FCM token for user $userId: $e");
+      print("DEBUG: Error saving FCM token for user $userId: $e");
+    }
+  }
+
+  // Method to manually check and request FCM permissions
+  Future<void> checkAndRequestFcmPermissions() async {
+    if (kIsWeb) return;
+    
+    try {
+      print('DEBUG: Checking FCM permission status...');
+      NotificationSettings settings = await _firebaseMessaging.getNotificationSettings();
+      print('DEBUG: Current FCM permission: ${settings.authorizationStatus}');
+      
+      if (settings.authorizationStatus == AuthorizationStatus.denied) {
+        print('DEBUG: FCM permission denied. User needs to enable notifications manually.');
+        print('DEBUG: Guide user to: Settings > Apps > Plendy > Notifications > Allow notifications');
+      } else if (settings.authorizationStatus == AuthorizationStatus.notDetermined) {
+        print('DEBUG: FCM permission not determined. Requesting permission...');
+        final newSettings = await _firebaseMessaging.requestPermission(
+          alert: true,
+          badge: true,
+          sound: true,
+        );
+        print('DEBUG: Permission request result: ${newSettings.authorizationStatus}');
+      } else {
+        print('DEBUG: FCM permission granted: ${settings.authorizationStatus}');
+      }
+    } catch (e) {
+      print('DEBUG: Error checking FCM permissions: $e');
+    }
+  }
+  
+  // Method to get FCM token info for debugging
+  Future<Map<String, dynamic>> getFcmDebugInfo() async {
+    if (kIsWeb) return {'error': 'Web not supported'};
+    
+    try {
+      final user = _currentUser;
+      if (user == null) {
+        return {'error': 'No user logged in'};
+      }
+      
+      final settings = await _firebaseMessaging.getNotificationSettings();
+      final token = await _firebaseMessaging.getToken();
+      
+      // Check if token exists in Firestore
+      final tokensSnapshot = await _firestore
+          .collection('users')
+          .doc(user.uid)
+          .collection('fcmTokens')
+          .get();
+      
+      return {
+        'userId': user.uid,
+        'permissionStatus': settings.authorizationStatus.toString(),
+        'hasToken': token != null,
+        'tokenPreview': token?.substring(0, 50) ?? 'null',
+        'tokensInFirestore': tokensSnapshot.docs.length,
+        'tokenIds': tokensSnapshot.docs.map((doc) => doc.id.substring(0, 20)).toList(),
+      };
+    } catch (e) {
+      return {'error': e.toString()};
     }
   }
 

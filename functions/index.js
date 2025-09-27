@@ -349,6 +349,103 @@ exports.testFcmSend1stGen = functions.https.onRequest(async (req, res) => {
 });
 
 /**
+ * Test function for message notifications
+ */
+exports.testMessageNotification = functions.https.onRequest(async (req, res) => {
+  const userId = req.query.userId;
+  const message = req.query.message || "Test message from Cloud Function";
+
+  if (!userId) {
+    functions.logger.error("Test: No userId provided.");
+    res.status(400).send("No userId provided. Use ?userId=YOUR_USER_ID&message=TEST_MESSAGE");
+    return;
+  }
+
+  try {
+    // Get FCM tokens for the user
+    const tokensSnapshot = await db
+      .collection("users")
+      .doc(userId)
+      .collection("fcmTokens")
+      .get();
+
+    if (tokensSnapshot.empty) {
+      functions.logger.log("Test: No FCM tokens for user:", userId);
+      res.status(404).send(`No FCM tokens found for user: ${userId}`);
+      return;
+    }
+
+    const tokens = tokensSnapshot.docs.map((doc) => doc.id);
+    functions.logger.log("Test: Found tokens for user", userId, ":", tokens.length);
+
+    // Send test notification
+    const messages = tokens.map((token) => ({
+      token: token,
+      notification: {
+        title: "Test Notification",
+        body: `Test: ${message}`,
+      },
+      data: {
+        type: "test_message",
+        userId: userId,
+        screen: "/messages",
+      },
+      android: {
+        notification: {
+          channelId: "messages",
+          priority: "high",
+          defaultSound: true,
+        },
+      },
+      apns: {
+        payload: {
+          aps: {
+            category: "message",
+            sound: "default",
+          },
+        },
+      },
+    }));
+
+    functions.logger.log("Test: Sending notifications to", tokens.length, "tokens");
+    const response = await messaging.sendEach(messages);
+    functions.logger.log("Test: Successfully sent:", response.successCount, "failed:", response.failureCount);
+
+    // Handle failed tokens
+    const tokensToRemovePromises = [];
+    response.responses.forEach((result, index) => {
+      if (!result.success) {
+        const error = result.error;
+        functions.logger.error("Test: Failure sending to", tokens[index], error);
+        if (
+          error?.code === "messaging/invalid-registration-token" ||
+          error?.code === "messaging/registration-token-not-registered"
+        ) {
+          tokensToRemovePromises.push(
+            db.collection("users").doc(userId).collection("fcmTokens").doc(tokens[index]).delete(),
+          );
+        }
+      }
+    });
+    await Promise.all(tokensToRemovePromises);
+    if (tokensToRemovePromises.length > 0) {
+      functions.logger.log("Test: Deleted invalid tokens:", tokensToRemovePromises.length);
+    }
+
+    res.status(200).send({
+      success: true,
+      sent: response.successCount,
+      failed: response.failureCount,
+      tokens: tokens.length,
+      message: `Test notification sent to ${response.successCount} devices`,
+    });
+  } catch (error) {
+    functions.logger.error("Test: Error sending notification:", error);
+    res.status(500).send(`Error: ${error.toString()}`);
+  }
+});
+
+/**
  * Test function using FCM v1 API instead of legacy sendToDevice
  */
 exports.testFcmV1Send = functions.https.onRequest(async (req, res) => {
