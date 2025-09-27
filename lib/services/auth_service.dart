@@ -260,6 +260,11 @@ class AuthService extends ChangeNotifier {
         await _setupFcmToken(userId);
       } else {
         print('User declined or has not accepted FCM permission: ${currentSettings.authorizationStatus}');
+        if (currentSettings.authorizationStatus == AuthorizationStatus.denied) {
+          print('FCM: Permission denied. User needs to manually enable notifications in device settings.');
+          // TODO: You could show a dialog here guiding the user to enable notifications manually
+          // or implement a method to open device settings
+        }
         // Don't set up token if permission denied
       }
     } catch (e) {

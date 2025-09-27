@@ -25,10 +25,6 @@ class MessageService {
   String? get currentUserId => _auth.currentUser?.uid;
 
   Stream<List<MessageThread>> watchThreadsForUser(String userId) {
-    print('MessageService: Watching threads for user: $userId');
-    print('MessageService: Current user: ${_auth.currentUser?.uid}');
-    print('MessageService: User authenticated: ${_auth.currentUser != null}');
-    
     return _threads
         .where('participants', arrayContains: userId)
         .snapshots()
