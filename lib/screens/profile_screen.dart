@@ -10,6 +10,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'browser_signin_screen.dart';
 import 'received_shares_screen.dart';
 import 'auth_screen.dart';
+import 'messages_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -112,14 +113,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       ),
                     ),
                   if (user?.displayName?.isNotEmpty ?? false)
-                    const SizedBox(height: 4), // Small space if display name is shown
+                    const SizedBox(
+                        height: 4), // Small space if display name is shown
                   Center(
                     child: Text(
                       '@${_username ?? '...'}',
                       style: TextStyle(
-                        fontSize: (user?.displayName?.isNotEmpty ?? false) ? 16 : 20, // Smaller if display name is above
-                        fontWeight: (user?.displayName?.isNotEmpty ?? false) ? FontWeight.normal : FontWeight.bold,
-                        color: (user?.displayName?.isNotEmpty ?? false) ? Colors.grey[600] : Colors.black, // Different color if subtitle
+                        fontSize: (user?.displayName?.isNotEmpty ?? false)
+                            ? 16
+                            : 20, // Smaller if display name is above
+                        fontWeight: (user?.displayName?.isNotEmpty ?? false)
+                            ? FontWeight.normal
+                            : FontWeight.bold,
+                        color: (user?.displayName?.isNotEmpty ?? false)
+                            ? Colors.grey[600]
+                            : Colors.black, // Different color if subtitle
                       ),
                       textAlign: TextAlign.center,
                     ),
@@ -143,7 +151,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             onTap: () {
                               Navigator.push(
                                 context,
-                                MaterialPageRoute(builder: (context) => const MyPeopleScreen()),
+                                MaterialPageRoute(
+                                    builder: (context) =>
+                                        const MyPeopleScreen()),
+                              );
+                            },
+                          ),
+                          ListTile(
+                            leading: const Icon(Icons.chat_bubble_outline),
+                            title: const Text('Messages'),
+                            onTap: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => const MessagesScreen(),
+                                ),
                               );
                             },
                           ),
@@ -153,18 +175,22 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             onTap: () {
                               Navigator.push(
                                 context,
-                                MaterialPageRoute(builder: (context) => const ReceivedSharesScreen()),
+                                MaterialPageRoute(
+                                    builder: (context) =>
+                                        const ReceivedSharesScreen()),
                               );
                             },
                           ),
                           ListTile(
                             leading: const Icon(FontAwesomeIcons.instagram),
-                            title: const Text('Sign in for improved experience'),
+                            title:
+                                const Text('Sign in for improved experience'),
                             onTap: () {
                               Navigator.push(
                                 context,
                                 MaterialPageRoute(
-                                  builder: (context) => const BrowserSignInScreen(),
+                                  builder: (context) =>
+                                      const BrowserSignInScreen(),
                                 ),
                               );
                             },
