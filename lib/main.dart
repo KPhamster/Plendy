@@ -24,7 +24,6 @@ import 'dart:async'; // Import dart:async for StreamSubscription
 import 'services/google_maps_service.dart'; // ADDED: Import GoogleMapsService
 import 'firebase_options.dart'; // Import Firebase options
 import 'package:flutter/foundation.dart' show kIsWeb, kReleaseMode; // Import kIsWeb, kReleaseMode
-import 'package:fluttertoast/fluttertoast.dart';
 import 'package:flutter_web_plugins/url_strategy.dart';
 import 'package:app_links/app_links.dart';
 import 'package:firebase_app_check/firebase_app_check.dart';
@@ -33,6 +32,7 @@ import 'screens/category_share_preview_screen.dart';
 
 // Define a GlobalKey for the Navigator
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
 
 // Debug logging function for cold start issues
 // _writeDebugLog disabled (unused)
@@ -85,16 +85,7 @@ Future<void> _checkForSharedData() async {
       for (var item in files) {
         print("🎯 DEBUG: ${item.type}: ${item.path}");
       }
-      // Show a toast to indicate we received data
-      if (!kIsWeb) {
-        Fluttertoast.showToast(
-          msg: "Received shared content",
-          toastLength: Toast.LENGTH_LONG,
-          gravity: ToastGravity.TOP,
-          backgroundColor: Colors.green,
-          textColor: Colors.white,
-        );
-      }
+      // Shared content received - no toast needed
     }
 
     // Note: URL/text are delivered via getInitialMedia as SharedMediaType.text on iOS
@@ -107,16 +98,7 @@ Future<void> _checkForSharedData() async {
         for (var item in value) {
           print("🎯 DEBUG: ${item.type}: ${item.path}");
         }
-        // Show a toast to indicate we received data
-        if (!kIsWeb) {
-          Fluttertoast.showToast(
-            msg: "Stream received ${value.length} item(s)",
-            toastLength: Toast.LENGTH_LONG,
-            gravity: ToastGravity.TOP,
-            backgroundColor: Colors.blue,
-            textColor: Colors.white,
-          );
-        }
+        // Stream shared content received - no toast needed
       }
     });
 
@@ -364,7 +346,6 @@ class _MyAppState extends State<MyApp> {
   List<SharedMediaFile>? _sharedFiles;
   bool _initialCheckComplete = false;
   bool _shouldShowReceiveShare = false;
-  bool _iosShareToastShown = false; // iOS: ensure toast shows only once per session
   bool _deepLinkStreamFired = false; // Track if a fresh deep link arrived via stream
   static const int _maxNavigatorPushRetries = 12;
 
@@ -812,19 +793,7 @@ class _MyAppState extends State<MyApp> {
     // If we have shared files, show ReceiveShareScreen
     if (launchedFromShare && _sharedFiles != null && _sharedFiles!.isNotEmpty) {
       print("MAIN BUILD DEBUG: Creating ReceiveShareScreen with ${_sharedFiles!.length} files");
-      // On iOS, show a single toast once when navigating to the receive share screen
-      if (Platform.isIOS && !_iosShareToastShown) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          Fluttertoast.showToast(
-            msg: "Received shared content",
-            toastLength: Toast.LENGTH_SHORT,
-            gravity: ToastGravity.TOP,
-            backgroundColor: Colors.green,
-            textColor: Colors.white,
-          );
-        });
-        _iosShareToastShown = true;
-      }
+      // iOS shared content handling - no toast needed
       return ChangeNotifierProvider(
         create: (_) => ReceiveShareProvider(),
         child: ReceiveShareScreen(
