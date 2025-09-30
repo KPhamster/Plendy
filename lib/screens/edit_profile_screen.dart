@@ -179,12 +179,21 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       appBar: AppBar(
         backgroundColor: Colors.white,
         foregroundColor: Colors.black,
+        centerTitle: true,
         title: const Text('Edit Profile'),
+        leadingWidth: 80,
+        leading: TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text(
+            'Cancel',
+            style: TextStyle(color: Colors.black, fontWeight: FontWeight.normal),
+          ),
+        ),
         actions: [
           if (!_isLoading)
-            IconButton(
-              icon: const Icon(Icons.save),
+            TextButton(
               onPressed: _updateProfile,
+              child: const Text('Save'),
             ),
         ],
       ),

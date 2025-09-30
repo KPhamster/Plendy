@@ -1409,6 +1409,54 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     }
   }
 
+  Future<void> _showRemoveSharedUserCategoryConfirmation(
+      UserCategory category, SharePermission permission) async {
+    final bool? confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Remove Shared Category?'),
+        content: Text(
+            'Are you sure you want to remove the "${category.name}" category from your collections? You will lose access to the experiences shared with it.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Remove', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true && mounted) {
+      setState(() {
+        _isLoading = true;
+      });
+      try {
+        await _sharingService.removeShare(permission.id);
+        if (!mounted) {
+          return;
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('"${category.name}" removed from your categories.')),
+        );
+        await _loadData();
+      } catch (e) {
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          _isLoading = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error removing shared category: $e')),
+        );
+      }
+    }
+  }
+
   // ADDED: Helper to update local orderIndex properties
   void _updateLocalOrderIndices() {
     int nextOrder = 0;
@@ -1710,37 +1758,59 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                   case 'share':
                     _showShareCategoryBottomSheet(category);
                     break;
+                  case 'remove':
+                    if (permission != null) {
+                      _showRemoveSharedUserCategoryConfirmation(category, permission);
+                    }
+                    break;
                   case 'delete':
                     _showDeleteCategoryConfirmation(category);
                     break;
                 }
               },
-              itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
-                PopupMenuItem<String>(
-                  value: 'edit',
-                  enabled: canEditCategory,
-                  child: const ListTile(
-                    leading: Icon(Icons.edit_outlined),
-                    title: Text('Edit'),
+              itemBuilder: (BuildContext context) {
+                final List<PopupMenuEntry<String>> items = [
+                  PopupMenuItem<String>(
+                    value: 'edit',
+                    enabled: canEditCategory,
+                    child: const ListTile(
+                      leading: Icon(Icons.edit_outlined),
+                      title: Text('Edit'),
+                    ),
                   ),
-                ),
-                PopupMenuItem<String>(
-                  value: 'share',
-                  enabled: canManageCategory,
-                  child: const ListTile(
-                    leading: Icon(Icons.ios_share),
-                    title: Text('Share'),
+                  PopupMenuItem<String>(
+                    value: 'share',
+                    enabled: canManageCategory,
+                    child: const ListTile(
+                      leading: Icon(Icons.ios_share),
+                      title: Text('Share'),
+                    ),
                   ),
-                ),
-                PopupMenuItem<String>(
-                  value: 'delete',
-                  enabled: canManageCategory,
-                  child: const ListTile(
-                    leading: Icon(Icons.delete_outline, color: Colors.red),
-                    title: Text('Delete', style: TextStyle(color: Colors.red)),
-                  ),
-                ),
-              ],
+                ];
+                if (isShared && permission != null) {
+                  items.add(
+                    const PopupMenuItem<String>(
+                      value: 'remove',
+                      child: ListTile(
+                        leading: Icon(Icons.remove_circle_outline, color: Colors.red),
+                        title: Text('Remove', style: TextStyle(color: Colors.red)),
+                      ),
+                    ),
+                  );
+                } else {
+                  items.add(
+                    PopupMenuItem<String>(
+                      value: 'delete',
+                      enabled: canManageCategory,
+                      child: const ListTile(
+                        leading: Icon(Icons.delete_outline, color: Colors.red),
+                        title: Text('Delete', style: TextStyle(color: Colors.red)),
+                      ),
+                    ),
+                  );
+                }
+                return items;
+              },
             ),
             onTap: () {
               setState(() {
@@ -4558,6 +4628,54 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     }
   }
 
+  Future<void> _showRemoveSharedColorCategoryConfirmation(
+      ColorCategory category, SharePermission permission) async {
+    final bool? confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Remove Shared Color Category?'),
+        content: Text(
+            'Are you sure you want to remove the "${category.name}" color category from your collections? You will lose access to the experiences shared with it.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Remove', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true && mounted) {
+      setState(() {
+        _isLoading = true;
+      });
+      try {
+        await _sharingService.removeShare(permission.id);
+        if (!mounted) {
+          return;
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('"${category.name}" removed from your categories.')),
+        );
+        await _loadData();
+      } catch (e) {
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          _isLoading = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error removing shared color category: $e')),
+        );
+      }
+    }
+  }
+
   void _updateLocalColorOrderIndices() {
     for (int i = 0; i < _colorCategories.length; i++) {
       _colorCategories[i] = _colorCategories[i].copyWith(orderIndex: i);
@@ -4866,37 +4984,59 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                   case 'share':
                     _showShareColorCategoryBottomSheet(category);
                     break;
+                  case 'remove':
+                    if (permission != null) {
+                      _showRemoveSharedColorCategoryConfirmation(category, permission);
+                    }
+                    break;
                   case 'delete':
                     _showDeleteColorCategoryConfirmation(category);
                     break;
                 }
               },
-              itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
-                PopupMenuItem<String>(
-                  value: 'edit',
-                  enabled: canEditCategory,
-                  child: const ListTile(
-                    leading: Icon(Icons.edit_outlined),
-                    title: Text('Edit'),
+              itemBuilder: (BuildContext context) {
+                final List<PopupMenuEntry<String>> items = [
+                  PopupMenuItem<String>(
+                    value: 'edit',
+                    enabled: canEditCategory,
+                    child: const ListTile(
+                      leading: Icon(Icons.edit_outlined),
+                      title: Text('Edit'),
+                    ),
                   ),
-                ),
-                PopupMenuItem<String>(
-                  value: 'share',
-                  enabled: canManageCategory,
-                  child: const ListTile(
-                    leading: Icon(Icons.ios_share),
-                    title: Text('Share'),
+                  PopupMenuItem<String>(
+                    value: 'share',
+                    enabled: canManageCategory,
+                    child: const ListTile(
+                      leading: Icon(Icons.ios_share),
+                      title: Text('Share'),
+                    ),
                   ),
-                ),
-                PopupMenuItem<String>(
-                  value: 'delete',
-                  enabled: canManageCategory,
-                  child: const ListTile(
-                    leading: Icon(Icons.delete_outline, color: Colors.red),
-                    title: Text('Delete', style: TextStyle(color: Colors.red)),
-                  ),
-                ),
-              ],
+                ];
+                if (isShared && permission != null) {
+                  items.add(
+                    const PopupMenuItem<String>(
+                      value: 'remove',
+                      child: ListTile(
+                        leading: Icon(Icons.remove_circle_outline, color: Colors.red),
+                        title: Text('Remove', style: TextStyle(color: Colors.red)),
+                      ),
+                    ),
+                  );
+                } else {
+                  items.add(
+                    PopupMenuItem<String>(
+                      value: 'delete',
+                      enabled: canManageCategory,
+                      child: const ListTile(
+                        leading: Icon(Icons.delete_outline, color: Colors.red),
+                        title: Text('Delete', style: TextStyle(color: Colors.red)),
+                      ),
+                    ),
+                  );
+                }
+                return items;
+              },
             ),
             onTap: () {
               setState(() {
