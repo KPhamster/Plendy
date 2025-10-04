@@ -43,6 +43,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'category_share_preview_screen.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
+import 'package:shared_preferences/shared_preferences.dart';
 
 // Helper classes for shared data
 class _SharedCategoryData {
@@ -293,6 +294,129 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   final Map<String, bool> _locationExpansionContent = {};
   bool _groupByCityExperiences = false;
   bool _groupByCityContent = false;
+
+  // --- Persistent sort preference keys ---
+  static const String _prefsKeyCategorySort = 'collections_category_sort';
+  static const String _prefsKeyColorCategorySort = 'collections_color_category_sort';
+  static const String _prefsKeyExperienceSort = 'collections_experience_sort';
+  static const String _prefsKeyContentSort = 'collections_content_sort';
+  static const String _prefsKeyGroupByLocationExperiences = 'collections_group_by_location_experiences';
+  static const String _prefsKeyGroupByLocationContent = 'collections_group_by_location_content';
+
+  Future<void> _loadSortPreferences() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final cat = prefs.getString(_prefsKeyCategorySort);
+      final colorCat = prefs.getString(_prefsKeyColorCategorySort);
+      final exp = prefs.getString(_prefsKeyExperienceSort);
+      final content = prefs.getString(_prefsKeyContentSort);
+      final groupExp = prefs.getBool(_prefsKeyGroupByLocationExperiences);
+      final groupContent = prefs.getBool(_prefsKeyGroupByLocationContent);
+
+      setState(() {
+        if (cat != null) {
+          _categorySortType = CategorySortType.values.firstWhere(
+              (e) => e.name == cat,
+              orElse: () => _categorySortType);
+        }
+        if (colorCat != null) {
+          _colorCategorySortType = ColorCategorySortType.values.firstWhere(
+              (e) => e.name == colorCat,
+              orElse: () => _colorCategorySortType);
+        }
+        if (exp != null) {
+          _experienceSortType = ExperienceSortType.values.firstWhere(
+              (e) => e.name == exp,
+              orElse: () => _experienceSortType);
+        }
+        if (content != null) {
+          _contentSortType = ContentSortType.values.firstWhere(
+              (e) => e.name == content,
+              orElse: () => _contentSortType);
+        }
+        if (groupExp != null) {
+          _groupByLocationExperiences = groupExp;
+        }
+        if (groupContent != null) {
+          _groupByLocationContent = groupContent;
+        }
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _saveCategorySort(CategorySortType sortType) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_prefsKeyCategorySort, sortType.name);
+    } catch (_) {}
+  }
+
+  Future<void> _saveColorCategorySort(ColorCategorySortType sortType) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_prefsKeyColorCategorySort, sortType.name);
+    } catch (_) {}
+  }
+
+  Future<void> _saveExperienceSort(ExperienceSortType sortType) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_prefsKeyExperienceSort, sortType.name);
+    } catch (_) {}
+  }
+
+  Future<void> _saveContentSort(ContentSortType sortType) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_prefsKeyContentSort, sortType.name);
+    } catch (_) {}
+  }
+
+  Future<void> _saveGroupByLocationExperiences(bool enabled) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_prefsKeyGroupByLocationExperiences, enabled);
+    } catch (_) {}
+  }
+
+  Future<void> _saveGroupByLocationContent(bool enabled) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_prefsKeyGroupByLocationContent, enabled);
+    } catch (_) {}
+  }
+
+  void _applyCategorySortInMemory() {
+    final List<UserCategory> sorted = List<UserCategory>.from(_categories);
+    sorted.sort((a, b) => _compareCategoriesForSort(a, b, _categorySortType));
+    setState(() {
+      _categories = sorted;
+      _updateLocalOrderIndices();
+    });
+  }
+
+  void _applyColorCategorySortInMemory() {
+    final List<ColorCategory> sorted = List<ColorCategory>.from(_colorCategories);
+    if (_colorCategorySortType == ColorCategorySortType.alphabetical) {
+      sorted.sort(
+          (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    } else {
+      sorted.sort((a, b) {
+        final tsA = a.lastUsedTimestamp;
+        final tsB = b.lastUsedTimestamp;
+        if (tsA == null && tsB == null) {
+          return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+        }
+        if (tsA == null) return 1;
+        if (tsB == null) return -1;
+        return tsB.compareTo(tsA);
+      });
+    }
+    setState(() {
+      _colorCategories = sorted;
+      _updateLocalColorOrderIndices();
+    });
+  }
   // --- ADDED: Country grouping state and expansion maps ---
   final Map<String, bool> _countryExpansionExperiences = {};
   final Map<String, bool> _countryExpansionContent = {};
@@ -489,7 +613,9 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         _loadGroupedContent();
       }
     });
-    _loadData();
+    _loadSortPreferences().whenComplete(() {
+      _loadData();
+    });
   }
 
   @override
@@ -1205,6 +1331,9 @@ class _CollectionsScreenState extends State<CollectionsScreen>
           _selectedColorCategory = null;
           _contentLoaded = false;
         });
+        // Apply persisted sorts immediately to combined lists so shared items are included
+        _applyCategorySortInMemory();
+        _applyColorCategorySortInMemory();
         final expSortSw = Stopwatch()..start();
         _applyExperienceSort(_experienceSortType, applyToFiltered: false).whenComplete(() async {
           if (_perfLogs) {
@@ -1896,6 +2025,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     });
 
     await _saveCategoryOrder();
+    // Persist user preference so it applies next time
+    unawaited(_saveCategorySort(sortType));
   }
 
   // MODIFIED: Method to apply sorting to the experiences list
@@ -1983,6 +2114,10 @@ class _CollectionsScreenState extends State<CollectionsScreen>
             return a.name.toLowerCase().compareTo(b.name.toLowerCase());
           });
         }
+      }
+      // Persist user preference so it applies next time
+      if (!applyToFiltered) {
+        unawaited(_saveExperienceSort(sortType));
       }
       // Add other sort types here if needed
     } catch (e) {
@@ -2202,6 +2337,10 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       // Apply the same sort to the filtered list using the same logic
       if (!applyToFiltered) {
         await _applyContentSort(sortType, applyToFiltered: true);
+      }
+      // Persist user preference so it applies next time
+      if (!applyToFiltered) {
+        unawaited(_saveContentSort(sortType));
       }
     } catch (e, stackTrace) {
       if (mounted) {
@@ -2440,6 +2579,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                       _cityExpansionExperiences.clear();
                       _locationExpansionExperiences.clear();
                     });
+                    unawaited(
+                        _saveGroupByLocationExperiences(_groupByLocationExperiences));
                   },
                   child: Row(
                     children: [
@@ -2450,7 +2591,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                       const SizedBox(width: 8),
                       const Expanded(
                           child: Text(
-                              'Group by Location (Country > State > City)')),
+                              'Group by Location')),
                     ],
                   ),
                 ),
@@ -2500,6 +2641,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                       _cityExpansionContent.clear();
                       _locationExpansionContent.clear();
                     });
+                    unawaited(
+                        _saveGroupByLocationContent(_groupByLocationContent));
                   },
                   child: Row(
                     children: [
@@ -2510,7 +2653,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                       const SizedBox(width: 8),
                       const Expanded(
                           child: Text(
-                              'Group by Location (Country > State > City)')),
+                              'Group by Location')),
                     ],
                   ),
                 ),
@@ -4762,6 +4905,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       _updateLocalColorOrderIndices();
     });
     await _saveColorCategoryOrder();
+    // Persist user preference so it applies next time
+    unawaited(_saveColorCategorySort(sortType));
   }
 
   // --- ADDED: Helper to count experiences for a specific color category --- START ---
