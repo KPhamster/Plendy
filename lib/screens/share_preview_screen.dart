@@ -95,6 +95,31 @@ class SharePreviewScreen extends StatelessWidget {
   Future<void> _handleOpenInApp(BuildContext context) async {
     // Try to open the app via your universal link first (should trigger App/Universal Links)
     final Uri deepLink = Uri.parse('https://plendy.app/shared/' + token);
+    
+    // On web, handle Universal Links differently to avoid opening both app and browser
+    if (kIsWeb) {
+      // Try to open the app directly without opening a new browser tab
+      final bool launched = await launchUrl(
+        deepLink,
+        mode: LaunchMode.platformDefault, // Let the platform decide
+        webOnlyWindowName: '_self', // Replace current tab instead of opening new one
+      );
+      
+      if (!launched) {
+        // If app doesn't open, show a message
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Please install the Plendy app to open this link'),
+              duration: Duration(seconds: 3),
+            ),
+          );
+        }
+      }
+      return;
+    }
+    
+    // On mobile platforms
     final bool launchedDeepLink = await launchUrl(
       deepLink,
       mode: LaunchMode.externalApplication,

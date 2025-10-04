@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart'; // For MethodChannel
 import 'dart:math' as math;
 import 'dart:io';
 import 'dart:convert';
@@ -620,6 +621,19 @@ class _MyAppState extends State<MyApp> {
 
   void _initDeepLinks() async {
     final appLinks = AppLinks();
+    
+    // iOS: Listen for manually posted deep links (to avoid Safari opening)
+    if (Platform.isIOS) {
+      const platform = MethodChannel('deep_link_channel');
+      platform.setMethodCallHandler((call) async {
+        if (call.method == 'onDeepLink') {
+          final String url = call.arguments as String;
+          print('DeepLink: Received from native iOS: $url');
+          _handleIncomingUri(Uri.parse(url));
+        }
+      });
+    }
+    
     // WEB: Handle current URL directly (no plugin needed)
     if (kIsWeb) {
       try {
@@ -630,6 +644,7 @@ class _MyAppState extends State<MyApp> {
     }
 
     // Link stream - process incoming links (fresh intents)
+    // Note: On iOS, for /shared/* links, this won't fire because we consume them in AppDelegate
     appLinks.uriLinkStream.listen((uri) {
       print('DeepLink: Stream received fresh URI: $uri');
       _deepLinkStreamFired = true;

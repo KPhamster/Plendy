@@ -23,14 +23,23 @@
     "public": "build/web",
     "ignore": [
       "firebase.json",
-      "**/.*",
+      "**/.git",
+      "**/.gitignore",
       "**/node_modules/**"
     ],
     "headers": [
       {
         "source": "/apple-app-site-association",
         "headers": [
-          { "key": "Content-Type", "value": "application/json" }
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Cache-Control", "value": "public, max-age=3600" }
+        ]
+      },
+      {
+        "source": "/.well-known/apple-app-site-association",
+        "headers": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Cache-Control", "value": "public, max-age=3600" }
         ]
       }
     ],
