@@ -50,4 +50,45 @@ import Foundation
     }
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
+  
+  // MARK: - Universal Links Handler (Required by Apple's Best Practices)
+  override func application(
+    _ application: UIApplication,
+    continue userActivity: NSUserActivity,
+    restorationHandler: @escaping ([UIUserActivityRestoring]?) -> Void
+  ) -> Bool {
+    // Log Universal Link for debugging
+    if userActivity.activityType == NSUserActivityTypeBrowsingWeb {
+      if let url = userActivity.webpageURL {
+        NSLog("[Plendy] Universal Link received: \(url.absoluteString)")
+        
+        // Validate that this is a link for our domain
+        if url.host == "plendy.app" || url.host == "www.plendy.app" {
+          NSLog("[Plendy] Valid Universal Link domain")
+          
+          // Check if this is a shared link
+          let path = url.path
+          if path.hasPrefix("/shared/") || path.hasPrefix("/shared-category/") {
+            NSLog("[Plendy] Shared content Universal Link detected - will handle manually")
+            
+            // Manually post the URL to Flutter via method channel
+            // We do NOT call super.application because that triggers Safari to open
+            if let controller = window?.rootViewController as? FlutterViewController {
+              let channel = FlutterMethodChannel(name: "deep_link_channel", binaryMessenger: controller.binaryMessenger)
+              NSLog("[Plendy] Posting URL to Flutter via channel: \(url.absoluteString)")
+              channel.invokeMethod("onDeepLink", arguments: url.absoluteString)
+            }
+            
+            // Return true to tell iOS we handled it (prevents Safari from opening)
+            return true
+          }
+        } else {
+          NSLog("[Plendy] Universal Link domain mismatch: \(url.host ?? "nil")")
+        }
+      }
+    }
+    
+    // For non-shared links, let Flutter handle normally
+    return super.application(application, continue: userActivity, restorationHandler: restorationHandler)
+  }
 }

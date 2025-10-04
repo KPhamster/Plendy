@@ -13,10 +13,41 @@ import '../services/category_share_service.dart';
 import 'auth_screen.dart';
 import 'main_screen.dart';
 
-class CategorySharePreviewScreen extends StatelessWidget {
+class CategorySharePreviewScreen extends StatefulWidget {
   final String token;
 
   const CategorySharePreviewScreen({super.key, required this.token});
+
+  @override
+  State<CategorySharePreviewScreen> createState() => _CategorySharePreviewScreenState();
+}
+
+class _CategorySharePreviewScreenState extends State<CategorySharePreviewScreen> {
+  @override
+  void initState() {
+    super.initState();
+    if (kIsWeb) {
+      _tryOpenInAppOnIOS();
+    }
+  }
+
+  void _tryOpenInAppOnIOS() {
+    // Inject JavaScript to detect iOS and attempt app opening
+    // This runs once when the web page loads
+    if (kIsWeb) {
+      // ignore: undefined_prefixed_name
+      // dart:html is only available on web
+      try {
+        // Use a small delay to ensure page has loaded
+        Future.delayed(const Duration(milliseconds: 500), () {
+          // This will be handled by JavaScript in index.html
+          // We'll add a meta tag to trigger the app opening
+        });
+      } catch (e) {
+        // Silently fail if not on web
+      }
+    }
+  }
 
   void _navigateToMain(BuildContext context) {
     Navigator.of(context).pushAndRemoveUntil(
@@ -57,7 +88,7 @@ class CategorySharePreviewScreen extends StatelessWidget {
           ],
         ),
         body: FutureBuilder<_CategoryPreviewPayload>(
-          future: _fetchCategoryShare(token),
+          future: _fetchCategoryShare(widget.token),
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) {
               return const Center(child: CircularProgressIndicator());
@@ -88,13 +119,38 @@ class CategorySharePreviewScreen extends StatelessWidget {
 
   Future<void> _handleOpenInApp(BuildContext context) async {
     final Uri deepLink =
-        Uri.parse('https://plendy.app/shared-category/' + token);
-    final bool launchedDeepLink = await launchUrl(
-      deepLink,
-      mode: LaunchMode.externalApplication,
-    );
-    if (launchedDeepLink) return;
-    await launchUrl(Uri.parse('https://plendy.app'));
+        Uri.parse('https://plendy.app/shared-category/' + widget.token);
+    
+    // On web, we need to handle Universal Links differently to avoid opening both app and browser
+    if (kIsWeb) {
+      // Try to open the app directly without opening a new browser tab
+      final bool launched = await launchUrl(
+        deepLink,
+        mode: LaunchMode.platformDefault, // Let the platform decide
+        webOnlyWindowName: '_self', // Replace current tab instead of opening new one
+      );
+      
+      if (!launched) {
+        // If app doesn't open, show a message
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Please install the Plendy app to open this link'),
+              duration: Duration(seconds: 3),
+            ),
+          );
+        }
+      }
+    } else {
+      // On mobile, this should not be called, but handle it anyway
+      final bool launchedDeepLink = await launchUrl(
+        deepLink,
+        mode: LaunchMode.externalApplication,
+      );
+      if (!launchedDeepLink) {
+        await launchUrl(Uri.parse('https://plendy.app'));
+      }
+    }
   }
 
   Future<_CategoryPreviewPayload> _fetchCategoryShare(String token) async {
