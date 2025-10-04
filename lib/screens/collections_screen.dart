@@ -1257,57 +1257,84 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   Future<List<_SharedCategoryData>> _resolveSharedCategories(
       List<SharePermission> permissions) async {
     if (permissions.isEmpty) return [];
-    final List<_SharedCategoryData> results = [];
-    for (final permission in permissions) {
+    
+    print('[Collections] Resolving ${permissions.length} shared categories in parallel...');
+    final sw = Stopwatch()..start();
+    
+    // Fetch all categories and owner names in parallel
+    final futures = permissions.map((permission) async {
       final ownerId = permission.ownerUserId;
-      print(
-          '[Collections] Resolving category ${permission.itemId} owned by $ownerId');
-      UserCategory? userCategory = await _experienceService
-          .getUserCategoryByOwner(ownerId, permission.itemId);
-      print(
-          '[Collections] UserCategory result: ${userCategory?.name ?? 'null'}');
-      ColorCategory? colorCategory;
-      if (userCategory == null) {
-        colorCategory = await _experienceService.getColorCategoryByOwner(
-            ownerId, permission.itemId);
-        print(
-            '[Collections] ColorCategory result: ${colorCategory?.name ?? 'null'}');
-      }
+      
+      // Fetch user category, color category, and owner name in parallel
+      final results = await Future.wait([
+        _experienceService.getUserCategoryByOwner(ownerId, permission.itemId),
+        _experienceService.getColorCategoryByOwner(ownerId, permission.itemId),
+        _getOwnerDisplayName(ownerId),
+      ]);
+      
+      final userCategory = results[0] as UserCategory?;
+      final colorCategory = results[1] as ColorCategory?;
+      final ownerName = results[2] as String;
+      
       if (userCategory == null && colorCategory == null) {
-        print(
-            '[Collections] No category found for ${permission.itemId}, skipping');
-        continue;
+        print('[Collections] No category found for ${permission.itemId}, skipping');
+        return null;
       }
-      final ownerName = await _getOwnerDisplayName(ownerId);
-      results.add(_SharedCategoryData(
+      
+      return _SharedCategoryData(
         userCategory: userCategory,
         colorCategory: colorCategory,
         permission: permission,
         ownerDisplayName: ownerName,
-      ));
-      print(
-          '[Collections] Added shared category: ${userCategory?.name ?? colorCategory?.name}');
-    }
+      );
+    }).toList();
+    
+    final results = (await Future.wait(futures))
+        .whereType<_SharedCategoryData>()
+        .toList();
+    
+    sw.stop();
+    print('[Collections] Resolved ${results.length} shared categories in ${sw.elapsedMilliseconds}ms');
+    
     return results;
   }
 
   Future<List<_SharedExperienceData>> _resolveSharedExperiences(
       List<SharePermission> permissions) async {
     if (permissions.isEmpty) return [];
-    final List<_SharedExperienceData> results = [];
-    for (final permission in permissions) {
-      final experience =
-          await _experienceService.getExperience(permission.itemId);
+    
+    print('[Collections] Resolving ${permissions.length} shared experiences in parallel...');
+    final sw = Stopwatch()..start();
+    
+    // Fetch all experiences and owner names in parallel
+    final futures = permissions.map((permission) async {
+      // Fetch experience and owner name in parallel
+      final results = await Future.wait([
+        _experienceService.getExperience(permission.itemId),
+        _getOwnerDisplayName(permission.ownerUserId),
+      ]);
+      
+      final experience = results[0] as Experience?;
+      final ownerName = results[1] as String;
+      
       if (experience == null) {
-        continue;
+        return null;
       }
-      final ownerName = await _getOwnerDisplayName(permission.ownerUserId);
-      results.add(_SharedExperienceData(
+      
+      return _SharedExperienceData(
         experience: experience,
         permission: permission,
         ownerDisplayName: ownerName,
-      ));
-    }
+      );
+    }).toList();
+    
+    final results = (await Future.wait(futures))
+        .whereType<_SharedExperienceData>()
+        .toList();
+    
+    sw.stop();
+    print('[Collections] Resolved ${results.length} shared experiences in ${sw.elapsedMilliseconds}ms');
+    
     return results;
   }
 
