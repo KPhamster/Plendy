@@ -82,6 +82,8 @@ class _MapScreenState extends State<MapScreen> {
   GoogleMapController? _mapController; // To be initialized from _mapControllerCompleter
   bool _isProgrammaticTextUpdate = false; // RE-ADDED
   Location? _mapWidgetInitialLocation; // ADDED: To control GoogleMapsWidget initial location
+  // ADDED: Indicates background loading of shared experiences
+  bool _isSharedLoading = false;
 
   @override
   void initState() {
@@ -150,178 +152,24 @@ class _MapScreenState extends State<MapScreen> {
         return;
       }
 
-      _categories = await _experienceService.getUserCategories();
-      _experiences = await _experienceService.getExperiencesByUser(userId);
-      _colorCategories = await _experienceService.getUserColorCategories();
+      // Fetch owned data in parallel (categories, color categories, owned experiences)
+      final ownedResults = await Future.wait([
+        _experienceService.getUserCategories(),
+        _experienceService.getUserColorCategories(),
+        _experienceService.getExperiencesByUser(userId),
+      ]);
+
+      _categories = ownedResults[0] as List<UserCategory>;
+      _colorCategories = ownedResults[1] as List<ColorCategory>;
+      _experiences = ownedResults[2] as List<Experience>;
       print(
-          "🗺️ MAP SCREEN: Loaded ${_experiences.length} experiences and ${_categories.length} categories.");
+          "🗺️ MAP SCREEN: Loaded ${_experiences.length} owned experiences and ${_categories.length}/${_colorCategories.length} categories.");
 
-      // ADDED: Load shared experiences and merge
-      try {
-        final sharingService = SharingService();
-        final sharedPermissions =
-            await sharingService.getSharedItemsForUser(userId);
-        final sharedExperienceIds = sharedPermissions
-            .where((perm) => perm.itemType == ShareableItemType.experience)
-            .map((perm) => perm.itemId)
-            .where((id) => id.isNotEmpty)
-            .toSet()
-            .toList();
-
-        // Build map from shared experience ID -> owner user ID
-        final Map<String, String> sharedExpOwnerById = {};
-        for (final perm in sharedPermissions) {
-          if (perm.itemType == ShareableItemType.experience &&
-              perm.itemId.isNotEmpty &&
-              perm.ownerUserId.isNotEmpty) {
-            sharedExpOwnerById[perm.itemId] = perm.ownerUserId;
-          }
-        }
-
-        print(
-            "🗺️ MAP SCREEN: Found ${sharedExperienceIds.length} shared experience IDs for current user.");
-
-        if (sharedExperienceIds.isNotEmpty) {
-          final sharedExperiences = await _experienceService
-              .getExperiencesByIds(sharedExperienceIds);
-          print(
-              "🗺️ MAP SCREEN: Loaded ${sharedExperiences.length} shared experiences.");
-
-          // ADDED: Fetch owners' categories and color categories referenced by shared experiences
-          final Set<String> existingCategoryIds =
-              _categories.map((c) => c.id).toSet();
-          final Set<String> existingColorCategoryIds =
-              _colorCategories.map((c) => c.id).toSet();
-
-          final Set<String> requestedCategoryPairKeys = {};
-          final Set<String> requestedColorPairKeys = {};
-          final List<Future<UserCategory?>> categoryFetches = [];
-          final List<Future<ColorCategory?>> colorFetches = [];
-
-          for (final exp in sharedExperiences) {
-            final ownerId = sharedExpOwnerById[exp.id];
-            if (ownerId == null || ownerId.isEmpty) continue;
-
-            // Primary category
-            final String? catId = exp.categoryId;
-            if (catId != null && catId.isNotEmpty &&
-                !existingCategoryIds.contains(catId)) {
-              final key = ownerId + '|' + catId;
-              if (requestedCategoryPairKeys.add(key)) {
-                categoryFetches.add(
-                    _experienceService.getUserCategoryByOwner(ownerId, catId));
-              }
-            }
-
-            // Other categories
-            for (final oc in exp.otherCategories) {
-              if (oc.isEmpty || existingCategoryIds.contains(oc)) continue;
-              final key = ownerId + '|' + oc;
-              if (requestedCategoryPairKeys.add(key)) {
-                categoryFetches.add(
-                    _experienceService.getUserCategoryByOwner(ownerId, oc));
-              }
-            }
-
-            // Color category
-            final String? colorId = exp.colorCategoryId;
-            if (colorId != null && colorId.isNotEmpty &&
-                !existingColorCategoryIds.contains(colorId)) {
-              final key = ownerId + '|' + colorId;
-              if (requestedColorPairKeys.add(key)) {
-                colorFetches.add(_experienceService
-                    .getColorCategoryByOwner(ownerId, colorId));
-              }
-            }
-          }
-
-          if (categoryFetches.isNotEmpty) {
-            try {
-              final fetchedCats = await Future.wait(categoryFetches);
-              final newCats = fetchedCats.whereType<UserCategory>().toList();
-              if (newCats.isNotEmpty) {
-                _categories.addAll(newCats);
-                print(
-                    "🗺️ MAP SCREEN: Added ${newCats.length} shared user categories to local list (for icons & filters).");
-              }
-            } catch (e) {
-              print(
-                  "🗺️ MAP SCREEN: Error fetching shared user categories: $e");
-            }
-          }
-
-          if (colorFetches.isNotEmpty) {
-            try {
-              final fetchedColors = await Future.wait(colorFetches);
-              final newColors =
-                  fetchedColors.whereType<ColorCategory>().toList();
-              if (newColors.isNotEmpty) {
-                _colorCategories.addAll(newColors);
-                print(
-                    "🗺️ MAP SCREEN: Added ${newColors.length} shared color categories to local list (for icons & filters).");
-              }
-            } catch (e) {
-              print(
-                  "🗺️ MAP SCREEN: Error fetching shared color categories: $e");
-            }
-          }
-
-          // ADDED: Fetch owner display names for shared categories/color categories
-          try {
-            final Set<String> ownerIdsToFetch = {};
-            for (final c in _categories) {
-              if (c.ownerUserId.isNotEmpty &&
-                  c.ownerUserId != userId &&
-                  !_ownerNameByUserId.containsKey(c.ownerUserId)) {
-                ownerIdsToFetch.add(c.ownerUserId);
-              }
-            }
-            for (final cc in _colorCategories) {
-              if (cc.ownerUserId.isNotEmpty &&
-                  cc.ownerUserId != userId &&
-                  !_ownerNameByUserId.containsKey(cc.ownerUserId)) {
-                ownerIdsToFetch.add(cc.ownerUserId);
-              }
-            }
-
-            if (ownerIdsToFetch.isNotEmpty) {
-              final List<UserProfile?> profiles = await Future.wait(ownerIdsToFetch
-                  .map((oid) => _experienceService.getUserProfileById(oid)));
-              final Map<String, String> newNames = {};
-              for (final p in profiles) {
-                if (p != null) {
-                  final name = (p.displayName ?? p.username ?? 'Unknown');
-                  newNames[p.id] = name;
-                }
-              }
-              if (newNames.isNotEmpty && mounted) {
-                setState(() {
-                  _ownerNameByUserId.addAll(newNames);
-                });
-              }
-            }
-          } catch (e) {
-            print("🗺️ MAP SCREEN: Error fetching owner display names: $e");
-          }
-
-          // Merge owned and shared, de-duplicating by ID
-          final Map<String, Experience> combined = {
-            for (final e in _experiences) e.id: e,
-          };
-          for (final e in sharedExperiences) {
-            combined[e.id] = e;
-          }
-          _experiences = combined.values.toList();
-          print(
-              "🗺️ MAP SCREEN: Combined experiences total: ${_experiences.length}");
-        }
-      } catch (e) {
-        print(
-            "🗺️ MAP SCREEN: Error loading shared experiences: $e. Proceeding with owned experiences only.");
-      }
-
-      // Generate markers from the merged experiences list
+      // Render markers immediately for owned experiences
       await _generateMarkersFromExperiences(_experiences);
+
+      // Kick off shared experiences loading in the background (no await)
+      _loadSharedExperiencesInBackground(userId);
 
       /* --- REMOVED Marker generation loop (moved to _generateMarkersFromExperiences) ---
       _markers.clear();
@@ -352,6 +200,183 @@ class _MapScreenState extends State<MapScreen> {
             "🗺️ MAP SCREEN: Data load finished. Setting loading state to false.");
         setState(() {
           _isLoading = false;
+        });
+      }
+    }
+  }
+
+  // Load shared experiences after initial render and merge incrementally
+  Future<void> _loadSharedExperiencesInBackground(String userId) async {
+    try {
+      setState(() {
+        _isSharedLoading = true;
+      });
+      final sharingService = SharingService();
+      final sharedPermissions =
+          await sharingService.getSharedItemsForUser(userId);
+      final sharedExperienceIds = sharedPermissions
+          .where((perm) => perm.itemType == ShareableItemType.experience)
+          .map((perm) => perm.itemId)
+          .where((id) => id.isNotEmpty)
+          .toSet()
+          .toList();
+
+      if (sharedExperienceIds.isEmpty) {
+        print("🗺️ MAP SCREEN: No shared experiences to load in background.");
+        return;
+      }
+
+      // Map shared experience ID -> owner user ID
+      final Map<String, String> sharedExpOwnerById = {};
+      for (final perm in sharedPermissions) {
+        if (perm.itemType == ShareableItemType.experience &&
+            perm.itemId.isNotEmpty &&
+            perm.ownerUserId.isNotEmpty) {
+          sharedExpOwnerById[perm.itemId] = perm.ownerUserId;
+        }
+      }
+
+      print(
+          "🗺️ MAP SCREEN: [BG] Fetching ${sharedExperienceIds.length} shared experiences...");
+      final sharedExperiences =
+          await _experienceService.getExperiencesByIds(sharedExperienceIds);
+      print(
+          "🗺️ MAP SCREEN: [BG] Loaded ${sharedExperiences.length} shared experiences.");
+
+      // Fetch referenced owners' categories/color categories that are missing locally
+      final Set<String> existingCategoryIds =
+          _categories.map((c) => c.id).toSet();
+      final Set<String> existingColorCategoryIds =
+          _colorCategories.map((c) => c.id).toSet();
+
+      final Set<String> requestedCategoryPairKeys = {};
+      final Set<String> requestedColorPairKeys = {};
+      final List<Future<UserCategory?>> categoryFetches = [];
+      final List<Future<ColorCategory?>> colorFetches = [];
+
+      for (final exp in sharedExperiences) {
+        final ownerId = sharedExpOwnerById[exp.id];
+        if (ownerId == null || ownerId.isEmpty) continue;
+
+        final String? catId = exp.categoryId;
+        if (catId != null && catId.isNotEmpty &&
+            !existingCategoryIds.contains(catId)) {
+          final key = ownerId + '|' + catId;
+          if (requestedCategoryPairKeys.add(key)) {
+            categoryFetches
+                .add(_experienceService.getUserCategoryByOwner(ownerId, catId));
+          }
+        }
+
+        for (final oc in exp.otherCategories) {
+          if (oc.isEmpty || existingCategoryIds.contains(oc)) continue;
+          final key = ownerId + '|' + oc;
+          if (requestedCategoryPairKeys.add(key)) {
+            categoryFetches
+                .add(_experienceService.getUserCategoryByOwner(ownerId, oc));
+          }
+        }
+
+        final String? colorId = exp.colorCategoryId;
+        if (colorId != null && colorId.isNotEmpty &&
+            !existingColorCategoryIds.contains(colorId)) {
+          final key = ownerId + '|' + colorId;
+          if (requestedColorPairKeys.add(key)) {
+            colorFetches.add(
+                _experienceService.getColorCategoryByOwner(ownerId, colorId));
+          }
+        }
+      }
+
+      if (categoryFetches.isNotEmpty) {
+        try {
+          final fetchedCats = await Future.wait(categoryFetches);
+          final newCats = fetchedCats.whereType<UserCategory>().toList();
+          if (newCats.isNotEmpty) {
+            _categories.addAll(newCats);
+            print(
+                "🗺️ MAP SCREEN: [BG] Added ${newCats.length} shared user categories.");
+          }
+        } catch (e) {
+          print("🗺️ MAP SCREEN: [BG] Error fetching shared categories: $e");
+        }
+      }
+
+      if (colorFetches.isNotEmpty) {
+        try {
+          final fetchedColors = await Future.wait(colorFetches);
+          final newColors = fetchedColors.whereType<ColorCategory>().toList();
+          if (newColors.isNotEmpty) {
+            _colorCategories.addAll(newColors);
+            print(
+                "🗺️ MAP SCREEN: [BG] Added ${newColors.length} shared color categories.");
+          }
+        } catch (e) {
+          print("🗺️ MAP SCREEN: [BG] Error fetching shared color categories: $e");
+        }
+      }
+
+      // Fetch owner display names (deduped)
+      try {
+        final Set<String> ownerIdsToFetch = {};
+        for (final c in _categories) {
+          if (c.ownerUserId.isNotEmpty &&
+              c.ownerUserId != userId &&
+              !_ownerNameByUserId.containsKey(c.ownerUserId)) {
+            ownerIdsToFetch.add(c.ownerUserId);
+          }
+        }
+        for (final cc in _colorCategories) {
+          if (cc.ownerUserId.isNotEmpty &&
+              cc.ownerUserId != userId &&
+              !_ownerNameByUserId.containsKey(cc.ownerUserId)) {
+            ownerIdsToFetch.add(cc.ownerUserId);
+          }
+        }
+
+        if (ownerIdsToFetch.isNotEmpty) {
+          final List<UserProfile?> profiles = await Future.wait(
+              ownerIdsToFetch.map((oid) => _experienceService.getUserProfileById(oid)));
+          final Map<String, String> newNames = {};
+          for (final p in profiles) {
+            if (p != null) {
+              final name = (p.displayName ?? p.username ?? 'Unknown');
+              newNames[p.id] = name;
+            }
+          }
+          if (newNames.isNotEmpty && mounted) {
+            setState(() {
+              _ownerNameByUserId.addAll(newNames);
+            });
+          }
+        }
+      } catch (e) {
+        print("🗺️ MAP SCREEN: [BG] Error fetching owner names: $e");
+      }
+
+      // Merge and update markers
+      final Map<String, Experience> combined = {
+        for (final e in _experiences) e.id: e,
+      };
+      for (final e in sharedExperiences) {
+        combined[e.id] = e;
+      }
+
+      if (mounted) {
+        setState(() {
+          _experiences = combined.values.toList();
+        });
+      }
+
+      await _generateMarkersFromExperiences(_experiences);
+      print("🗺️ MAP SCREEN: [BG] Shared experiences merged and markers updated.");
+    } catch (e) {
+      print(
+          "🗺️ MAP SCREEN: [BG] Error loading shared experiences: $e. Skipping background merge.");
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSharedLoading = false;
         });
       }
     }
@@ -979,19 +1004,19 @@ class _MapScreenState extends State<MapScreen> {
     print(
         "🗺️ MAP SCREEN: Location selected via widget callback: ${locationDetails.displayName}");
 
-    print("🗺️ MAP SCREEN: (_handleLocationSelected) Listeners BEFORE remove: ${_searchController.hasListeners}");
+    print("🗺️ MAP SCREEN: (_handleLocationSelected) Removing search listener before clearing text");
     _searchController.removeListener(_onSearchChanged);
-    print("🗺️ MAP SCREEN: (_handleLocationSelected) Listeners AFTER remove: ${_searchController.hasListeners}. Will now clear text.");
+    print("🗺️ MAP SCREEN: (_handleLocationSelected) Listener removed. Clearing text next.");
 
     // Clear the search text. If listener was still active, this would trigger _onSearchChanged.
     _searchController.clear(); 
-    print("🗺️ MAP SCREEN: (_handleLocationSelected) Text cleared. Listeners after clear: ${_searchController.hasListeners}");
+    print("🗺️ MAP SCREEN: (_handleLocationSelected) Text cleared.");
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
-          print("🗺️ MAP SCREEN: (_handleLocationSelected POST-FRAME) Running. Listeners before re-add: ${_searchController.hasListeners}");
+        print("🗺️ MAP SCREEN: (_handleLocationSelected POST-FRAME) Re-adding search listener.");
         _searchController.addListener(_onSearchChanged);
-        print("🗺️ MAP SCREEN: (_handleLocationSelected POST-FRAME) Re-added search listener. Listeners now: ${_searchController.hasListeners}");
+        print("🗺️ MAP SCREEN: (_handleLocationSelected POST-FRAME) Search listener re-added.");
       } else {
         print("🗺️ MAP SCREEN: (_handleLocationSelected POST-FRAME) NOT RUNNING because !mounted.");
       }
@@ -1404,9 +1429,9 @@ class _MapScreenState extends State<MapScreen> {
     _isProgrammaticTextUpdate = true; 
     print("🗺️ MAP SCREEN: (_selectSearchResult) Set _isProgrammaticTextUpdate = true");
 
-    print("🗺️ MAP SCREEN: (_selectSearchResult) Listeners on _searchController BEFORE remove: ${_searchController.hasListeners}");
+    print("🗺️ MAP SCREEN: (_selectSearchResult) Removing search listener before setting text");
     _searchController.removeListener(_onSearchChanged);
-    print("🗺️ MAP SCREEN: (_selectSearchResult) Listeners on _searchController AFTER remove: ${_searchController.hasListeners}");
+    print("🗺️ MAP SCREEN: (_selectSearchResult) Listener removed.");
 
     // Check if this is a user's saved experience
     if (result['type'] == 'experience') {
@@ -1599,12 +1624,12 @@ class _MapScreenState extends State<MapScreen> {
 
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) { // Check mounted again inside callback
-          print("🗺️ MAP SCREEN: (_selectSearchResult POST-FRAME) Running. Listeners on _searchController before re-add attempt: ${_searchController.hasListeners}");
+          print("🗺️ MAP SCREEN: (_selectSearchResult POST-FRAME) Re-adding search listener.");
           // The flag should already be false here.
           // print("🗺️ MAP SCREEN: (_selectSearchResult) State of _isProgrammaticTextUpdate in post-frame: $_isProgrammaticTextUpdate");
 
           _searchController.addListener(_onSearchChanged);
-          print("🗺️ MAP SCREEN: (_selectSearchResult POST-FRAME) Attempted to re-add _onSearchChanged. Listeners now: ${_searchController.hasListeners}");
+          print("🗺️ MAP SCREEN: (_selectSearchResult POST-FRAME) Search listener re-added.");
         } else {
           print("🗺️ MAP SCREEN: (_selectSearchResult POST-FRAME) NOT RUNNING because !mounted.");
         }
@@ -2048,14 +2073,38 @@ class _MapScreenState extends State<MapScreen> {
                     additionalMarkers: allMarkers,
                     onMapControllerCreated: _onMapWidgetCreated,
                   ),
-                  // Show loading indicator on top if loading (main page load, not search typing)
-                  if (_isLoading && !_isSearching) 
-                    Container(
-                      color: Colors.black.withOpacity(0.1),
-                      child: const Center(
-                        child: CircularProgressIndicator(),
+                  // Show a small, non-blocking loading spinner in the top-right during load
+                  Positioned(
+                    top: 12,
+                    right: 12,
+                    child: IgnorePointer(
+                      ignoring: true,
+                      child: AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 220),
+                        switchInCurve: Curves.easeOut,
+                        switchOutCurve: Curves.easeIn,
+                        transitionBuilder: (child, animation) => FadeTransition(
+                          opacity: animation,
+                          child: child,
+                        ),
+                        child: ((_isLoading || _isSharedLoading) && !_isSearching)
+                            ? SizedBox(
+                                key: const ValueKey('spinner'),
+                                width: 22,
+                                height: 22,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Theme.of(context).primaryColor,
+                                ),
+                              )
+                            : const SizedBox(
+                                key: ValueKey('empty'),
+                                width: 0,
+                                height: 0,
+                              ),
                       ),
                     ),
+                  ),
                 ],
               ),
             ),
