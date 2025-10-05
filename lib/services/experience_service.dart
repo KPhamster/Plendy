@@ -1029,34 +1029,44 @@ class ExperienceService {
       chunks.add(uniqueIds.sublist(i, end));
     }
 
+    // Fetch chunks with limited concurrency for faster overall time without overwhelming Firestore
+    const int maxConcurrent = 6;
     final List<Experience> results = [];
-    for (final chunk in chunks) {
-      try {
-        final snapshot = await _experiencesCollection
-            .where(FieldPath.documentId, whereIn: chunk)
-            .get();
-        results.addAll(snapshot.docs.map((doc) => Experience.fromFirestore(doc)));
-      } catch (e) {
-        // Some environments will fail the entire whereIn query if any single
-        // document in the chunk is not readable by the current user (per rules).
-        // Fall back to per-doc fetches so we still retrieve the allowed ones.
-        print(
-            "getExperiencesByIds: Error fetching chunk of size ${chunk.length}: $e. Falling back to per-doc reads.");
 
-        for (final id in chunk) {
-          try {
-            final doc = await _experiencesCollection.doc(id).get();
-            if (doc.exists) {
-              // Guard: Firestore rules may still block certain docs individually.
-              // Only add those we could read.
-              results.add(Experience.fromFirestore(doc));
+    for (int i = 0; i < chunks.length; i += maxConcurrent) {
+      final currentBatch = chunks.sublist(
+          i, (i + maxConcurrent) > chunks.length ? chunks.length : (i + maxConcurrent));
+
+      final futures = currentBatch.map((chunk) async {
+        try {
+          final snapshot = await _experiencesCollection
+              .where(FieldPath.documentId, whereIn: chunk)
+              .get();
+          return snapshot.docs
+              .map((doc) => Experience.fromFirestore(doc))
+              .toList();
+        } catch (e) {
+          print(
+              "getExperiencesByIds: Error fetching chunk of size ${chunk.length}: $e. Falling back to per-doc reads.");
+          final List<Experience> perDoc = [];
+          for (final id in chunk) {
+            try {
+              final doc = await _experiencesCollection.doc(id).get();
+              if (doc.exists) {
+                perDoc.add(Experience.fromFirestore(doc));
+              }
+            } catch (inner) {
+              print(
+                  "getExperiencesByIds: Skipping $id due to error on per-doc read: $inner");
             }
-          } catch (inner) {
-            // Ignore docs we cannot read due to permissions; continue.
-            print(
-                "getExperiencesByIds: Skipping $id due to error on per-doc read: $inner");
           }
+          return perDoc;
         }
+      }).toList();
+
+      final batchResults = await Future.wait(futures);
+      for (final list in batchResults) {
+        results.addAll(list);
       }
     }
 
