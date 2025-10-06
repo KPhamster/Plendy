@@ -1805,7 +1805,37 @@ class _MapScreenState extends State<MapScreen> {
       appBar: AppBar(
         backgroundColor: Colors.white,
         foregroundColor: Colors.black,
-        title: const Text('Experiences Map'),
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Experiences Map'),
+            const SizedBox(width: 8),
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 220),
+              switchInCurve: Curves.easeOut,
+              switchOutCurve: Curves.easeIn,
+              transitionBuilder: (child, animation) => FadeTransition(
+                opacity: animation,
+                child: child,
+              ),
+              child: ((_isLoading || _isSharedLoading) && !_isSearching)
+                  ? SizedBox(
+                      key: const ValueKey('appbar_spinner'),
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Theme.of(context).primaryColor,
+                      ),
+                    )
+                  : const SizedBox(
+                      key: ValueKey('appbar_empty'),
+                      width: 0,
+                      height: 0,
+                    ),
+            ),
+          ],
+        ),
         actions: [
           Container(
             color: Colors.white,
@@ -2072,38 +2102,6 @@ class _MapScreenState extends State<MapScreen> {
                     showControls: true,
                     additionalMarkers: allMarkers,
                     onMapControllerCreated: _onMapWidgetCreated,
-                  ),
-                  // Show a small, non-blocking loading spinner in the top-right during load
-                  Positioned(
-                    top: 12,
-                    right: 12,
-                    child: IgnorePointer(
-                      ignoring: true,
-                      child: AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 220),
-                        switchInCurve: Curves.easeOut,
-                        switchOutCurve: Curves.easeIn,
-                        transitionBuilder: (child, animation) => FadeTransition(
-                          opacity: animation,
-                          child: child,
-                        ),
-                        child: ((_isLoading || _isSharedLoading) && !_isSearching)
-                            ? SizedBox(
-                                key: const ValueKey('spinner'),
-                                width: 22,
-                                height: 22,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Theme.of(context).primaryColor,
-                                ),
-                              )
-                            : const SizedBox(
-                                key: ValueKey('empty'),
-                                width: 0,
-                                height: 0,
-                              ),
-                      ),
-                    ),
                   ),
                 ],
               ),

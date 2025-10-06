@@ -658,7 +658,25 @@ class SharingService {
     if (currentUserId == null) {
       throw Exception('User not authenticated');
     }
-    // Optional: Add check if currentUserId == ownerUserId?
+    // Prevent creating self-share permissions for the owner; they already have full access
+    if (ownerUserId == sharedWithUserId) {
+      // Best-effort cleanup of any accidental/corrupt self-share duplicates
+      try {
+        final typeSegment = itemType == ShareableItemType.category ? 'category' : 'experience';
+        final dupSnap = await _sharePermissionsCollection
+            .where('itemId', isEqualTo: itemId)
+            .where('itemType', isEqualTo: typeSegment)
+            .where('ownerUserId', isEqualTo: ownerUserId)
+            .where('sharedWithUserId', isEqualTo: sharedWithUserId)
+            .get();
+        for (final doc in dupSnap.docs) {
+          await doc.reference.delete();
+        }
+      } catch (e) {
+        // ignore cleanup failure
+      }
+      return; // No-op for self-share
+    }
 
     final docId = _permissionDocId(
       ownerUserId: ownerUserId,
@@ -724,6 +742,7 @@ class SharingService {
     print('SharingService: Found ${snapshot.docs.length} share permission documents');
     final permissions = snapshot.docs
         .map((doc) => SharePermission.fromFirestore(doc))
+        .where((perm) => perm.ownerUserId != perm.sharedWithUserId) // filter out self-shares
         .toList();
 
     // Sort in memory by createdAt descending
@@ -746,6 +765,7 @@ class SharingService {
     print('SharingService: Found ${snapshot.docs.length} owned share permission documents');
     final permissions = snapshot.docs
         .map((doc) => SharePermission.fromFirestore(doc))
+        .where((perm) => perm.ownerUserId != perm.sharedWithUserId) // filter out self-shares
         .toList();
 
     permissions.sort((a, b) => b.createdAt.compareTo(a.createdAt));

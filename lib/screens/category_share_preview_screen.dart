@@ -5,11 +5,13 @@ import 'package:http/http.dart' as http;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:url_launcher/url_launcher.dart';
 import 'package:firebase_app_check/firebase_app_check.dart';
+import 'package:provider/provider.dart';
 import '../../firebase_options.dart';
 import '../models/experience.dart';
 import '../services/experience_service.dart';
 import '../services/auth_service.dart';
 import '../services/category_share_service.dart';
+import '../providers/category_save_progress_notifier.dart';
 import 'auth_screen.dart';
 import 'main_screen.dart';
 
@@ -19,10 +21,12 @@ class CategorySharePreviewScreen extends StatefulWidget {
   const CategorySharePreviewScreen({super.key, required this.token});
 
   @override
-  State<CategorySharePreviewScreen> createState() => _CategorySharePreviewScreenState();
+  State<CategorySharePreviewScreen> createState() =>
+      _CategorySharePreviewScreenState();
 }
 
-class _CategorySharePreviewScreenState extends State<CategorySharePreviewScreen> {
+class _CategorySharePreviewScreenState
+    extends State<CategorySharePreviewScreen> {
   @override
   void initState() {
     super.initState();
@@ -110,6 +114,7 @@ class _CategorySharePreviewScreenState extends State<CategorySharePreviewScreen>
               fromUserId: payload.fromUserId,
               accessMode: payload.accessMode,
               categoryId: payload.categoryId,
+              isColorCategory: payload.isColorCategory,
             );
           },
         ),
@@ -120,16 +125,17 @@ class _CategorySharePreviewScreenState extends State<CategorySharePreviewScreen>
   Future<void> _handleOpenInApp(BuildContext context) async {
     final Uri deepLink =
         Uri.parse('https://plendy.app/shared-category/' + widget.token);
-    
+
     // On web, we need to handle Universal Links differently to avoid opening both app and browser
     if (kIsWeb) {
       // Try to open the app directly without opening a new browser tab
       final bool launched = await launchUrl(
         deepLink,
         mode: LaunchMode.platformDefault, // Let the platform decide
-        webOnlyWindowName: '_self', // Replace current tab instead of opening new one
+        webOnlyWindowName:
+            '_self', // Replace current tab instead of opening new one
       );
-      
+
       if (!launched) {
         // If app doesn't open, show a message
         if (context.mounted) {
@@ -392,7 +398,8 @@ class _CategorySharePreviewScreenState extends State<CategorySharePreviewScreen>
           ? Future.value(embedded)
           : _fetchExperiencesForCategory(
                   isColorCategory: isColor, categoryId: categoryId)
-              .then((list) => list.map((e) => _experienceFromModel(e)).toList());
+              .then(
+                  (list) => list.map((e) => _experienceFromModel(e)).toList());
 
       return _CategoryPreviewPayload(
         categoryTitle: title,
@@ -490,6 +497,7 @@ class _CategoryPreviewList extends StatefulWidget {
   final String fromUserId;
   final String accessMode;
   final String categoryId;
+  final bool isColorCategory;
 
   const _CategoryPreviewList({
     required this.title,
@@ -498,6 +506,7 @@ class _CategoryPreviewList extends StatefulWidget {
     required this.fromUserId,
     required this.accessMode,
     required this.categoryId,
+    required this.isColorCategory,
   });
 
   @override
@@ -577,84 +586,116 @@ class _CategoryPreviewListState extends State<_CategoryPreviewList> {
       return;
     }
 
-    final authService = AuthService();
-    String? currentUserId = authService.currentUser?.uid;
-
-    if (currentUserId == null) {
-      if (!mounted) {
-        return;
-      }
-      await Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => const AuthScreen()),
-      );
-      if (!mounted) {
-        return;
-      }
-      await _loadUserInfo();
-      currentUserId = authService.currentUser?.uid;
-      if (currentUserId == null) {
-        return;
-      }
-    }
-
-    if (widget.categoryId.isEmpty || widget.fromUserId.isEmpty) {
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text('Unable to save this category right now.')),
-      );
-      return;
-    }
-
-    setState(() {
-      _isSaving = true;
-    });
+    setState(() => _isSaving = true);
 
     try {
-      final previews = await widget.experiences;
-      final experienceIds = previews
-          .map((exp) => exp.id)
-          .where((id) => id.isNotEmpty)
-          .toSet()
-          .toList();
+      final AuthService authService = AuthService();
+      String? currentUserId = authService.currentUser?.uid;
 
-      final service = CategoryShareService();
-      await service.grantSharedCategoryToUser(
-        categoryId: widget.categoryId,
-        ownerUserId: widget.fromUserId,
-        targetUserId: currentUserId,
-        accessMode: widget.accessMode,
-        experienceIds: experienceIds,
-      );
+      if (currentUserId == null) {
+        if (!mounted) {
+          return;
+        }
+        await Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const AuthScreen()),
+        );
+        if (!mounted) {
+          return;
+        }
+        await _loadUserInfo();
+        currentUserId = authService.currentUser?.uid;
+        if (currentUserId == null) {
+          return;
+        }
+      }
 
-      if (!mounted) {
+      if (widget.categoryId.isEmpty || widget.fromUserId.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+                content: Text('Unable to save this category right now.')),
+          );
+        }
         return;
       }
 
-      final accessLabel =
-          widget.accessMode.toLowerCase() == 'edit' ? 'edit' : 'view';
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Category saved with $accessLabel access.')),
+      final ExperienceService experienceService = ExperienceService();
+      List<String> experienceIds = <String>[];
+      try {
+        final ownerExperiences =
+            await experienceService.getExperiencesForOwnerCategory(
+          ownerUserId: widget.fromUserId,
+          categoryId: widget.categoryId,
+          isColorCategory: widget.isColorCategory,
+        );
+        experienceIds = ownerExperiences
+            .map((exp) => exp.id)
+            .where((id) => id.isNotEmpty)
+            .toSet()
+            .toList();
+      } catch (_) {
+        // Ignore and fall back to preview snapshot below.
+      }
+
+      if (experienceIds.isEmpty) {
+        try {
+          final previews = await widget.experiences;
+          experienceIds = previews
+              .map((exp) => exp.id)
+              .where((id) => id.isNotEmpty)
+              .toSet()
+              .toList();
+        } catch (e) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                  content: Text('Failed to load category experiences: $e')),
+            );
+          }
+          return;
+        }
+      }
+
+      final int totalUnits = 1 + experienceIds.length;
+
+      final CategorySaveProgressNotifier notifier =
+          Provider.of<CategorySaveProgressNotifier>(context, listen: false);
+      final CategoryShareService service = CategoryShareService();
+      final String targetUserId = currentUserId!;
+      final String categoryId = widget.categoryId;
+      final String fromUserId = widget.fromUserId;
+      final String accessMode = widget.accessMode;
+      final String categoryName = widget.title;
+
+      notifier.startCategorySave(
+        categoryName: categoryName,
+        totalUnits: totalUnits,
+        saveOperation: (controller) async {
+          await service.grantSharedCategoryToUser(
+            categoryId: categoryId,
+            ownerUserId: fromUserId,
+            targetUserId: targetUserId,
+            accessMode: accessMode,
+            experienceIds: experienceIds,
+            onProgress: (completed, total) {
+              controller.update(
+                completedUnits: completed,
+                totalUnits: total,
+              );
+            },
+          );
+        },
       );
 
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const MainScreen()),
-        (route) => false,
-      );
-    } catch (e) {
-      if (!mounted) {
-        return;
+      if (mounted) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const MainScreen()),
+          (route) => false,
+        );
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to save category: $e')),
-      );
     } finally {
       if (mounted) {
-        setState(() {
-          _isSaving = false;
-        });
+        setState(() => _isSaving = false);
       }
     }
   }
@@ -762,7 +803,8 @@ class _MultiCategoryPreviewList extends StatefulWidget {
   const _MultiCategoryPreviewList({required this.payload});
 
   @override
-  State<_MultiCategoryPreviewList> createState() => _MultiCategoryPreviewListState();
+  State<_MultiCategoryPreviewList> createState() =>
+      _MultiCategoryPreviewListState();
 }
 
 class _MultiCategoryPreviewListState extends State<_MultiCategoryPreviewList> {
@@ -786,8 +828,8 @@ class _MultiCategoryPreviewListState extends State<_MultiCategoryPreviewList> {
       String? displayName;
       if (widget.payload.fromUserId.isNotEmpty) {
         final experienceService = ExperienceService();
-        final userProfile =
-            await experienceService.getUserProfileById(widget.payload.fromUserId);
+        final userProfile = await experienceService
+            .getUserProfileById(widget.payload.fromUserId);
         displayName =
             userProfile?.displayName ?? userProfile?.username ?? 'Someone';
       }
@@ -820,54 +862,104 @@ class _MultiCategoryPreviewListState extends State<_MultiCategoryPreviewList> {
 
   Future<void> _handleSaveAll() async {
     if (_isSaving) return;
-    final authService = AuthService();
-    String? currentUserId = authService.currentUser?.uid;
-    if (currentUserId == null) {
-      if (!mounted) return;
-      await Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => const AuthScreen()),
-      );
-      if (!mounted) return;
-      await _loadUserInfo();
-      currentUserId = authService.currentUser?.uid;
-      if (currentUserId == null) return;
-    }
 
     setState(() => _isSaving = true);
-    try {
-      final service = CategoryShareService();
-      final List<String> experienceIds = widget.payload.items!
-          .expand((i) => i.experiences.map((e) => e.id))
-          .where((id) => id.isNotEmpty)
-          .toSet()
-          .toList();
 
-      // Grant for each category separately
-      for (final item in widget.payload.items!) {
-        await service.grantSharedCategoryToUser(
-          categoryId: item.id,
-          ownerUserId: widget.payload.fromUserId,
-          targetUserId: currentUserId!,
-          accessMode: widget.payload.accessMode,
-          experienceIds: experienceIds,
+    try {
+      final AuthService authService = AuthService();
+      String? currentUserId = authService.currentUser?.uid;
+      if (currentUserId == null) {
+        if (!mounted) return;
+        await Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const AuthScreen()),
+        );
+        if (!mounted) return;
+        await _loadUserInfo();
+        currentUserId = authService.currentUser?.uid;
+        if (currentUserId == null) {
+          return;
+        }
+      }
+
+      final List<_MultiCategoryItem> items =
+          widget.payload.items ?? const <_MultiCategoryItem>[];
+      if (items.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+                content: Text('Unable to save these categories right now.')),
+          );
+        }
+        return;
+      }
+
+      final CategorySaveProgressNotifier notifier =
+          Provider.of<CategorySaveProgressNotifier>(context, listen: false);
+      final CategoryShareService service = CategoryShareService();
+      final ExperienceService experienceService = ExperienceService();
+      final String targetUserId = currentUserId!;
+      final String fromUserId = widget.payload.fromUserId;
+      final String accessMode = widget.payload.accessMode;
+
+      for (final _MultiCategoryItem item in items) {
+        if (item.id.isEmpty) {
+          continue;
+        }
+
+        List<String> experienceIds = <String>[];
+        try {
+          final ownerExperiences =
+              await experienceService.getExperiencesForOwnerCategory(
+            ownerUserId: fromUserId,
+            categoryId: item.id,
+            isColorCategory: item.isColor,
+          );
+          experienceIds = ownerExperiences
+              .map((exp) => exp.id)
+              .where((id) => id.isNotEmpty)
+              .toSet()
+              .toList();
+        } catch (_) {
+          // Ignore and fall back to snapshot data
+        }
+
+        if (experienceIds.isEmpty) {
+          experienceIds = item.experiences
+              .map((e) => e.id)
+              .where((id) => id.isNotEmpty)
+              .toSet()
+              .toList();
+        }
+
+        final int totalUnits = 1 + experienceIds.length;
+
+        notifier.startCategorySave(
+          categoryName: item.title,
+          totalUnits: totalUnits,
+          saveOperation: (controller) async {
+            await service.grantSharedCategoryToUser(
+              categoryId: item.id,
+              ownerUserId: fromUserId,
+              targetUserId: targetUserId,
+              accessMode: accessMode,
+              experienceIds: experienceIds,
+              onProgress: (completed, total) {
+                controller.update(
+                  completedUnits: completed,
+                  totalUnits: total,
+                );
+              },
+            );
+          },
         );
       }
 
-      if (!mounted) return;
-      final accessLabel =
-          widget.payload.accessMode.toLowerCase() == 'edit' ? 'edit' : 'view';
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Saved ${widget.payload.items!.length} categories with $accessLabel access.')),
-      );
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const MainScreen()),
-        (route) => false,
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to save: $e')),
-      );
+      if (mounted) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const MainScreen()),
+          (route) => false,
+        );
+      }
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
