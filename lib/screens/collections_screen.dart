@@ -22,6 +22,7 @@ import 'receive_share/widgets/instagram_preview_widget.dart'
 import 'receive_share_screen.dart';
 import 'package:provider/provider.dart';
 import '../providers/receive_share_provider.dart';
+import '../providers/category_save_progress_notifier.dart';
 import 'receive_share/widgets/tiktok_preview_widget.dart';
 import 'receive_share/widgets/facebook_preview_widget.dart';
 import 'receive_share/widgets/youtube_preview_widget.dart';
@@ -150,7 +151,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   final _authService = AuthService();
   final _experienceService = ExperienceService();
   final TextEditingController _searchController = TextEditingController();
-  
+
   // Bottom padding to keep last item above the FAB
   static const double _bottomListPadding = 80.0;
 
@@ -176,6 +177,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   List<UserCategory> _sharedCategories = [];
   List<ColorCategory> _sharedColorCategories = [];
   List<Experience> _sharedExperiences = [];
+  CategorySaveProgressNotifier? _categorySaveNotifier;
 
   // Selection mode for Categories/Color Categories in the first tab
   bool _isSelectingCategories = false;
@@ -297,11 +299,14 @@ class _CollectionsScreenState extends State<CollectionsScreen>
 
   // --- Persistent sort preference keys ---
   static const String _prefsKeyCategorySort = 'collections_category_sort';
-  static const String _prefsKeyColorCategorySort = 'collections_color_category_sort';
+  static const String _prefsKeyColorCategorySort =
+      'collections_color_category_sort';
   static const String _prefsKeyExperienceSort = 'collections_experience_sort';
   static const String _prefsKeyContentSort = 'collections_content_sort';
-  static const String _prefsKeyGroupByLocationExperiences = 'collections_group_by_location_experiences';
-  static const String _prefsKeyGroupByLocationContent = 'collections_group_by_location_content';
+  static const String _prefsKeyGroupByLocationExperiences =
+      'collections_group_by_location_experiences';
+  static const String _prefsKeyGroupByLocationContent =
+      'collections_group_by_location_content';
 
   Future<void> _loadSortPreferences() async {
     try {
@@ -396,10 +401,11 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   }
 
   void _applyColorCategorySortInMemory() {
-    final List<ColorCategory> sorted = List<ColorCategory>.from(_colorCategories);
+    final List<ColorCategory> sorted =
+        List<ColorCategory>.from(_colorCategories);
     if (_colorCategorySortType == ColorCategorySortType.alphabetical) {
-      sorted.sort(
-          (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+      sorted
+          .sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
     } else {
       sorted.sort((a, b) {
         final tsA = a.lastUsedTimestamp;
@@ -417,6 +423,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       _updateLocalColorOrderIndices();
     });
   }
+
   // --- ADDED: Country grouping state and expansion maps ---
   final Map<String, bool> _countryExpansionExperiences = {};
   final Map<String, bool> _countryExpansionContent = {};
@@ -619,7 +626,120 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final CategorySaveProgressNotifier notifier =
+        Provider.of<CategorySaveProgressNotifier>(context, listen: false);
+    if (!identical(_categorySaveNotifier, notifier)) {
+      _categorySaveNotifier?.removeListener(_handleCategorySaveProgress);
+      _categorySaveNotifier = notifier;
+      _categorySaveNotifier?.addListener(_handleCategorySaveProgress);
+      _handleCategorySaveProgress();
+    }
+  }
+
+  void _handleCategorySaveProgress() {
+    final CategorySaveProgressNotifier? notifier = _categorySaveNotifier;
+    if (!mounted || notifier == null) {
+      return;
+    }
+    var shouldReload = false;
+    while (true) {
+      final CategorySaveMessage? message = notifier.takeNextMessage();
+      if (message == null) {
+        break;
+      }
+      final SnackBar snackBar = SnackBar(
+        content: Text(message.text),
+        backgroundColor:
+            message.isError ? Theme.of(context).colorScheme.error : null,
+      );
+      ScaffoldMessenger.of(context).showSnackBar(snackBar);
+      if (!message.isError) {
+        shouldReload = true;
+      }
+    }
+    if (shouldReload) {
+      unawaited(_loadData());
+      Future.delayed(const Duration(seconds: 3), () {
+        if (mounted) {
+          unawaited(_loadData());
+        }
+      });
+    }
+  }
+
+  Widget _buildCategorySaveProgressTile(
+      BuildContext context, CategorySaveTask task) {
+    final ThemeData theme = Theme.of(context);
+    final ColorScheme scheme = theme.colorScheme;
+    final Color background = scheme.surfaceVariant.withOpacity(0.6);
+    final double? progress = task.progress;
+    final int totalExperiences = task.totalUnits > 0 ? task.totalUnits - 1 : 0;
+    final int rawCompletedExperiences =
+        task.completedUnits > 0 ? task.completedUnits - 1 : 0;
+    final int completedExperiences = rawCompletedExperiences < 0
+        ? 0
+        : (rawCompletedExperiences > totalExperiences
+            ? totalExperiences
+            : rawCompletedExperiences);
+    final bool showExperienceCounts = totalExperiences > 0;
+
+    return Container(
+      padding: const EdgeInsets.all(12.0),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(12.0),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: scheme.primary,
+                  value: progress,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'Saving ' + task.categoryName + ' Category',
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (showExperienceCounts)
+            Padding(
+              padding: const EdgeInsets.only(top: 4.0),
+              child: Text(
+                '$completedExperiences of $totalExperiences experiences saved',
+                style: theme.textTheme.bodySmall,
+              ),
+            ),
+          const SizedBox(height: 8),
+          LinearProgressIndicator(
+            value: progress,
+            minHeight: 4,
+            color: scheme.primary,
+            backgroundColor: scheme.surfaceVariant.withOpacity(0.3),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
   void dispose() {
+    _categorySaveNotifier?.removeListener(_handleCategorySaveProgress);
+    _categorySaveNotifier = null;
     _tabController.dispose();
     _searchController.dispose();
     super.dispose();
@@ -1335,7 +1455,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         _applyCategorySortInMemory();
         _applyColorCategorySortInMemory();
         final expSortSw = Stopwatch()..start();
-        _applyExperienceSort(_experienceSortType, applyToFiltered: false).whenComplete(() async {
+        _applyExperienceSort(_experienceSortType, applyToFiltered: false)
+            .whenComplete(() async {
           if (_perfLogs) {
             print(
                 '[Perf][Collections] Initial experience sort took ${expSortSw.elapsedMilliseconds}ms');
@@ -1348,7 +1469,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
             setState(() {
               _filteredExperiences = List.from(_experiences);
             });
-            await _applyExperienceSort(_experienceSortType, applyToFiltered: true);
+            await _applyExperienceSort(_experienceSortType,
+                applyToFiltered: true);
           }
         });
         if (_perfLogs) {
@@ -1386,30 +1508,32 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   Future<List<_SharedCategoryData>> _resolveSharedCategories(
       List<SharePermission> permissions) async {
     if (permissions.isEmpty) return [];
-    
-    print('[Collections] Resolving ${permissions.length} shared categories in parallel...');
+
+    print(
+        '[Collections] Resolving ${permissions.length} shared categories in parallel...');
     final sw = Stopwatch()..start();
-    
+
     // Fetch all categories and owner names in parallel
     final futures = permissions.map((permission) async {
       final ownerId = permission.ownerUserId;
-      
+
       // Fetch user category, color category, and owner name in parallel
       final results = await Future.wait([
         _experienceService.getUserCategoryByOwner(ownerId, permission.itemId),
         _experienceService.getColorCategoryByOwner(ownerId, permission.itemId),
         _getOwnerDisplayName(ownerId),
       ]);
-      
+
       final userCategory = results[0] as UserCategory?;
       final colorCategory = results[1] as ColorCategory?;
       final ownerName = results[2] as String;
-      
+
       if (userCategory == null && colorCategory == null) {
-        print('[Collections] No category found for ${permission.itemId}, skipping');
+        print(
+            '[Collections] No category found for ${permission.itemId}, skipping');
         return null;
       }
-      
+
       return _SharedCategoryData(
         userCategory: userCategory,
         colorCategory: colorCategory,
@@ -1417,24 +1541,25 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         ownerDisplayName: ownerName,
       );
     }).toList();
-    
-    final results = (await Future.wait(futures))
-        .whereType<_SharedCategoryData>()
-        .toList();
-    
+
+    final results =
+        (await Future.wait(futures)).whereType<_SharedCategoryData>().toList();
+
     sw.stop();
-    print('[Collections] Resolved ${results.length} shared categories in ${sw.elapsedMilliseconds}ms');
-    
+    print(
+        '[Collections] Resolved ${results.length} shared categories in ${sw.elapsedMilliseconds}ms');
+
     return results;
   }
 
   Future<List<_SharedExperienceData>> _resolveSharedExperiences(
       List<SharePermission> permissions) async {
     if (permissions.isEmpty) return [];
-    
-    print('[Collections] Resolving ${permissions.length} shared experiences in parallel...');
+
+    print(
+        '[Collections] Resolving ${permissions.length} shared experiences in parallel...');
     final sw = Stopwatch()..start();
-    
+
     // Fetch all experiences and owner names in parallel
     final futures = permissions.map((permission) async {
       // Fetch experience and owner name in parallel
@@ -1442,28 +1567,29 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         _experienceService.getExperience(permission.itemId),
         _getOwnerDisplayName(permission.ownerUserId),
       ]);
-      
+
       final experience = results[0] as Experience?;
       final ownerName = results[1] as String;
-      
+
       if (experience == null) {
         return null;
       }
-      
+
       return _SharedExperienceData(
         experience: experience,
         permission: permission,
         ownerDisplayName: ownerName,
       );
     }).toList();
-    
+
     final results = (await Future.wait(futures))
         .whereType<_SharedExperienceData>()
         .toList();
-    
+
     sw.stop();
-    print('[Collections] Resolved ${results.length} shared experiences in ${sw.elapsedMilliseconds}ms');
-    
+    print(
+        '[Collections] Resolved ${results.length} shared experiences in ${sw.elapsedMilliseconds}ms');
+
     return results;
   }
 
@@ -1565,6 +1691,131 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     }
   }
 
+  // Determine which shared experiences lose their last matching category/color category
+  List<SharePermission> _collectExperiencePermissionsToRemove({
+    String? categoryId,
+    String? colorCategoryId,
+  }) {
+    assert(categoryId != null || colorCategoryId != null,
+        'categoryId or colorCategoryId must be provided');
+
+    final Set<String> remainingCategoryIds =
+        _categories.map((c) => c.id).toSet();
+    final Set<String> remainingColorCategoryIds =
+        _colorCategories.map((c) => c.id).toSet();
+
+    if (categoryId != null) {
+      remainingCategoryIds.remove(categoryId);
+    }
+    if (colorCategoryId != null) {
+      remainingColorCategoryIds.remove(colorCategoryId);
+    }
+
+    final List<SharePermission> candidates = [];
+
+    for (final experience in _sharedExperiences) {
+      final SharePermission? permission =
+          _sharedExperiencePermissions[experience.id];
+      if (permission == null) {
+        continue;
+      }
+
+      bool associatedWithRemoval = false;
+      if (categoryId != null &&
+          (experience.categoryId == categoryId ||
+              experience.otherCategories.contains(categoryId))) {
+        associatedWithRemoval = true;
+      }
+
+      if (colorCategoryId != null &&
+          experience.colorCategoryId == colorCategoryId) {
+        associatedWithRemoval = true;
+      }
+
+      if (!associatedWithRemoval) {
+        continue;
+      }
+
+      final bool hasOtherCategory = () {
+        final String? primary = experience.categoryId;
+        if (primary != null &&
+            primary.isNotEmpty &&
+            primary != categoryId &&
+            remainingCategoryIds.contains(primary)) {
+          return true;
+        }
+        for (final otherId in experience.otherCategories) {
+          if (otherId == categoryId) {
+            continue;
+          }
+          if (remainingCategoryIds.contains(otherId)) {
+            return true;
+          }
+        }
+        return false;
+      }();
+
+      final bool hasOtherColorCategory = () {
+        final String? colorId = experience.colorCategoryId;
+        if (colorId != null &&
+            colorId.isNotEmpty &&
+            colorId != colorCategoryId &&
+            remainingColorCategoryIds.contains(colorId)) {
+          return true;
+        }
+        return false;
+      }();
+
+      if (!hasOtherCategory && !hasOtherColorCategory) {
+        candidates.add(permission);
+      }
+    }
+
+    return candidates;
+  }
+
+  Future<int> _removeSharedUserCategory(
+      UserCategory category, SharePermission permission) async {
+    final List<SharePermission> experiencePermissionsToRemove =
+        _collectExperiencePermissionsToRemove(categoryId: category.id);
+    if (experiencePermissionsToRemove.isNotEmpty) {
+      print(
+          '[Collections] Removing ${experiencePermissionsToRemove.length} shared experience(s) with only "${category.name}" as a matching category.');
+    }
+
+    await _sharingService.removeShare(permission.id);
+
+    int removedExperienceCount = 0;
+    for (final SharePermission permissionToRemove
+        in experiencePermissionsToRemove) {
+      await _sharingService.removeShare(permissionToRemove.id);
+      removedExperienceCount++;
+    }
+
+    return removedExperienceCount;
+  }
+
+  Future<int> _removeSharedColorCategory(
+      ColorCategory category, SharePermission permission) async {
+    final List<SharePermission> experiencePermissionsToRemove =
+        _collectExperiencePermissionsToRemove(colorCategoryId: category.id);
+    if (experiencePermissionsToRemove.isNotEmpty) {
+      print(
+          '[Collections] Removing ${experiencePermissionsToRemove.length} shared experience(s) with only "${category.name}" as a color category.');
+    }
+
+    await _sharingService.removeShare(permission.id);
+
+    int removedExperienceCount = 0;
+    for (final SharePermission permissionToRemove
+        in experiencePermissionsToRemove) {
+      await _sharingService.removeShare(permissionToRemove.id);
+      removedExperienceCount++;
+    }
+
+    return removedExperienceCount;
+  }
+
   Future<void> _showRemoveSharedUserCategoryConfirmation(
       UserCategory category, SharePermission permission) async {
     final bool? confirm = await showDialog<bool>(
@@ -1591,12 +1842,19 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         _isLoading = true;
       });
       try {
-        await _sharingService.removeShare(permission.id);
+        final int removedExperienceCount =
+            await _removeSharedUserCategory(category, permission);
         if (!mounted) {
           return;
         }
+        final String experienceMessage = removedExperienceCount > 0
+            ? ' Removed $removedExperienceCount experience${removedExperienceCount == 1 ? '' : 's'} without other category access.'
+            : '';
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('"${category.name}" removed from your categories.')),
+          SnackBar(
+            content: Text(
+                '"${category.name}" removed from your categories.$experienceMessage'),
+          ),
         );
         await _loadData();
       } catch (e) {
@@ -1798,11 +2056,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       }
 
       return GridView.builder(
-        padding: EdgeInsets.fromLTRB(
-            horizontalPadding,
-            defaultPadding,
-            horizontalPadding,
-            defaultPadding + _bottomListPadding),
+        padding: EdgeInsets.fromLTRB(horizontalPadding, defaultPadding,
+            horizontalPadding, defaultPadding + _bottomListPadding),
         itemCount: _categories.length,
         gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: 5,
@@ -1916,7 +2171,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                     break;
                   case 'remove':
                     if (permission != null) {
-                      _showRemoveSharedUserCategoryConfirmation(category, permission);
+                      _showRemoveSharedUserCategoryConfirmation(
+                          category, permission);
                     }
                     break;
                   case 'delete':
@@ -1948,8 +2204,10 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                     const PopupMenuItem<String>(
                       value: 'remove',
                       child: ListTile(
-                        leading: Icon(Icons.remove_circle_outline, color: Colors.red),
-                        title: Text('Remove', style: TextStyle(color: Colors.red)),
+                        leading: Icon(Icons.remove_circle_outline,
+                            color: Colors.red),
+                        title:
+                            Text('Remove', style: TextStyle(color: Colors.red)),
                       ),
                     ),
                   );
@@ -1960,7 +2218,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                       enabled: canManageCategory,
                       child: const ListTile(
                         leading: Icon(Icons.delete_outline, color: Colors.red),
-                        title: Text('Delete', style: TextStyle(color: Colors.red)),
+                        title:
+                            Text('Delete', style: TextStyle(color: Colors.red)),
                       ),
                     ),
                   );
@@ -2579,8 +2838,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                       _cityExpansionExperiences.clear();
                       _locationExpansionExperiences.clear();
                     });
-                    unawaited(
-                        _saveGroupByLocationExperiences(_groupByLocationExperiences));
+                    unawaited(_saveGroupByLocationExperiences(
+                        _groupByLocationExperiences));
                   },
                   child: Row(
                     children: [
@@ -2589,9 +2848,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                         onChanged: (_) {},
                       ),
                       const SizedBox(width: 8),
-                      const Expanded(
-                          child: Text(
-                              'Group by Location')),
+                      const Expanded(child: Text('Group by Location')),
                     ],
                   ),
                 ),
@@ -2651,9 +2908,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                         onChanged: (_) {},
                       ),
                       const SizedBox(width: 8),
-                      const Expanded(
-                          child: Text(
-                              'Group by Location')),
+                      const Expanded(child: Text('Group by Location')),
                     ],
                   ),
                 ),
@@ -2831,8 +3086,9 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                                         final int selectedCount = isViewingColor
                                             ? _selectedColorCategoryIds.length
                                             : _selectedCategoryIds.length;
-                                        final bool allSelected = totalCount > 0 &&
-                                            selectedCount == totalCount;
+                                        final bool allSelected =
+                                            totalCount > 0 &&
+                                                selectedCount == totalCount;
                                         final bool someSelected =
                                             selectedCount > 0 &&
                                                 selectedCount < totalCount;
@@ -2852,27 +3108,36 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                                                 onChanged: (bool? newValue) {
                                                   setState(() {
                                                     // Interpret tap based on current aggregate state for intuitive UX
-                                                    final bool selectAllNow = someSelected
-                                                        ? true // some -> all
-                                                        : (allSelected
-                                                            ? false // all -> none
-                                                            : (newValue == true)); // none -> all
+                                                    final bool selectAllNow =
+                                                        someSelected
+                                                            ? true // some -> all
+                                                            : (allSelected
+                                                                ? false // all -> none
+                                                                : (newValue ==
+                                                                    true)); // none -> all
 
                                                     if (isViewingColor) {
                                                       if (selectAllNow) {
                                                         _selectedColorCategoryIds
                                                           ..clear()
-                                                          ..addAll(_colorCategories.map((c) => c.id));
+                                                          ..addAll(
+                                                              _colorCategories
+                                                                  .map((c) =>
+                                                                      c.id));
                                                       } else {
-                                                        _selectedColorCategoryIds.clear();
+                                                        _selectedColorCategoryIds
+                                                            .clear();
                                                       }
                                                     } else {
                                                       if (selectAllNow) {
                                                         _selectedCategoryIds
                                                           ..clear()
-                                                          ..addAll(_categories.map((c) => c.id));
+                                                          ..addAll(
+                                                              _categories.map(
+                                                                  (c) => c.id));
                                                       } else {
-                                                        _selectedCategoryIds.clear();
+                                                        _selectedCategoryIds
+                                                            .clear();
                                                       }
                                                     }
                                                   });
@@ -2884,39 +3149,80 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                                                 icon: const Icon(Icons.close),
                                                 onPressed: () {
                                                   setState(() {
-                                                    _isSelectingCategories = false;
-                                                    _selectedCategoryIds.clear();
-                                                    _selectedColorCategoryIds.clear();
+                                                    _isSelectingCategories =
+                                                        false;
+                                                    _selectedCategoryIds
+                                                        .clear();
+                                                    _selectedColorCategoryIds
+                                                        .clear();
                                                   });
                                                 },
                                               ),
                                               const SizedBox(width: 6),
                                               Builder(
                                                 builder: (context) {
-                                                  final VoidCallback? onSharePressed = selectedCount == 0
-                                                      ? null
-                                                      : () {
-                                                          if (isViewingColor) {
-                                                            final List<ColorCategory> selected = _colorCategories
-                                                                .where((c) => _selectedColorCategoryIds.contains(c.id))
-                                                                .toList();
-                                                            _showShareSelectedCategoriesBottomSheet(
-                                                              colorCategories: selected,
-                                                            );
-                                                          } else {
-                                                            final List<UserCategory> selected = _categories
-                                                                .where((c) => _selectedCategoryIds.contains(c.id))
-                                                                .toList();
-                                                            _showShareSelectedCategoriesBottomSheet(
-                                                              userCategories: selected,
-                                                            );
-                                                          }
-                                                        };
+                                                  final VoidCallback?
+                                                      onSharePressed =
+                                                      selectedCount == 0
+                                                          ? null
+                                                          : () {
+                                                              if (isViewingColor) {
+                                                                final List<
+                                                                        ColorCategory>
+                                                                    selected =
+                                                                    _colorCategories
+                                                                        .where((c) =>
+                                                                            _selectedColorCategoryIds.contains(c.id))
+                                                                        .toList();
+                                                                _showShareSelectedCategoriesBottomSheet(
+                                                                  colorCategories:
+                                                                      selected,
+                                                                );
+                                                              } else {
+                                                                final List<
+                                                                        UserCategory>
+                                                                    selected =
+                                                                    _categories
+                                                                        .where((c) =>
+                                                                            _selectedCategoryIds.contains(c.id))
+                                                                        .toList();
+                                                                _showShareSelectedCategoriesBottomSheet(
+                                                                  userCategories:
+                                                                      selected,
+                                                                );
+                                                              }
+                                                            };
                                                   // In selection mode, always use compact icon-only to avoid overflow
                                                   return IconButton(
                                                     tooltip: 'Share',
-                                                    icon: const Icon(Icons.ios_share),
+                                                    icon: const Icon(
+                                                        Icons.ios_share),
                                                     onPressed: onSharePressed,
+                                                  );
+                                                },
+                                              ),
+                                              const SizedBox(width: 6),
+                                              Builder(
+                                                builder: (context) {
+                                                  final bool hasSelection =
+                                                      selectedCount > 0;
+                                                  final String tooltip = isViewingColor
+                                                      ? 'Delete selected color categories'
+                                                      : 'Delete selected categories';
+                                                  return IconButton(
+                                                    tooltip: tooltip,
+                                                    icon: const Icon(
+                                                        Icons.delete_outline),
+                                                    color: Colors.red,
+                                                    onPressed: hasSelection
+                                                        ? () {
+                                                            if (isViewingColor) {
+                                                              _handleBulkDeleteSelectedColorCategories();
+                                                            } else {
+                                                              _handleBulkDeleteSelectedUserCategories();
+                                                            }
+                                                          }
+                                                        : null,
                                                   );
                                                 },
                                               ),
@@ -2943,26 +3249,38 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                                     Flexible(
                                       child: Builder(
                                         builder: (context) {
-                                          final IconData toggleIcon = _showingColorCategories
-                                              ? Icons.category_outlined
-                                              : Icons.color_lens_outlined;
+                                          final IconData toggleIcon =
+                                              _showingColorCategories
+                                                  ? Icons.category_outlined
+                                                  : Icons.color_lens_outlined;
                                           final String toggleLabel =
-                                              _showingColorCategories ? 'Categories' : 'Color Categories';
+                                              _showingColorCategories
+                                                  ? 'Categories'
+                                                  : 'Color Categories';
                                           void onToggle() {
                                             setState(() {
-                                              _showingColorCategories = !_showingColorCategories;
-                                              _selectedCategory = null; // Clear selected text category when switching views
-                                              _selectedColorCategory = null; // Clear selected color category when switching views
+                                              _showingColorCategories =
+                                                  !_showingColorCategories;
+                                              _selectedCategory =
+                                                  null; // Clear selected text category when switching views
+                                              _selectedColorCategory =
+                                                  null; // Clear selected color category when switching views
                                             });
                                           }
+
                                           return Align(
                                             alignment: Alignment.centerRight,
                                             child: FittedBox(
                                               fit: BoxFit.scaleDown,
                                               child: TextButton.icon(
                                                 style: TextButton.styleFrom(
-                                                  visualDensity: const VisualDensity(horizontal: -2, vertical: -2),
-                                                  padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                                                  visualDensity:
+                                                      const VisualDensity(
+                                                          horizontal: -2,
+                                                          vertical: -2),
+                                                  padding: const EdgeInsets
+                                                      .symmetric(
+                                                      horizontal: 8.0),
                                                 ),
                                                 icon: Icon(toggleIcon),
                                                 label: Text(toggleLabel),
@@ -2975,6 +3293,34 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                                     ),
                                   ],
                                 ),
+                              ),
+                              Consumer<CategorySaveProgressNotifier>(
+                                builder: (context, notifier, _) {
+                                  final tasks = notifier.activeTasks;
+                                  if (tasks.isEmpty) {
+                                    return const SizedBox.shrink();
+                                  }
+                                  return Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 16.0,
+                                      vertical: 4.0,
+                                    ),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.stretch,
+                                      children: [
+                                        for (int i = 0;
+                                            i < tasks.length;
+                                            i++) ...[
+                                          _buildCategorySaveProgressTile(
+                                              context, tasks[i]),
+                                          if (i != tasks.length - 1)
+                                            const SizedBox(height: 8),
+                                        ],
+                                      ],
+                                    ),
+                                  );
+                                },
                               ),
                               // Show reorder hint only when viewing main category lists (not individual category experiences)
                               // and only on mobile devices where reordering is available
@@ -4824,12 +5170,19 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         _isLoading = true;
       });
       try {
-        await _sharingService.removeShare(permission.id);
+        final int removedExperienceCount =
+            await _removeSharedColorCategory(category, permission);
         if (!mounted) {
           return;
         }
+        final String experienceMessage = removedExperienceCount > 0
+            ? ' Removed $removedExperienceCount experience${removedExperienceCount == 1 ? '' : 's'} without other category access.'
+            : '';
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('"${category.name}" removed from your categories.')),
+          SnackBar(
+            content: Text(
+                '"${category.name}" removed from your color categories.$experienceMessage'),
+          ),
         );
         await _loadData();
       } catch (e) {
@@ -4843,6 +5196,314 @@ class _CollectionsScreenState extends State<CollectionsScreen>
           SnackBar(content: Text('Error removing shared color category: $e')),
         );
       }
+    }
+  }
+
+  Future<void> _handleBulkDeleteSelectedUserCategories() async {
+    final List<UserCategory> selectedCategories = _categories
+        .where((category) => _selectedCategoryIds.contains(category.id))
+        .toList();
+    if (selectedCategories.isEmpty) {
+      return;
+    }
+
+    final List<UserCategory> ownedCategories = [];
+    final List<MapEntry<UserCategory, SharePermission>> sharedCategories = [];
+
+    for (final UserCategory category in selectedCategories) {
+      final SharePermission? permission =
+          _sharedCategoryPermissions[category.id];
+      if (permission != null) {
+        sharedCategories.add(MapEntry(category, permission));
+      } else {
+        ownedCategories.add(category);
+      }
+    }
+
+    if (ownedCategories.isEmpty && sharedCategories.isEmpty) {
+      return;
+    }
+
+    String plural(int count, String single, String plural) =>
+        count == 1 ? single : plural;
+
+    final List<String> dialogLines = [];
+    if (ownedCategories.isNotEmpty) {
+      dialogLines.add(
+          'Delete ${ownedCategories.length} ${plural(ownedCategories.length, 'category you own', 'categories you own')}. Experiences will keep their other tags but lose these categories.');
+    }
+    if (sharedCategories.isNotEmpty) {
+      dialogLines.add(
+          'Remove ${sharedCategories.length} ${plural(sharedCategories.length, 'shared category', 'shared categories')}. You will lose access to experiences available only through them.');
+    }
+    dialogLines.add('This cannot be undone.');
+
+    final bool? confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Remove Selected Categories?'),
+        content: Text(dialogLines.join('\n\n')),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Remove', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true || !mounted) {
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    final List<String> errors = [];
+    int deletedOwnedCount = 0;
+    int removedSharedCount = 0;
+    int removedExperiencesCount = 0;
+
+    for (final UserCategory category in ownedCategories) {
+      try {
+        await _experienceService.deleteUserCategory(category.id);
+        deletedOwnedCount++;
+      } catch (e) {
+        errors.add('Delete "${category.name}": $e');
+      }
+    }
+
+    for (final MapEntry<UserCategory, SharePermission> entry
+        in sharedCategories) {
+      try {
+        removedExperiencesCount +=
+            await _removeSharedUserCategory(entry.key, entry.value);
+        removedSharedCount++;
+      } catch (e) {
+        errors.add('Remove "${entry.key.name}": $e');
+      }
+    }
+
+    final bool anySuccess = deletedOwnedCount > 0 || removedSharedCount > 0;
+    if (!anySuccess) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+        if (errors.isNotEmpty) {
+          final String errorText = errors.first;
+          final int remaining = errors.length - 1;
+          final String suffix = remaining > 0
+              ? ' (and $remaining more issue${remaining == 1 ? '' : 's'})'
+              : '';
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+                content:
+                    Text('Failed to remove categories: $errorText$suffix')),
+          );
+        }
+      }
+      return;
+    }
+
+    if (mounted) {
+      setState(() {
+        _selectedCategoryIds.clear();
+        _selectedColorCategoryIds.clear();
+        _isSelectingCategories = false;
+      });
+
+      final List<String> messageParts = [];
+      if (deletedOwnedCount > 0) {
+        messageParts.add(
+            'Deleted $deletedOwnedCount ${plural(deletedOwnedCount, 'category you own', 'categories you own')}');
+      }
+      if (removedSharedCount > 0) {
+        messageParts.add(
+            'Removed $removedSharedCount ${plural(removedSharedCount, 'shared category', 'shared categories')}');
+      }
+      if (removedExperiencesCount > 0) {
+        messageParts.add(
+            'Removed $removedExperiencesCount shared experience${removedExperiencesCount == 1 ? '' : 's'} without other category access');
+      }
+      if (errors.isNotEmpty) {
+        final String errorText = errors.first;
+        final int remaining = errors.length - 1;
+        final String suffix = remaining > 0
+            ? ' (and $remaining more issue${remaining == 1 ? '' : 's'})'
+            : '';
+        messageParts.add('Some removals failed: $errorText$suffix');
+      }
+
+      final String message = messageParts.join('. ');
+      final String displayMessage =
+          message.endsWith('.') ? message : '$message.';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(displayMessage)),
+      );
+    }
+
+    if (mounted) {
+      await _loadData();
+    }
+  }
+
+  Future<void> _handleBulkDeleteSelectedColorCategories() async {
+    final List<ColorCategory> selectedCategories = _colorCategories
+        .where((category) => _selectedColorCategoryIds.contains(category.id))
+        .toList();
+    if (selectedCategories.isEmpty) {
+      return;
+    }
+
+    final List<ColorCategory> ownedCategories = [];
+    final List<MapEntry<ColorCategory, SharePermission>> sharedCategories = [];
+
+    for (final ColorCategory category in selectedCategories) {
+      final SharePermission? permission =
+          _sharedCategoryPermissions[category.id];
+      if (permission != null) {
+        sharedCategories.add(MapEntry(category, permission));
+      } else {
+        ownedCategories.add(category);
+      }
+    }
+
+    if (ownedCategories.isEmpty && sharedCategories.isEmpty) {
+      return;
+    }
+
+    String plural(int count, String single, String plural) =>
+        count == 1 ? single : plural;
+
+    final List<String> dialogLines = [];
+    if (ownedCategories.isNotEmpty) {
+      dialogLines.add(
+          'Delete ${ownedCategories.length} ${plural(ownedCategories.length, 'color category you own', 'color categories you own')}. Experiences will lose this color tag.');
+    }
+    if (sharedCategories.isNotEmpty) {
+      dialogLines.add(
+          'Remove ${sharedCategories.length} ${plural(sharedCategories.length, 'shared color category', 'shared color categories')}. You will lose access to experiences available only through them.');
+    }
+    dialogLines.add('This cannot be undone.');
+
+    final bool? confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Remove Selected Color Categories?'),
+        content: Text(dialogLines.join('\n\n')),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Remove', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true || !mounted) {
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    final List<String> errors = [];
+    int deletedOwnedCount = 0;
+    int removedSharedCount = 0;
+    int removedExperiencesCount = 0;
+
+    for (final ColorCategory category in ownedCategories) {
+      try {
+        await _experienceService.deleteColorCategory(category.id);
+        deletedOwnedCount++;
+      } catch (e) {
+        errors.add('Delete "${category.name}": $e');
+      }
+    }
+
+    for (final MapEntry<ColorCategory, SharePermission> entry
+        in sharedCategories) {
+      try {
+        removedExperiencesCount +=
+            await _removeSharedColorCategory(entry.key, entry.value);
+        removedSharedCount++;
+      } catch (e) {
+        errors.add('Remove "${entry.key.name}": $e');
+      }
+    }
+
+    final bool anySuccess = deletedOwnedCount > 0 || removedSharedCount > 0;
+    if (!anySuccess) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+        if (errors.isNotEmpty) {
+          final String errorText = errors.first;
+          final int remaining = errors.length - 1;
+          final String suffix = remaining > 0
+              ? ' (and $remaining more issue${remaining == 1 ? '' : 's'})'
+              : '';
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+                content: Text(
+                    'Failed to remove color categories: $errorText$suffix')),
+          );
+        }
+      }
+      return;
+    }
+
+    if (mounted) {
+      setState(() {
+        _selectedCategoryIds.clear();
+        _selectedColorCategoryIds.clear();
+        _isSelectingCategories = false;
+      });
+
+      final List<String> messageParts = [];
+      if (deletedOwnedCount > 0) {
+        messageParts.add(
+            'Deleted $deletedOwnedCount ${plural(deletedOwnedCount, 'color category you own', 'color categories you own')}');
+      }
+      if (removedSharedCount > 0) {
+        messageParts.add(
+            'Removed $removedSharedCount ${plural(removedSharedCount, 'shared color category', 'shared color categories')}');
+      }
+      if (removedExperiencesCount > 0) {
+        messageParts.add(
+            'Removed $removedExperiencesCount shared experience${removedExperiencesCount == 1 ? '' : 's'} without other category access');
+      }
+      if (errors.isNotEmpty) {
+        final String errorText = errors.first;
+        final int remaining = errors.length - 1;
+        final String suffix = remaining > 0
+            ? ' (and $remaining more issue${remaining == 1 ? '' : 's'})'
+            : '';
+        messageParts.add('Some removals failed: $errorText$suffix');
+      }
+
+      final String message = messageParts.join('. ');
+      final String displayMessage =
+          message.endsWith('.') ? message : '$message.';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(displayMessage)),
+      );
+    }
+
+    if (mounted) {
+      await _loadData();
     }
   }
 
@@ -5038,9 +5699,10 @@ class _CollectionsScreenState extends State<CollectionsScreen>
 
     final bool isDesktopWeb = kIsWeb && MediaQuery.of(context).size.width > 600;
 
-     if (isDesktopWeb) {
-       return GridView.builder(
-         padding: const EdgeInsets.fromLTRB(12.0, 12.0, 12.0, 12.0 + _bottomListPadding),
+    if (isDesktopWeb) {
+      return GridView.builder(
+        padding: const EdgeInsets.fromLTRB(
+            12.0, 12.0, 12.0, 12.0 + _bottomListPadding),
         itemCount: _colorCategories.length,
         gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: 3,
@@ -5053,11 +5715,11 @@ class _CollectionsScreenState extends State<CollectionsScreen>
           return _buildColorCategoryGridItem(category);
         },
       );
-     } else {
-       return ReorderableListView.builder(
-         padding: const EdgeInsets.only(bottom: _bottomListPadding),
-         buildDefaultDragHandles: false,
-         itemCount: _colorCategories.length,
+    } else {
+      return ReorderableListView.builder(
+        padding: const EdgeInsets.only(bottom: _bottomListPadding),
+        buildDefaultDragHandles: false,
+        itemCount: _colorCategories.length,
         itemBuilder: (context, index) {
           final category = _colorCategories[index];
           final count = _getExperienceCountForColorCategory(category);
@@ -5078,7 +5740,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                   ownerName: ownerName ?? 'Someone',
                 )
               : (isOwnerShared ? 'Shared' : null);
-          final bool isSelected = _selectedColorCategoryIds.contains(category.id);
+          final bool isSelected =
+              _selectedColorCategoryIds.contains(category.id);
 
           final Widget colorDot = Padding(
             padding: const EdgeInsets.only(left: 9.0),
@@ -5158,7 +5821,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                     break;
                   case 'remove':
                     if (permission != null) {
-                      _showRemoveSharedColorCategoryConfirmation(category, permission);
+                      _showRemoveSharedColorCategoryConfirmation(
+                          category, permission);
                     }
                     break;
                   case 'delete':
@@ -5190,8 +5854,10 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                     const PopupMenuItem<String>(
                       value: 'remove',
                       child: ListTile(
-                        leading: Icon(Icons.remove_circle_outline, color: Colors.red),
-                        title: Text('Remove', style: TextStyle(color: Colors.red)),
+                        leading: Icon(Icons.remove_circle_outline,
+                            color: Colors.red),
+                        title:
+                            Text('Remove', style: TextStyle(color: Colors.red)),
                       ),
                     ),
                   );
@@ -5202,7 +5868,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                       enabled: canManageCategory,
                       child: const ListTile(
                         leading: Icon(Icons.delete_outline, color: Colors.red),
-                        title: Text('Delete', style: TextStyle(color: Colors.red)),
+                        title:
+                            Text('Delete', style: TextStyle(color: Colors.red)),
                       ),
                     ),
                   );
@@ -6630,6 +7297,7 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
   final ExperienceService _experienceService = ExperienceService();
   final FirebaseAuth _firebaseAuth = FirebaseAuth.instance;
 
+  bool _creating = false;
   bool _isLoadingShareDetails = false;
   _ShareAccessDetails? _shareAccessDetails;
   String? _shareDetailsError;
@@ -6662,7 +7330,9 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
         return inPrimary || inOther;
       }).toList();
     } else if (widget.colorCategory != null) {
-      return allOwned.where((exp) => exp.colorCategoryId == categoryId).toList();
+      return allOwned
+          .where((exp) => exp.colorCategoryId == categoryId)
+          .toList();
     }
     return [];
   }
@@ -6896,7 +7566,8 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
 
   Widget _buildParticipantRow(_ShareParticipantInfo participant) {
     final bool canEdit = participant.accessLevel == ShareAccessLevel.edit;
-    final bool ownerIsCurrentUser = _shareAccessDetails?.ownerIsCurrentUser == true;
+    final bool ownerIsCurrentUser =
+        _shareAccessDetails?.ownerIsCurrentUser == true;
     return ListTile(
       contentPadding: const EdgeInsets.symmetric(horizontal: 16.0),
       leading: const Icon(Icons.person_outline, color: Colors.black54),
@@ -6913,7 +7584,8 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
     );
   }
 
-  Future<void> _showManageAccessDialog(_ShareParticipantInfo participant) async {
+  Future<void> _showManageAccessDialog(
+      _ShareParticipantInfo participant) async {
     final String categoryId =
         widget.userCategory?.id ?? widget.colorCategory?.id ?? '';
     if (categoryId.isEmpty) return;
@@ -6929,7 +7601,8 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
         return AlertDialog(
           backgroundColor: Colors.white,
           title: Text('Manage access for ' + participant.displayName),
-          content: const Text('Change what this person can do in this category.'),
+          content:
+              const Text('Change what this person can do in this category.'),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(ctx).pop('remove'),
@@ -7032,7 +7705,8 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
                   .updatePermissionAccessLevel(
                 permissionId: expPermissionId,
                 newAccessLevel: ShareAccessLevel.view,
-              ).catchError((_) async {
+              )
+                  .catchError((_) async {
                 // If missing, no explicit edit permission exists; nothing to downgrade
               }));
             }
@@ -7059,7 +7733,8 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
                 .updatePermissionAccessLevel(
               permissionId: expPermissionId,
               newAccessLevel: ShareAccessLevel.edit,
-            ).catchError((_) async {
+            )
+                .catchError((_) async {
               await _sharingService.shareItem(
                 itemId: exp.id,
                 itemType: ShareableItemType.experience,
@@ -7080,8 +7755,8 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-              choice == 'remove' ? 'Access removed' : 'Access updated'),
+          content:
+              Text(choice == 'remove' ? 'Access removed' : 'Access updated'),
         ),
       );
     } catch (e) {
@@ -7284,45 +7959,60 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
               },
             ),
             ListTile(
-              leading: const Icon(Icons.link_outlined),
-              title: const Text('Get shareable link'),
-              onTap: () async {
-                final bool grantEdit = _shareMode == 'edit_access';
-                try {
-                  final DateTime expiresAt =
-                      DateTime.now().add(const Duration(days: 30));
-                  final shareService = CategoryShareService();
-                  late final String url;
-                  final BuildContext rootContext =
-                      Navigator.of(context, rootNavigator: true).context;
-                  if (widget.userCategory != null) {
-                    url = await shareService.createLinkShareForCategory(
-                      category: widget.userCategory!,
-                      accessMode: grantEdit ? 'edit' : 'view',
-                      expiresAt: expiresAt,
-                    );
-                  } else if (widget.colorCategory != null) {
-                    url = await shareService.createLinkShareForColorCategory(
-                      colorCategory: widget.colorCategory!,
-                      accessMode: grantEdit ? 'edit' : 'view',
-                      expiresAt: expiresAt,
-                    );
-                  } else {
-                    throw Exception('No category provided');
-                  }
-                  if (mounted) {
-                    Navigator.of(context).pop();
-                  }
-                  _showShareUrlOptions(rootContext, url);
-                } catch (e) {
-                  if (!mounted) return;
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                        content:
-                            Text('Failed to create link: ' + e.toString())),
-                  );
-                }
-              },
+              leading: _creating
+                  ? const SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.link_outlined),
+              title:
+                  Text(_creating ? 'Creating link...' : 'Get shareable link'),
+              onTap: _creating
+                  ? null
+                  : () async {
+                      setState(() => _creating = true);
+                      final bool grantEdit = _shareMode == 'edit_access';
+                      try {
+                        final DateTime expiresAt =
+                            DateTime.now().add(const Duration(days: 30));
+                        final shareService = CategoryShareService();
+                        late final String url;
+                        final BuildContext rootContext =
+                            Navigator.of(context, rootNavigator: true).context;
+                        if (widget.userCategory != null) {
+                          url = await shareService.createLinkShareForCategory(
+                            category: widget.userCategory!,
+                            accessMode: grantEdit ? 'edit' : 'view',
+                            expiresAt: expiresAt,
+                          );
+                        } else if (widget.colorCategory != null) {
+                          url = await shareService
+                              .createLinkShareForColorCategory(
+                            colorCategory: widget.colorCategory!,
+                            accessMode: grantEdit ? 'edit' : 'view',
+                            expiresAt: expiresAt,
+                          );
+                        } else {
+                          throw Exception('No category provided');
+                        }
+                        if (mounted) {
+                          Navigator.of(context).pop();
+                        }
+                        _showShareUrlOptions(rootContext, url);
+                      } catch (e) {
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                  'Failed to create link: ' + e.toString()),
+                            ),
+                          );
+                        }
+                      } finally {
+                        if (mounted) setState(() => _creating = false);
+                      }
+                    },
             ),
           ],
         ),
@@ -7341,10 +8031,12 @@ class _BulkShareBottomSheetContent extends StatefulWidget {
   });
 
   @override
-  State<_BulkShareBottomSheetContent> createState() => _BulkShareBottomSheetContentState();
+  State<_BulkShareBottomSheetContent> createState() =>
+      _BulkShareBottomSheetContentState();
 }
 
-class _BulkShareBottomSheetContentState extends State<_BulkShareBottomSheetContent> {
+class _BulkShareBottomSheetContentState
+    extends State<_BulkShareBottomSheetContent> {
   String _shareMode = 'view_access';
   bool _creating = false;
 
@@ -7364,7 +8056,8 @@ class _BulkShareBottomSheetContentState extends State<_BulkShareBottomSheetConte
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text('Share link',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+                    style:
+                        TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
                 const SizedBox(height: 8),
                 Container(
                   padding: const EdgeInsets.all(12),
@@ -7394,8 +8087,8 @@ class _BulkShareBottomSheetContentState extends State<_BulkShareBottomSheetConte
                         await Clipboard.setData(ClipboardData(text: url));
                         if (ctx.mounted) {
                           Navigator.of(ctx).pop();
-                          ScaffoldMessenger.of(ctx)
-                              .showSnackBar(const SnackBar(content: Text('Link copied')));
+                          ScaffoldMessenger.of(ctx).showSnackBar(
+                              const SnackBar(content: Text('Link copied')));
                         }
                       },
                       icon: const Icon(Icons.copy),
@@ -7413,7 +8106,8 @@ class _BulkShareBottomSheetContentState extends State<_BulkShareBottomSheetConte
 
   @override
   Widget build(BuildContext context) {
-    final int count = (widget.userCategories?.length ?? 0) + (widget.colorCategories?.length ?? 0);
+    final int count = (widget.userCategories?.length ?? 0) +
+        (widget.colorCategories?.length ?? 0);
     return SafeArea(
       child: SingleChildScrollView(
         padding: const EdgeInsets.all(16.0),
@@ -7424,7 +8118,8 @@ class _BulkShareBottomSheetContentState extends State<_BulkShareBottomSheetConte
             Row(
               children: [
                 Text('Share ${count} ${count == 1 ? 'category' : 'categories'}',
-                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+                    style: const TextStyle(
+                        fontSize: 18, fontWeight: FontWeight.w600)),
                 const Spacer(),
                 IconButton(
                   icon: const Icon(Icons.close),
@@ -7433,7 +8128,8 @@ class _BulkShareBottomSheetContentState extends State<_BulkShareBottomSheetConte
               ],
             ),
             const SizedBox(height: 8),
-            if ((widget.userCategories?.isNotEmpty ?? false) || (widget.colorCategories?.isNotEmpty ?? false))
+            if ((widget.userCategories?.isNotEmpty ?? false) ||
+                (widget.colorCategories?.isNotEmpty ?? false))
               Padding(
                 padding: const EdgeInsets.only(bottom: 12.0),
                 child: Text(
@@ -7444,18 +8140,22 @@ class _BulkShareBottomSheetContentState extends State<_BulkShareBottomSheetConte
             if (widget.userCategories != null)
               ...widget.userCategories!.map((c) => ListTile(
                     dense: true,
-                    visualDensity: const VisualDensity(horizontal: -4, vertical: -4),
+                    visualDensity:
+                        const VisualDensity(horizontal: -4, vertical: -4),
                     leading: const Icon(Icons.label_outline),
                     title: Text(c.name, overflow: TextOverflow.ellipsis),
-                    subtitle: Text('Category', style: Theme.of(context).textTheme.bodySmall),
+                    subtitle: Text('Category',
+                        style: Theme.of(context).textTheme.bodySmall),
                   )),
             if (widget.colorCategories != null)
               ...widget.colorCategories!.map((c) => ListTile(
                     dense: true,
-                    visualDensity: const VisualDensity(horizontal: -4, vertical: -4),
+                    visualDensity:
+                        const VisualDensity(horizontal: -4, vertical: -4),
                     leading: const Icon(Icons.color_lens_outlined),
                     title: Text(c.name, overflow: TextOverflow.ellipsis),
-                    subtitle: Text('Color Category', style: Theme.of(context).textTheme.bodySmall),
+                    subtitle: Text('Color Category',
+                        style: Theme.of(context).textTheme.bodySmall),
                   )),
             const Divider(height: 24),
             ListTile(
@@ -7496,17 +8196,27 @@ class _BulkShareBottomSheetContentState extends State<_BulkShareBottomSheetConte
             ),
             const SizedBox(height: 8),
             ListTile(
-              leading: const Icon(Icons.link_outlined),
-              title: Text(_creating ? 'Creating link...' : 'Get shareable link'),
+              leading: _creating
+                  ? const SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.link_outlined),
+              title:
+                  Text(_creating ? 'Creating link...' : 'Get shareable link'),
               onTap: _creating
                   ? null
                   : () async {
                       setState(() => _creating = true);
                       try {
                         final service = CategoryShareService();
-                        final DateTime expiresAt = DateTime.now().add(const Duration(days: 30));
-                        final String mode = _shareMode == 'edit_access' ? 'edit' : 'view';
-                        final String url = await service.createLinkShareForMultiple(
+                        final DateTime expiresAt =
+                            DateTime.now().add(const Duration(days: 30));
+                        final String mode =
+                            _shareMode == 'edit_access' ? 'edit' : 'view';
+                        final String url =
+                            await service.createLinkShareForMultiple(
                           userCategories: widget.userCategories ?? const [],
                           colorCategories: widget.colorCategories ?? const [],
                           accessMode: mode,
@@ -7518,7 +8228,9 @@ class _BulkShareBottomSheetContentState extends State<_BulkShareBottomSheetConte
                       } catch (e) {
                         if (!mounted) return;
                         ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('Failed to create link: ' + e.toString())),
+                          SnackBar(
+                              content: Text(
+                                  'Failed to create link: ' + e.toString())),
                         );
                       } finally {
                         if (mounted) setState(() => _creating = false);

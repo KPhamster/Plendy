@@ -21,6 +21,7 @@ import 'models/shared_media_compat.dart';
 import 'services/notification_state_service.dart'; // Import NotificationStateService
 import 'package:provider/provider.dart';
 import 'providers/receive_share_provider.dart';
+import 'providers/category_save_progress_notifier.dart';
 import 'dart:async'; // Import dart:async for StreamSubscription
 import 'services/google_maps_service.dart'; // ADDED: Import GoogleMapsService
 import 'firebase_options.dart'; // Import Firebase options
@@ -327,6 +328,9 @@ void main() async {
         ),
         ChangeNotifierProvider<NotificationStateService>(
           create: (_) => NotificationStateService(),
+        ),
+        ChangeNotifierProvider<CategorySaveProgressNotifier>(
+          create: (_) => CategorySaveProgressNotifier(),
         ),
       ],
       child: const MyApp(),

@@ -3099,6 +3099,7 @@ class _ShareBottomSheetContent extends StatefulWidget {
 class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
   String _shareMode = 'separate_copy'; // 'my_copy' | 'separate_copy'
   bool _giveEditAccess = false;
+  bool _creating = false;
 
   @override
   void initState() {
@@ -3155,15 +3156,28 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
               },
             ),
             ListTile(
-              leading: const Icon(Icons.link_outlined),
-              title: const Text('Get shareable link'),
-              onTap: () async {
-                await _persistChoice();
-                await widget.onCreateLink(
-                  shareMode: _shareMode,
-                  giveEditAccess: _shareMode == 'my_copy' ? _giveEditAccess : false,
-                );
-              },
+              leading: _creating
+                  ? const SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.link_outlined),
+              title: Text(_creating ? 'Creating link...' : 'Get shareable link'),
+              onTap: _creating
+                  ? null
+                  : () async {
+                      setState(() => _creating = true);
+                      try {
+                        await _persistChoice();
+                        await widget.onCreateLink(
+                          shareMode: _shareMode,
+                          giveEditAccess: _shareMode == 'my_copy' ? _giveEditAccess : false,
+                        );
+                      } finally {
+                        if (mounted) setState(() => _creating = false);
+                      }
+                    },
             ),
           ],
         ),

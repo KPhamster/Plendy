@@ -223,9 +223,21 @@ class CategoryShareService {
     required String targetUserId,
     required String accessMode,
     required List<String> experienceIds,
+    void Function(int completed, int total)? onProgress,
   }) async {
     if (categoryId.isEmpty || ownerUserId.isEmpty || targetUserId.isEmpty) {
       throw Exception('Invalid parameters for saving shared category');
+    }
+
+    // If the owner is saving their own shared link, do nothing.
+    // They already have ownership; don't create redundant share permissions.
+    if (ownerUserId == targetUserId) {
+      // Still report a completed no-op to the progress handler for smooth UX
+      final int totalSteps = 1 + experienceIds.where((id) => id.isNotEmpty).toSet().length;
+      if (onProgress != null) {
+        onProgress(totalSteps, totalSteps);
+      }
+      return;
     }
 
     final mode = accessMode.toLowerCase();
@@ -234,6 +246,17 @@ class CategoryShareService {
         ? ShareAccessLevel.edit
         : ShareAccessLevel.view;
 
+    final Set<String> uniqueExperienceIds =
+        experienceIds.where((id) => id.isNotEmpty).toSet();
+    final int totalSteps = 1 + uniqueExperienceIds.length;
+    int completedSteps = 0;
+
+    void reportProgress() {
+      if (onProgress != null) {
+        onProgress(completedSteps, totalSteps);
+      }
+    }
+
     await _sharingService.shareItem(
       itemId: categoryId,
       itemType: ShareableItemType.category,
@@ -241,15 +264,10 @@ class CategoryShareService {
       sharedWithUserId: targetUserId,
       accessLevel: accessLevel,
     );
+    completedSteps = completedSteps + 1;
+    reportProgress();
 
-    final Set<String> uniqueExperienceIds =
-        experienceIds.where((id) => id.isNotEmpty).toSet();
-
-    if (uniqueExperienceIds.isEmpty) {
-      return;
-    }
-
-    await Future.wait(uniqueExperienceIds.map((experienceId) async {
+    for (final experienceId in uniqueExperienceIds) {
       await _sharingService.shareItem(
         itemId: experienceId,
         itemType: ShareableItemType.experience,
@@ -257,7 +275,9 @@ class CategoryShareService {
         sharedWithUserId: targetUserId,
         accessLevel: accessLevel,
       );
-    }));
+      completedSteps = completedSteps + 1;
+      reportProgress();
+    }
   }
 
   Map<String, dynamic> _buildExperienceSnapshot(Experience exp) {

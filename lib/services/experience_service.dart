@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import '../models/experience.dart';
 import '../models/review.dart';
 import '../models/comment.dart';
@@ -57,9 +58,12 @@ class ExperienceService {
     if (ownerUserId.isEmpty || categoryId.isEmpty) return null;
     try {
       final currentUserId = _currentUserId;
-      final expectedPermissionId = '${ownerUserId}_category_${categoryId}_${currentUserId}';
-      print('getUserCategoryByOwner: Fetching users/$ownerUserId/categories/$categoryId');
-      print('getUserCategoryByOwner: Expected permission doc ID: $expectedPermissionId');
+      final expectedPermissionId =
+          '${ownerUserId}_category_${categoryId}_${currentUserId}';
+      print(
+          'getUserCategoryByOwner: Fetching users/$ownerUserId/categories/$categoryId');
+      print(
+          'getUserCategoryByOwner: Expected permission doc ID: $expectedPermissionId');
       final doc =
           await _userCategoriesCollection(ownerUserId).doc(categoryId).get();
       if (!doc.exists) {
@@ -85,7 +89,8 @@ class ExperienceService {
       String ownerUserId, String categoryId) async {
     if (ownerUserId.isEmpty || categoryId.isEmpty) return null;
     try {
-      print('getColorCategoryByOwner: Fetching users/$ownerUserId/color_categories/$categoryId');
+      print(
+          'getColorCategoryByOwner: Fetching users/$ownerUserId/color_categories/$categoryId');
       final doc = await _userColorCategoriesCollection(ownerUserId)
           .doc(categoryId)
           .get();
@@ -946,6 +951,56 @@ class ExperienceService {
     return results;
   }
 
+  Future<List<Experience>> getExperiencesForOwnerCategory({
+    required String ownerUserId,
+    required String categoryId,
+    required bool isColorCategory,
+    int limitPerQuery = 500,
+  }) async {
+    if (ownerUserId.isEmpty || categoryId.isEmpty) {
+      return const <Experience>[];
+    }
+    try {
+      if (isColorCategory) {
+        final QuerySnapshot snapshot = await _experiencesCollection
+            .where('createdBy', isEqualTo: ownerUserId)
+            .where('colorCategoryId', isEqualTo: categoryId)
+            .limit(limitPerQuery)
+            .get();
+        return snapshot.docs
+            .map((doc) => Experience.fromFirestore(doc))
+            .toList();
+      }
+      final futures = await Future.wait([
+        _experiencesCollection
+            .where('createdBy', isEqualTo: ownerUserId)
+            .where('categoryId', isEqualTo: categoryId)
+            .limit(limitPerQuery)
+            .get(),
+        _experiencesCollection
+            .where('createdBy', isEqualTo: ownerUserId)
+            .where('otherCategories', arrayContains: categoryId)
+            .limit(limitPerQuery)
+            .get(),
+      ]);
+      final List<Experience> results = [];
+      final Set<String> seen = <String>{};
+      for (final snapshot in futures) {
+        for (final doc in snapshot.docs) {
+          final experience = Experience.fromFirestore(doc);
+          if (seen.add(experience.id)) {
+            results.add(experience);
+          }
+        }
+      }
+      return results;
+    } catch (e) {
+      debugPrint(
+          'ExperienceService.getExperiencesForOwnerCategory: Failed to fetch experiences for $ownerUserId/$categoryId: $e');
+      return const <Experience>[];
+    }
+  }
+
   /// Get experiences by color category ID
   Future<List<Experience>> getExperiencesByColorCategoryId(
       String colorCategoryId,
@@ -1014,8 +1069,7 @@ class ExperienceService {
   }
 
   /// Get multiple experiences by their document IDs (handles Firestore whereIn limits)
-  Future<List<Experience>> getExperiencesByIds(
-      List<String> experienceIds,
+  Future<List<Experience>> getExperiencesByIds(List<String> experienceIds,
       {int chunkSize = 30}) async {
     if (experienceIds.isEmpty) {
       return [];
@@ -1025,7 +1079,9 @@ class ExperienceService {
 
     final List<List<String>> chunks = [];
     for (int i = 0; i < uniqueIds.length; i += chunkSize) {
-      final end = (i + chunkSize) > uniqueIds.length ? uniqueIds.length : (i + chunkSize);
+      final end = (i + chunkSize) > uniqueIds.length
+          ? uniqueIds.length
+          : (i + chunkSize);
       chunks.add(uniqueIds.sublist(i, end));
     }
 
@@ -1035,7 +1091,10 @@ class ExperienceService {
 
     for (int i = 0; i < chunks.length; i += maxConcurrent) {
       final currentBatch = chunks.sublist(
-          i, (i + maxConcurrent) > chunks.length ? chunks.length : (i + maxConcurrent));
+          i,
+          (i + maxConcurrent) > chunks.length
+              ? chunks.length
+              : (i + maxConcurrent));
 
       final futures = currentBatch.map((chunk) async {
         try {
@@ -1660,25 +1719,33 @@ class ExperienceService {
         category.ownerUserId.isNotEmpty ? category.ownerUserId : userId;
     print(
         'ExperienceService.updateColorCategory: currentUser=$userId, targetUserId=$targetUserId, categoryOwner=${category.ownerUserId}, categoryId=${category.id}');
-    
+
     // If updating someone else's category, check if permission exists
     if (targetUserId != userId) {
-      final expectedPermissionId = '${targetUserId}_category_${category.id}_$userId';
-      print('ExperienceService.updateColorCategory: Expected permission doc ID: $expectedPermissionId');
-      
+      final expectedPermissionId =
+          '${targetUserId}_category_${category.id}_$userId';
+      print(
+          'ExperienceService.updateColorCategory: Expected permission doc ID: $expectedPermissionId');
+
       try {
-        final permissionDoc = await _firestore.collection('share_permissions').doc(expectedPermissionId).get();
+        final permissionDoc = await _firestore
+            .collection('share_permissions')
+            .doc(expectedPermissionId)
+            .get();
         if (permissionDoc.exists) {
           final data = permissionDoc.data() as Map<String, dynamic>;
-          print('ExperienceService.updateColorCategory: Permission doc exists with accessLevel: ${data['accessLevel']}');
+          print(
+              'ExperienceService.updateColorCategory: Permission doc exists with accessLevel: ${data['accessLevel']}');
         } else {
-          print('ExperienceService.updateColorCategory: Permission doc does NOT exist!');
+          print(
+              'ExperienceService.updateColorCategory: Permission doc does NOT exist!');
         }
       } catch (e) {
-        print('ExperienceService.updateColorCategory: Error checking permission doc: $e');
+        print(
+            'ExperienceService.updateColorCategory: Error checking permission doc: $e');
       }
     }
-    
+
     await _userColorCategoriesCollection(targetUserId)
         .doc(category.id)
         .update(category.toMap());
