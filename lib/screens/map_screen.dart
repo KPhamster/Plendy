@@ -92,6 +92,25 @@ class _MapScreenState extends State<MapScreen> {
   bool _sharedHasMore = true;
   bool _sharedIsFetching = false;
   static const int _sharedPageSize = 200;
+  // ADDED: Fallback paging state when query path fails
+  List<String>? _fallbackSharedIds;
+  int _fallbackPageOffset = 0;
+
+  // ADDED: Resolve and cache display name for owners of shared items
+  Future<String> _getOwnerDisplayName(String userId) async {
+    if (_ownerNameByUserId.containsKey(userId)) {
+      return _ownerNameByUserId[userId]!;
+    }
+    try {
+      final profile = await _experienceService.getUserProfileById(userId);
+      final name = profile?.displayName ?? profile?.username ?? 'Someone';
+      _ownerNameByUserId[userId] = name;
+      return name;
+    } catch (_) {
+      _ownerNameByUserId[userId] = 'Someone';
+      return 'Someone';
+    }
+  }
 
   @override
   void initState() {
@@ -240,25 +259,96 @@ class _MapScreenState extends State<MapScreen> {
       } catch (e) {
         // Fallback: use permissions + get by IDs for compatibility until index/denorm propagates
         print("🗺️ MAP SCREEN: [BG] Paging query failed ($e). Falling back to share_permissions path.");
-        final sharingService = SharingService();
-        final sharedPermissions = await sharingService.getSharedItemsForUser(userId);
-        final sharedExperienceIds = sharedPermissions
-            .where((perm) => perm.itemType == ShareableItemType.experience)
-            .map((perm) => perm.itemId)
-            .where((id) => id.isNotEmpty)
-            .toSet()
-            .toList();
-        if (sharedExperienceIds.isEmpty) {
-          _sharedHasMore = false;
-        } else {
-          // To avoid fetching everything at once, slice according to page size while falling back
-          final idsPage = sharedExperienceIds.take(_sharedPageSize).toList();
+        // On first call, fetch all permission IDs and process in pages
+        if (_fallbackSharedIds == null) {
+          final sharingService = SharingService();
+          final sharedPermissions = await sharingService.getSharedItemsForUser(userId);
+          final allSharedExperienceIds = sharedPermissions
+              .where((perm) => perm.itemType == ShareableItemType.experience)
+              .map((perm) => perm.itemId)
+              .where((id) => id.isNotEmpty)
+              .toSet()
+              .toList();
+          _fallbackSharedIds = allSharedExperienceIds;
+          _fallbackPageOffset = 0;
+          print("🗺️ MAP SCREEN: [BG] Fallback: Found ${_fallbackSharedIds!.length} total shared experiences to page.");
+        }
+        if (_fallbackSharedIds != null && _fallbackSharedIds!.isNotEmpty) {
+          final start = _fallbackPageOffset;
+          final end = (start + _sharedPageSize) > _fallbackSharedIds!.length 
+              ? _fallbackSharedIds!.length 
+              : (start + _sharedPageSize);
+          final idsPage = _fallbackSharedIds!.sublist(start, end);
+          print("🗺️ MAP SCREEN: [BG] Fallback: Fetching experiences from offset $start to $end (${idsPage.length} IDs).");
           sharedExperiences = await _experienceService.getExperiencesByIds(idsPage);
-          _sharedHasMore = false; // fallback: single fetch
+          _fallbackPageOffset = end;
+          if (end >= _fallbackSharedIds!.length) {
+            _sharedHasMore = false;
+            print("🗺️ MAP SCREEN: [BG] Fallback: Reached end of shared experiences.");
+          }
+        } else {
+          _sharedHasMore = false;
         }
       }
 
-      // Skip expensive cross-owner category/color fetches; rely on denormalized icon/color for markers.
+      // Fetch minimal missing category/color data for this page when denorm is absent
+      final Set<String> existingCategoryIds = _categories.map((c) => c.id).toSet();
+      final Set<String> existingColorCategoryIds = _colorCategories.map((c) => c.id).toSet();
+      final Set<String> catKeys = {};
+      final Set<String> colorKeys = {};
+      final List<Future<UserCategory?>> categoryFetches = [];
+      final List<Future<ColorCategory?>> colorFetches = [];
+
+      for (final exp in sharedExperiences) {
+        final String? ownerId = exp.createdBy;
+        if (ownerId == null || ownerId.isEmpty) continue;
+
+        if ((exp.categoryIconDenorm == null || exp.categoryIconDenorm!.isEmpty)) {
+          final String? catId = exp.categoryId;
+          if (catId != null && catId.isNotEmpty && !existingCategoryIds.contains(catId)) {
+            final key = ownerId + '|' + catId;
+            if (catKeys.add(key)) {
+              categoryFetches.add(_experienceService.getUserCategoryByOwner(ownerId, catId));
+            }
+          }
+        }
+
+        if ((exp.colorHexDenorm == null || exp.colorHexDenorm!.isEmpty)) {
+          final String? colorId = exp.colorCategoryId;
+          if (colorId != null && colorId.isNotEmpty && !existingColorCategoryIds.contains(colorId)) {
+            final key = ownerId + '|' + colorId;
+            if (colorKeys.add(key)) {
+              colorFetches.add(_experienceService.getColorCategoryByOwner(ownerId, colorId));
+            }
+          }
+        }
+      }
+
+      if (categoryFetches.isNotEmpty) {
+        try {
+          final fetchedCats = await Future.wait(categoryFetches);
+          final newCats = fetchedCats.whereType<UserCategory>().toList();
+          if (newCats.isNotEmpty) {
+            _categories.addAll(newCats);
+            print("🗺️ MAP SCREEN: [BG] Added ${newCats.length} shared user categories (for icons).");
+          }
+        } catch (e) {
+          print("🗺️ MAP SCREEN: [BG] Error fetching shared categories for icons: $e");
+        }
+      }
+
+      if (colorFetches.isNotEmpty) {
+        try {
+          final fetchedColors = await Future.wait(colorFetches);
+          final newColors = fetchedColors.whereType<ColorCategory>().toList();
+          if (newColors.isNotEmpty) {
+            _colorCategories.addAll(newColors);
+            print("🗺️ MAP SCREEN: [BG] Added ${newColors.length} shared color categories (for colors).");
+          }
+        } catch (e) {
+          print("🗺️ MAP SCREEN: [BG] Error fetching shared color categories for colors: $e");
+        }
+      }
 
       // Skip owner name fetch for performance; optional enhancement later.
 
@@ -471,6 +561,29 @@ class _MapScreenState extends State<MapScreen> {
 
   // --- ADDED: Filter Dialog ---
   Future<void> _showFilterDialog() async {
+    // Prefetch owner display names for shared categories to show labels identically to Collections
+    try {
+      final String? currentUserId = _authService.currentUser?.uid;
+      if (currentUserId != null) {
+        final Set<String> ownerIdsToFetch = {};
+        for (final c in _categories) {
+          if (c.ownerUserId.isNotEmpty && c.ownerUserId != currentUserId) {
+            ownerIdsToFetch.add(c.ownerUserId);
+          }
+        }
+        for (final cc in _colorCategories) {
+          if (cc.ownerUserId.isNotEmpty && cc.ownerUserId != currentUserId) {
+            ownerIdsToFetch.add(cc.ownerUserId);
+          }
+        }
+        if (ownerIdsToFetch.isNotEmpty) {
+          await Future.wait(ownerIdsToFetch.map(_getOwnerDisplayName));
+        }
+      }
+    } catch (_) {
+      // Ignore prefetch errors; UI will fallback to 'Someone'
+    }
+
     // Create temporary sets to hold selections within the dialog
     Set<String> tempSelectedCategoryIds = Set.from(_selectedCategoryIds);
     Set<String> tempSelectedColorCategoryIds =
@@ -505,8 +618,13 @@ class _MapScreenState extends State<MapScreen> {
                           .map((category) {
                         final bool isSharedOwner = category.ownerUserId != _authService.currentUser?.uid;
                         final String? ownerName = isSharedOwner ? _ownerNameByUserId[category.ownerUserId] : null;
+                        final String? shareLabel = isSharedOwner
+                            ? 'Shared by ${ownerName ?? 'Someone'}'
+                            : null;
                         // This map returns a Widget (CheckboxListTile)
                         return CheckboxListTile(
+                          controlAffinity: ListTileControlAffinity.leading,
+                          contentPadding: EdgeInsets.zero,
                           title: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             mainAxisSize: MainAxisSize.min,
@@ -527,11 +645,11 @@ class _MapScreenState extends State<MapScreen> {
                                   ),
                                 ],
                               ),
-                              if (isSharedOwner && ownerName != null && ownerName.isNotEmpty)
+                              if (shareLabel != null)
                                 Padding(
                                   padding: const EdgeInsets.only(left: 28),
                                   child: Text(
-                                    '(Shared by ${ownerName})',
+                                    shareLabel,
                                     style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                                   ),
                                 ),
@@ -559,8 +677,13 @@ class _MapScreenState extends State<MapScreen> {
                           .map((colorCategory) {
                         final bool isSharedOwner = colorCategory.ownerUserId != _authService.currentUser?.uid;
                         final String? ownerName = isSharedOwner ? _ownerNameByUserId[colorCategory.ownerUserId] : null;
+                        final String? shareLabel = isSharedOwner
+                            ? 'Shared by ${ownerName ?? 'Someone'}'
+                            : null;
                         // This map returns a Widget (CheckboxListTile)
                         return CheckboxListTile(
+                          controlAffinity: ListTileControlAffinity.leading,
+                          contentPadding: EdgeInsets.zero,
                           title: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             mainAxisSize: MainAxisSize.min,
@@ -585,11 +708,11 @@ class _MapScreenState extends State<MapScreen> {
                                   ),
                                 ],
                               ),
-                              if (isSharedOwner && ownerName != null && ownerName.isNotEmpty)
+                              if (shareLabel != null)
                                 Padding(
                                   padding: const EdgeInsets.only(left: 28),
                                   child: Text(
-                                    '(Shared by ${ownerName})',
+                                    shareLabel,
                                     style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                                   ),
                                 ),
