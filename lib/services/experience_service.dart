@@ -1068,6 +1068,28 @@ class ExperienceService {
     return snapshot.docs.map((doc) => Experience.fromFirestore(doc)).toList();
   }
 
+  /// Page experiences shared with a specific user, using denormalized sharedWithUserIds.
+  /// Returns both items and the last DocumentSnapshot for pagination.
+  Future<(List<Experience>, DocumentSnapshot<Object?>?)> getExperiencesSharedWith(
+    String userId, {
+    int limit = 200,
+    DocumentSnapshot<Object?>? startAfter,
+  }) async {
+    if (userId.isEmpty) return (<Experience>[], null);
+
+    Query query = _experiencesCollection
+        .where('sharedWithUserIds', arrayContains: userId)
+        .orderBy('updatedAt', descending: true)
+        .limit(limit);
+    if (startAfter != null) {
+      query = query.startAfterDocument(startAfter);
+    }
+    final snap = await query.get();
+    final items = snap.docs.map((d) => Experience.fromFirestore(d)).toList();
+    final last = snap.docs.isNotEmpty ? snap.docs.last : null;
+    return (items, last);
+  }
+
   /// Get multiple experiences by their document IDs (handles Firestore whereIn limits)
   Future<List<Experience>> getExperiencesByIds(List<String> experienceIds,
       {int chunkSize = 30}) async {
@@ -1077,6 +1099,12 @@ class ExperienceService {
 
     final List<String> uniqueIds = experienceIds.toSet().toList();
 
+    // Decide strategy: probe a single whereIn to see if rules allow query-based access.
+    // If the probe fails with permission-denied, skip whereIn entirely and do per-doc with concurrency.
+    bool canUseWhereIn = true;
+    final List<Experience> accumulated = [];
+
+    // Prepare chunks upfront for potential whereIn path
     final List<List<String>> chunks = [];
     for (int i = 0; i < uniqueIds.length; i += chunkSize) {
       final end = (i + chunkSize) > uniqueIds.length
@@ -1085,53 +1113,113 @@ class ExperienceService {
       chunks.add(uniqueIds.sublist(i, end));
     }
 
-    // Fetch chunks with limited concurrency for faster overall time without overwhelming Firestore
-    const int maxConcurrent = 6;
-    final List<Experience> results = [];
-
-    for (int i = 0; i < chunks.length; i += maxConcurrent) {
-      final currentBatch = chunks.sublist(
-          i,
-          (i + maxConcurrent) > chunks.length
-              ? chunks.length
-              : (i + maxConcurrent));
-
-      final futures = currentBatch.map((chunk) async {
-        try {
-          final snapshot = await _experiencesCollection
-              .where(FieldPath.documentId, whereIn: chunk)
-              .get();
-          return snapshot.docs
-              .map((doc) => Experience.fromFirestore(doc))
-              .toList();
-        } catch (e) {
-          print(
-              "getExperiencesByIds: Error fetching chunk of size ${chunk.length}: $e. Falling back to per-doc reads.");
-          final List<Experience> perDoc = [];
-          for (final id in chunk) {
-            try {
-              final doc = await _experiencesCollection.doc(id).get();
-              if (doc.exists) {
-                perDoc.add(Experience.fromFirestore(doc));
-              }
-            } catch (inner) {
-              print(
-                  "getExperiencesByIds: Skipping $id due to error on per-doc read: $inner");
-            }
+    if (chunks.isNotEmpty) {
+      final List<String> probeChunk = chunks.first;
+      try {
+        final probeSnap = await _experiencesCollection
+            .where(FieldPath.documentId, whereIn: probeChunk)
+            .get();
+        accumulated
+            .addAll(probeSnap.docs.map((doc) => Experience.fromFirestore(doc)));
+      } catch (e) {
+        // Prefer structured check when possible
+        if (e is FirebaseException && e.code == 'permission-denied') {
+          canUseWhereIn = false;
+        } else {
+          final errText = e.toString().toLowerCase();
+          if (errText.contains('permission-denied')) {
+            canUseWhereIn = false;
           }
-          return perDoc;
         }
-      }).toList();
+        if (!canUseWhereIn) {
+          debugPrint(
+              'getExperiencesByIds: whereIn probe denied by rules. Switching to concurrent per-doc reads.');
+        }
+      }
+    }
 
-      final batchResults = await Future.wait(futures);
-      for (final list in batchResults) {
-        results.addAll(list);
+    if (!canUseWhereIn) {
+      // Fast path: concurrent per-doc reads with a safe parallelism cap
+      const int perDocParallel = 12; // tune cautiously
+      for (int i = 0; i < uniqueIds.length; i += perDocParallel) {
+        final sub = uniqueIds.sublist(
+            i,
+            (i + perDocParallel) > uniqueIds.length
+                ? uniqueIds.length
+                : (i + perDocParallel));
+        final docs = await Future.wait(sub.map((id) async {
+          try {
+            return await _experiencesCollection.doc(id).get();
+          } catch (e) {
+            debugPrint('getExperiencesByIds: per-doc get failed for $id: $e');
+            return null;
+          }
+        }));
+        for (final doc in docs) {
+          if (doc != null && doc.exists) {
+            accumulated.add(Experience.fromFirestore(doc));
+          }
+        }
+      }
+    } else {
+      // Use chunked whereIn with limited concurrency, skipping the first chunk already fetched
+      const int maxConcurrent = 6;
+      final List<List<String>> remaining = chunks.skip(1).toList();
+      for (int i = 0; i < remaining.length; i += maxConcurrent) {
+        final batch = remaining.sublist(
+            i,
+            (i + maxConcurrent) > remaining.length
+                ? remaining.length
+                : (i + maxConcurrent));
+        final futures = batch.map((chunk) async {
+          try {
+            final snapshot = await _experiencesCollection
+                .where(FieldPath.documentId, whereIn: chunk)
+                .get();
+            return snapshot.docs
+                .map((doc) => Experience.fromFirestore(doc))
+                .toList();
+          } catch (e) {
+            // If any later chunk still fails due to rules, fall back to per-doc for just that chunk
+            debugPrint(
+                'getExperiencesByIds: whereIn denied for chunk of ${chunk.length}. Falling back to per-doc for this chunk. Error: $e');
+            const int perDocParallel = 12;
+            final List<Experience> perDoc = [];
+            for (int j = 0; j < chunk.length; j += perDocParallel) {
+              final sub = chunk.sublist(
+                  j,
+                  (j + perDocParallel) > chunk.length
+                      ? chunk.length
+                      : (j + perDocParallel));
+              final docs = await Future.wait(sub.map((id) async {
+                try {
+                  return await _experiencesCollection.doc(id).get();
+                } catch (inner) {
+                  debugPrint(
+                      'getExperiencesByIds: per-doc get failed for $id: $inner');
+                  return null;
+                }
+              }));
+              for (final doc in docs) {
+                if (doc != null && doc.exists) {
+                  perDoc.add(Experience.fromFirestore(doc));
+                }
+              }
+            }
+            return perDoc;
+          }
+        }).toList();
+
+        final batchResults = await Future.wait(futures);
+        for (final list in batchResults) {
+          accumulated.addAll(list);
+        }
       }
     }
 
     // Deduplicate in case of overlaps
     final Map<String, Experience> byId = {
-      for (final exp in results) exp.id: exp,
+      for (final exp in accumulated) exp.id: exp,
     };
     return byId.values.toList();
   }

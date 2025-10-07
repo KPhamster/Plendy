@@ -92,11 +92,22 @@ service cloud.firestore {
     }
 
     match /experiences/{experienceId} {
-      allow read: if request.auth != null && (
+      // Single-document reads (get) can use cross-document permission checks
+      allow get: if request.auth != null && (
         resource.data.createdBy == request.auth.uid ||
         (resource.data.editorUserIds is list && request.auth.uid in resource.data.editorUserIds) ||
         (resource.data.createdBy != null && exists(/databases/$(database)/documents/share_permissions/$(sharedPermissionDocId(resource.data.createdBy, 'experience', experienceId, request.auth.uid)))) ||
         (resource.data.ownerUserId != null && exists(/databases/$(database)/documents/share_permissions/$(sharedPermissionDocId(resource.data.ownerUserId, 'experience', experienceId, request.auth.uid))))
+      );
+
+      // Query reads (list) must be index- and query-safe: avoid cross-document reads.
+      // This enables where-in by documentId and other queries to work fast.
+      // To authorize shared (view) access via queries, denormalize viewer IDs on the doc
+      // (e.g., sharedWithUserIds) at write time.
+      allow list: if request.auth != null && (
+        resource.data.createdBy == request.auth.uid ||
+        (resource.data.editorUserIds is list && request.auth.uid in resource.data.editorUserIds) ||
+        (resource.data.sharedWithUserIds is list && request.auth.uid in resource.data.sharedWithUserIds)
       );
       allow create: if request.auth != null;
       // Allow updates by creator or any current editor listed in the document

@@ -43,6 +43,18 @@ exports.onExperienceShareCreate = functions.firestore
             seen: false,
           });
         });
+        // Denormalize sharedWithUserIds for query-friendly rules
+        if (share.experienceId) {
+          const expRef = db.collection("experiences").doc(share.experienceId);
+          batch.set(
+            expRef,
+            {
+              sharedWithUserIds: admin.firestore.FieldValue.arrayUnion(...toUserIds),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true },
+          );
+        }
         await batch.commit();
 
         // Send FCM notifications

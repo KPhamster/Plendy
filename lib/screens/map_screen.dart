@@ -4,13 +4,16 @@ import 'dart:ui' as ui; // Import for ui.Image, ui.Canvas etc.
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart'; // Add Google Maps import
 import 'package:url_launcher/url_launcher.dart'; // ADDED: Import url_launcher
+import 'package:cloud_firestore/cloud_firestore.dart'; // ADDED: For pagination cursors
+import '../services/sharing_service.dart'; // RESTORED: Fallback path
+import '../models/enums/share_enums.dart'; // RESTORED: Fallback path
 import '../widgets/google_maps_widget.dart';
 import '../services/experience_service.dart'; // Import ExperienceService
 import '../services/auth_service.dart'; // Import AuthService
 import '../services/google_maps_service.dart'; // Import GoogleMapsService
-import '../services/sharing_service.dart'; // ADDED: SharingService for shared experiences
-import '../models/enums/share_enums.dart'; // ADDED: ShareableItemType enum
-import '../models/user_profile.dart'; // ADDED: UserProfile for owner names
+// import '../services/sharing_service.dart'; // REMOVED: no longer used with paged shared fetch
+// import '../models/enums/share_enums.dart'; // REMOVED: no longer used
+// import '../models/user_profile.dart'; // REMOVED: no longer used
 import '../models/experience.dart'; // Import Experience model (includes Location)
 import '../models/user_category.dart'; // Import UserCategory model
 import '../models/color_category.dart'; // Import ColorCategory model
@@ -84,6 +87,11 @@ class _MapScreenState extends State<MapScreen> {
   Location? _mapWidgetInitialLocation; // ADDED: To control GoogleMapsWidget initial location
   // ADDED: Indicates background loading of shared experiences
   bool _isSharedLoading = false;
+  // ADDED: Paging state for shared experiences
+  DocumentSnapshot<Object?>? _sharedLastDoc;
+  bool _sharedHasMore = true;
+  bool _sharedIsFetching = false;
+  static const int _sharedPageSize = 200;
 
   @override
   void initState() {
@@ -208,151 +216,51 @@ class _MapScreenState extends State<MapScreen> {
   // Load shared experiences after initial render and merge incrementally
   Future<void> _loadSharedExperiencesInBackground(String userId) async {
     try {
-      setState(() {
-        _isSharedLoading = true;
-      });
-      final sharingService = SharingService();
-      final sharedPermissions =
-          await sharingService.getSharedItemsForUser(userId);
-      final sharedExperienceIds = sharedPermissions
-          .where((perm) => perm.itemType == ShareableItemType.experience)
-          .map((perm) => perm.itemId)
-          .where((id) => id.isNotEmpty)
-          .toSet()
-          .toList();
+      if (mounted) {
+        setState(() { _isSharedLoading = true; });
+      }
 
-      if (sharedExperienceIds.isEmpty) {
-        print("🗺️ MAP SCREEN: No shared experiences to load in background.");
+      if (_sharedIsFetching || !_sharedHasMore) {
         return;
       }
-
-      // Map shared experience ID -> owner user ID
-      final Map<String, String> sharedExpOwnerById = {};
-      for (final perm in sharedPermissions) {
-        if (perm.itemType == ShareableItemType.experience &&
-            perm.itemId.isNotEmpty &&
-            perm.ownerUserId.isNotEmpty) {
-          sharedExpOwnerById[perm.itemId] = perm.ownerUserId;
-        }
-      }
-
-      print(
-          "🗺️ MAP SCREEN: [BG] Fetching ${sharedExperienceIds.length} shared experiences...");
-      final sharedExperiences =
-          await _experienceService.getExperiencesByIds(sharedExperienceIds);
-      print(
-          "🗺️ MAP SCREEN: [BG] Loaded ${sharedExperiences.length} shared experiences.");
-
-      // Fetch referenced owners' categories/color categories that are missing locally
-      final Set<String> existingCategoryIds =
-          _categories.map((c) => c.id).toSet();
-      final Set<String> existingColorCategoryIds =
-          _colorCategories.map((c) => c.id).toSet();
-
-      final Set<String> requestedCategoryPairKeys = {};
-      final Set<String> requestedColorPairKeys = {};
-      final List<Future<UserCategory?>> categoryFetches = [];
-      final List<Future<ColorCategory?>> colorFetches = [];
-
-      for (final exp in sharedExperiences) {
-        final ownerId = sharedExpOwnerById[exp.id];
-        if (ownerId == null || ownerId.isEmpty) continue;
-
-        final String? catId = exp.categoryId;
-        if (catId != null && catId.isNotEmpty &&
-            !existingCategoryIds.contains(catId)) {
-          final key = ownerId + '|' + catId;
-          if (requestedCategoryPairKeys.add(key)) {
-            categoryFetches
-                .add(_experienceService.getUserCategoryByOwner(ownerId, catId));
-          }
-        }
-
-        for (final oc in exp.otherCategories) {
-          if (oc.isEmpty || existingCategoryIds.contains(oc)) continue;
-          final key = ownerId + '|' + oc;
-          if (requestedCategoryPairKeys.add(key)) {
-            categoryFetches
-                .add(_experienceService.getUserCategoryByOwner(ownerId, oc));
-          }
-        }
-
-        final String? colorId = exp.colorCategoryId;
-        if (colorId != null && colorId.isNotEmpty &&
-            !existingColorCategoryIds.contains(colorId)) {
-          final key = ownerId + '|' + colorId;
-          if (requestedColorPairKeys.add(key)) {
-            colorFetches.add(
-                _experienceService.getColorCategoryByOwner(ownerId, colorId));
-          }
-        }
-      }
-
-      if (categoryFetches.isNotEmpty) {
-        try {
-          final fetchedCats = await Future.wait(categoryFetches);
-          final newCats = fetchedCats.whereType<UserCategory>().toList();
-          if (newCats.isNotEmpty) {
-            _categories.addAll(newCats);
-            print(
-                "🗺️ MAP SCREEN: [BG] Added ${newCats.length} shared user categories.");
-          }
-        } catch (e) {
-          print("🗺️ MAP SCREEN: [BG] Error fetching shared categories: $e");
-        }
-      }
-
-      if (colorFetches.isNotEmpty) {
-        try {
-          final fetchedColors = await Future.wait(colorFetches);
-          final newColors = fetchedColors.whereType<ColorCategory>().toList();
-          if (newColors.isNotEmpty) {
-            _colorCategories.addAll(newColors);
-            print(
-                "🗺️ MAP SCREEN: [BG] Added ${newColors.length} shared color categories.");
-          }
-        } catch (e) {
-          print("🗺️ MAP SCREEN: [BG] Error fetching shared color categories: $e");
-        }
-      }
-
-      // Fetch owner display names (deduped)
+      _sharedIsFetching = true;
+      List<Experience> sharedExperiences = [];
       try {
-        final Set<String> ownerIdsToFetch = {};
-        for (final c in _categories) {
-          if (c.ownerUserId.isNotEmpty &&
-              c.ownerUserId != userId &&
-              !_ownerNameByUserId.containsKey(c.ownerUserId)) {
-            ownerIdsToFetch.add(c.ownerUserId);
-          }
+        final page = await _experienceService.getExperiencesSharedWith(
+          userId,
+          limit: _sharedPageSize,
+          startAfter: _sharedLastDoc,
+        );
+        sharedExperiences = page.$1;
+        _sharedLastDoc = page.$2;
+        if (sharedExperiences.isEmpty || page.$2 == null) {
+          _sharedHasMore = false;
         }
-        for (final cc in _colorCategories) {
-          if (cc.ownerUserId.isNotEmpty &&
-              cc.ownerUserId != userId &&
-              !_ownerNameByUserId.containsKey(cc.ownerUserId)) {
-            ownerIdsToFetch.add(cc.ownerUserId);
-          }
-        }
-
-        if (ownerIdsToFetch.isNotEmpty) {
-          final List<UserProfile?> profiles = await Future.wait(
-              ownerIdsToFetch.map((oid) => _experienceService.getUserProfileById(oid)));
-          final Map<String, String> newNames = {};
-          for (final p in profiles) {
-            if (p != null) {
-              final name = (p.displayName ?? p.username ?? 'Unknown');
-              newNames[p.id] = name;
-            }
-          }
-          if (newNames.isNotEmpty && mounted) {
-            setState(() {
-              _ownerNameByUserId.addAll(newNames);
-            });
-          }
-        }
+        print("🗺️ MAP SCREEN: [BG] Loaded page with ${sharedExperiences.length} shared experiences.");
       } catch (e) {
-        print("🗺️ MAP SCREEN: [BG] Error fetching owner names: $e");
+        // Fallback: use permissions + get by IDs for compatibility until index/denorm propagates
+        print("🗺️ MAP SCREEN: [BG] Paging query failed ($e). Falling back to share_permissions path.");
+        final sharingService = SharingService();
+        final sharedPermissions = await sharingService.getSharedItemsForUser(userId);
+        final sharedExperienceIds = sharedPermissions
+            .where((perm) => perm.itemType == ShareableItemType.experience)
+            .map((perm) => perm.itemId)
+            .where((id) => id.isNotEmpty)
+            .toSet()
+            .toList();
+        if (sharedExperienceIds.isEmpty) {
+          _sharedHasMore = false;
+        } else {
+          // To avoid fetching everything at once, slice according to page size while falling back
+          final idsPage = sharedExperienceIds.take(_sharedPageSize).toList();
+          sharedExperiences = await _experienceService.getExperiencesByIds(idsPage);
+          _sharedHasMore = false; // fallback: single fetch
+        }
       }
+
+      // Skip expensive cross-owner category/color fetches; rely on denormalized icon/color for markers.
+
+      // Skip owner name fetch for performance; optional enhancement later.
 
       // Merge and update markers
       final Map<String, Experience> combined = {
@@ -370,13 +278,19 @@ class _MapScreenState extends State<MapScreen> {
 
       await _generateMarkersFromExperiences(_experiences);
       print("🗺️ MAP SCREEN: [BG] Shared experiences merged and markers updated.");
+
+      // Continue paging in background until exhausted
+      if (_sharedHasMore && mounted) {
+        Future.microtask(() => _loadSharedExperiencesInBackground(userId));
+      }
     } catch (e) {
       print(
           "🗺️ MAP SCREEN: [BG] Error loading shared experiences: $e. Skipping background merge.");
     } finally {
+      _sharedIsFetching = false;
       if (mounted) {
         setState(() {
-          _isSharedLoading = false;
+          _isSharedLoading = _sharedHasMore; // keep loading indicator until last page
         });
       }
     }
@@ -865,16 +779,20 @@ class _MapScreenState extends State<MapScreen> {
         //     "🗺️ MAP SCREEN: Experience '${experience.name}' has no colorCategoryId. Using default color.");
       }
 
-      // Determine marker background color
+      // Determine marker background color (prefer denormalized color if present)
       Color markerBackgroundColor = Colors.grey; // Default
-      if (colorCategory != null && colorCategory.colorHex.isNotEmpty) {
+      if (experience.colorHexDenorm != null && experience.colorHexDenorm!.isNotEmpty) {
+        markerBackgroundColor = _parseColor(experience.colorHexDenorm!);
+      } else if (colorCategory != null && colorCategory.colorHex.isNotEmpty) {
         markerBackgroundColor = _parseColor(colorCategory.colorHex);
-        // print(
-        //     "🗺️ MAP SCREEN: Using color ${markerBackgroundColor} for category '${category.name}'.");
       }
 
       // Generate a unique cache key including the color and the *icon*
-      final String cacheKey = '${category.icon}_${markerBackgroundColor.value}';
+      // Prefer denormalized icon when available
+      final String iconText = (experience.categoryIconDenorm != null && experience.categoryIconDenorm!.isNotEmpty)
+          ? experience.categoryIconDenorm!
+          : category.icon;
+      final String cacheKey = '${iconText}_${markerBackgroundColor.value}';
 
       BitmapDescriptor categoryIconBitmap =
           BitmapDescriptor.defaultMarker; // Default
@@ -890,7 +808,7 @@ class _MapScreenState extends State<MapScreen> {
           //     "🗺️ MAP SCREEN: Generating icon for '$cacheKey' (${category.name})");
           // Pass the background color to the generator
           categoryIconBitmap = await _bitmapDescriptorFromText(
-            category.icon,
+            iconText,
             backgroundColor: markerBackgroundColor,
             size: 70,
           );
@@ -934,8 +852,11 @@ class _MapScreenState extends State<MapScreen> {
             }
           } catch (e) { /* Use default grey color */ }
 
+          final String selectedIconText = (_tappedExperience?.categoryIconDenorm != null && _tappedExperience!.categoryIconDenorm!.isNotEmpty)
+              ? _tappedExperience!.categoryIconDenorm!
+              : category.icon;
           final selectedIcon = await _bitmapDescriptorFromText(
-            category.icon,
+            selectedIconText,
             backgroundColor: markerBackgroundColor,
             size: 100, // 125% of 70
             backgroundOpacity: 1.0, // Fully opaque
@@ -1462,8 +1383,11 @@ class _MapScreenState extends State<MapScreen> {
         }
       } catch (e) { /* Use default grey color */ }
 
+      final String selectedIconText = (experience.categoryIconDenorm != null && experience.categoryIconDenorm!.isNotEmpty)
+          ? experience.categoryIconDenorm!
+          : category.icon;
       final selectedIcon = await _bitmapDescriptorFromText(
-        category.icon,
+        selectedIconText,
         backgroundColor: markerBackgroundColor,
         size: 88, // 125% of 70
         backgroundOpacity: 1.0, // Fully opaque

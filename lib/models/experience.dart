@@ -216,6 +216,14 @@ class Experience {
   final List<String> otherCategories; // List of other category IDs
   // --- END ADDED ---
 
+  // --- DENORMALIZED for fast map rendering ---
+  final String? categoryIconDenorm; // Emoji/icon denormalized from owner category
+  final String? colorHexDenorm; // Hex color denormalized from owner color category
+  // --- END DENORMALIZED ---
+
+  // Owner
+  final String? createdBy;
+
   Experience({
     required this.id,
     required this.name,
@@ -247,6 +255,9 @@ class Experience {
     required this.editorUserIds,
     this.colorCategoryId,
     this.otherCategories = const [], // Default to empty list
+    this.categoryIconDenorm,
+    this.colorHexDenorm,
+    this.createdBy,
   });
 
   /// Creates an Experience from a Firestore document
@@ -284,6 +295,9 @@ class Experience {
       editorUserIds: _parseStringList(data['editorUserIds']),
       colorCategoryId: data['colorCategoryId'] as String?,
       otherCategories: _parseStringList(data['otherCategories']),
+      categoryIconDenorm: data['categoryIconDenorm'] as String?,
+      colorHexDenorm: data['colorHexDenorm'] as String?,
+      createdBy: data['createdBy'] as String?,
     );
   }
 
@@ -319,6 +333,9 @@ class Experience {
       'additionalNotes': additionalNotes,
       'colorCategoryId': colorCategoryId,
       'otherCategories': otherCategories,
+      'categoryIconDenorm': categoryIconDenorm,
+      'colorHexDenorm': colorHexDenorm,
+      'createdBy': createdBy,
     };
   }
 
@@ -354,6 +371,9 @@ class Experience {
     List<String>? editorUserIds,
     String? colorCategoryId,
     List<String>? otherCategories,
+    String? categoryIconDenorm,
+    String? colorHexDenorm,
+    String? createdBy,
   }) {
     return Experience(
       id: id ?? this.id,
@@ -386,6 +406,9 @@ class Experience {
       editorUserIds: editorUserIds ?? this.editorUserIds,
       colorCategoryId: colorCategoryId ?? this.colorCategoryId,
       otherCategories: otherCategories ?? this.otherCategories,
+      categoryIconDenorm: categoryIconDenorm ?? this.categoryIconDenorm,
+      colorHexDenorm: colorHexDenorm ?? this.colorHexDenorm,
+      createdBy: createdBy ?? this.createdBy,
     );
   }
 

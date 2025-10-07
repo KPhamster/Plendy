@@ -149,6 +149,9 @@ class _AuthScreenState extends State<AuthScreen> {
 																						_emailController.text,
 																						_passwordController.text,
 																					);
+																// If this AuthScreen was pushed on top of the stack, remove it so root shows MainScreen
+																if (!mounted) return;
+																Navigator.of(context, rootNavigator: true).popUntil((route) => route.isFirst);
 																				} catch (e) {
 																					if (mounted) {
 																						ScaffoldMessenger.of(context).showSnackBar(
@@ -201,15 +204,20 @@ class _AuthScreenState extends State<AuthScreen> {
 										Center(
 											child: InkWell(
 												onTap: () async {
-													try {
-														await authService.signInWithGoogle();
-													} catch (e) {
-														if (mounted) {
-															ScaffoldMessenger.of(context).showSnackBar(
-																SnackBar(content: Text(e.toString())),
-															);
-														}
+												try {
+													final result = await authService.signInWithGoogle();
+													if (result != null) {
+														// If this AuthScreen was pushed on top of the stack, remove it so root shows MainScreen
+														if (!mounted) return;
+														Navigator.of(context, rootNavigator: true).popUntil((route) => route.isFirst);
 													}
+												} catch (e) {
+													if (mounted) {
+														ScaffoldMessenger.of(context).showSnackBar(
+															SnackBar(content: Text(e.toString())),
+														);
+													}
+												}
 												},
 												child: const Padding(
 													padding: EdgeInsets.symmetric(horizontal: 20),

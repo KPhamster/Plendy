@@ -7,7 +7,9 @@
     "shell": "firebase functions:shell",
     "start": "npm run shell",
     "deploy": "firebase deploy --only functions",
-    "logs": "firebase functions:log"
+    "logs": "firebase functions:log",
+    "bulk:shareperms:dryrun": "echo Use deployed HTTPS endpoint /bulkDeleteSharePermissions with dryRun=true",
+    "bulk:shareperms:delete": "echo Use deployed HTTPS endpoint /bulkDeleteSharePermissions with confirm=yes"
   },
   "engines": {
     "node": "22"

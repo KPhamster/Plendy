@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -588,115 +589,97 @@ class _CategoryPreviewListState extends State<_CategoryPreviewList> {
 
     setState(() => _isSaving = true);
 
-    try {
-      final AuthService authService = AuthService();
-      String? currentUserId = authService.currentUser?.uid;
+    final AuthService authService = AuthService();
+    String? currentUserId = authService.currentUser?.uid;
 
-      if (currentUserId == null) {
-        if (!mounted) {
-          return;
-        }
-        await Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => const AuthScreen()),
-        );
-        if (!mounted) {
-          return;
-        }
-        await _loadUserInfo();
-        currentUserId = authService.currentUser?.uid;
-        if (currentUserId == null) {
-          return;
-        }
-      }
-
-      if (widget.categoryId.isEmpty || widget.fromUserId.isEmpty) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-                content: Text('Unable to save this category right now.')),
-          );
-        }
+    if (currentUserId == null) {
+      if (!mounted) {
         return;
       }
-
-      final ExperienceService experienceService = ExperienceService();
-      List<String> experienceIds = <String>[];
-      try {
-        final ownerExperiences =
-            await experienceService.getExperiencesForOwnerCategory(
-          ownerUserId: widget.fromUserId,
-          categoryId: widget.categoryId,
-          isColorCategory: widget.isColorCategory,
-        );
-        experienceIds = ownerExperiences
-            .map((exp) => exp.id)
-            .where((id) => id.isNotEmpty)
-            .toSet()
-            .toList();
-      } catch (_) {
-        // Ignore and fall back to preview snapshot below.
-      }
-
-      if (experienceIds.isEmpty) {
-        try {
-          final previews = await widget.experiences;
-          experienceIds = previews
-              .map((exp) => exp.id)
-              .where((id) => id.isNotEmpty)
-              .toSet()
-              .toList();
-        } catch (e) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                  content: Text('Failed to load category experiences: $e')),
-            );
-          }
-          return;
-        }
-      }
-
-      final int totalUnits = 1 + experienceIds.length;
-
-      final CategorySaveProgressNotifier notifier =
-          Provider.of<CategorySaveProgressNotifier>(context, listen: false);
-      final CategoryShareService service = CategoryShareService();
-      final String targetUserId = currentUserId!;
-      final String categoryId = widget.categoryId;
-      final String fromUserId = widget.fromUserId;
-      final String accessMode = widget.accessMode;
-      final String categoryName = widget.title;
-
-      notifier.startCategorySave(
-        categoryName: categoryName,
-        totalUnits: totalUnits,
-        saveOperation: (controller) async {
-          await service.grantSharedCategoryToUser(
-            categoryId: categoryId,
-            ownerUserId: fromUserId,
-            targetUserId: targetUserId,
-            accessMode: accessMode,
-            experienceIds: experienceIds,
-            onProgress: (completed, total) {
-              controller.update(
-                completedUnits: completed,
-                totalUnits: total,
-              );
-            },
-          );
-        },
+      await Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const AuthScreen()),
       );
-
-      if (mounted) {
-        Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (_) => const MainScreen()),
-          (route) => false,
-        );
+      if (!mounted) {
+        return;
       }
-    } finally {
+      await _loadUserInfo();
+      currentUserId = authService.currentUser?.uid;
+      if (currentUserId == null) {
+        setState(() => _isSaving = false);
+        return;
+      }
+    }
+
+    if (widget.categoryId.isEmpty || widget.fromUserId.isEmpty) {
       if (mounted) {
         setState(() => _isSaving = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('Unable to save this category right now.')),
+        );
       }
+      return;
+    }
+
+    final messenger = ScaffoldMessenger.of(context);
+    final CategorySaveProgressNotifier notifier =
+        Provider.of<CategorySaveProgressNotifier>(context, listen: false);
+    final CategoryShareService service = CategoryShareService();
+    final ExperienceService experienceService = ExperienceService();
+    final String targetUserId = currentUserId!;
+    final String categoryId = widget.categoryId;
+    final String fromUserId = widget.fromUserId;
+    final String accessMode = widget.accessMode;
+    final String categoryName = widget.title;
+    final bool isColorCategory = widget.isColorCategory;
+
+    unawaited(() async {
+      try {
+        final experienceIds = await _fetchExperienceIdsForOwner(
+          experienceService: experienceService,
+          ownerUserId: fromUserId,
+          categoryId: categoryId,
+          isColorCategory: isColorCategory,
+          previewFuture: widget.experiences,
+        );
+        final int totalUnits = 1 + experienceIds.length;
+
+        notifier.startCategorySave(
+          categoryName: categoryName,
+          totalUnits: totalUnits,
+          categoryId: categoryId,
+          ownerUserId: fromUserId,
+          isColorCategory: isColorCategory,
+          accessMode: accessMode,
+          experienceIds: experienceIds,
+          saveOperation: (controller) async {
+            await service.grantSharedCategoryToUser(
+              categoryId: categoryId,
+              ownerUserId: fromUserId,
+              targetUserId: targetUserId,
+              accessMode: accessMode,
+              experienceIds: experienceIds,
+              onProgress: (completed, total) {
+                controller.update(
+                  completedUnits: completed,
+                  totalUnits: total,
+                );
+              },
+            );
+          },
+        );
+      } catch (e) {
+        messenger.showSnackBar(
+          SnackBar(content: Text('Failed to save category: $e')),
+        );
+      }
+    }());
+
+    if (mounted) {
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const MainScreen()),
+        (route) => false,
+      );
     }
   }
 
@@ -865,103 +848,96 @@ class _MultiCategoryPreviewListState extends State<_MultiCategoryPreviewList> {
 
     setState(() => _isSaving = true);
 
-    try {
-      final AuthService authService = AuthService();
-      String? currentUserId = authService.currentUser?.uid;
+    final AuthService authService = AuthService();
+    String? currentUserId = authService.currentUser?.uid;
+    if (currentUserId == null) {
+      if (!mounted) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const AuthScreen()),
+      );
+      if (!mounted) return;
+      await _loadUserInfo();
+      currentUserId = authService.currentUser?.uid;
       if (currentUserId == null) {
-        if (!mounted) return;
-        await Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => const AuthScreen()),
-        );
-        if (!mounted) return;
-        await _loadUserInfo();
-        currentUserId = authService.currentUser?.uid;
-        if (currentUserId == null) {
-          return;
-        }
-      }
-
-      final List<_MultiCategoryItem> items =
-          widget.payload.items ?? const <_MultiCategoryItem>[];
-      if (items.isEmpty) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-                content: Text('Unable to save these categories right now.')),
-          );
-        }
+        setState(() => _isSaving = false);
         return;
       }
+    }
 
-      final CategorySaveProgressNotifier notifier =
-          Provider.of<CategorySaveProgressNotifier>(context, listen: false);
-      final CategoryShareService service = CategoryShareService();
-      final ExperienceService experienceService = ExperienceService();
-      final String targetUserId = currentUserId!;
-      final String fromUserId = widget.payload.fromUserId;
-      final String accessMode = widget.payload.accessMode;
+    final List<_MultiCategoryItem> items =
+        widget.payload.items ?? const <_MultiCategoryItem>[];
+    if (items.isEmpty) {
+      if (mounted) {
+        setState(() => _isSaving = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('Unable to save these categories right now.')),
+        );
+      }
+      return;
+    }
 
+    final messenger = ScaffoldMessenger.of(context);
+    final CategorySaveProgressNotifier notifier =
+        Provider.of<CategorySaveProgressNotifier>(context, listen: false);
+    final CategoryShareService service = CategoryShareService();
+    final ExperienceService experienceService = ExperienceService();
+    final String targetUserId = currentUserId!;
+    final String fromUserId = widget.payload.fromUserId;
+    final String accessMode = widget.payload.accessMode;
+
+    unawaited(() async {
       for (final _MultiCategoryItem item in items) {
         if (item.id.isEmpty) {
           continue;
         }
-
-        List<String> experienceIds = <String>[];
         try {
-          final ownerExperiences =
-              await experienceService.getExperiencesForOwnerCategory(
+          final experienceIds = await _fetchExperienceIdsForOwner(
+            experienceService: experienceService,
             ownerUserId: fromUserId,
             categoryId: item.id,
             isColorCategory: item.isColor,
+            snapshotExperiences: item.experiences,
           );
-          experienceIds = ownerExperiences
-              .map((exp) => exp.id)
-              .where((id) => id.isNotEmpty)
-              .toSet()
-              .toList();
-        } catch (_) {
-          // Ignore and fall back to snapshot data
+          final int totalUnits = 1 + experienceIds.length;
+
+          notifier.startCategorySave(
+            categoryName: item.title,
+            totalUnits: totalUnits,
+            categoryId: item.id,
+            ownerUserId: fromUserId,
+            isColorCategory: item.isColor,
+            accessMode: accessMode,
+            experienceIds: experienceIds,
+            saveOperation: (controller) async {
+              await service.grantSharedCategoryToUser(
+                categoryId: item.id,
+                ownerUserId: fromUserId,
+                targetUserId: targetUserId,
+                accessMode: accessMode,
+                experienceIds: experienceIds,
+                onProgress: (completed, total) {
+                  controller.update(
+                    completedUnits: completed,
+                    totalUnits: total,
+                  );
+                },
+              );
+            },
+          );
+        } catch (e) {
+          messenger.showSnackBar(
+            SnackBar(content: Text('Failed to save ${item.title}: $e')),
+          );
         }
-
-        if (experienceIds.isEmpty) {
-          experienceIds = item.experiences
-              .map((e) => e.id)
-              .where((id) => id.isNotEmpty)
-              .toSet()
-              .toList();
-        }
-
-        final int totalUnits = 1 + experienceIds.length;
-
-        notifier.startCategorySave(
-          categoryName: item.title,
-          totalUnits: totalUnits,
-          saveOperation: (controller) async {
-            await service.grantSharedCategoryToUser(
-              categoryId: item.id,
-              ownerUserId: fromUserId,
-              targetUserId: targetUserId,
-              accessMode: accessMode,
-              experienceIds: experienceIds,
-              onProgress: (completed, total) {
-                controller.update(
-                  completedUnits: completed,
-                  totalUnits: total,
-                );
-              },
-            );
-          },
-        );
       }
+    }());
 
-      if (mounted) {
-        Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (_) => const MainScreen()),
-          (route) => false,
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _isSaving = false);
+    if (mounted) {
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const MainScreen()),
+        (route) => false,
+      );
     }
   }
 
@@ -1081,4 +1057,56 @@ _ExperiencePreview _experienceFromModel(Experience e) {
     subtitle: e.location.address ?? e.location.displayName,
     imageUrl: e.imageUrls.isNotEmpty ? e.imageUrls.first : null,
   );
+}
+
+Future<List<String>> _fetchExperienceIdsForOwner({
+  required ExperienceService experienceService,
+  required String ownerUserId,
+  required String categoryId,
+  required bool isColorCategory,
+  Future<List<_ExperiencePreview>>? previewFuture,
+  List<_ExperiencePreview>? snapshotExperiences,
+}) async {
+  if (ownerUserId.isEmpty || categoryId.isEmpty) {
+    return <String>[];
+  }
+  List<String> experienceIds = <String>[];
+  try {
+    final ownerExperiences =
+        await experienceService.getExperiencesForOwnerCategory(
+      ownerUserId: ownerUserId,
+      categoryId: categoryId,
+      isColorCategory: isColorCategory,
+    );
+    experienceIds = ownerExperiences
+        .map((exp) => exp.id)
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList();
+  } catch (_) {
+    // Ignore and fall back to provided snapshots.
+  }
+
+  if (experienceIds.isNotEmpty) {
+    return experienceIds;
+  }
+
+  if (previewFuture != null) {
+    final previews = await previewFuture;
+    return previews
+        .map((exp) => exp.id)
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList();
+  }
+
+  if (snapshotExperiences != null) {
+    return snapshotExperiences
+        .map((exp) => exp.id)
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList();
+  }
+
+  return <String>[];
 }
