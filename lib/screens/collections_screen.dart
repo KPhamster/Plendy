@@ -8,6 +8,7 @@ import '../widgets/add_color_category_modal.dart';
 import '../widgets/edit_color_categories_modal.dart' show ColorCategorySortType;
 import '../services/auth_service.dart';
 import '../services/experience_service.dart';
+import '../services/experience_share_service.dart';
 import '../widgets/add_category_modal.dart';
 import '../widgets/edit_categories_modal.dart' show CategorySortType;
 import '../widgets/add_experience_modal.dart'; // ADDED: Import for AddExperienceModal
@@ -181,6 +182,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
 
   // Selection mode for Categories/Color Categories in the first tab
   bool _isSelectingCategories = false;
+  bool _isSelectingExperiences = false;
+  final Set<String> _selectedExperienceIds = <String>{};
 
   bool _isSharedCategory(UserCategory category) =>
       _sharedCategoryPermissions.containsKey(category.id);
@@ -643,7 +646,6 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     if (!mounted || notifier == null) {
       return;
     }
-    var shouldReload = false;
     while (true) {
       final CategorySaveMessage? message = notifier.takeNextMessage();
       if (message == null) {
@@ -655,17 +657,174 @@ class _CollectionsScreenState extends State<CollectionsScreen>
             message.isError ? Theme.of(context).colorScheme.error : null,
       );
       ScaffoldMessenger.of(context).showSnackBar(snackBar);
-      if (!message.isError) {
-        shouldReload = true;
+      if (!message.isError && message.snapshot != null) {
+        unawaited(_applySavedCategorySnapshot(message.snapshot!));
       }
     }
-    if (shouldReload) {
-      unawaited(_loadData());
-      Future.delayed(const Duration(seconds: 3), () {
-        if (mounted) {
-          unawaited(_loadData());
+  }
+
+  Future<void> _applySavedCategorySnapshot(
+      CategorySaveTaskSnapshot snapshot) async {
+    final String? currentUserId = _authService.currentUser?.uid;
+    if (currentUserId == null) {
+      return;
+    }
+
+    await _updateSharedCategoryData(snapshot, currentUserId);
+    await _updateSharedExperiencesData(snapshot, currentUserId);
+
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      if (_hasActiveFilters) {
+        _applyFiltersAndUpdateLists();
+      } else {
+        _filteredExperiences = List<Experience>.from(_experiences);
+      }
+    });
+    unawaited(
+        _applyExperienceSort(_experienceSortType, applyToFiltered: false));
+  }
+
+  Future<void> _updateSharedCategoryData(
+      CategorySaveTaskSnapshot snapshot, String currentUserId) async {
+    try {
+      final SharePermission? permission =
+          await _sharingService.getPermissionForUserAndItem(
+        userId: currentUserId,
+        itemId: snapshot.categoryId,
+      );
+      if (permission == null) {
+        return;
+      }
+      final List<_SharedCategoryData> resolved =
+          await _resolveSharedCategories(<SharePermission>[permission]);
+      if (resolved.isEmpty || !mounted) {
+        return;
+      }
+      final _SharedCategoryData data = resolved.first;
+      setState(() {
+        if (data.isColorCategory) {
+          final color = data.colorCategory;
+          if (color != null &&
+              !_sharedColorCategories.any((c) => c.id == color.id)) {
+            _sharedColorCategories = List<ColorCategory>.from(
+              _sharedColorCategories,
+            )..add(color);
+          }
+          if (color != null && !_colorCategories.any((c) => c.id == color.id)) {
+            _colorCategories = List<ColorCategory>.from(_colorCategories)
+              ..add(color);
+          }
+          _colorCategories = List<ColorCategory>.from(_colorCategories)
+            ..sort((a, b) {
+              if (_colorCategorySortType ==
+                  ColorCategorySortType.alphabetical) {
+                return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+              }
+              final tsA = a.lastUsedTimestamp;
+              final tsB = b.lastUsedTimestamp;
+              if (tsA == null && tsB == null) return 0;
+              if (tsA == null) return 1;
+              if (tsB == null) return -1;
+              return tsB.compareTo(tsA);
+            });
+        } else {
+          final category = data.userCategory;
+          if (category != null &&
+              !_sharedCategories.any((c) => c.id == category.id)) {
+            _sharedCategories = List<UserCategory>.from(_sharedCategories)
+              ..add(category);
+          }
+          if (category != null &&
+              !_categories.any((c) => c.id == category.id)) {
+            _categories = List<UserCategory>.from(_categories)..add(category);
+          }
+          _categories = List<UserCategory>.from(_categories)
+            ..sort(
+                (a, b) => _compareCategoriesForSort(a, b, _categorySortType));
+          _updateLocalOrderIndices();
         }
+        _sharedCategoryPermissions[data.categoryId] = data.permission;
+        _sharedCategoryIsColor[data.categoryId] = data.isColorCategory;
+        final Set<String> categoryIdsNow = _currentCategoryIdSet();
+        final Set<String> colorIdsNow = _currentColorCategoryIdSet();
+        _sharedExperiences = _filterExperiencesWithAssignments(
+          _sharedExperiences,
+          categoryIdsNow,
+          colorIdsNow,
+        );
+        _experiences = _filterExperiencesWithAssignments(
+          _experiences,
+          categoryIdsNow,
+          colorIdsNow,
+        );
+        _filteredExperiences = _filterExperiencesWithAssignments(
+          _filteredExperiences,
+          categoryIdsNow,
+          colorIdsNow,
+        );
       });
+    } catch (e) {
+      debugPrint(
+          'Collections: failed to update shared category after save: $e');
+    }
+  }
+
+  Future<void> _updateSharedExperiencesData(
+      CategorySaveTaskSnapshot snapshot, String currentUserId) async {
+    if (snapshot.experienceIds.isEmpty) {
+      return;
+    }
+    try {
+      final List<Future<SharePermission?>> futures = snapshot.experienceIds
+          .map((expId) => _sharingService.getPermissionForUserAndItem(
+                userId: currentUserId,
+                itemId: expId,
+              ))
+          .toList();
+      final List<SharePermission> permissions =
+          (await Future.wait(futures)).whereType<SharePermission>().toList();
+      if (permissions.isEmpty) {
+        return;
+      }
+      final List<_SharedExperienceData> resolved =
+          await _resolveSharedExperiences(permissions);
+      if (!mounted || resolved.isEmpty) {
+        return;
+      }
+      final Set<String> categoryIds = _currentCategoryIdSet();
+      final Set<String> colorCategoryIds = _currentColorCategoryIdSet();
+      setState(() {
+        for (final data in resolved) {
+          final experience = data.experience;
+          _sharedExperiencePermissions[experience.id] = data.permission;
+          if (!_sharedExperiences.any((e) => e.id == experience.id)) {
+            _sharedExperiences = List<Experience>.from(_sharedExperiences)
+              ..add(experience);
+          }
+        }
+        _sharedExperiences = _filterExperiencesWithAssignments(
+          _sharedExperiences,
+          categoryIds,
+          colorCategoryIds,
+        );
+        _experiences = _combineExperiencesWithShared(_experiences);
+        _experiences = _filterExperiencesWithAssignments(
+          _experiences,
+          categoryIds,
+          colorCategoryIds,
+        );
+        _filteredExperiences = _filterExperiencesWithAssignments(
+          _filteredExperiences,
+          categoryIds,
+          colorCategoryIds,
+        );
+      });
+    } catch (e) {
+      debugPrint(
+          'Collections: failed to update shared experiences after save: $e');
     }
   }
 
@@ -1416,6 +1575,17 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         }
       }
 
+      final Set<String> combinedCategoryIds =
+          combinedCategories.map((c) => c.id).toSet();
+      final Set<String> combinedColorCategoryIds =
+          combinedColorCategories.map((c) => c.id).toSet();
+      final List<Experience> filteredSharedExperiences =
+          _filterExperiencesWithAssignments(
+        sharedExperiences,
+        combinedCategoryIds,
+        combinedColorCategoryIds,
+      );
+
       final bool hadFilters = _hasActiveFilters;
 
       if (mounted) {
@@ -1433,8 +1603,19 @@ class _CollectionsScreenState extends State<CollectionsScreen>
           _sharedExperiencePermissions
             ..clear()
             ..addAll(experiencePermissionMap);
-          _sharedExperiences = sharedExperiences;
-          _experiences = _combineExperiencesWithShared(_experiences);
+          _sharedExperiences = filteredSharedExperiences;
+          final List<Experience> combinedExperienceList =
+              _combineExperiencesWithShared(_experiences);
+          _experiences = _filterExperiencesWithAssignments(
+            combinedExperienceList,
+            combinedCategoryIds,
+            combinedColorCategoryIds,
+          );
+          _filteredExperiences = _filterExperiencesWithAssignments(
+            _filteredExperiences,
+            combinedCategoryIds,
+            combinedColorCategoryIds,
+          );
           _ownedSharedCategoryIds
             ..clear()
             ..addAll(ownedSharedCategoryIds);
@@ -1444,6 +1625,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
           _ownedSharedExperienceIds
             ..clear()
             ..addAll(ownedSharedExperienceIds);
+          _selectedExperienceIds.clear();
+          _isSelectingExperiences = false;
           _groupedContentItems = [];
           _filteredGroupedContentItems = [];
           _isLoading = false;
@@ -1503,6 +1686,114 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       experienceById.putIfAbsent(shared.id, () => shared);
     }
     return experienceById.values.toList();
+  }
+
+  bool _experienceHasValidAssignment(
+    Experience experience,
+    Set<String> categoryIds,
+    Set<String> colorCategoryIds,
+  ) {
+    final String? primary = experience.categoryId;
+    if (primary != null &&
+        primary.isNotEmpty &&
+        categoryIds.contains(primary)) {
+      return true;
+    }
+
+    for (final String otherId in experience.otherCategories) {
+      if (categoryIds.contains(otherId)) {
+        return true;
+      }
+    }
+
+    final String? colorId = experience.colorCategoryId;
+    if (colorId != null &&
+        colorId.isNotEmpty &&
+        colorCategoryIds.contains(colorId)) {
+      return true;
+    }
+
+    return false;
+  }
+
+  List<Experience> _filterExperiencesWithAssignments(
+    List<Experience> experiences,
+    Set<String> categoryIds,
+    Set<String> colorCategoryIds,
+  ) {
+    if (experiences.isEmpty) {
+      return experiences;
+    }
+    return experiences
+        .where((exp) =>
+            _experienceHasValidAssignment(exp, categoryIds, colorCategoryIds))
+        .toList();
+  }
+
+  Set<String> _currentCategoryIdSet() =>
+      _categories.map((category) => category.id).toSet();
+
+  Set<String> _currentColorCategoryIdSet() =>
+      _colorCategories.map((category) => category.id).toSet();
+
+  Future<int> _deleteOrphanedExperiences({
+    Set<String>? removedCategoryIds,
+    Set<String>? removedColorCategoryIds,
+  }) async {
+    final String? currentUserId = _authService.currentUser?.uid;
+    if (currentUserId == null) {
+      return 0;
+    }
+
+    try {
+      final List<Experience> userExperiences =
+          await _experienceService.getExperiencesByUser(
+        currentUserId,
+        limit: 500,
+      );
+      final Set<String> categoryIds = _currentCategoryIdSet();
+      final Set<String> colorIds = _currentColorCategoryIdSet();
+      if (removedCategoryIds != null && removedCategoryIds.isNotEmpty) {
+        categoryIds.removeAll(removedCategoryIds);
+      }
+      if (removedColorCategoryIds != null &&
+          removedColorCategoryIds.isNotEmpty) {
+        colorIds.removeAll(removedColorCategoryIds);
+      }
+      final List<Experience> orphans = userExperiences
+          .where((exp) => !_experienceHasValidAssignment(
+                exp,
+                categoryIds,
+                colorIds,
+              ))
+          .toList();
+
+      if (orphans.isEmpty) {
+        return 0;
+      }
+
+      for (final Experience experience in orphans) {
+        await _experienceService.deleteExperience(experience.id);
+      }
+
+      if (mounted) {
+        setState(() {
+          final Set<String> orphanIds =
+              orphans.map((experience) => experience.id).toSet();
+          _experiences
+              .removeWhere((experience) => orphanIds.contains(experience.id));
+          _filteredExperiences
+              .removeWhere((experience) => orphanIds.contains(experience.id));
+          _sharedExperiences
+              .removeWhere((experience) => orphanIds.contains(experience.id));
+        });
+      }
+
+      return orphans.length;
+    } catch (e) {
+      debugPrint('Collections: failed to delete orphan experiences: $e');
+      return 0;
+    }
   }
 
   Future<List<_SharedCategoryData>> _resolveSharedCategories(
@@ -3305,19 +3596,19 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                                       horizontal: 16.0,
                                       vertical: 4.0,
                                     ),
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.stretch,
-                                      children: [
-                                        for (int i = 0;
-                                            i < tasks.length;
-                                            i++) ...[
-                                          _buildCategorySaveProgressTile(
-                                              context, tasks[i]),
-                                          if (i != tasks.length - 1)
+                                    child: ConstrainedBox(
+                                      constraints:
+                                          const BoxConstraints(maxHeight: 200),
+                                      child: ListView.separated(
+                                        shrinkWrap: true,
+                                        physics: const ClampingScrollPhysics(),
+                                        itemCount: tasks.length,
+                                        itemBuilder: (context, index) =>
+                                            _buildCategorySaveProgressTile(
+                                                context, tasks[index]),
+                                        separatorBuilder: (context, index) =>
                                             const SizedBox(height: 8),
-                                        ],
-                                      ],
+                                      ),
                                     ),
                                   );
                                 },
@@ -3363,7 +3654,130 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                         // --- END MODIFIED ---
                         Container(
                           color: Colors.white,
-                          child: _buildExperiencesListView(),
+                          child: Column(
+                            children: [
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 7.0, vertical: 8.0),
+                                child: Row(
+                                  children: [
+                                    Builder(builder: (context) {
+                                      final int totalCount =
+                                          _filteredExperiences.length;
+                                      final int selectedCount =
+                                          _selectedExperienceIds.length;
+                                      final bool selecting =
+                                          _isSelectingExperiences;
+                                      final bool allSelected = selecting &&
+                                          totalCount > 0 &&
+                                          selectedCount == totalCount;
+                                      final bool someSelected = selecting &&
+                                          selectedCount > 0 &&
+                                          !allSelected;
+
+                                      if (!selecting) {
+                                        return Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            IconButton(
+                                              tooltip: 'Select experiences',
+                                              icon: const Icon(
+                                                  Icons.check_box_outlined),
+                                              onPressed: () {
+                                                setState(() {
+                                                  _isSelectingExperiences =
+                                                      true;
+                                                  _selectedExperienceIds
+                                                      .clear();
+                                                });
+                                              },
+                                            ),
+                                          ],
+                                        );
+                                      }
+
+                                      return Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Checkbox(
+                                            value: allSelected
+                                                ? true
+                                                : (someSelected ? null : false),
+                                            tristate: true,
+                                            onChanged: totalCount == 0
+                                                ? null
+                                                : (bool? value) {
+                                                    setState(() {
+                                                      final bool selectAllNow =
+                                                          someSelected
+                                                              ? true
+                                                              : (allSelected
+                                                                  ? false
+                                                                  : (value ??
+                                                                      true));
+                                                      if (selectAllNow) {
+                                                        _selectedExperienceIds
+                                                          ..clear()
+                                                          ..addAll(
+                                                              _filteredExperiences
+                                                                  .map((e) =>
+                                                                      e.id));
+                                                      } else {
+                                                        _selectedExperienceIds
+                                                            .clear();
+                                                      }
+                                                    });
+                                                  },
+                                          ),
+                                          const SizedBox(width: 6),
+                                          IconButton(
+                                            tooltip: 'Cancel selection',
+                                            icon: const Icon(Icons.close),
+                                            onPressed: () {
+                                              setState(() {
+                                                _isSelectingExperiences = false;
+                                                _selectedExperienceIds.clear();
+                                              });
+                                            },
+                                          ),
+                                          const SizedBox(width: 6),
+                                          IconButton(
+                                            tooltip:
+                                                'Share selected experiences',
+                                            icon: const Icon(Icons.ios_share),
+                                            onPressed: selectedCount == 0
+                                                ? null
+                                                : () {
+                                                    unawaited(
+                                                        _handleShareSelectedExperiences());
+                                                  },
+                                          ),
+                                          const SizedBox(width: 6),
+                                          IconButton(
+                                            tooltip:
+                                                'Delete selected experiences',
+                                            icon: const Icon(
+                                                Icons.delete_outline),
+                                            color: Colors.red,
+                                            onPressed: selectedCount == 0
+                                                ? null
+                                                : () {
+                                                    unawaited(
+                                                        _handleBulkDeleteSelectedExperiences());
+                                                  },
+                                          ),
+                                        ],
+                                      );
+                                    }),
+                                    const Expanded(child: SizedBox()),
+                                  ],
+                                ),
+                              ),
+                              Expanded(
+                                child: _buildExperiencesListView(),
+                              ),
+                            ],
+                          ),
                         ),
                         // MODIFIED: Call builder for Content tab
                         Container(
@@ -3507,38 +3921,67 @@ class _CollectionsScreenState extends State<CollectionsScreen>
           )
         : (isOwnerShared ? 'Shared' : null);
 
+    final bool isSelecting = _isSelectingExperiences;
+    final bool isSelected = _selectedExperienceIds.contains(experience.id);
+
+    final Widget leadingBase = Container(
+      width: 56,
+      height: 56,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: leadingBoxColor,
+        borderRadius: BorderRadius.circular(8.0),
+      ),
+      child: MediaQuery(
+        data: MediaQuery.of(context).copyWith(textScaleFactor: 1.0),
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.center,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                categoryIcon,
+                style: const TextStyle(fontSize: 28),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    final Widget leadingWidget = isSelecting
+        ? Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Checkbox(
+                value: isSelected,
+                onChanged: (bool? value) {
+                  setState(() {
+                    if (value ?? false) {
+                      _selectedExperienceIds.add(experience.id);
+                    } else {
+                      _selectedExperienceIds.remove(experience.id);
+                    }
+                  });
+                },
+              ),
+              const SizedBox(width: 4),
+              leadingBase,
+            ],
+          )
+        : leadingBase;
+
     return ListTile(
       key: ValueKey(experience.id), // Use experience ID as key
       contentPadding: const EdgeInsets.symmetric(horizontal: 8.0),
       visualDensity: const VisualDensity(horizontal: -4),
       isThreeLine: true,
       titleAlignment: ListTileTitleAlignment.threeLine,
-      leading: Container(
-        width: 56,
-        height: 56,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: leadingBoxColor,
-          borderRadius: BorderRadius.circular(8.0),
-        ),
-        child: MediaQuery(
-          data: MediaQuery.of(context).copyWith(textScaleFactor: 1.0),
-          child: FittedBox(
-            fit: BoxFit.scaleDown,
-            alignment: Alignment.center,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  categoryIcon,
-                  style: const TextStyle(fontSize: 28),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
+      leading: leadingWidget,
+      minLeadingWidth: 56,
+      selected: isSelecting && isSelected,
       title: Text(
         experience.name,
         overflow: TextOverflow.ellipsis,
@@ -3665,7 +4108,27 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         ],
       ),
       onTap: () async {
-        await _openExperience(experience);
+        if (_isSelectingExperiences) {
+          setState(() {
+            if (_selectedExperienceIds.contains(experience.id)) {
+              _selectedExperienceIds.remove(experience.id);
+            } else {
+              _selectedExperienceIds.add(experience.id);
+            }
+          });
+        } else {
+          await _openExperience(experience);
+        }
+      },
+      onLongPress: () {
+        if (!_isSelectingExperiences) {
+          setState(() {
+            _isSelectingExperiences = true;
+            _selectedExperienceIds
+              ..clear()
+              ..add(experience.id);
+          });
+        }
       },
     );
   }
@@ -3897,13 +4360,44 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       lowerSectionContent = textContentColumn;
     }
 
-    return Card(
+    final bool isSelecting = _isSelectingExperiences;
+    final bool isSelected = _selectedExperienceIds.contains(experience.id);
+
+    final ShapeBorder cardShape = RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(12.0),
+      side: isSelecting && isSelected
+          ? BorderSide(color: Theme.of(context).primaryColor, width: 2)
+          : BorderSide(color: Colors.transparent, width: 1),
+    );
+
+    final Widget card = Card(
       key: ValueKey('experience_grid_${experience.id}'),
       clipBehavior: Clip.antiAlias,
       elevation: 2.0,
+      shape: cardShape,
       child: InkWell(
-        onTap: () {
-          _openExperience(experience);
+        onTap: () async {
+          if (_isSelectingExperiences) {
+            setState(() {
+              if (_selectedExperienceIds.contains(experience.id)) {
+                _selectedExperienceIds.remove(experience.id);
+              } else {
+                _selectedExperienceIds.add(experience.id);
+              }
+            });
+          } else {
+            await _openExperience(experience);
+          }
+        },
+        onLongPress: () {
+          if (!_isSelectingExperiences) {
+            setState(() {
+              _isSelectingExperiences = true;
+              _selectedExperienceIds
+                ..clear()
+                ..add(experience.id);
+            });
+          }
         },
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -3919,6 +4413,46 @@ class _CollectionsScreenState extends State<CollectionsScreen>
           ],
         ),
       ),
+    );
+
+    if (!isSelecting) {
+      return card;
+    }
+
+    return Stack(
+      children: [
+        card,
+        Positioned(
+          top: 8,
+          right: 8,
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(8),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.15),
+                  blurRadius: 4,
+                ),
+              ],
+            ),
+            child: Checkbox(
+              value: isSelected,
+              onChanged: (bool? value) {
+                setState(() {
+                  if (value ?? false) {
+                    _selectedExperienceIds.add(experience.id);
+                  } else {
+                    _selectedExperienceIds.remove(experience.id);
+                  }
+                });
+              },
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              visualDensity: VisualDensity.compact,
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -5072,6 +5606,299 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   }
   // --- END ADDED ---
 
+  Future<void> _handleShareSelectedExperiences() async {
+    final List<Experience> selectedExperiences = _experiences
+        .where((experience) => _selectedExperienceIds.contains(experience.id))
+        .toList();
+    if (selectedExperiences.isEmpty) {
+      return;
+    }
+
+    final List<Experience> shareableExperiences = selectedExperiences
+        .where(
+            (experience) => _sharedExperiencePermissions[experience.id] == null)
+        .toList();
+    final List<Experience> restrictedExperiences = selectedExperiences
+        .where(
+            (experience) => _sharedExperiencePermissions[experience.id] != null)
+        .toList();
+
+    if (shareableExperiences.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text(
+                  'You can only create shareable links for experiences you own.')),
+        );
+      }
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    final ExperienceShareService shareService = ExperienceShareService();
+    final List<MapEntry<Experience, String>> createdLinks = [];
+    final List<String> errors = [];
+
+    for (final Experience experience in shareableExperiences) {
+      try {
+        final String url = await shareService.createLinkShare(
+          experience: experience,
+          expiresAt: DateTime.now().add(const Duration(days: 30)),
+          linkMode: 'separate_copy',
+          grantEdit: false,
+        );
+        createdLinks.add(MapEntry(experience, url));
+      } catch (e) {
+        errors.add('${experience.name}: $e');
+      }
+    }
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _isLoading = false;
+    });
+
+    if (createdLinks.isNotEmpty) {
+      final scaffoldMessenger = ScaffoldMessenger.of(context);
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) {
+          return AlertDialog(
+            title: Text(createdLinks.length == 1
+                ? 'Shareable link created'
+                : 'Shareable links created'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: createdLinks.map((entry) {
+                  return ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(
+                      entry.key.name,
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    subtitle: Padding(
+                      padding: const EdgeInsets.only(top: 4.0),
+                      child: SelectableText(
+                        entry.value,
+                        style: const TextStyle(fontSize: 13),
+                      ),
+                    ),
+                    trailing: IconButton(
+                      tooltip: 'Copy link',
+                      icon: const Icon(Icons.copy),
+                      onPressed: () async {
+                        await Clipboard.setData(
+                          ClipboardData(text: entry.value),
+                        );
+                        scaffoldMessenger.showSnackBar(
+                          SnackBar(
+                            content:
+                                Text('Link copied for "${entry.key.name}".'),
+                          ),
+                        );
+                      },
+                    ),
+                  );
+                }).toList(),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: const Text('Close'),
+              ),
+            ],
+          );
+        },
+      );
+    }
+
+    final List<String> messageParts = [];
+    if (createdLinks.isNotEmpty) {
+      messageParts.add(
+          'Created ${createdLinks.length} ${createdLinks.length == 1 ? 'shareable link' : 'shareable links'}');
+    }
+    if (restrictedExperiences.isNotEmpty) {
+      messageParts.add(
+          'Skipped ${restrictedExperiences.length} shared ${restrictedExperiences.length == 1 ? 'experience' : 'experiences'} you do not own');
+    }
+    if (errors.isNotEmpty) {
+      final String errorText = errors.first;
+      final int remaining = errors.length - 1;
+      final String suffix = remaining > 0
+          ? ' (and $remaining more issue${remaining == 1 ? '' : 's'})'
+          : '';
+      messageParts.add('Some links failed: $errorText$suffix');
+    }
+
+    if (messageParts.isNotEmpty && mounted) {
+      final String message = messageParts.join('. ');
+      final String displayMessage =
+          message.endsWith('.') ? message : '$message.';
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(displayMessage)));
+    }
+  }
+
+  Future<void> _removeSharedExperience(SharePermission permission) async {
+    await _sharingService.removeShare(permission.id);
+  }
+
+  Future<void> _handleBulkDeleteSelectedExperiences() async {
+    final List<Experience> selectedExperiences = _experiences
+        .where((experience) => _selectedExperienceIds.contains(experience.id))
+        .toList();
+    if (selectedExperiences.isEmpty) {
+      return;
+    }
+
+    final List<Experience> ownedExperiences = [];
+    final List<MapEntry<Experience, SharePermission>> sharedExperiences = [];
+
+    for (final Experience experience in selectedExperiences) {
+      final SharePermission? permission =
+          _sharedExperiencePermissions[experience.id];
+      if (permission != null) {
+        sharedExperiences.add(MapEntry(experience, permission));
+      } else {
+        ownedExperiences.add(experience);
+      }
+    }
+
+    if (ownedExperiences.isEmpty && sharedExperiences.isEmpty) {
+      return;
+    }
+
+    String plural(int count, String singular, String plural) =>
+        count == 1 ? singular : plural;
+
+    final List<String> dialogLines = [];
+    if (ownedExperiences.isNotEmpty) {
+      dialogLines.add(
+          'Delete ${ownedExperiences.length} ${plural(ownedExperiences.length, 'experience you own', 'experiences you own')}. Any linked media will also be removed.');
+    }
+    if (sharedExperiences.isNotEmpty) {
+      dialogLines.add(
+          'Remove ${sharedExperiences.length} ${plural(sharedExperiences.length, 'shared experience', 'shared experiences')}. You will lose access unless another shared category still grants it.');
+    }
+    dialogLines.add('This cannot be undone.');
+
+    final bool? confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Colors.white,
+        title: const Text('Remove Selected Experiences?'),
+        content: Text(dialogLines.join('\n\n')),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true || !mounted) {
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    final List<String> errors = [];
+    int deletedOwnedCount = 0;
+    int removedSharedCount = 0;
+
+    for (final Experience experience in ownedExperiences) {
+      try {
+        await _experienceService.deleteExperience(experience.id);
+        deletedOwnedCount++;
+      } catch (e) {
+        errors.add('Delete "${experience.name}": $e');
+      }
+    }
+
+    for (final MapEntry<Experience, SharePermission> entry
+        in sharedExperiences) {
+      try {
+        await _removeSharedExperience(entry.value);
+        removedSharedCount++;
+      } catch (e) {
+        errors.add('Remove "${entry.key.name}": $e');
+      }
+    }
+
+    final bool anySuccess = deletedOwnedCount > 0 || removedSharedCount > 0;
+    if (!anySuccess) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+        if (errors.isNotEmpty) {
+          final String errorText = errors.first;
+          final int remaining = errors.length - 1;
+          final String suffix = remaining > 0
+              ? ' (and $remaining more issue${remaining == 1 ? '' : 's'})'
+              : '';
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+                content:
+                    Text('Failed to remove experiences: $errorText$suffix')),
+          );
+        }
+      }
+      return;
+    }
+
+    if (mounted) {
+      setState(() {
+        _selectedExperienceIds.clear();
+        _isSelectingExperiences = false;
+      });
+
+      final List<String> messageParts = [];
+      if (deletedOwnedCount > 0) {
+        messageParts.add(
+            'Deleted $deletedOwnedCount ${plural(deletedOwnedCount, 'experience you own', 'experiences you own')}');
+      }
+      if (removedSharedCount > 0) {
+        messageParts.add(
+            'Removed $removedSharedCount ${plural(removedSharedCount, 'shared experience', 'shared experiences')}');
+      }
+      if (errors.isNotEmpty) {
+        final String errorText = errors.first;
+        final int remaining = errors.length - 1;
+        final String suffix = remaining > 0
+            ? ' (and $remaining more issue${remaining == 1 ? '' : 's'})'
+            : '';
+        messageParts.add('Some removals failed: $errorText$suffix');
+      }
+
+      final String message = messageParts.join('. ');
+      final String displayMessage = message.isEmpty
+          ? 'Experiences updated.'
+          : (message.endsWith('.') ? message : '$message.');
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(displayMessage)));
+    }
+
+    if (mounted) {
+      await _loadData();
+    }
+  }
+
   // --- ADDED: Methods for Color Category Editing --- START ---
 
   Future<void> _showAddColorCategoryModal() async {
@@ -5241,6 +6068,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     final bool? confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
+        backgroundColor: Colors.white,
         title: const Text('Remove Selected Categories?'),
         content: Text(dialogLines.join('\n\n')),
         actions: [
@@ -5250,7 +6078,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
           ),
           TextButton(
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Remove', style: TextStyle(color: Colors.red)),
+            child: const Text('Remove'),
           ),
         ],
       ),
@@ -5268,7 +6096,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     int deletedOwnedCount = 0;
     int removedSharedCount = 0;
     int removedExperiencesCount = 0;
-
+    int deletedOrphanExperienceCount = 0;
     for (final UserCategory category in ownedCategories) {
       try {
         await _experienceService.deleteUserCategory(category.id);
@@ -5311,6 +6139,14 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       return;
     }
 
+    final Set<String> removedCategoryIds = {
+      ...ownedCategories.map((c) => c.id),
+      ...sharedCategories.map((entry) => entry.key.id),
+    }..removeWhere((id) => id.isEmpty);
+    deletedOrphanExperienceCount = await _deleteOrphanedExperiences(
+      removedCategoryIds: removedCategoryIds,
+    );
+
     if (mounted) {
       setState(() {
         _selectedCategoryIds.clear();
@@ -5330,6 +6166,10 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       if (removedExperiencesCount > 0) {
         messageParts.add(
             'Removed $removedExperiencesCount shared experience${removedExperiencesCount == 1 ? '' : 's'} without other category access');
+      }
+      if (deletedOrphanExperienceCount > 0) {
+        messageParts.add(
+            'Deleted $deletedOrphanExperienceCount ${plural(deletedOrphanExperienceCount, 'experience with no tags', 'experiences with no tags')}');
       }
       if (errors.isNotEmpty) {
         final String errorText = errors.first;
@@ -5395,6 +6235,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     final bool? confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
+        backgroundColor: Colors.white,
         title: const Text('Remove Selected Color Categories?'),
         content: Text(dialogLines.join('\n\n')),
         actions: [
@@ -5404,7 +6245,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
           ),
           TextButton(
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Remove', style: TextStyle(color: Colors.red)),
+            child: const Text('Remove'),
           ),
         ],
       ),
@@ -5422,6 +6263,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     int deletedOwnedCount = 0;
     int removedSharedCount = 0;
     int removedExperiencesCount = 0;
+
+    int deletedOrphanExperienceCount = 0;
 
     for (final ColorCategory category in ownedCategories) {
       try {
@@ -5465,6 +6308,16 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       return;
     }
 
+    final Set<String> removedCategoryIds = <String>{};
+    final Set<String> removedColorCategoryIds = {
+      ...ownedCategories.map((c) => c.id),
+      ...sharedCategories.map((entry) => entry.key.id),
+    }..removeWhere((id) => id.isEmpty);
+    deletedOrphanExperienceCount = await _deleteOrphanedExperiences(
+      removedCategoryIds: removedCategoryIds,
+      removedColorCategoryIds: removedColorCategoryIds,
+    );
+
     if (mounted) {
       setState(() {
         _selectedCategoryIds.clear();
@@ -5484,6 +6337,10 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       if (removedExperiencesCount > 0) {
         messageParts.add(
             'Removed $removedExperiencesCount shared experience${removedExperiencesCount == 1 ? '' : 's'} without other category access');
+      }
+      if (deletedOrphanExperienceCount > 0) {
+        messageParts.add(
+            'Deleted $deletedOrphanExperienceCount ${plural(deletedOrphanExperienceCount, 'experience with no tags', 'experiences with no tags')}');
       }
       if (errors.isNotEmpty) {
         final String errorText = errors.first;
@@ -7173,13 +8030,21 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   Future<void> _loadExperiences(String userId) async {
     _isExperiencesLoading = true;
     try {
+      final Set<String> currentCategoryIds = _currentCategoryIdSet();
+      final Set<String> currentColorCategoryIds = _currentColorCategoryIdSet();
+
       try {
         final cached = await _experienceService.getExperiencesByUser(userId);
         final combinedCached = _combineExperiencesWithShared(cached);
-        if (mounted && combinedCached.isNotEmpty) {
+        final filteredCached = _filterExperiencesWithAssignments(
+          combinedCached,
+          currentCategoryIds,
+          currentColorCategoryIds,
+        );
+        if (mounted) {
           final bool hadFilters = _hasActiveFilters;
           setState(() {
-            _experiences = combinedCached;
+            _experiences = filteredCached;
             if (!hadFilters) {
               _filteredExperiences = List.from(_experiences);
             }
@@ -7198,10 +8063,15 @@ class _CollectionsScreenState extends State<CollectionsScreen>
 
       final fresh = await _experienceService.getExperiencesByUser(userId);
       final combinedFresh = _combineExperiencesWithShared(fresh);
+      final filteredFresh = _filterExperiencesWithAssignments(
+        combinedFresh,
+        currentCategoryIds,
+        currentColorCategoryIds,
+      );
       if (mounted) {
         final bool hadFilters = _hasActiveFilters;
         setState(() {
-          _experiences = combinedFresh;
+          _experiences = filteredFresh;
           if (!hadFilters) {
             _filteredExperiences = List.from(_experiences);
           }
@@ -8243,3 +9113,5 @@ class _BulkShareBottomSheetContentState
     );
   }
 }
+
+

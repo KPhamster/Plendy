@@ -1,6 +1,7 @@
 // functions/index.js
 const { getFirestore } = require("firebase-admin/firestore"); // For interacting with Firestore
 const { onDocumentCreated } = require("firebase-functions/v2/firestore"); // For 2nd gen Firestore triggers
+const { onRequest } = require("firebase-functions/v2/https"); // For 2nd gen HTTPS endpoints
 const functions = require("firebase-functions"); // Still needed for logger, config, etc.
 const admin = require("firebase-admin");
 
@@ -479,5 +480,128 @@ exports.testFcmV1Send = functions.https.onRequest(async (req, res) => {
   } catch (error) {
     functions.logger.error("Test v1: Error sending notification:", error);
     res.status(500).send(`v1 API Error: ${error.toString()}`);
+  }
+});
+
+/**
+ * Admin-only bulk delete for share_permissions filtered by sharedWithUserId.
+ *
+ * Safety features:
+ * - Optional shared secret via functions config: maintenance.secret
+ * - Dry-run mode using count() aggregation
+ * - Batching with configurable batchSize and maxDocs per invocation
+ *
+ * Usage (GET or POST):
+ *   /bulkDeleteSharePermissions?sharedWithUserId=UID&dryRun=true
+ *   /bulkDeleteSharePermissions?sharedWithUserId=UID&confirm=yes&batchSize=400&maxDocs=5000
+ * If a secret is configured, include &secret=YOUR_SECRET or header x-admin-secret.
+ */
+exports.bulkDeleteSharePermissions = onRequest({ region: "us-central1" }, async (req, res) => {
+  try {
+    // Method guard
+    if (req.method !== "GET" && req.method !== "POST") {
+      res.status(405).send("Method not allowed");
+      return;
+    }
+
+    // Simple shared-secret guard (optional). For 2nd gen, prefer process.env.
+    let configuredSecret = "";
+    try {
+      configuredSecret = process.env.MAINTENANCE_SECRET || "";
+    } catch (e) {
+      configuredSecret = "";
+    }
+    if (configuredSecret) {
+      const providedSecret =
+        (req.query && (req.query.secret || req.query.apiKey)) ||
+        req.get("x-admin-secret") ||
+        (req.body && (req.body.secret || req.body.apiKey));
+      if (providedSecret !== configuredSecret) {
+        res.status(403).json({ ok: false, error: "Forbidden: invalid secret" });
+        return;
+      }
+    }
+
+    const sharedWithUserId = (
+      (req.query && req.query.sharedWithUserId) || (req.body && req.body.sharedWithUserId) || ""
+    ).toString().trim();
+    if (!sharedWithUserId) {
+      res.status(400).json({ ok: false, error: "sharedWithUserId is required" });
+      return;
+    }
+
+    const dryRunRaw = (req.query && req.query.dryRun) || (req.body && req.body.dryRun);
+    const dryRun = (typeof dryRunRaw === "string" ? dryRunRaw : String(dryRunRaw || "")).toLowerCase() === "true";
+    const confirm = ((req.query && req.query.confirm) || (req.body && req.body.confirm) || "").toString().toLowerCase();
+    const batchSizeInput = Number((req.query && req.query.batchSize) || (req.body && req.body.batchSize) || 300);
+    const maxDocsInput = Number((req.query && req.query.maxDocs) || (req.body && req.body.maxDocs) || 5000);
+    const batchSize = Math.max(1, Math.min(450, isFinite(batchSizeInput) ? batchSizeInput : 300));
+    const maxDocs = Math.max(1, Math.min(100000, isFinite(maxDocsInput) ? maxDocsInput : 5000));
+
+    const baseQuery = db
+      .collection("share_permissions")
+      .where("sharedWithUserId", "==", sharedWithUserId);
+
+    // Dry run: fast count without deleting
+    if (dryRun) {
+      try {
+        const agg = await baseQuery.count().get();
+        const total = agg.data().count || 0;
+        res.json({ ok: true, sharedWithUserId, dryRun: true, total });
+        return;
+      } catch (countErr) {
+        // Fallback if count() not available in environment
+        const snap = await baseQuery.limit(1001).get();
+        const estimatedTotal = snap.size;
+        const truncated = estimatedTotal >= 1001;
+        res.json({ ok: true, sharedWithUserId, dryRun: true, total: estimatedTotal, truncated });
+        return;
+      }
+    }
+
+    if (confirm !== "yes") {
+      res.status(400).json({
+        ok: false,
+        error: "Missing confirm=yes. Use dryRun=true first to see counts.",
+        hint: "Add confirm=yes to actually delete. Example: ?sharedWithUserId=UID&confirm=yes",
+      });
+      return;
+    }
+
+    const startedAtMs = Date.now();
+    let totalDeleted = 0;
+    let batches = 0;
+
+    // Loop deleting in pages until we reach maxDocs or there are no more matches
+    while (totalDeleted < maxDocs) {
+      const toFetch = Math.min(batchSize, maxDocs - totalDeleted);
+      const snap = await baseQuery.limit(toFetch).get();
+      if (snap.empty) break;
+
+      const batch = db.batch();
+      snap.docs.forEach((doc) => batch.delete(doc.ref));
+      await batch.commit();
+
+      totalDeleted += snap.size;
+      batches += 1;
+
+      // Small delay to reduce write contention with onDelete triggers
+      await new Promise((r) => setTimeout(r, 50));
+    }
+
+    const durationMs = Date.now() - startedAtMs;
+    res.json({
+      ok: true,
+      sharedWithUserId,
+      deleted: totalDeleted,
+      batches,
+      batchSize,
+      maxDocs,
+      ms: durationMs,
+      note: "If more documents remain, call again or increase maxDocs.",
+    });
+  } catch (err) {
+    functions.logger.error("bulkDeleteSharePermissions error", err);
+    res.status(500).json({ ok: false, error: err && err.message ? err.message : String(err) });
   }
 });

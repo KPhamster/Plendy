@@ -5,12 +5,22 @@ class CategorySaveTask {
     required this.id,
     required this.categoryName,
     required this.totalUnits,
-  });
+    required this.categoryId,
+    required this.ownerUserId,
+    required this.isColorCategory,
+    required this.accessMode,
+    required List<String> experienceIds,
+  }) : experienceIds = List<String>.unmodifiable(experienceIds);
 
   final int id;
   final String categoryName;
   int completedUnits = 0;
   int totalUnits;
+  final String categoryId;
+  final String ownerUserId;
+  final bool isColorCategory;
+  final String accessMode;
+  final List<String> experienceIds;
 
   double? get progress {
     if (totalUnits <= 0) {
@@ -28,13 +38,45 @@ class CategorySaveTask {
     }
     return ratio;
   }
+
+  CategorySaveTaskSnapshot toSnapshot() => CategorySaveTaskSnapshot(
+        categoryId: categoryId,
+        ownerUserId: ownerUserId,
+        isColorCategory: isColorCategory,
+        experienceIds: experienceIds,
+        accessMode: accessMode,
+        categoryName: categoryName,
+      );
 }
 
 class CategorySaveMessage {
-  const CategorySaveMessage({required this.text, required this.isError});
+  const CategorySaveMessage({
+    required this.text,
+    required this.isError,
+    this.snapshot,
+  });
 
   final String text;
   final bool isError;
+  final CategorySaveTaskSnapshot? snapshot;
+}
+
+class CategorySaveTaskSnapshot {
+  CategorySaveTaskSnapshot({
+    required this.categoryId,
+    required this.ownerUserId,
+    required this.isColorCategory,
+    required List<String> experienceIds,
+    required this.accessMode,
+    required this.categoryName,
+  }) : experienceIds = List<String>.unmodifiable(experienceIds);
+
+  final String categoryId;
+  final String ownerUserId;
+  final bool isColorCategory;
+  final List<String> experienceIds;
+  final String accessMode;
+  final String categoryName;
 }
 
 class CategorySaveProgressController {
@@ -74,6 +116,11 @@ class CategorySaveProgressNotifier extends ChangeNotifier {
   Future<void> startCategorySave({
     required String categoryName,
     required int totalUnits,
+    required String categoryId,
+    required String ownerUserId,
+    required bool isColorCategory,
+    required String accessMode,
+    required List<String> experienceIds,
     required Future<void> Function(CategorySaveProgressController controller)
         saveOperation,
   }) async {
@@ -81,6 +128,11 @@ class CategorySaveProgressNotifier extends ChangeNotifier {
       id: _taskCounter++,
       categoryName: categoryName,
       totalUnits: totalUnits,
+      categoryId: categoryId,
+      ownerUserId: ownerUserId,
+      isColorCategory: isColorCategory,
+      accessMode: accessMode,
+      experienceIds: experienceIds,
     );
     _activeTasks.add(task);
     notifyListeners();
@@ -108,6 +160,7 @@ class CategorySaveProgressNotifier extends ChangeNotifier {
         CategorySaveMessage(
           text: 'Saved $categoryName Category',
           isError: false,
+          snapshot: task.toSnapshot(),
         ),
       );
     }).catchError((Object error, StackTrace stackTrace) {
@@ -117,6 +170,7 @@ class CategorySaveProgressNotifier extends ChangeNotifier {
         CategorySaveMessage(
           text: 'Failed to save $categoryName Category',
           isError: true,
+          snapshot: task.toSnapshot(),
         ),
       );
     }).whenComplete(() {

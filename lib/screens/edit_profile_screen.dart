@@ -1,7 +1,6 @@
 import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart'; // Added for FieldValue
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:plendy/screens/auth_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:firebase_storage/firebase_storage.dart';
@@ -323,10 +322,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
       // After deletion, navigate away from the profile screen, perhaps to the auth screen
       if (mounted) {
-        Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (context) => AuthScreen()), // Navigate to your main/auth screen
-          (Route<dynamic> route) => false, // Remove all previous routes
-        );
+        // Return to root and let auth StreamBuilder render AuthScreen
+        Navigator.of(context, rootNavigator: true).popUntil((route) => route.isFirst);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Account successfully deleted.')),
         );
