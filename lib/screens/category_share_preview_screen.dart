@@ -652,6 +652,7 @@ class _CategoryPreviewListState extends State<_CategoryPreviewList> {
           isColorCategory: isColorCategory,
           accessMode: accessMode,
           experienceIds: experienceIds,
+          maxRetries: 1,
           saveOperation: (controller) async {
             await service.grantSharedCategoryToUser(
               categoryId: categoryId,
@@ -909,6 +910,7 @@ class _MultiCategoryPreviewListState extends State<_MultiCategoryPreviewList> {
             isColorCategory: item.isColor,
             accessMode: accessMode,
             experienceIds: experienceIds,
+            maxRetries: 1,
             saveOperation: (controller) async {
               await service.grantSharedCategoryToUser(
                 categoryId: item.id,
