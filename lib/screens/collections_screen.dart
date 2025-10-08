@@ -299,6 +299,10 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   final Map<String, bool> _locationExpansionContent = {};
   bool _groupByCityExperiences = false;
   bool _groupByCityContent = false;
+  List<String> _manualCategoryOrder = [];
+  List<String> _manualColorCategoryOrder = [];
+  bool _useManualCategoryOrder = false;
+  bool _useManualColorCategoryOrder = false;
 
   // --- Persistent sort preference keys ---
   static const String _prefsKeyCategorySort = 'collections_category_sort';
@@ -310,6 +314,14 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       'collections_group_by_location_experiences';
   static const String _prefsKeyGroupByLocationContent =
       'collections_group_by_location_content';
+  static const String _prefsKeyCategoryOrderPrefix =
+      'collections_category_order_';
+  static const String _prefsKeyColorCategoryOrderPrefix =
+      'collections_color_category_order_';
+  static const String _prefsKeyUseManualCategoryOrderPrefix =
+      'collections_use_manual_category_order_';
+  static const String _prefsKeyUseManualColorCategoryOrderPrefix =
+      'collections_use_manual_color_category_order_';
 
   Future<void> _loadSortPreferences() async {
     try {
@@ -320,6 +332,21 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       final content = prefs.getString(_prefsKeyContentSort);
       final groupExp = prefs.getBool(_prefsKeyGroupByLocationExperiences);
       final groupContent = prefs.getBool(_prefsKeyGroupByLocationContent);
+      final String? userId = _authService.currentUser?.uid;
+      List<String>? manualCategoryOrder;
+      List<String>? manualColorCategoryOrder;
+      bool? manualCategoryOrderEnabled;
+      bool? manualColorCategoryOrderEnabled;
+      if (userId != null && userId.isNotEmpty) {
+        manualCategoryOrder =
+            prefs.getStringList('$_prefsKeyCategoryOrderPrefix$userId');
+        manualColorCategoryOrder =
+            prefs.getStringList('$_prefsKeyColorCategoryOrderPrefix$userId');
+        manualCategoryOrderEnabled = prefs
+            .getBool('$_prefsKeyUseManualCategoryOrderPrefix$userId');
+        manualColorCategoryOrderEnabled = prefs
+            .getBool('$_prefsKeyUseManualColorCategoryOrderPrefix$userId');
+      }
 
       setState(() {
         if (cat != null) {
@@ -347,6 +374,19 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         }
         if (groupContent != null) {
           _groupByLocationContent = groupContent;
+        }
+        if (manualCategoryOrder != null) {
+          _manualCategoryOrder = List<String>.from(manualCategoryOrder);
+        }
+        if (manualColorCategoryOrder != null) {
+          _manualColorCategoryOrder =
+              List<String>.from(manualColorCategoryOrder);
+        }
+        if (manualCategoryOrderEnabled != null) {
+          _useManualCategoryOrder = manualCategoryOrderEnabled;
+        }
+        if (manualColorCategoryOrderEnabled != null) {
+          _useManualColorCategoryOrder = manualColorCategoryOrderEnabled;
         }
       });
     } catch (_) {}
@@ -394,9 +434,122 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     } catch (_) {}
   }
 
+  String? _userSpecificPrefsKey(String prefix) {
+    final String? userId = _authService.currentUser?.uid;
+    if (userId == null || userId.isEmpty) {
+      return null;
+    }
+    return '$prefix$userId';
+  }
+
+  Future<void> _persistManualCategoryOrder() async {
+    final String? key = _userSpecificPrefsKey(_prefsKeyCategoryOrderPrefix);
+    if (key == null) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (_manualCategoryOrder.isEmpty) {
+        await prefs.remove(key);
+      } else {
+        await prefs.setStringList(key, List<String>.from(_manualCategoryOrder));
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _persistManualColorCategoryOrder() async {
+    final String? key =
+        _userSpecificPrefsKey(_prefsKeyColorCategoryOrderPrefix);
+    if (key == null) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (_manualColorCategoryOrder.isEmpty) {
+        await prefs.remove(key);
+      } else {
+        await prefs.setStringList(
+            key, List<String>.from(_manualColorCategoryOrder));
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _persistUseManualCategoryOrder() async {
+    final String? key =
+        _userSpecificPrefsKey(_prefsKeyUseManualCategoryOrderPrefix);
+    if (key == null) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(key, _useManualCategoryOrder);
+    } catch (_) {}
+  }
+
+  Future<void> _persistUseManualColorCategoryOrder() async {
+    final String? key =
+        _userSpecificPrefsKey(_prefsKeyUseManualColorCategoryOrderPrefix);
+    if (key == null) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(key, _useManualColorCategoryOrder);
+    } catch (_) {}
+  }
+
+  List<String> _syncManualOrderList(
+    List<String> existing,
+    Iterable<String> currentIds,
+  ) {
+    if (existing.isEmpty) {
+      return <String>[];
+    }
+    final Set<String> currentSet = currentIds.toSet();
+    final List<String> filtered = [
+      for (final id in existing)
+        if (currentSet.contains(id)) id,
+    ];
+    for (final id in currentIds) {
+      if (!filtered.contains(id)) {
+        filtered.add(id);
+      }
+    }
+    return filtered;
+  }
+
+  List<T> _applyManualOrder<T>({
+    required List<T> items,
+    required List<String> manualOrderIds,
+    required String Function(T) idSelector,
+  }) {
+    if (manualOrderIds.isEmpty) {
+      return items;
+    }
+    final Map<String, T> itemById = {
+      for (final item in items) idSelector(item): item
+    };
+    final List<T> ordered = [];
+    final Set<String> seen = {};
+    for (final id in manualOrderIds) {
+      final T? item = itemById[id];
+      if (item != null) {
+        ordered.add(item);
+        seen.add(id);
+      }
+    }
+    for (final item in items) {
+      final String id = idSelector(item);
+      if (!seen.contains(id)) {
+        ordered.add(item);
+      }
+    }
+    return ordered;
+  }
+
   void _applyCategorySortInMemory() {
-    final List<UserCategory> sorted = List<UserCategory>.from(_categories);
-    sorted.sort((a, b) => _compareCategoriesForSort(a, b, _categorySortType));
+    List<UserCategory> sorted = List<UserCategory>.from(_categories);
+    if (_useManualCategoryOrder && _manualCategoryOrder.isNotEmpty) {
+      sorted = _applyManualOrder<UserCategory>(
+        items: sorted,
+        manualOrderIds: _manualCategoryOrder,
+        idSelector: (category) => category.id,
+      );
+    } else {
+      sorted.sort((a, b) => _compareCategoriesForSort(a, b, _categorySortType));
+    }
     setState(() {
       _categories = sorted;
       _updateLocalOrderIndices();
@@ -404,9 +557,16 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   }
 
   void _applyColorCategorySortInMemory() {
-    final List<ColorCategory> sorted =
-        List<ColorCategory>.from(_colorCategories);
-    if (_colorCategorySortType == ColorCategorySortType.alphabetical) {
+    List<ColorCategory> sorted = List<ColorCategory>.from(_colorCategories);
+    if (_useManualColorCategoryOrder &&
+        _manualColorCategoryOrder.isNotEmpty) {
+      sorted = _applyManualOrder<ColorCategory>(
+        items: sorted,
+        manualOrderIds: _manualColorCategoryOrder,
+        idSelector: (category) => category.id,
+      );
+    } else if (_colorCategorySortType ==
+        ColorCategorySortType.alphabetical) {
       sorted
           .sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
     } else {
@@ -1575,10 +1735,19 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         }
       }
 
+      final List<String> combinedCategoryIdList =
+          combinedCategories.map((c) => c.id).toList();
+      final List<String> combinedColorCategoryIdList =
+          combinedColorCategories.map((c) => c.id).toList();
+      final List<String> updatedManualCategoryOrder =
+          _syncManualOrderList(_manualCategoryOrder, combinedCategoryIdList);
+      final List<String> updatedManualColorCategoryOrder =
+          _syncManualOrderList(
+              _manualColorCategoryOrder, combinedColorCategoryIdList);
       final Set<String> combinedCategoryIds =
-          combinedCategories.map((c) => c.id).toSet();
+          combinedCategoryIdList.toSet();
       final Set<String> combinedColorCategoryIds =
-          combinedColorCategories.map((c) => c.id).toSet();
+          combinedColorCategoryIdList.toSet();
       final List<Experience> filteredSharedExperiences =
           _filterExperiencesWithAssignments(
         sharedExperiences,
@@ -1590,6 +1759,9 @@ class _CollectionsScreenState extends State<CollectionsScreen>
 
       if (mounted) {
         setState(() {
+          _manualCategoryOrder = List<String>.from(updatedManualCategoryOrder);
+          _manualColorCategoryOrder =
+              List<String>.from(updatedManualColorCategoryOrder);
           _categories = combinedCategories;
           _sharedCategories = sharedUserCategories;
           _colorCategories = combinedColorCategories;
@@ -1634,6 +1806,13 @@ class _CollectionsScreenState extends State<CollectionsScreen>
           _selectedColorCategory = null;
           _contentLoaded = false;
         });
+        if (_useManualCategoryOrder && _manualCategoryOrder.isNotEmpty) {
+          unawaited(_persistManualCategoryOrder());
+        }
+        if (_useManualColorCategoryOrder &&
+            _manualColorCategoryOrder.isNotEmpty) {
+          unawaited(_persistManualColorCategoryOrder());
+        }
         // Apply persisted sorts immediately to combined lists so shared items are included
         _applyCategorySortInMemory();
         _applyColorCategorySortInMemory();
@@ -2194,19 +2373,13 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       return;
     }
 
-    setState(() => _isLoading = true);
-
     try {
       await _experienceService.updateCategoryOrder(updates);
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text("Error saving category order: $e")),
         );
-        setState(() => _isLoading = false);
         _loadData();
       }
     }
@@ -2396,13 +2569,6 @@ class _CollectionsScreenState extends State<CollectionsScreen>
             ),
           );
 
-          final Widget dragOrIcon = isShared || _isSelectingCategories
-              ? iconWidget
-              : ReorderableDragStartListener(
-                  index: index,
-                  child: iconWidget,
-                );
-
           final Widget leadingWidget = _isSelectingCategories
               ? Row(
                   mainAxisSize: MainAxisSize.min,
@@ -2419,10 +2585,10 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                         });
                       },
                     ),
-                    dragOrIcon,
+                    iconWidget,
                   ],
                 )
-              : dragOrIcon;
+              : iconWidget;
 
           final Widget subtitleWidget = shareLabel != null
               ? Column(
@@ -2441,8 +2607,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                 )
               : Text('$count ${count == 1 ? "experience" : "experiences"}');
 
-          return ListTile(
-            key: ValueKey(category.id),
+          final listTile = ListTile(
             contentPadding: const EdgeInsets.symmetric(horizontal: 7.0),
             minLeadingWidth: 24,
             leading: leadingWidget,
@@ -2534,6 +2699,13 @@ class _CollectionsScreenState extends State<CollectionsScreen>
               });
             },
           );
+
+          return ReorderableDelayedDragStartListener(
+            key: ValueKey(category.id),
+            index: index,
+            enabled: !_isSelectingCategories,
+            child: listTile,
+          );
         },
         onReorder: (int oldIndex, int newIndex) {
           if (newIndex > oldIndex) {
@@ -2545,18 +2717,16 @@ class _CollectionsScreenState extends State<CollectionsScreen>
               newIndex >= _categories.length) {
             return;
           }
-          final movingCategory = _categories[oldIndex];
-          final targetCategory = _categories[newIndex];
-          if (_sharedCategoryPermissions.containsKey(movingCategory.id) ||
-              _sharedCategoryPermissions.containsKey(targetCategory.id)) {
-            setState(() {});
-            return;
-          }
           setState(() {
             final UserCategory item = _categories.removeAt(oldIndex);
             _categories.insert(newIndex, item);
+            _manualCategoryOrder =
+                List<String>.from(_categories.map((c) => c.id));
+            _useManualCategoryOrder = true;
             _updateLocalOrderIndices();
           });
+          unawaited(_persistManualCategoryOrder());
+          unawaited(_persistUseManualCategoryOrder());
           _saveCategoryOrder();
         },
       );
@@ -2570,6 +2740,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
 
     setState(() {
       _categorySortType = sortType;
+      _useManualCategoryOrder = false;
+      _manualCategoryOrder = [];
       _categories = sorted;
       _updateLocalOrderIndices();
     });
@@ -2577,6 +2749,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     await _saveCategoryOrder();
     // Persist user preference so it applies next time
     unawaited(_saveCategorySort(sortType));
+    unawaited(_persistManualCategoryOrder());
+    unawaited(_persistUseManualCategoryOrder());
   }
 
   // MODIFIED: Method to apply sorting to the experiences list
@@ -6365,66 +6539,87 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   }
 
   void _updateLocalColorOrderIndices() {
+    final String? currentUserId = _authService.currentUser?.uid;
+    if (currentUserId == null || currentUserId.isEmpty) {
+      return;
+    }
+    int nextOrder = 0;
     for (int i = 0; i < _colorCategories.length; i++) {
-      _colorCategories[i] = _colorCategories[i].copyWith(orderIndex: i);
+      final ColorCategory category = _colorCategories[i];
+      if (category.ownerUserId != currentUserId) {
+        continue;
+      }
+      _colorCategories[i] =
+          category.copyWith(orderIndex: nextOrder);
+      nextOrder++;
     }
   }
 
   Future<void> _saveColorCategoryOrder() async {
-    setState(() => _isLoading = true);
+    final String? currentUserId = _authService.currentUser?.uid;
+    if (currentUserId == null || currentUserId.isEmpty) {
+      return;
+    }
     final List<Map<String, dynamic>> updates = [];
     for (final category in _colorCategories) {
+      if (category.ownerUserId != currentUserId) {
+        continue;
+      }
       if (category.id.isNotEmpty && category.orderIndex != null) {
         updates.add({
           'id': category.id,
           'orderIndex': category.orderIndex!,
         });
-      } else {}
+      }
     }
 
     if (updates.isEmpty) {
-      setState(() => _isLoading = false);
       return;
     }
 
     try {
       await _experienceService.updateColorCategoryOrder(updates);
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text("Error saving color category order: $e")),
         );
-        setState(() => _isLoading = false);
         _loadData(); // Revert on error
       }
     }
   }
 
   Future<void> _applyColorSortAndSave(ColorCategorySortType sortType) async {
+    final List<ColorCategory> sorted =
+        List<ColorCategory>.from(_colorCategories);
+    if (sortType == ColorCategorySortType.alphabetical) {
+      sorted.sort(
+          (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    } else {
+      sorted.sort((a, b) {
+        final tsA = a.lastUsedTimestamp;
+        final tsB = b.lastUsedTimestamp;
+        if (tsA == null && tsB == null) {
+          return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+        }
+        if (tsA == null) return 1;
+        if (tsB == null) return -1;
+        return tsB.compareTo(tsA);
+      });
+    }
+
     setState(() {
-      if (sortType == ColorCategorySortType.alphabetical) {
-        _colorCategories.sort(
-            (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-      } else if (sortType == ColorCategorySortType.mostRecent) {
-        _colorCategories.sort((a, b) {
-          final tsA = a.lastUsedTimestamp;
-          final tsB = b.lastUsedTimestamp;
-          if (tsA == null && tsB == null) {
-            return a.name.toLowerCase().compareTo(b.name.toLowerCase());
-          }
-          if (tsA == null) return 1;
-          if (tsB == null) return -1;
-          return tsB.compareTo(tsA);
-        });
-      }
+      _colorCategorySortType = sortType;
+      _useManualColorCategoryOrder = false;
+      _manualColorCategoryOrder = [];
+      _colorCategories = sorted;
       _updateLocalColorOrderIndices();
     });
     await _saveColorCategoryOrder();
     // Persist user preference so it applies next time
     unawaited(_saveColorCategorySort(sortType));
+    unawaited(_persistManualColorCategoryOrder());
+    unawaited(_persistUseManualColorCategoryOrder());
   }
 
   // --- ADDED: Helper to count experiences for a specific color category --- START ---
@@ -6612,13 +6807,6 @@ class _CollectionsScreenState extends State<CollectionsScreen>
             ),
           );
 
-          final Widget dragOrDot = isShared || _isSelectingCategories
-              ? colorDot
-              : ReorderableDragStartListener(
-                  index: index,
-                  child: colorDot,
-                );
-
           final Widget leadingWidget = _isSelectingCategories
               ? Row(
                   mainAxisSize: MainAxisSize.min,
@@ -6635,10 +6823,10 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                         });
                       },
                     ),
-                    dragOrDot,
+                    colorDot,
                   ],
                 )
-              : dragOrDot;
+              : colorDot;
 
           final Widget subtitleWidget = shareLabel != null
               ? Column(
@@ -6657,8 +6845,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                 )
               : Text('$count ${count == 1 ? "experience" : "experiences"}');
 
-          return ListTile(
-            key: ValueKey(category.id),
+          final listTile = ListTile(
             contentPadding: const EdgeInsets.symmetric(horizontal: 7.0),
             minLeadingWidth: 24,
             leading: leadingWidget,
@@ -6750,6 +6937,12 @@ class _CollectionsScreenState extends State<CollectionsScreen>
               });
             },
           );
+          return ReorderableDelayedDragStartListener(
+            key: ValueKey(category.id),
+            index: index,
+            enabled: !_isSelectingCategories,
+            child: listTile,
+          );
         },
         onReorder: (int oldIndex, int newIndex) {
           if (newIndex > oldIndex) {
@@ -6761,21 +6954,16 @@ class _CollectionsScreenState extends State<CollectionsScreen>
               newIndex >= _colorCategories.length) {
             return;
           }
-          final movingCategory = _colorCategories[oldIndex];
-          final targetCategory = _colorCategories[newIndex];
-          final bool movingShared =
-              _sharedCategoryIsColor[movingCategory.id] ?? false;
-          final bool targetShared =
-              _sharedCategoryIsColor[targetCategory.id] ?? false;
-          if (movingShared || targetShared) {
-            setState(() {});
-            return;
-          }
           setState(() {
             final ColorCategory item = _colorCategories.removeAt(oldIndex);
             _colorCategories.insert(newIndex, item);
+            _manualColorCategoryOrder =
+                List<String>.from(_colorCategories.map((c) => c.id));
+            _useManualColorCategoryOrder = true;
             _updateLocalColorOrderIndices();
           });
+          unawaited(_persistManualColorCategoryOrder());
+          unawaited(_persistUseManualColorCategoryOrder());
           _saveColorCategoryOrder();
         },
       );
@@ -9113,5 +9301,3 @@ class _BulkShareBottomSheetContentState
     );
   }
 }
-
-
