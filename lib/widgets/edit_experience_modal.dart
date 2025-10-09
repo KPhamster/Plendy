@@ -21,7 +21,8 @@ class EditExperienceModal extends StatefulWidget {
   final Experience experience;
   final List<UserCategory> userCategories;
   final List<ColorCategory> userColorCategories;
-  final bool enableDuplicatePrompt; // When true, check duplicate on open and allow switching to existing
+  final bool
+      enableDuplicatePrompt; // When true, check duplicate on open and allow switching to existing
 
   const EditExperienceModal({
     super.key,
@@ -47,7 +48,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
   List<UserCategory> _currentUserCategories = [];
   List<ColorCategory> _currentColorCategories = [];
   bool _isLoadingCategories = true; // Loading indicator for categories
-  
+
   // --- ADDED: ValueNotifiers for reactive category updates ---
   late ValueNotifier<List<UserCategory>> _userCategoriesNotifier;
   late ValueNotifier<List<ColorCategory>> _colorCategoriesNotifier;
@@ -71,10 +72,12 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
     _cardData.notesController.text = widget.experience.additionalNotes ?? '';
     _cardData.selectedCategoryId = widget.experience.categoryId;
     _cardData.selectedColorCategoryId = widget.experience.colorCategoryId;
-    _cardData.selectedOtherCategoryIds = List<String>.from(widget.experience.otherCategories); // Initialize other categories
+    _cardData.selectedOtherCategoryIds = List<String>.from(
+        widget.experience.otherCategories); // Initialize other categories
     _cardData.selectedLocation = widget.experience.location;
-    _cardData.locationEnabled.value = widget.experience.location.latitude != 0.0 ||
-        widget.experience.location.longitude != 0.0;
+    _cardData.locationEnabled.value =
+        widget.experience.location.latitude != 0.0 ||
+            widget.experience.location.longitude != 0.0;
 
     // If location exists, pre-fill searchController for display consistency (optional)
     if (_cardData.selectedLocation?.address != null) {
@@ -115,12 +118,12 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
     // --- ADDED: Remove Website listener ---
     _cardData.websiteController.removeListener(_triggerRebuild);
     // --- END ADDED ---
-    
+
     // --- ADDED: Dispose ValueNotifiers ---
     _userCategoriesNotifier.dispose();
     _colorCategoriesNotifier.dispose();
     // --- END ADDED ---
-    
+
     super.dispose();
   }
 
@@ -130,6 +133,13 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
       setState(() {});
     }
   }
+
+  String? _sharedOwnerLabel(String? ownerName) {
+    if (ownerName == null) return null;
+    final trimmed = ownerName.trim();
+    if (trimmed.isEmpty) return null;
+    return 'Shared by $trimmed';
+  }
   // --- END ADDED ---
 
   // --- ADDED: Methods to load categories locally ---
@@ -137,8 +147,8 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
     setState(() => _isLoadingCategories = true);
     try {
       final results = await Future.wait([
-        _experienceService.getUserCategories(),
-        _experienceService.getUserColorCategories(),
+        _experienceService.getUserCategories(includeSharedEditable: true),
+        _experienceService.getUserColorCategories(includeSharedEditable: true),
       ]);
       if (mounted) {
         setState(() {
@@ -169,12 +179,16 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
       if (placeId == null || placeId.isEmpty) return;
 
       // Avoid re-prompt if we already bound to an existing experience id
-      if ((_cardData.existingExperienceId != null && _cardData.existingExperienceId!.isNotEmpty)) {
+      if ((_cardData.existingExperienceId != null &&
+          _cardData.existingExperienceId!.isNotEmpty)) {
         return;
       }
 
       final userExperiences = await _experienceService.getUserExperiences();
-      final duplicate = userExperiences.where((e) => e.location.placeId == placeId).cast<Experience?>().firstOrNull;
+      final duplicate = userExperiences
+          .where((e) => e.location.placeId == placeId)
+          .cast<Experience?>()
+          .firstOrNull;
       if (duplicate == null) return;
 
       final bool? useExisting = await showDialog<bool>(
@@ -202,7 +216,8 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
       if (useExisting == true && mounted) {
         _applyExperienceToForm(duplicate);
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Loaded your existing experience for editing.')),
+          const SnackBar(
+              content: Text('Loaded your existing experience for editing.')),
         );
       }
     } catch (e) {
@@ -220,9 +235,11 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
       _cardData.notesController.text = src.additionalNotes ?? '';
       _cardData.selectedCategoryId = src.categoryId;
       _cardData.selectedColorCategoryId = src.colorCategoryId;
-      _cardData.selectedOtherCategoryIds = List<String>.from(src.otherCategories);
+      _cardData.selectedOtherCategoryIds =
+          List<String>.from(src.otherCategories);
       _cardData.selectedLocation = src.location;
-      _cardData.locationEnabled.value = src.location.latitude != 0.0 || src.location.longitude != 0.0;
+      _cardData.locationEnabled.value =
+          src.location.latitude != 0.0 || src.location.longitude != 0.0;
       if (_cardData.selectedLocation?.address != null) {
         _cardData.searchController.text = _cardData.selectedLocation!.address!;
       }
@@ -233,7 +250,9 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
     // Simplified version for targeted refresh
     setState(() => _isLoadingCategories = true);
     try {
-      final categories = await _experienceService.getUserCategories();
+      final categories = await _experienceService.getUserCategories(
+        includeSharedEditable: true,
+      );
       if (mounted) {
         setState(() {
           _currentUserCategories = categories;
@@ -258,7 +277,9 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
     // Simplified version for targeted refresh
     setState(() => _isLoadingCategories = true);
     try {
-      final categories = await _experienceService.getUserColorCategories();
+      final categories = await _experienceService.getUserColorCategories(
+        includeSharedEditable: true,
+      );
       if (mounted) {
         setState(() {
           _currentColorCategories = categories;
@@ -391,12 +412,23 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                         itemCount: _currentUserCategories.length,
                         itemBuilder: (context, index) {
                           final category = _currentUserCategories[index];
-                          final bool isSelected = 
+                          final bool isSelected =
                               category.id == _cardData.selectedCategoryId;
+                          final sharedLabel = _sharedOwnerLabel(
+                              category.sharedOwnerDisplayName);
                           return ListTile(
                             leading: Text(category.icon,
                                 style: const TextStyle(fontSize: 20)),
                             title: Text(category.name),
+                            subtitle: sharedLabel != null
+                                ? Text(
+                                    sharedLabel,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .bodySmall
+                                        ?.copyWith(color: Colors.grey[600]),
+                                  )
+                                : null,
                             trailing: isSelected
                                 ? const Icon(Icons.check, color: Colors.blue)
                                 : null,
@@ -422,17 +454,20 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                                 style: TextStyle(color: Colors.blue[700])),
                             onPressed: () async {
                               // Handle add category and refresh dialog
-                              final newCategory = await showModalBottomSheet<UserCategory>(
+                              final newCategory =
+                                  await showModalBottomSheet<UserCategory>(
                                 context: stfContext,
                                 backgroundColor: Colors.white,
                                 builder: (context) => const AddCategoryModal(),
                                 isScrollControlled: true,
                                 shape: const RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+                                  borderRadius: BorderRadius.vertical(
+                                      top: Radius.circular(16)),
                                 ),
                               );
                               if (newCategory != null && mounted) {
-                                print("Edit Modal: New user category added: ${newCategory.name} (${newCategory.icon})");
+                                print(
+                                    "Edit Modal: New user category added: ${newCategory.name} (${newCategory.icon})");
                                 setState(() {
                                   _cardData.selectedCategoryId = newCategory.id;
                                 });
@@ -440,7 +475,9 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                                 // Refresh the dialog
                                 stfSetState(() {});
                                 ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(content: Text('Category "${newCategory.name}" added and selected.')),
+                                  SnackBar(
+                                      content: Text(
+                                          'Category "${newCategory.name}" added and selected.')),
                                 );
                               }
                             },
@@ -455,22 +492,28 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                             label: Text('Edit Categories',
                                 style: TextStyle(color: Colors.orange[700])),
                             onPressed: () async {
-                              final bool? categoriesChanged = await showModalBottomSheet<bool>(
+                              final bool? categoriesChanged =
+                                  await showModalBottomSheet<bool>(
                                 context: stfContext,
                                 backgroundColor: Colors.white,
-                                builder: (context) => const EditCategoriesModal(),
+                                builder: (context) =>
+                                    const EditCategoriesModal(),
                                 isScrollControlled: true,
                                 shape: const RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+                                  borderRadius: BorderRadius.vertical(
+                                      top: Radius.circular(16)),
                                 ),
                               );
                               if (categoriesChanged == true && mounted) {
-                                print("Edit Modal: User Categories potentially changed.");
+                                print(
+                                    "Edit Modal: User Categories potentially changed.");
                                 await _loadUserCategories();
                                 // Check if current selection still exists
-                                final currentSelectionExists = _currentUserCategories
-                                    .any((cat) => cat.id == _cardData.selectedCategoryId);
-                                if (!currentSelectionExists && _cardData.selectedCategoryId != null) {
+                                final currentSelectionExists =
+                                    _currentUserCategories.any((cat) =>
+                                        cat.id == _cardData.selectedCategoryId);
+                                if (!currentSelectionExists &&
+                                    _cardData.selectedCategoryId != null) {
                                   setState(() {
                                     _cardData.selectedCategoryId = null;
                                   });
@@ -478,7 +521,9 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                                 // Refresh the dialog
                                 stfSetState(() {});
                                 ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(content: Text('Category list updated. Please review your selection.')),
+                                  const SnackBar(
+                                      content: Text(
+                                          'Category list updated. Please review your selection.')),
                                 );
                               }
                             },
@@ -501,9 +546,9 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
 
     // Handle the dialog result
     if (selectedValue != null) {
-      if (_cardData.selectedCategoryId != selectedValue) { 
+      if (_cardData.selectedCategoryId != selectedValue) {
         setState(() {
-          _cardData.selectedCategoryId = selectedValue; 
+          _cardData.selectedCategoryId = selectedValue;
         });
       }
     }
@@ -512,8 +557,8 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
 
   // Helper to get category icon
   String _getIconForSelectedCategory() {
-    final selectedId = _cardData.selectedCategoryId; 
-    if (selectedId == null) return '❓'; 
+    final selectedId = _cardData.selectedCategoryId;
+    if (selectedId == null) return '❓';
     try {
       final matchingCategory = _currentUserCategories.firstWhere(
         (category) => category.id == selectedId, // Find by ID
@@ -554,15 +599,19 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
     if (yelpUrlString.isNotEmpty) {
       // Behavior when Yelp URL field is NOT empty
       if (_isValidUrl(yelpUrlString) &&
-          (yelpUrlString.toLowerCase().contains('yelp.com/biz') || yelpUrlString.toLowerCase().contains('yelp.to/'))) { // Ensure it's a Yelp specific link for direct launch
+          (yelpUrlString.toLowerCase().contains('yelp.com/biz') ||
+              yelpUrlString.toLowerCase().contains('yelp.to/'))) {
+        // Ensure it's a Yelp specific link for direct launch
         uri = Uri.parse(yelpUrlString);
       } else {
         // Fallback to Yelp homepage if URL in field is invalid or not a specific Yelp business link
         // Or, consider showing an error: "Please enter a valid Yelp business page URL."
         uri = Uri.parse('https://www.yelp.com');
-         if (mounted) {
+        if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Invalid or non-specific Yelp URL. Opening Yelp home.')),
+            SnackBar(
+                content: Text(
+                    'Invalid or non-specific Yelp URL. Opening Yelp home.')),
           );
         }
       }
@@ -577,7 +626,8 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
         if (addressString != null && addressString.isNotEmpty) {
           // Both title and address are available
           String searchLoc = Uri.encodeComponent(addressString);
-          uri = Uri.parse('https://www.yelp.com/search?find_desc=$searchDesc&find_loc=$searchLoc');
+          uri = Uri.parse(
+              'https://www.yelp.com/search?find_desc=$searchDesc&find_loc=$searchLoc');
         } else {
           // Only title is available, address is not
           uri = Uri.parse('https://www.yelp.com/search?find_desc=$searchDesc');
@@ -833,6 +883,8 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                       final category = categoriesToShow[index];
                       final bool isSelected = category.id ==
                           _cardData.selectedColorCategoryId; // Use _cardData
+                      final sharedLabel =
+                          _sharedOwnerLabel(category.sharedOwnerDisplayName);
                       return ListTile(
                         leading: Container(
                           width: 24,
@@ -844,6 +896,15 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                                   color: Colors.grey.shade400, width: 1)),
                         ),
                         title: Text(category.name),
+                        subtitle: sharedLabel != null
+                            ? Text(
+                                sharedLabel,
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .bodySmall
+                                    ?.copyWith(color: Colors.grey[600]),
+                              )
+                            : null,
                         trailing: isSelected
                             ? const Icon(Icons.check, color: Colors.blue)
                             : null,
@@ -943,18 +1004,22 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
               ),
             );
             if (categoriesChanged == true && mounted) {
-              print("Edit Modal: User Categories potentially changed from Other Categories dialog.");
+              print(
+                  "Edit Modal: User Categories potentially changed from Other Categories dialog.");
               await _loadUserCategories();
               // Check if current selection still exists
               final currentSelectionExists = _currentUserCategories
                   .any((cat) => cat.id == _cardData.selectedCategoryId);
-              if (!currentSelectionExists && _cardData.selectedCategoryId != null) {
+              if (!currentSelectionExists &&
+                  _cardData.selectedCategoryId != null) {
                 setState(() {
                   _cardData.selectedCategoryId = null;
                 });
               }
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Category list updated. Please review your selection.')),
+                const SnackBar(
+                    content: Text(
+                        'Category list updated. Please review your selection.')),
               );
               // After editing categories, reopen this dialog
               if (mounted) {
@@ -974,10 +1039,12 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
               ),
             );
             if (newCategory != null && mounted) {
-              print("Edit Modal: New user category added from Other Categories dialog: ${newCategory.name} (${newCategory.icon})");
+              print(
+                  "Edit Modal: New user category added from Other Categories dialog: ${newCategory.name} (${newCategory.icon})");
               await _loadUserCategories();
               ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('Category "${newCategory.name}" added.')),
+                SnackBar(
+                    content: Text('Category "${newCategory.name}" added.')),
               );
               // After adding the category, reopen this dialog
               if (mounted) {
@@ -1060,490 +1127,514 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
           child: Form(
             key: _formKey,
             child: Column(
-            mainAxisSize: MainAxisSize.min, // Fit content vertically
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Modal Title
-              Text(
-                'Edit Experience',
-                style: Theme.of(context).textTheme.headlineSmall,
-              ),
-              const SizedBox(height: 20),
+              mainAxisSize: MainAxisSize.min, // Fit content vertically
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Modal Title
+                Text(
+                  'Edit Experience',
+                  style: Theme.of(context).textTheme.headlineSmall,
+                ),
+                const SizedBox(height: 20),
 
-              // --- Form Fields (Similar to ExperienceCardForm) ---
+                // --- Form Fields (Similar to ExperienceCardForm) ---
 
-              // Location selection (using adapted widget/logic)
-              GestureDetector(
-                onTap: (_cardData.locationEnabled.value) ? _showLocationPicker : null,
-                child: Container(
+                // Location selection (using adapted widget/logic)
+                GestureDetector(
+                  onTap: (_cardData.locationEnabled.value)
+                      ? _showLocationPicker
+                      : null,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      border: Border.all(
+                          color: _cardData.locationEnabled.value
+                              ? Colors.grey
+                              : Colors.grey.shade300),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    padding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                    child: Row(
+                      children: [
+                        Icon(Icons.location_on,
+                            color: _cardData.locationEnabled.value
+                                ? Colors.grey[600]
+                                : Colors.grey[400]),
+                        SizedBox(width: 12),
+                        Expanded(
+                          child: _cardData.selectedLocation != null &&
+                                  _cardData.selectedLocation!.latitude != 0.0
+                              ? Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      _cardData.selectedLocation!
+                                          .getPlaceName(), // Use helper
+                                      style: TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          color: _cardData.locationEnabled.value
+                                              ? Colors.black
+                                              : Colors.grey[500]),
+                                    ),
+                                    if (_cardData.selectedLocation!.address !=
+                                        null)
+                                      Text(
+                                        _cardData.selectedLocation!.address!,
+                                        style: TextStyle(
+                                            fontSize: 12,
+                                            color:
+                                                _cardData.locationEnabled.value
+                                                    ? Colors.black87
+                                                    : Colors.grey[500]),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                  ],
+                                )
+                              : Text(
+                                  'Select location',
+                                  style: TextStyle(
+                                      color: _cardData.locationEnabled.value
+                                          ? Colors.grey[600]
+                                          : Colors.grey[400]),
+                                ),
+                        ),
+                        Transform.scale(
+                          // Toggle switch
+                          scale: 0.8,
+                          child: Switch(
+                            value: _cardData.locationEnabled.value,
+                            onChanged: (value) {
+                              setState(() {
+                                _cardData.locationEnabled.value = value;
+                              });
+                            },
+                            activeColor: Colors.blue,
+                            materialTapTargetSize:
+                                MaterialTapTargetSize.shrinkWrap,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                SizedBox(height: 16),
+
+                // Experience title
+                TextFormField(
+                  controller: _cardData.titleController,
+                  decoration: InputDecoration(
+                    labelText: 'Experience Title',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.title),
+                    filled: true,
+                    fillColor: Colors.white,
+                  ),
+                  validator: (value) {
+                    if (value == null || value.isEmpty) {
+                      return 'Please enter a title';
+                    }
+                    return null;
+                  },
+                ),
+                SizedBox(height: 16),
+
+                // Category Selection Button
+                Text('Primary Category',
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodyMedium
+                        ?.copyWith(color: Colors.grey[600])),
+                const SizedBox(height: 4),
+                OutlinedButton(
+                  onPressed: _isLoadingCategories
+                      ? null
+                      : _showCategorieselectionDialog,
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 15),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8.0)),
+                    side: BorderSide(color: Colors.grey),
+                    alignment: Alignment.centerLeft,
+                    backgroundColor: Colors.white,
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        children: [
+                          Text(_getIconForSelectedCategory(),
+                              style: const TextStyle(fontSize: 18)),
+                          const SizedBox(width: 8),
+                          Text(
+                            _currentUserCategories
+                                    .firstWhereOrNull((cat) =>
+                                        cat.id == _cardData.selectedCategoryId)
+                                    ?.name ??
+                                'Select Category',
+                            style: TextStyle(
+                                color: _cardData.selectedCategoryId != null
+                                    ? Theme.of(context)
+                                        .textTheme
+                                        .bodyLarge
+                                        ?.color
+                                    : Colors.grey[600]),
+                          ),
+                        ],
+                      ),
+                      const Icon(Icons.arrow_drop_down, color: Colors.grey),
+                    ],
+                  ),
+                ),
+                // TODO: Add validation message display if needed
+                SizedBox(height: 16),
+
+                // Color Category Selection Button
+                Text('Color Category',
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodyMedium
+                        ?.copyWith(color: Colors.grey[600])),
+                const SizedBox(height: 4),
+                OutlinedButton(
+                  onPressed: _isLoadingCategories
+                      ? null
+                      : _showColorCategorySelectionDialog,
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 15),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8.0)),
+                    side: BorderSide(color: Colors.grey),
+                    alignment: Alignment.centerLeft,
+                    backgroundColor: Colors.white,
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        children: [
+                          // Display selected category color circle
+                          Container(
+                            width: 18,
+                            height: 18,
+                            decoration: BoxDecoration(
+                                color:
+                                    _getColorForSelectedCategory(), // Use helper
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                    color: Colors.grey.shade400, width: 1)),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            _getSelectedColorCategoryObject()?.name ??
+                                'Select Color Category',
+                            style: TextStyle(
+                              color: _cardData.selectedColorCategoryId != null
+                                  ? Theme.of(context).textTheme.bodyLarge?.color
+                                  : Colors.grey[600],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const Icon(Icons.arrow_drop_down, color: Colors.grey),
+                    ],
+                  ),
+                ),
+                SizedBox(height: 16),
+
+                // --- ADDED: Other Categories Selection ---
+                Text('Other Categories',
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodyMedium
+                        ?.copyWith(color: Colors.grey[600])),
+                const SizedBox(height: 4),
+                Container(
+                  width: double.infinity, // Ensure it takes full width
+                  padding: const EdgeInsets.all(12.0),
                   decoration: BoxDecoration(
                     color: Colors.white,
-                    border: Border.all(
-                        color: _cardData.locationEnabled.value
-                            ? Colors.grey
-                            : Colors.grey.shade300),
-                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(color: Colors.grey),
+                    borderRadius: BorderRadius.circular(8.0),
                   ),
-                  padding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                  child: Row(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Icon(Icons.location_on,
-                          color: _cardData.locationEnabled.value
-                              ? Colors.grey[600]
-                              : Colors.grey[400]),
-                      SizedBox(width: 12),
-                      Expanded(
-                        child: _cardData.selectedLocation != null &&
-                                _cardData.selectedLocation!.latitude != 0.0
-                            ? Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    _cardData.selectedLocation!
-                                        .getPlaceName(), // Use helper
-                                    style: TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        color: _cardData.locationEnabled.value
-                                            ? Colors.black
-                                            : Colors.grey[500]),
-                                  ),
-                                  if (_cardData.selectedLocation!.address !=
-                                      null)
-                                    Text(
-                                      _cardData.selectedLocation!.address!,
-                                      style: TextStyle(
-                                          fontSize: 12,
-                                          color: _cardData.locationEnabled.value
-                                              ? Colors.black87
-                                              : Colors.grey[500]),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                ],
-                              )
-                            : Text(
-                                'Select location',
-                                style: TextStyle(
-                                    color: _cardData.locationEnabled.value
-                                        ? Colors.grey[600]
-                                        : Colors.grey[400]),
-                              ),
-                      ),
-                      Transform.scale(
-                        // Toggle switch
-                        scale: 0.8,
-                        child: Switch(
-                          value: _cardData.locationEnabled.value,
-                          onChanged: (value) {
-                            setState(() {
-                              _cardData.locationEnabled.value = value;
-                            });
-                          },
-                          activeColor: Colors.blue,
-                          materialTapTargetSize:
-                              MaterialTapTargetSize.shrinkWrap,
+                      if (_cardData.selectedOtherCategoryIds.isEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8.0),
+                          child: Text(
+                            'No other categories assigned.',
+                            style: TextStyle(color: Colors.grey[700]),
+                          ),
+                        )
+                      else
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8.0),
+                          child: Wrap(
+                            spacing: 6.0,
+                            runSpacing: 6.0,
+                            children: _cardData.selectedOtherCategoryIds
+                                .map((categoryId) {
+                              final category =
+                                  _currentUserCategories.firstWhereOrNull(
+                                      (cat) => cat.id == categoryId);
+                              if (category == null)
+                                return const SizedBox.shrink();
+                              return Chip(
+                                avatar: Text(category.icon,
+                                    style: const TextStyle(fontSize: 14)),
+                                label: Text(category.name),
+                                onDeleted: () {
+                                  setState(() {
+                                    _cardData.selectedOtherCategoryIds
+                                        .remove(categoryId);
+                                  });
+                                },
+                                materialTapTargetSize:
+                                    MaterialTapTargetSize.shrinkWrap,
+                                padding:
+                                    const EdgeInsets.symmetric(horizontal: 0),
+                                visualDensity: VisualDensity.compact,
+                                labelPadding:
+                                    const EdgeInsets.symmetric(horizontal: 4.0),
+                                deleteIconColor: Colors.grey[600],
+                                deleteButtonTooltipMessage: 'Remove category',
+                              );
+                            }).toList(),
+                          ),
+                        ),
+                      Center(
+                        child: TextButton.icon(
+                          icon: const Icon(Icons.add, size: 20),
+                          label: const Text('Add / Edit Categories'),
+                          onPressed: _showOtherCategoriesSelectionDialog,
+                          style: TextButton.styleFrom(
+                            visualDensity: VisualDensity.compact,
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                          ),
                         ),
                       ),
                     ],
                   ),
                 ),
-              ),
-              SizedBox(height: 16),
+                // --- END ADDED ---
 
-              // Experience title
-              TextFormField(
-                controller: _cardData.titleController,
-                decoration: InputDecoration(
-                  labelText: 'Experience Title',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.title),
-                  filled: true,
-                  fillColor: Colors.white,
-                ),
-                validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Please enter a title';
-                  }
-                  return null;
-                },
-              ),
-              SizedBox(height: 16),
+                SizedBox(height: 16),
 
-              // Category Selection Button
-              Text('Primary Category',
-                  style: Theme.of(context)
-                      .textTheme
-                      .bodyMedium
-                      ?.copyWith(color: Colors.grey[600])),
-              const SizedBox(height: 4),
-              OutlinedButton(
-                onPressed:
-                    _isLoadingCategories ? null : _showCategorieselectionDialog,
-                style: OutlinedButton.styleFrom(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 15),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8.0)),
-                  side: BorderSide(color: Colors.grey),
-                  alignment: Alignment.centerLeft,
-                  backgroundColor: Colors.white,
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Row(
-                      children: [
-                        Text(_getIconForSelectedCategory(),
-                            style: const TextStyle(fontSize: 18)),
-                        const SizedBox(width: 8),
-                        Text(
-                          _currentUserCategories.firstWhereOrNull((cat) => cat.id == _cardData.selectedCategoryId)?.name ?? 'Select Category',
-                          style: TextStyle(
-                              color: _cardData.selectedCategoryId != null
-                                  ? Theme.of(context).textTheme.bodyLarge?.color
-                                  : Colors.grey[600]),
-                        ),
-                      ],
-                    ),
-                    const Icon(Icons.arrow_drop_down, color: Colors.grey),
-                  ],
-                ),
-              ),
-              // TODO: Add validation message display if needed
-              SizedBox(height: 16),
-
-              // Color Category Selection Button
-              Text('Color Category',
-                  style: Theme.of(context)
-                      .textTheme
-                      .bodyMedium
-                      ?.copyWith(color: Colors.grey[600])),
-              const SizedBox(height: 4),
-              OutlinedButton(
-                onPressed: _isLoadingCategories
-                    ? null
-                    : _showColorCategorySelectionDialog,
-                style: OutlinedButton.styleFrom(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 15),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8.0)),
-                  side: BorderSide(color: Colors.grey),
-                  alignment: Alignment.centerLeft,
-                  backgroundColor: Colors.white,
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Row(
-                      children: [
-                        // Display selected category color circle
-                        Container(
-                          width: 18,
-                          height: 18,
-                          decoration: BoxDecoration(
-                              color:
-                                  _getColorForSelectedCategory(), // Use helper
-                              shape: BoxShape.circle,
-                              border: Border.all(
-                                  color: Colors.grey.shade400, width: 1)),
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          _getSelectedColorCategoryObject()?.name ??
-                              'Select Color Category',
-                          style: TextStyle(
-                            color: _cardData.selectedColorCategoryId != null
-                                ? Theme.of(context).textTheme.bodyLarge?.color
-                                : Colors.grey[600],
-                          ),
-                        ),
-                      ],
-                    ),
-                    const Icon(Icons.arrow_drop_down, color: Colors.grey),
-                  ],
-                ),
-              ),
-              SizedBox(height: 16),
-
-              // --- ADDED: Other Categories Selection ---
-              Text('Other Categories',
-                  style: Theme.of(context)
-                      .textTheme
-                      .bodyMedium
-                      ?.copyWith(color: Colors.grey[600])),
-              const SizedBox(height: 4),
-              Container(
-                width: double.infinity, // Ensure it takes full width
-                padding: const EdgeInsets.all(12.0),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  border: Border.all(color: Colors.grey),
-                  borderRadius: BorderRadius.circular(8.0),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (_cardData.selectedOtherCategoryIds.isEmpty)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 8.0),
-                        child: Text(
-                          'No other categories assigned.',
-                          style: TextStyle(color: Colors.grey[700]),
-                        ),
-                      )
-                    else
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 8.0),
-                        child: Wrap(
-                          spacing: 6.0,
-                          runSpacing: 6.0,
-                          children: _cardData.selectedOtherCategoryIds.map((categoryId) {
-                            final category = _currentUserCategories.firstWhereOrNull((cat) => cat.id == categoryId);
-                            if (category == null) return const SizedBox.shrink();
-                            return Chip(
-                              avatar: Text(category.icon,
-                                  style: const TextStyle(fontSize: 14)),
-                              label: Text(category.name),
-                              onDeleted: () {
-                                setState(() {
-                                  _cardData.selectedOtherCategoryIds.remove(categoryId);
-                                });
+                // Yelp URL
+                TextFormField(
+                  controller: _cardData.yelpUrlController,
+                  decoration: InputDecoration(
+                      labelText: 'Yelp URL (optional)',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(FontAwesomeIcons.yelp),
+                      filled: true,
+                      fillColor: Colors.white,
+                      // --- ADDED: Suffix Icons ---
+                      suffixIconConstraints: BoxConstraints.tightFor(
+                          width: 110, // Keep width for three icons
+                          height: 48),
+                      suffixIcon: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: <Widget>[
+                          // Clear button (now first)
+                          if (_cardData.yelpUrlController.text.isNotEmpty)
+                            InkWell(
+                              onTap: () {
+                                _cardData.yelpUrlController.clear();
+                                // Listener will call _triggerRebuild
                               },
-                              materialTapTargetSize:
-                                  MaterialTapTargetSize.shrinkWrap,
-                              padding: const EdgeInsets.symmetric(horizontal: 0),
-                              visualDensity: VisualDensity.compact,
-                              labelPadding: const EdgeInsets.symmetric(horizontal: 4.0),
-                              deleteIconColor: Colors.grey[600],
-                              deleteButtonTooltipMessage: 'Remove category',
-                            );
-                          }).toList(),
-                        ),
-                      ),
-                    Center(
-                      child: TextButton.icon(
-                        icon: const Icon(Icons.add, size: 20),
-                        label: const Text('Add / Edit Categories'),
-                        onPressed: _showOtherCategoriesSelectionDialog,
-                        style: TextButton.styleFrom(
-                          visualDensity: VisualDensity.compact,
-                          padding: const EdgeInsets.symmetric(horizontal: 12),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              // --- END ADDED ---
+                              borderRadius: BorderRadius.circular(16),
+                              child: Padding(
+                                padding: const EdgeInsets.all(
+                                    4.0), // No horizontal padding needed here
+                                child: Icon(Icons.clear, size: 22),
+                              ),
+                            ),
+                          // Spacer
+                          if (_cardData.yelpUrlController.text
+                              .isNotEmpty) // Only show spacer if clear button is shown
+                            const SizedBox(width: 4),
 
-              SizedBox(height: 16),
-
-              // Yelp URL
-              TextFormField(
-                controller: _cardData.yelpUrlController,
-                decoration: InputDecoration(
-                    labelText: 'Yelp URL (optional)',
-                    border: OutlineInputBorder(),
-                    prefixIcon: Icon(FontAwesomeIcons.yelp),
-                    filled: true,
-                    fillColor: Colors.white,
-                    // --- ADDED: Suffix Icons ---
-                    suffixIconConstraints: BoxConstraints.tightFor(
-                        width: 110, // Keep width for three icons
-                        height: 48),
-                    suffixIcon: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: <Widget>[
-                        // Clear button (now first)
-                        if (_cardData.yelpUrlController.text.isNotEmpty)
+                          // Paste button (now second)
                           InkWell(
-                            onTap: () {
-                              _cardData.yelpUrlController.clear();
-                              // Listener will call _triggerRebuild
-                            },
+                            onTap: _pasteYelpUrlFromClipboard,
                             borderRadius: BorderRadius.circular(16),
                             child: Padding(
-                              padding: const EdgeInsets.all(4.0), // No horizontal padding needed here
-                              child: Icon(Icons.clear, size: 22),
+                              padding: const EdgeInsets.all(
+                                  4.0), // No horizontal padding needed here
+                              child: Icon(Icons.content_paste,
+                                  size: 22, color: Colors.blue[700]),
                             ),
                           ),
-                        // Spacer
-                        if (_cardData.yelpUrlController.text
-                            .isNotEmpty) // Only show spacer if clear button is shown
+
+                          // Spacer
                           const SizedBox(width: 4),
 
-                        // Paste button (now second)
-                        InkWell(
-                          onTap: _pasteYelpUrlFromClipboard,
-                          borderRadius: BorderRadius.circular(16),
-                          child: Padding(
-                            padding: const EdgeInsets.all(4.0), // No horizontal padding needed here
-                            child: Icon(Icons.content_paste,
-                                size: 22, color: Colors.blue[700]),
-                          ),
-                        ),
-
-                        // Spacer
-                        const SizedBox(width: 4),
-
-                        // Yelp launch button (remains last)
-                        InkWell(
-                          onTap: _launchYelpUrl, // MODIFIED: Always call _launchYelpUrl
-                          borderRadius: BorderRadius.circular(16),
-                          child: Padding(
-                            padding: const EdgeInsets.fromLTRB(4.0, 4.0, 8.0, 4.0),
-                            child: Icon(FontAwesomeIcons.yelp,
-                                size: 22,
-                                color: Colors.red[700]), // MODIFIED: Always active color
-                          ),
-                        ),
-                      ],
-                    )
-                    // --- END ADDED ---
-                    ),
-                keyboardType: TextInputType.url,
-                validator: (value) {
-                  if (value != null &&
-                      value.isNotEmpty &&
-                      !_isValidUrl(value)) {
-                    return 'Please enter a valid URL (http/https)';
-                  }
-                  return null;
-                },
-              ),
-              SizedBox(height: 16),
-
-              // Official website
-              TextFormField(
-                controller: _cardData.websiteController,
-                decoration: InputDecoration(
-                    labelText: 'Official Website (optional)',
-                    border: OutlineInputBorder(),
-                    prefixIcon: Icon(Icons.language),
-                    filled: true,
-                    fillColor: Colors.white,
-                    // --- MODIFIED: Add Paste button to suffix ---
-                    suffixIconConstraints: BoxConstraints.tightFor(
-                        width: 110, // Keep width for three icons
-                        height: 48),
-                    suffixIcon: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: <Widget>[
-                        // Clear button (first)
-                        if (_cardData.websiteController.text.isNotEmpty)
+                          // Yelp launch button (remains last)
                           InkWell(
-                            onTap: () {
-                              _cardData.websiteController.clear();
-                            },
+                            onTap:
+                                _launchYelpUrl, // MODIFIED: Always call _launchYelpUrl
                             borderRadius: BorderRadius.circular(16),
                             child: Padding(
                               padding:
-                                  const EdgeInsets.all(4.0),
-                              child: Icon(Icons.clear, size: 22),
+                                  const EdgeInsets.fromLTRB(4.0, 4.0, 8.0, 4.0),
+                              child: Icon(FontAwesomeIcons.yelp,
+                                  size: 22,
+                                  color: Colors.red[
+                                      700]), // MODIFIED: Always active color
                             ),
                           ),
-                        // Spacer
-                        if (_cardData.websiteController.text.isNotEmpty)
+                        ],
+                      )
+                      // --- END ADDED ---
+                      ),
+                  keyboardType: TextInputType.url,
+                  validator: (value) {
+                    if (value != null &&
+                        value.isNotEmpty &&
+                        !_isValidUrl(value)) {
+                      return 'Please enter a valid URL (http/https)';
+                    }
+                    return null;
+                  },
+                ),
+                SizedBox(height: 16),
+
+                // Official website
+                TextFormField(
+                  controller: _cardData.websiteController,
+                  decoration: InputDecoration(
+                      labelText: 'Official Website (optional)',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.language),
+                      filled: true,
+                      fillColor: Colors.white,
+                      // --- MODIFIED: Add Paste button to suffix ---
+                      suffixIconConstraints: BoxConstraints.tightFor(
+                          width: 110, // Keep width for three icons
+                          height: 48),
+                      suffixIcon: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: <Widget>[
+                          // Clear button (first)
+                          if (_cardData.websiteController.text.isNotEmpty)
+                            InkWell(
+                              onTap: () {
+                                _cardData.websiteController.clear();
+                              },
+                              borderRadius: BorderRadius.circular(16),
+                              child: Padding(
+                                padding: const EdgeInsets.all(4.0),
+                                child: Icon(Icons.clear, size: 22),
+                              ),
+                            ),
+                          // Spacer
+                          if (_cardData.websiteController.text.isNotEmpty)
+                            const SizedBox(width: 4),
+
+                          // Paste button (second)
+                          InkWell(
+                            onTap: _pasteWebsiteUrlFromClipboard,
+                            borderRadius: BorderRadius.circular(16),
+                            child: Padding(
+                              padding: const EdgeInsets.all(4.0),
+                              child: Icon(Icons.content_paste,
+                                  size: 22, color: Colors.blue[700]),
+                            ),
+                          ),
+
+                          // Spacer
                           const SizedBox(width: 4),
 
-                        // Paste button (second)
-                        InkWell(
-                          onTap: _pasteWebsiteUrlFromClipboard,
-                          borderRadius: BorderRadius.circular(16),
-                          child: Padding(
-                            padding: const EdgeInsets.all(4.0),
-                            child: Icon(Icons.content_paste,
-                                size: 22, color: Colors.blue[700]),
+                          // Launch button (last)
+                          InkWell(
+                            onTap: _cardData
+                                        .websiteController.text.isNotEmpty &&
+                                    _isValidUrl(
+                                        _cardData.websiteController.text.trim())
+                                ? () => _launchUrl(
+                                    _cardData.websiteController.text.trim())
+                                : null,
+                            borderRadius: BorderRadius.circular(16),
+                            child: Padding(
+                              padding:
+                                  const EdgeInsets.fromLTRB(4.0, 4.0, 8.0, 4.0),
+                              child: Icon(Icons.launch,
+                                  size: 22,
+                                  color: _cardData.websiteController.text
+                                              .isNotEmpty &&
+                                          _isValidUrl(_cardData
+                                              .websiteController.text
+                                              .trim())
+                                      ? Colors.blue[700]
+                                      : Colors.grey),
+                            ),
                           ),
-                        ),
-
-                        // Spacer
-                        const SizedBox(width: 4),
-
-                        // Launch button (last)
-                        InkWell(
-                          onTap: _cardData.websiteController.text.isNotEmpty &&
-                                  _isValidUrl(
-                                      _cardData.websiteController.text.trim())
-                              ? () => _launchUrl(
-                                  _cardData.websiteController.text.trim())
-                              : null,
-                          borderRadius: BorderRadius.circular(16),
-                          child: Padding(
-                            padding: const EdgeInsets.fromLTRB(4.0, 4.0, 8.0, 4.0),
-                            child: Icon(Icons.launch,
-                                size: 22,
-                                color: _cardData.websiteController.text
-                                            .isNotEmpty &&
-                                        _isValidUrl(_cardData
-                                            .websiteController.text
-                                            .trim())
-                                    ? Colors.blue[700]
-                                    : Colors.grey),
-                          ),
-                        ),
-                      ],
-                    )
-                    // --- END MODIFICATION ---
-                    ),
-                keyboardType: TextInputType.url,
-                validator: (value) {
-                  if (value != null &&
-                      value.isNotEmpty &&
-                      !_isValidUrl(value)) {
-                    return 'Please enter a valid URL (http/https)';
-                  }
-                  return null;
-                },
-              ),
-              SizedBox(height: 16),
-
-              // Notes field (using description/additionalNotes)
-              TextFormField(
-                controller: _cardData.notesController,
-                decoration: InputDecoration(
-                  labelText: 'Notes (optional)', // Or 'Description'
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.notes),
-                  alignLabelWithHint: true,
-                  filled: true,
-                  fillColor: Colors.white,
+                        ],
+                      )
+                      // --- END MODIFICATION ---
+                      ),
+                  keyboardType: TextInputType.url,
+                  validator: (value) {
+                    if (value != null &&
+                        value.isNotEmpty &&
+                        !_isValidUrl(value)) {
+                      return 'Please enter a valid URL (http/https)';
+                    }
+                    return null;
+                  },
                 ),
-                keyboardType: TextInputType.multiline,
-                minLines: 3,
-                maxLines: null,
-              ),
-              SizedBox(height: 24), // Space before buttons
+                SizedBox(height: 16),
 
-              // --- Action Buttons ---
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  TextButton(
-                    onPressed: () =>
-                        Navigator.of(context).pop(), // Close without saving
-                    child: const Text('Cancel'),
+                // Notes field (using description/additionalNotes)
+                TextFormField(
+                  controller: _cardData.notesController,
+                  decoration: InputDecoration(
+                    labelText: 'Notes (optional)', // Or 'Description'
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.notes),
+                    alignLabelWithHint: true,
+                    filled: true,
+                    fillColor: Colors.white,
                   ),
-                  const SizedBox(width: 8),
-                  ElevatedButton(
-                    onPressed: _saveAndClose,
-                    style: ElevatedButton.styleFrom(
-                        // backgroundColor: Theme.of(context).primaryColor, // Optional styling
-                        // foregroundColor: Colors.white,
-                        ),
-                    child: const Text('Save Changes'),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16), // Bottom padding
-            ],
+                  keyboardType: TextInputType.multiline,
+                  minLines: 3,
+                  maxLines: null,
+                ),
+                SizedBox(height: 24), // Space before buttons
+
+                // --- Action Buttons ---
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    TextButton(
+                      onPressed: () =>
+                          Navigator.of(context).pop(), // Close without saving
+                      child: const Text('Cancel'),
+                    ),
+                    const SizedBox(width: 8),
+                    ElevatedButton(
+                      onPressed: _saveAndClose,
+                      style: ElevatedButton.styleFrom(
+                          // backgroundColor: Theme.of(context).primaryColor, // Optional styling
+                          // foregroundColor: Colors.white,
+                          ),
+                      child: const Text('Save Changes'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16), // Bottom padding
+              ],
+            ),
           ),
         ),
       ),
-    ),
     );
   }
 
@@ -1630,6 +1721,13 @@ class _OtherCategoriesSelectionDialogState
     extends State<_OtherCategoriesSelectionDialog> {
   late Set<String> _selectedIds;
 
+  String? _sharedOwnerLabel(String? ownerName) {
+    if (ownerName == null) return null;
+    final trimmed = ownerName.trim();
+    if (trimmed.isEmpty) return null;
+    return 'Shared by $trimmed';
+  }
+
   @override
   void initState() {
     super.initState();
@@ -1654,7 +1752,7 @@ class _OtherCategoriesSelectionDialogState
               uniqueCategoriesByName[category.name] = category;
             }
             final uniqueCategoryList = uniqueCategoriesByName.values.toList();
-            
+
             // Filter out the primary category from the deduplicated list
             final availableCategories = uniqueCategoryList
                 .where((cat) => cat.id != widget.primaryCategoryId)
@@ -1668,10 +1766,22 @@ class _OtherCategoriesSelectionDialogState
                     itemCount: availableCategories.length,
                     itemBuilder: (context, index) {
                       final category = availableCategories[index];
-                      final bool isSelected = _selectedIds.contains(category.id);
+                      final bool isSelected =
+                          _selectedIds.contains(category.id);
+                      final sharedLabel =
+                          _sharedOwnerLabel(category.sharedOwnerDisplayName);
                       return CheckboxListTile(
                         title: Text(category.name),
-                        secondary: Text(category.icon, 
+                        subtitle: sharedLabel != null
+                            ? Text(
+                                sharedLabel,
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .bodySmall
+                                    ?.copyWith(color: Colors.grey[600]),
+                              )
+                            : null,
+                        secondary: Text(category.icon,
                             style: const TextStyle(fontSize: 20)),
                         value: isSelected,
                         onChanged: (bool? value) {
@@ -1697,8 +1807,8 @@ class _OtherCategoriesSelectionDialogState
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       TextButton.icon(
-                        icon: Icon(Icons.add,
-                            size: 20, color: Colors.blue[700]),
+                        icon:
+                            Icon(Icons.add, size: 20, color: Colors.blue[700]),
                         label: Text('Add New Category',
                             style: TextStyle(color: Colors.blue[700])),
                         onPressed: () async {

@@ -2,7 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:plendy/models/experience.dart';
 import 'package:plendy/models/user_category.dart';
 import 'package:plendy/models/color_category.dart';
-import 'package:plendy/screens/receive_share_screen.dart' show ExperienceCardData;
+import 'package:plendy/screens/receive_share_screen.dart'
+    show ExperienceCardData;
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:plendy/services/google_maps_service.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -44,7 +45,7 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
   List<ColorCategory> _currentColorCategories = [];
   bool _isLoadingCategories = true;
   bool _isSaving = false;
-  
+
   late ValueNotifier<List<UserCategory>> _userCategoriesNotifier;
   late ValueNotifier<List<ColorCategory>> _colorCategoriesNotifier;
 
@@ -52,28 +53,30 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
   static const String _editCategoriesValue = '__edit_categories__';
   static const String _addColorCategoryValue = '__add_new_color_category__';
   static const String _editColorCategoriesValue = '__edit_color_categories__';
-  
+
   @override
   void initState() {
     super.initState();
     _cardData = ExperienceCardData();
-    
+
     // Set default values for a new experience
     _cardData.locationEnabled.value = true;
-    
+
     // Initialize with passed categories
     _currentUserCategories = widget.userCategories;
     _currentColorCategories = widget.userColorCategories;
-    
-    _userCategoriesNotifier = ValueNotifier<List<UserCategory>>(_currentUserCategories);
-    _colorCategoriesNotifier = ValueNotifier<List<ColorCategory>>(_currentColorCategories);
-    
+
+    _userCategoriesNotifier =
+        ValueNotifier<List<UserCategory>>(_currentUserCategories);
+    _colorCategoriesNotifier =
+        ValueNotifier<List<ColorCategory>>(_currentColorCategories);
+
     _cardData.yelpUrlController.addListener(_triggerRebuild);
     _cardData.websiteController.addListener(_triggerRebuild);
-    
+
     // Categories are already loaded from parent, so set loading to false
     _isLoadingCategories = false;
-    
+
     // ADDED: Method to load defaults from SharedPreferences
     _loadDefaults();
   }
@@ -94,12 +97,19 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
     }
   }
 
+  String? _sharedOwnerLabel(String? ownerName) {
+    if (ownerName == null) return null;
+    final trimmed = ownerName.trim();
+    if (trimmed.isEmpty) return null;
+    return 'Shared by $trimmed';
+  }
+
   Future<void> _loadAllCategories() async {
     setState(() => _isLoadingCategories = true);
     try {
       final results = await Future.wait([
-        _experienceService.getUserCategories(),
-        _experienceService.getUserColorCategories(),
+        _experienceService.getUserCategories(includeSharedEditable: true),
+        _experienceService.getUserColorCategories(includeSharedEditable: true),
       ]);
       if (mounted) {
         setState(() {
@@ -124,7 +134,9 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
   Future<void> _loadUserCategories() async {
     setState(() => _isLoadingCategories = true);
     try {
-      final categories = await _experienceService.getUserCategories();
+      final categories = await _experienceService.getUserCategories(
+        includeSharedEditable: true,
+      );
       if (mounted) {
         setState(() {
           _currentUserCategories = categories;
@@ -146,7 +158,9 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
   Future<void> _loadColorCategories() async {
     setState(() => _isLoadingCategories = true);
     try {
-      final categories = await _experienceService.getUserColorCategories();
+      final categories = await _experienceService.getUserColorCategories(
+        includeSharedEditable: true,
+      );
       if (mounted) {
         setState(() {
           _currentColorCategories = categories;
@@ -193,7 +207,8 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
       try {
         if (selectedLocation.placeId == null ||
             selectedLocation.placeId!.isEmpty) {
-          print("WARN: Location picked has no Place ID. Performing basic update.");
+          print(
+              "WARN: Location picked has no Place ID. Performing basic update.");
           setState(() {
             _cardData.selectedLocation = selectedLocation;
             _cardData.searchController.text =
@@ -205,14 +220,16 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
 
         Location detailedLocation =
             await _mapsService.getPlaceDetails(selectedLocation.placeId!);
-        print("Add Modal: Fetched details for picked location: ${detailedLocation.displayName}");
+        print(
+            "Add Modal: Fetched details for picked location: ${detailedLocation.displayName}");
 
         setState(() {
           _cardData.selectedLocation = detailedLocation;
           if (_cardData.titleController.text.isEmpty) {
             _cardData.titleController.text = detailedLocation.getPlaceName();
           }
-          if (_cardData.websiteController.text.isEmpty && detailedLocation.website != null) {
+          if (_cardData.websiteController.text.isEmpty &&
+              detailedLocation.website != null) {
             _cardData.websiteController.text = detailedLocation.website!;
           }
           _cardData.searchController.text = detailedLocation.address ?? '';
@@ -264,12 +281,23 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
                         itemCount: _currentUserCategories.length,
                         itemBuilder: (context, index) {
                           final category = _currentUserCategories[index];
-                          final bool isSelected = 
+                          final bool isSelected =
                               category.id == _cardData.selectedCategoryId;
+                          final sharedLabel = _sharedOwnerLabel(
+                              category.sharedOwnerDisplayName);
                           return ListTile(
                             leading: Text(category.icon,
                                 style: const TextStyle(fontSize: 20)),
                             title: Text(category.name),
+                            subtitle: sharedLabel != null
+                                ? Text(
+                                    sharedLabel,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .bodySmall
+                                        ?.copyWith(color: Colors.grey[600]),
+                                  )
+                                : null,
                             trailing: isSelected
                                 ? const Icon(Icons.check, color: Colors.blue)
                                 : null,
@@ -294,23 +322,28 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
                             label: Text('Add New Category',
                                 style: TextStyle(color: Colors.blue[700])),
                             onPressed: () async {
-                              final newCategory = await showModalBottomSheet<UserCategory>(
+                              final newCategory =
+                                  await showModalBottomSheet<UserCategory>(
                                 context: stfContext,
                                 builder: (context) => const AddCategoryModal(),
                                 isScrollControlled: true,
                                 shape: const RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+                                  borderRadius: BorderRadius.vertical(
+                                      top: Radius.circular(16)),
                                 ),
                               );
                               if (newCategory != null && mounted) {
-                                print("Add Modal: New user category added: ${newCategory.name} (${newCategory.icon})");
+                                print(
+                                    "Add Modal: New user category added: ${newCategory.name} (${newCategory.icon})");
                                 setState(() {
                                   _cardData.selectedCategoryId = newCategory.id;
                                 });
                                 await _loadUserCategories();
                                 stfSetState(() {});
                                 ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(content: Text('Category "${newCategory.name}" added and selected.')),
+                                  SnackBar(
+                                      content: Text(
+                                          'Category "${newCategory.name}" added and selected.')),
                                 );
                               }
                             },
@@ -325,27 +358,35 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
                             label: Text('Edit Categories',
                                 style: TextStyle(color: Colors.orange[700])),
                             onPressed: () async {
-                              final bool? categoriesChanged = await showModalBottomSheet<bool>(
+                              final bool? categoriesChanged =
+                                  await showModalBottomSheet<bool>(
                                 context: stfContext,
-                                builder: (context) => const EditCategoriesModal(),
+                                builder: (context) =>
+                                    const EditCategoriesModal(),
                                 isScrollControlled: true,
                                 shape: const RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+                                  borderRadius: BorderRadius.vertical(
+                                      top: Radius.circular(16)),
                                 ),
                               );
                               if (categoriesChanged == true && mounted) {
-                                print("Add Modal: User Categories potentially changed.");
+                                print(
+                                    "Add Modal: User Categories potentially changed.");
                                 await _loadUserCategories();
-                                final currentSelectionExists = _currentUserCategories
-                                    .any((cat) => cat.id == _cardData.selectedCategoryId);
-                                if (!currentSelectionExists && _cardData.selectedCategoryId != null) {
+                                final currentSelectionExists =
+                                    _currentUserCategories.any((cat) =>
+                                        cat.id == _cardData.selectedCategoryId);
+                                if (!currentSelectionExists &&
+                                    _cardData.selectedCategoryId != null) {
                                   setState(() {
                                     _cardData.selectedCategoryId = null;
                                   });
                                 }
                                 stfSetState(() {});
                                 ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(content: Text('Category list updated. Please review your selection.')),
+                                  const SnackBar(
+                                      content: Text(
+                                          'Category list updated. Please review your selection.')),
                                 );
                               }
                             },
@@ -367,17 +408,17 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
     );
 
     if (selectedValue != null) {
-      if (_cardData.selectedCategoryId != selectedValue) { 
+      if (_cardData.selectedCategoryId != selectedValue) {
         setState(() {
-          _cardData.selectedCategoryId = selectedValue; 
+          _cardData.selectedCategoryId = selectedValue;
         });
       }
     }
   }
 
   String _getIconForSelectedCategory() {
-    final selectedId = _cardData.selectedCategoryId; 
-    if (selectedId == null) return '❓'; 
+    final selectedId = _cardData.selectedCategoryId;
+    if (selectedId == null) return '❓';
     try {
       final matchingCategory = _currentUserCategories.firstWhere(
         (category) => category.id == selectedId,
@@ -409,13 +450,16 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
 
     if (yelpUrlString.isNotEmpty) {
       if (_isValidUrl(yelpUrlString) &&
-          (yelpUrlString.toLowerCase().contains('yelp.com/biz') || yelpUrlString.toLowerCase().contains('yelp.to/'))) {
+          (yelpUrlString.toLowerCase().contains('yelp.com/biz') ||
+              yelpUrlString.toLowerCase().contains('yelp.to/'))) {
         uri = Uri.parse(yelpUrlString);
       } else {
         uri = Uri.parse('https://www.yelp.com');
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Invalid or non-specific Yelp URL. Opening Yelp home.')),
+            SnackBar(
+                content: Text(
+                    'Invalid or non-specific Yelp URL. Opening Yelp home.')),
           );
         }
       }
@@ -428,7 +472,8 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
         String searchDesc = Uri.encodeComponent(titleString);
         if (addressString != null && addressString.isNotEmpty) {
           String searchLoc = Uri.encodeComponent(addressString);
-          uri = Uri.parse('https://www.yelp.com/search?find_desc=$searchDesc&find_loc=$searchLoc');
+          uri = Uri.parse(
+              'https://www.yelp.com/search?find_desc=$searchDesc&find_loc=$searchLoc');
         } else {
           uri = Uri.parse('https://www.yelp.com/search?find_desc=$searchDesc');
         }
@@ -527,10 +572,7 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
     final matchingCategory = _currentColorCategories.firstWhere(
       (category) => category.id == selectedId,
       orElse: () => const ColorCategory(
-          id: '',
-          name: '',
-          colorHex: 'FF9E9E9E',
-          ownerUserId: ''),
+          id: '', name: '', colorHex: 'FF9E9E9E', ownerUserId: ''),
     );
     return matchingCategory.color;
   }
@@ -636,8 +678,10 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
                     itemCount: categoriesToShow.length,
                     itemBuilder: (context, index) {
                       final category = categoriesToShow[index];
-                      final bool isSelected = category.id ==
-                          _cardData.selectedColorCategoryId;
+                      final bool isSelected =
+                          category.id == _cardData.selectedColorCategoryId;
+                      final sharedLabel =
+                          _sharedOwnerLabel(category.sharedOwnerDisplayName);
                       return ListTile(
                         leading: Container(
                           width: 24,
@@ -649,12 +693,20 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
                                   color: Colors.grey.shade400, width: 1)),
                         ),
                         title: Text(category.name),
+                        subtitle: sharedLabel != null
+                            ? Text(
+                                sharedLabel,
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .bodySmall
+                                    ?.copyWith(color: Colors.grey[600]),
+                              )
+                            : null,
                         trailing: isSelected
                             ? const Icon(Icons.check, color: Colors.blue)
                             : null,
                         onTap: () {
-                          Navigator.pop(
-                              context, category.id);
+                          Navigator.pop(context, category.id);
                         },
                         visualDensity: VisualDensity.compact,
                       );
@@ -674,8 +726,7 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
                         label: Text('Add New Color Category',
                             style: TextStyle(color: Colors.blue[700])),
                         onPressed: () {
-                          Navigator.pop(
-                              context, _addColorCategoryValue);
+                          Navigator.pop(context, _addColorCategoryValue);
                         },
                         style: TextButton.styleFrom(
                             alignment: Alignment.centerLeft,
@@ -688,8 +739,7 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
                         label: Text('Edit Color Categories',
                             style: TextStyle(color: Colors.orange[700])),
                         onPressed: () {
-                          Navigator.pop(context,
-                              _editColorCategoriesValue);
+                          Navigator.pop(context, _editColorCategoriesValue);
                         },
                         style: TextButton.styleFrom(
                             alignment: Alignment.centerLeft,
@@ -742,17 +792,21 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
               ),
             );
             if (categoriesChanged == true && mounted) {
-              print("Add Modal: User Categories potentially changed from Other Categories dialog.");
+              print(
+                  "Add Modal: User Categories potentially changed from Other Categories dialog.");
               await _loadUserCategories();
               final currentSelectionExists = _currentUserCategories
                   .any((cat) => cat.id == _cardData.selectedCategoryId);
-              if (!currentSelectionExists && _cardData.selectedCategoryId != null) {
+              if (!currentSelectionExists &&
+                  _cardData.selectedCategoryId != null) {
                 setState(() {
                   _cardData.selectedCategoryId = null;
                 });
               }
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Category list updated. Please review your selection.')),
+                const SnackBar(
+                    content: Text(
+                        'Category list updated. Please review your selection.')),
               );
               if (mounted) {
                 _showOtherCategoriesSelectionDialog();
@@ -770,10 +824,12 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
               ),
             );
             if (newCategory != null && mounted) {
-              print("Add Modal: New user category added from Other Categories dialog: ${newCategory.name} (${newCategory.icon})");
+              print(
+                  "Add Modal: New user category added from Other Categories dialog: ${newCategory.name} (${newCategory.icon})");
               await _loadUserCategories();
               ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('Category "${newCategory.name}" added.')),
+                SnackBar(
+                    content: Text('Category "${newCategory.name}" added.')),
               );
               if (mounted) {
                 _showOtherCategoriesSelectionDialog();
@@ -793,7 +849,8 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
 
   void _saveAndClose() async {
     if (_formKey.currentState!.validate()) {
-      if (_cardData.selectedCategoryId == null || _cardData.selectedCategoryId!.isEmpty) {
+      if (_cardData.selectedCategoryId == null ||
+          _cardData.selectedCategoryId!.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Please select a category.')),
         );
@@ -844,32 +901,40 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
           editorUserIds: [currentUserId],
         );
 
-        final createdExperienceId = await _experienceService.createExperience(newExperience);
-        
+        final createdExperienceId =
+            await _experienceService.createExperience(newExperience);
+
         // Fetch the created experience to return it
-        final createdExperience = await _experienceService.getExperience(createdExperienceId);
-        
+        final createdExperience =
+            await _experienceService.getExperience(createdExperienceId);
+
         // Update category timestamps
         if (_cardData.selectedCategoryId != null) {
-          await _experienceService.updateCategoryLastUsedTimestamp(_cardData.selectedCategoryId!);
+          await _experienceService
+              .updateCategoryLastUsedTimestamp(_cardData.selectedCategoryId!);
         }
         for (final otherId in _cardData.selectedOtherCategoryIds) {
           await _experienceService.updateCategoryLastUsedTimestamp(otherId);
         }
         if (_cardData.selectedColorCategoryId != null) {
-          await _experienceService.updateColorCategoryLastUsedTimestamp(_cardData.selectedColorCategoryId!);
+          await _experienceService.updateColorCategoryLastUsedTimestamp(
+              _cardData.selectedColorCategoryId!);
         }
 
         // ADDED: Save last used categories to SharedPreferences
         final prefs = await SharedPreferences.getInstance();
         if (_cardData.selectedCategoryId != null) {
-          await prefs.setString(AppConstants.lastUsedCategoryKey, _cardData.selectedCategoryId!);
+          await prefs.setString(
+              AppConstants.lastUsedCategoryKey, _cardData.selectedCategoryId!);
         }
         if (_cardData.selectedColorCategoryId != null) {
-          await prefs.setString(AppConstants.lastUsedColorCategoryKey, _cardData.selectedColorCategoryId!);
+          await prefs.setString(AppConstants.lastUsedColorCategoryKey,
+              _cardData.selectedColorCategoryId!);
         }
-        print("ADD_MODAL_SAVE: Saving other categories: ${_cardData.selectedOtherCategoryIds}");
-        await prefs.setStringList(AppConstants.lastUsedOtherCategoriesKey, _cardData.selectedOtherCategoryIds);
+        print(
+            "ADD_MODAL_SAVE: Saving other categories: ${_cardData.selectedOtherCategoryIds}");
+        await prefs.setStringList(AppConstants.lastUsedOtherCategoriesKey,
+            _cardData.selectedOtherCategoryIds);
         // --- END ADDED ---
 
         if (mounted) {
@@ -946,7 +1011,9 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
 
               // Location selection
               GestureDetector(
-                onTap: (_cardData.locationEnabled.value) ? _showLocationPicker : null,
+                onTap: (_cardData.locationEnabled.value)
+                    ? _showLocationPicker
+                    : null,
                 child: Container(
                   decoration: BoxDecoration(
                     border: Border.all(
@@ -1063,7 +1130,11 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
                             style: const TextStyle(fontSize: 18)),
                         const SizedBox(width: 8),
                         Text(
-                          _currentUserCategories.firstWhereOrNull((cat) => cat.id == _cardData.selectedCategoryId)?.name ?? 'Select Category',
+                          _currentUserCategories
+                                  .firstWhereOrNull((cat) =>
+                                      cat.id == _cardData.selectedCategoryId)
+                                  ?.name ??
+                              'Select Category',
                           style: TextStyle(
                               color: _cardData.selectedCategoryId != null
                                   ? Theme.of(context).textTheme.bodyLarge?.color
@@ -1159,23 +1230,30 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
                         child: Wrap(
                           spacing: 6.0,
                           runSpacing: 6.0,
-                          children: _cardData.selectedOtherCategoryIds.map((categoryId) {
-                            final category = _currentUserCategories.firstWhereOrNull((cat) => cat.id == categoryId);
-                            if (category == null) return const SizedBox.shrink();
+                          children: _cardData.selectedOtherCategoryIds
+                              .map((categoryId) {
+                            final category =
+                                _currentUserCategories.firstWhereOrNull(
+                                    (cat) => cat.id == categoryId);
+                            if (category == null)
+                              return const SizedBox.shrink();
                             return Chip(
                               avatar: Text(category.icon,
                                   style: const TextStyle(fontSize: 14)),
                               label: Text(category.name),
                               onDeleted: () {
                                 setState(() {
-                                  _cardData.selectedOtherCategoryIds.remove(categoryId);
+                                  _cardData.selectedOtherCategoryIds
+                                      .remove(categoryId);
                                 });
                               },
                               materialTapTargetSize:
                                   MaterialTapTargetSize.shrinkWrap,
-                              padding: const EdgeInsets.symmetric(horizontal: 0),
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 0),
                               visualDensity: VisualDensity.compact,
-                              labelPadding: const EdgeInsets.symmetric(horizontal: 4.0),
+                              labelPadding:
+                                  const EdgeInsets.symmetric(horizontal: 4.0),
                               deleteIconColor: Colors.grey[600],
                               deleteButtonTooltipMessage: 'Remove category',
                             );
@@ -1205,9 +1283,8 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
                     labelText: 'Yelp URL (optional)',
                     border: OutlineInputBorder(),
                     prefixIcon: Icon(FontAwesomeIcons.yelp),
-                    suffixIconConstraints: BoxConstraints.tightFor(
-                        width: 110,
-                        height: 48),
+                    suffixIconConstraints:
+                        BoxConstraints.tightFor(width: 110, height: 48),
                     suffixIcon: Row(
                       mainAxisSize: MainAxisSize.min,
                       mainAxisAlignment: MainAxisAlignment.end,
@@ -1239,10 +1316,10 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
                           onTap: _launchYelpUrl,
                           borderRadius: BorderRadius.circular(16),
                           child: Padding(
-                            padding: const EdgeInsets.fromLTRB(4.0, 4.0, 8.0, 4.0),
+                            padding:
+                                const EdgeInsets.fromLTRB(4.0, 4.0, 8.0, 4.0),
                             child: Icon(FontAwesomeIcons.yelp,
-                                size: 22,
-                                color: Colors.red[700]),
+                                size: 22, color: Colors.red[700]),
                           ),
                         ),
                       ],
@@ -1266,9 +1343,8 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
                     labelText: 'Official Website (optional)',
                     border: OutlineInputBorder(),
                     prefixIcon: Icon(Icons.language),
-                    suffixIconConstraints: BoxConstraints.tightFor(
-                        width: 110,
-                        height: 48),
+                    suffixIconConstraints:
+                        BoxConstraints.tightFor(width: 110, height: 48),
                     suffixIcon: Row(
                       mainAxisSize: MainAxisSize.min,
                       mainAxisAlignment: MainAxisAlignment.end,
@@ -1280,8 +1356,7 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
                             },
                             borderRadius: BorderRadius.circular(16),
                             child: Padding(
-                              padding:
-                                  const EdgeInsets.all(4.0),
+                              padding: const EdgeInsets.all(4.0),
                               child: Icon(Icons.clear, size: 22),
                             ),
                           ),
@@ -1306,7 +1381,8 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
                               : null,
                           borderRadius: BorderRadius.circular(16),
                           child: Padding(
-                            padding: const EdgeInsets.fromLTRB(4.0, 4.0, 8.0, 4.0),
+                            padding:
+                                const EdgeInsets.fromLTRB(4.0, 4.0, 8.0, 4.0),
                             child: Icon(Icons.launch,
                                 size: 22,
                                 color: _cardData.websiteController.text
@@ -1352,8 +1428,7 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
                   TextButton(
-                    onPressed: () =>
-                        Navigator.of(context).pop(),
+                    onPressed: () => Navigator.of(context).pop(),
                     child: const Text('Cancel'),
                   ),
                   const SizedBox(width: 8),
@@ -1365,7 +1440,8 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
                             height: 20,
                             child: CircularProgressIndicator(
                               strokeWidth: 2,
-                              valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                              valueColor:
+                                  AlwaysStoppedAnimation<Color>(Colors.white),
                             ),
                           )
                         : const Text('Add Experience'),
@@ -1384,15 +1460,20 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
   Future<void> _loadDefaults() async {
     final prefs = await SharedPreferences.getInstance();
 
-    final lastUsedCategoryId = prefs.getString(AppConstants.lastUsedCategoryKey);
-    final lastUsedColorCategoryId = prefs.getString(AppConstants.lastUsedColorCategoryKey);
-    final lastUsedOtherCategoryIds = prefs.getStringList(AppConstants.lastUsedOtherCategoriesKey);
-    print("ADD_MODAL_LOAD: Read other categories from prefs: $lastUsedOtherCategoryIds");
+    final lastUsedCategoryId =
+        prefs.getString(AppConstants.lastUsedCategoryKey);
+    final lastUsedColorCategoryId =
+        prefs.getString(AppConstants.lastUsedColorCategoryKey);
+    final lastUsedOtherCategoryIds =
+        prefs.getStringList(AppConstants.lastUsedOtherCategoriesKey);
+    print(
+        "ADD_MODAL_LOAD: Read other categories from prefs: $lastUsedOtherCategoryIds");
 
     if (mounted) {
       setState(() {
         // Apply primary category default
-        if (lastUsedCategoryId != null && _currentUserCategories.any((cat) => cat.id == lastUsedCategoryId)) {
+        if (lastUsedCategoryId != null &&
+            _currentUserCategories.any((cat) => cat.id == lastUsedCategoryId)) {
           _cardData.selectedCategoryId = lastUsedCategoryId;
         } else if (_currentUserCategories.isNotEmpty) {
           // Fallback to first category if preference is not found or invalid
@@ -1400,7 +1481,9 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
         }
 
         // Apply color category default
-        if (lastUsedColorCategoryId != null && _currentColorCategories.any((cat) => cat.id == lastUsedColorCategoryId)) {
+        if (lastUsedColorCategoryId != null &&
+            _currentColorCategories
+                .any((cat) => cat.id == lastUsedColorCategoryId)) {
           _cardData.selectedColorCategoryId = lastUsedColorCategoryId;
         }
 
@@ -1411,7 +1494,8 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
               .where((id) => _currentUserCategories.any((cat) => cat.id == id))
               .toList();
           _cardData.selectedOtherCategoryIds = validOtherIds;
-          print("ADD_MODAL_LOAD: Setting other categories in setState: $validOtherIds");
+          print(
+              "ADD_MODAL_LOAD: Setting other categories in setState: $validOtherIds");
         }
       });
     }
@@ -1434,8 +1518,7 @@ extension LocationNameHelperModal on Location {
   }
 
   bool _containsCoordinates(String text) {
-    final coordRegex =
-        RegExp(r'-?\d+\.\d+ ?, ?-?\d+\.\d+');
+    final coordRegex = RegExp(r'-?\d+\.\d+ ?, ?-?\d+\.\d+');
     return coordRegex.hasMatch(text);
   }
 }
@@ -1465,6 +1548,13 @@ class _OtherCategoriesSelectionDialogState
     extends State<_OtherCategoriesSelectionDialog> {
   late Set<String> _selectedIds;
 
+  String? _sharedOwnerLabel(String? ownerName) {
+    if (ownerName == null) return null;
+    final trimmed = ownerName.trim();
+    if (trimmed.isEmpty) return null;
+    return 'Shared by $trimmed';
+  }
+
   @override
   void initState() {
     super.initState();
@@ -1487,7 +1577,7 @@ class _OtherCategoriesSelectionDialogState
               uniqueCategoriesByName[category.name] = category;
             }
             final uniqueCategoryList = uniqueCategoriesByName.values.toList();
-            
+
             final availableCategories = uniqueCategoryList
                 .where((cat) => cat.id != widget.primaryCategoryId)
                 .toList();
@@ -1500,10 +1590,22 @@ class _OtherCategoriesSelectionDialogState
                     itemCount: availableCategories.length,
                     itemBuilder: (context, index) {
                       final category = availableCategories[index];
-                      final bool isSelected = _selectedIds.contains(category.id);
+                      final bool isSelected =
+                          _selectedIds.contains(category.id);
+                      final sharedLabel =
+                          _sharedOwnerLabel(category.sharedOwnerDisplayName);
                       return CheckboxListTile(
                         title: Text(category.name),
-                        secondary: Text(category.icon, 
+                        subtitle: sharedLabel != null
+                            ? Text(
+                                sharedLabel,
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .bodySmall
+                                    ?.copyWith(color: Colors.grey[600]),
+                              )
+                            : null,
+                        secondary: Text(category.icon,
                             style: const TextStyle(fontSize: 20)),
                         value: isSelected,
                         onChanged: (bool? value) {
@@ -1529,8 +1631,8 @@ class _OtherCategoriesSelectionDialogState
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       TextButton.icon(
-                        icon: Icon(Icons.add,
-                            size: 20, color: Colors.blue[700]),
+                        icon:
+                            Icon(Icons.add, size: 20, color: Colors.blue[700]),
                         label: Text('Add New Category',
                             style: TextStyle(color: Colors.blue[700])),
                         onPressed: () async {

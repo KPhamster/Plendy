@@ -7,6 +7,7 @@ class UserCategory extends Equatable {
   final String name;
   final String icon; // Emoji or identifier for an icon
   final String ownerUserId; // ID of the user who owns this category
+  final String? sharedOwnerDisplayName; // Display name of owner when shared
   final Timestamp? lastUsedTimestamp;
   final int? orderIndex;
 
@@ -15,6 +16,7 @@ class UserCategory extends Equatable {
     required this.name,
     required this.icon,
     required this.ownerUserId, // Make ownerUserId required
+    this.sharedOwnerDisplayName,
     this.lastUsedTimestamp,
     this.orderIndex,
   });
@@ -25,6 +27,7 @@ class UserCategory extends Equatable {
         name,
         icon,
         ownerUserId,
+        sharedOwnerDisplayName,
         lastUsedTimestamp,
         orderIndex
       ]; // Add ownerUserId to props
@@ -53,6 +56,7 @@ class UserCategory extends Equatable {
       name: data['name'] ?? 'Unknown',
       icon: data['icon'] ?? '❓', // Default icon if missing
       ownerUserId: ownerId, // Use the fetched ownerId
+      sharedOwnerDisplayName: null,
       lastUsedTimestamp: data['lastUsedTimestamp'] as Timestamp?,
       orderIndex: data['orderIndex'] as int?,
     );
@@ -66,6 +70,7 @@ class UserCategory extends Equatable {
       'ownerUserId': ownerUserId, // Add ownerUserId to map
       'lastUsedTimestamp': lastUsedTimestamp,
       'orderIndex': orderIndex,
+      // sharedOwnerDisplayName is derived metadata; don't persist to Firestore.
       // Consider adding 'createdAt', 'updatedAt' timestamps if needed for management.
     };
   }
@@ -77,6 +82,7 @@ class UserCategory extends Equatable {
     String? icon,
     String? ownerUserId, // Add ownerUserId to copyWith
     Timestamp? lastUsedTimestamp,
+    String? sharedOwnerDisplayName,
     bool setLastUsedTimestampNull = false,
     int? orderIndex,
     bool setOrderIndexNull = false,
@@ -86,6 +92,8 @@ class UserCategory extends Equatable {
       name: name ?? this.name,
       icon: icon ?? this.icon,
       ownerUserId: ownerUserId ?? this.ownerUserId, // Handle ownerUserId copy
+      sharedOwnerDisplayName:
+          sharedOwnerDisplayName ?? this.sharedOwnerDisplayName,
       lastUsedTimestamp: setLastUsedTimestampNull
           ? null
           : lastUsedTimestamp ?? this.lastUsedTimestamp,
@@ -117,6 +125,7 @@ class UserCategory extends Equatable {
         name: entry.key,
         icon: entry.value,
         ownerUserId: ownerId, // Assign ownerId here
+        sharedOwnerDisplayName: null,
         lastUsedTimestamp: null,
         orderIndex: null,
       );
