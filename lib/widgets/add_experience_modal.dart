@@ -13,6 +13,7 @@ import 'package:plendy/widgets/edit_color_categories_modal.dart';
 import 'package:plendy/widgets/add_category_modal.dart';
 import 'package:plendy/widgets/edit_categories_modal.dart';
 import 'package:plendy/services/experience_service.dart';
+import 'package:plendy/services/category_ordering_service.dart';
 import 'package:plendy/services/auth_service.dart';
 import 'package:collection/collection.dart';
 import 'package:plendy/screens/location_picker_screen.dart';
@@ -40,6 +41,8 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
   final GoogleMapsService _mapsService = GoogleMapsService();
   final ExperienceService _experienceService = ExperienceService();
   final AuthService _authService = AuthService();
+  final CategoryOrderingService _categoryOrderingService =
+      CategoryOrderingService();
 
   List<UserCategory> _currentUserCategories = [];
   List<ColorCategory> _currentColorCategories = [];
@@ -74,6 +77,8 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
     _cardData.yelpUrlController.addListener(_triggerRebuild);
     _cardData.websiteController.addListener(_triggerRebuild);
 
+    _applyCollectionsOrderingToCurrentLists();
+
     // Categories are already loaded from parent, so set loading to false
     _isLoadingCategories = false;
 
@@ -97,6 +102,22 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
     }
   }
 
+  Future<void> _applyCollectionsOrderingToCurrentLists() async {
+    final orderedCategories = await _categoryOrderingService
+        .orderUserCategories(_currentUserCategories);
+    final orderedColorCategories = await _categoryOrderingService
+        .orderColorCategories(_currentColorCategories);
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _currentUserCategories = orderedCategories;
+      _currentColorCategories = orderedColorCategories;
+    });
+    _userCategoriesNotifier.value = orderedCategories;
+    _colorCategoriesNotifier.value = orderedColorCategories;
+  }
+
   String? _sharedOwnerLabel(String? ownerName) {
     if (ownerName == null) return null;
     final trimmed = ownerName.trim();
@@ -107,18 +128,26 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
   Future<void> _loadAllCategories() async {
     setState(() => _isLoadingCategories = true);
     try {
-      final results = await Future.wait([
-        _experienceService.getUserCategories(includeSharedEditable: true),
-        _experienceService.getUserColorCategories(includeSharedEditable: true),
-      ]);
+      final UserCategoryFetchResult categoryResult =
+          await _experienceService.getUserCategoriesWithMeta(
+        includeSharedEditable: true,
+      );
+      final orderedCategories = await _categoryOrderingService
+          .orderUserCategories(categoryResult.categories,
+              sharedPermissions: categoryResult.sharedPermissions);
+      final colorCategories = await _experienceService.getUserColorCategories(
+        includeSharedEditable: true,
+      );
+      final orderedColorCategories =
+          await _categoryOrderingService.orderColorCategories(colorCategories);
       if (mounted) {
         setState(() {
-          _currentUserCategories = results[0] as List<UserCategory>;
-          _currentColorCategories = results[1] as List<ColorCategory>;
+          _currentUserCategories = orderedCategories;
+          _currentColorCategories = orderedColorCategories;
           _isLoadingCategories = false;
         });
-        _userCategoriesNotifier.value = _currentUserCategories;
-        _colorCategoriesNotifier.value = _currentColorCategories;
+        _userCategoriesNotifier.value = orderedCategories;
+        _colorCategoriesNotifier.value = orderedColorCategories;
       }
     } catch (e) {
       print("AddExperienceModal: Error loading categories: $e");
@@ -134,15 +163,19 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
   Future<void> _loadUserCategories() async {
     setState(() => _isLoadingCategories = true);
     try {
-      final categories = await _experienceService.getUserCategories(
+      final UserCategoryFetchResult categoryResult =
+          await _experienceService.getUserCategoriesWithMeta(
         includeSharedEditable: true,
       );
+      final orderedCategories = await _categoryOrderingService
+          .orderUserCategories(categoryResult.categories,
+              sharedPermissions: categoryResult.sharedPermissions);
       if (mounted) {
         setState(() {
-          _currentUserCategories = categories;
+          _currentUserCategories = orderedCategories;
           _isLoadingCategories = false;
         });
-        _userCategoriesNotifier.value = _currentUserCategories;
+        _userCategoriesNotifier.value = orderedCategories;
       }
     } catch (e) {
       print("AddExperienceModal: Error loading user categories: $e");
@@ -161,12 +194,14 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
       final categories = await _experienceService.getUserColorCategories(
         includeSharedEditable: true,
       );
+      final orderedCategories =
+          await _categoryOrderingService.orderColorCategories(categories);
       if (mounted) {
         setState(() {
-          _currentColorCategories = categories;
+          _currentColorCategories = orderedCategories;
           _isLoadingCategories = false;
         });
-        _colorCategoriesNotifier.value = _currentColorCategories;
+        _colorCategoriesNotifier.value = orderedCategories;
       }
     } catch (e) {
       print("AddExperienceModal: Error loading color categories: $e");

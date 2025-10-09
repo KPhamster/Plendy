@@ -6,9 +6,7 @@ import 'package:plendy/services/experience_service.dart';
 import 'package:plendy/services/sharing_service.dart';
 import 'package:plendy/services/auth_service.dart';
 import 'package:plendy/widgets/add_color_category_modal.dart';
-
-// Enum for sort order
-enum ColorCategorySortType { mostRecent, alphabetical }
+import 'package:plendy/models/category_sort_type.dart';
 
 class EditColorCategoriesModal extends StatefulWidget {
   const EditColorCategoriesModal({super.key});
@@ -25,7 +23,8 @@ class _EditColorCategoriesModalState extends State<EditColorCategoriesModal> {
   List<ColorCategory> _categories =
       []; // Holds the current display/manual order
   List<ColorCategory> _fetchedCategories = []; // Holds original fetched order
-  Map<String, SharePermission> _sharedCategoryPermissions = {}; // Track permissions for shared categories
+  Map<String, SharePermission> _sharedCategoryPermissions =
+      {}; // Track permissions for shared categories
   bool _isLoading = false;
   bool _categoriesChanged =
       false; // Track if any change to order/content occurred
@@ -47,46 +46,52 @@ class _EditColorCategoriesModalState extends State<EditColorCategoriesModal> {
       if (userId == null) {
         throw Exception('User not authenticated');
       }
-      
+
       // Load owned color categories
       print(
           "_loadColorCategories - Calling _experienceService.getUserColorCategories...");
       final ownCategories = await _experienceService.getUserColorCategories();
       print(
           "_loadColorCategories - Received ${ownCategories.length} owned color categories from service:");
-      
+
       // Load shared color categories with edit permissions
-      final sharedPermissions = await _sharingService.getSharedItemsForUser(userId);
+      final sharedPermissions =
+          await _sharingService.getSharedItemsForUser(userId);
       final categoryPermissions = sharedPermissions
-          .where((perm) => perm.itemType == ShareableItemType.category && 
-                          perm.accessLevel == ShareAccessLevel.edit)
+          .where((perm) =>
+              perm.itemType == ShareableItemType.category &&
+              perm.accessLevel == ShareAccessLevel.edit)
           .toList();
-      
-      print("_loadColorCategories - Found ${categoryPermissions.length} shared categories (checking for color categories)");
-      
+
+      print(
+          "_loadColorCategories - Found ${categoryPermissions.length} shared categories (checking for color categories)");
+
       // Fetch the actual shared color category data
       final List<ColorCategory> sharedCategories = [];
       final Map<String, SharePermission> permissionMap = {};
-      
+
       for (final permission in categoryPermissions) {
-        print("  - Processing permission: itemId=${permission.itemId}, ownerUserId=${permission.ownerUserId}, accessLevel=${permission.accessLevel}");
+        print(
+            "  - Processing permission: itemId=${permission.itemId}, ownerUserId=${permission.ownerUserId}, accessLevel=${permission.accessLevel}");
         try {
           // First try as color category
-          final colorCategory = await _experienceService.getColorCategoryByOwner(
-            permission.ownerUserId, 
-            permission.itemId
-          );
+          final colorCategory =
+              await _experienceService.getColorCategoryByOwner(
+                  permission.ownerUserId, permission.itemId);
           if (colorCategory != null) {
             sharedCategories.add(colorCategory);
             permissionMap[colorCategory.id] = permission;
-            print("  - Loaded shared color category: ${colorCategory.name} from owner: ${permission.ownerUserId}");
-            print("  - Permission document ID should be: ${permission.ownerUserId}_category_${permission.itemId}_${_authService.currentUser?.uid}");
+            print(
+                "  - Loaded shared color category: ${colorCategory.name} from owner: ${permission.ownerUserId}");
+            print(
+                "  - Permission document ID should be: ${permission.ownerUserId}_category_${permission.itemId}_${_authService.currentUser?.uid}");
           }
         } catch (e) {
-          print("  - Failed to load shared color category ${permission.itemId}: $e");
+          print(
+              "  - Failed to load shared color category ${permission.itemId}: $e");
         }
       }
-      
+
       // Combine owned and shared color categories
       final allCategories = [...ownCategories];
       for (final shared in sharedCategories) {
@@ -207,16 +212,19 @@ class _EditColorCategoriesModalState extends State<EditColorCategoriesModal> {
     final currentUserId = _authService.currentUser?.uid;
     final isShared = _sharedCategoryPermissions.containsKey(category.id);
     final permission = _sharedCategoryPermissions[category.id];
-    
-    print("🎨 EDIT_COLOR_MODAL: Editing category ${category.name} (ID: ${category.id})");
+
+    print(
+        "🎨 EDIT_COLOR_MODAL: Editing category ${category.name} (ID: ${category.id})");
     print("🎨 EDIT_COLOR_MODAL: Current user: $currentUserId");
     print("🎨 EDIT_COLOR_MODAL: Category owner: ${category.ownerUserId}");
     print("🎨 EDIT_COLOR_MODAL: Is shared: $isShared");
     if (isShared && permission != null) {
-      print("🎨 EDIT_COLOR_MODAL: Permission access level: ${permission.accessLevel}");
-      print("🎨 EDIT_COLOR_MODAL: Expected permission doc ID: ${permission.ownerUserId}_category_${permission.itemId}_$currentUserId");
+      print(
+          "🎨 EDIT_COLOR_MODAL: Permission access level: ${permission.accessLevel}");
+      print(
+          "🎨 EDIT_COLOR_MODAL: Expected permission doc ID: ${permission.ownerUserId}_category_${permission.itemId}_$currentUserId");
     }
-    
+
     final updatedCategory = await showModalBottomSheet<ColorCategory>(
       context: context,
       backgroundColor: Colors.white,
@@ -320,10 +328,10 @@ class _EditColorCategoriesModalState extends State<EditColorCategoriesModal> {
                   IconButton(
                     icon: const Icon(Icons.close),
                     onPressed: () async {
-                        bool result = await _handleCloseLogic();
-                        if (mounted) {
-                          Navigator.of(context).pop(result);
-                        }
+                      bool result = await _handleCloseLogic();
+                      if (mounted) {
+                        Navigator.of(context).pop(result);
+                      }
                     },
                     tooltip: 'Close',
                   ),
@@ -335,16 +343,21 @@ class _EditColorCategoriesModalState extends State<EditColorCategoriesModal> {
                 child: _isLoading
                     ? const Center(child: CircularProgressIndicator())
                     : _categories.isEmpty
-                        ? const Center(child: Text('No color categories found.'))
+                        ? const Center(
+                            child: Text('No color categories found.'))
                         : ReorderableListView.builder(
                             itemCount: _categories.length,
                             itemBuilder: (context, index) {
                               final category = _categories[index];
-                              final bool isShared = _sharedCategoryPermissions.containsKey(category.id);
-                              final bool isOwned = category.ownerUserId == _authService.currentUser?.uid;
-                              final bool canEdit = isOwned || isShared; // If shared with edit permission
-                              final bool canDelete = isOwned; // Only owner can delete
-                              
+                              final bool isShared = _sharedCategoryPermissions
+                                  .containsKey(category.id);
+                              final bool isOwned = category.ownerUserId ==
+                                  _authService.currentUser?.uid;
+                              final bool canEdit = isOwned ||
+                                  isShared; // If shared with edit permission
+                              final bool canDelete =
+                                  isOwned; // Only owner can delete
+
                               return ListTile(
                                 key: ValueKey(category.id),
                                 leading: Row(
@@ -357,32 +370,47 @@ class _EditColorCategoriesModalState extends State<EditColorCategoriesModal> {
                                           color: category.color,
                                           shape: BoxShape.circle,
                                           border: Border.all(
-                                              color: Colors.grey.shade400, width: 1)),
+                                              color: Colors.grey.shade400,
+                                              width: 1)),
                                     ),
-                                    if (isShared) 
-                                      const SizedBox(width: 4),
+                                    if (isShared) const SizedBox(width: 4),
                                     if (isShared)
-                                      Icon(Icons.people, size: 16, color: Colors.blue[600]),
+                                      Icon(Icons.people,
+                                          size: 16, color: Colors.blue[600]),
                                   ],
                                 ),
                                 title: Text(category.name),
-                                subtitle: isShared ? Text('Shared with you', 
-                                    style: TextStyle(fontSize: 12, color: Colors.blue[600])) : null,
+                                subtitle: isShared
+                                    ? Text('Shared with you',
+                                        style: TextStyle(
+                                            fontSize: 12,
+                                            color: Colors.blue[600]))
+                                    : null,
                                 trailing: Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
                                     IconButton(
                                       icon: Icon(Icons.edit_outlined,
-                                          color: canEdit ? Colors.blue[700] : Colors.grey, size: 20),
-                                      tooltip: canEdit ? 'Edit ${category.name}' : 'Cannot edit shared category',
+                                          color: canEdit
+                                              ? Colors.blue[700]
+                                              : Colors.grey,
+                                          size: 20),
+                                      tooltip: canEdit
+                                          ? 'Edit ${category.name}'
+                                          : 'Cannot edit shared category',
                                       onPressed: _isLoading || !canEdit
                                           ? null
                                           : () => _editCategory(category),
                                     ),
                                     IconButton(
                                       icon: Icon(Icons.delete_outline,
-                                          color: canDelete ? Colors.red[700] : Colors.grey, size: 20),
-                                      tooltip: canDelete ? 'Delete ${category.name}' : 'Cannot delete shared category',
+                                          color: canDelete
+                                              ? Colors.red[700]
+                                              : Colors.grey,
+                                          size: 20),
+                                      tooltip: canDelete
+                                          ? 'Delete ${category.name}'
+                                          : 'Cannot delete shared category',
                                       onPressed: _isLoading || !canDelete
                                           ? null
                                           : () => _deleteCategory(category),
@@ -391,7 +419,10 @@ class _EditColorCategoriesModalState extends State<EditColorCategoriesModal> {
                                     ReorderableDragStartListener(
                                       index: index,
                                       child: Icon(Icons.drag_handle,
-                                          color: isOwned ? Colors.grey : Colors.grey[400], size: 24),
+                                          color: isOwned
+                                              ? Colors.grey
+                                              : Colors.grey[400],
+                                          size: 24),
                                     ),
                                   ],
                                 ),
@@ -477,16 +508,15 @@ class _EditColorCategoriesModalState extends State<EditColorCategoriesModal> {
           }
         }
 
-        if (updates.isNotEmpty) { 
+        if (updates.isNotEmpty) {
           print(
               "Attempting to save order for ${updates.length} color categories.");
           await _experienceService.updateColorCategoryOrder(updates);
           print("Color category order saved successfully.");
           changesSuccessfullySaved = true;
         } else if (updates.isEmpty && _categoriesChanged) {
-          changesSuccessfullySaved = true; 
+          changesSuccessfullySaved = true;
         }
-
       } catch (e) {
         print("Error saving color category order: $e");
         if (mounted) {
@@ -494,7 +524,7 @@ class _EditColorCategoriesModalState extends State<EditColorCategoriesModal> {
             SnackBar(content: Text("Error saving color category order: $e")),
           );
         }
-        changesSuccessfullySaved = false; 
+        changesSuccessfullySaved = false;
       } finally {
         if (mounted) {
           setState(() {
