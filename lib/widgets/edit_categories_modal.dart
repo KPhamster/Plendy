@@ -1,14 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:plendy/models/user_category.dart';
 import 'package:plendy/models/share_permission.dart';
-import 'package:plendy/models/enums/share_enums.dart';
 import 'package:plendy/services/experience_service.dart';
-import 'package:plendy/services/sharing_service.dart';
 import 'package:plendy/services/auth_service.dart';
 import 'package:plendy/widgets/add_category_modal.dart';
-
-// UPDATED: Enum for sort order (used as parameter, not state)
-enum CategorySortType { mostRecent, alphabetical }
+import 'package:plendy/models/category_sort_type.dart';
+import 'package:plendy/services/category_ordering_service.dart';
 
 class EditCategoriesModal extends StatefulWidget {
   const EditCategoriesModal({super.key});
@@ -19,12 +16,14 @@ class EditCategoriesModal extends StatefulWidget {
 
 class _EditCategoriesModalState extends State<EditCategoriesModal> {
   final ExperienceService _experienceService = ExperienceService();
-  final SharingService _sharingService = SharingService();
+  final CategoryOrderingService _categoryOrderingService =
+      CategoryOrderingService();
   final AuthService _authService = AuthService();
   List<UserCategory> _Categories =
       []; // Now holds the current display/manual order
   List<UserCategory> _fetchedCategories = []; // Holds original fetched order
-  Map<String, SharePermission> _sharedCategoryPermissions = {}; // Track permissions for shared categories
+  Map<String, SharePermission> _sharedCategoryPermissions =
+      {}; // Track permissions for shared categories
   bool _isLoading = false;
   bool _CategoriesChanged =
       false; // Track if *any* change to order/content occurred
@@ -46,59 +45,28 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
       if (userId == null) {
         throw Exception('User not authenticated');
       }
-      
-      // Load owned categories
+
       print(
-          "_loadCategories - Calling _experienceService.getUserCategories..."); // Log Before Call
-      final ownCategories = await _experienceService.getUserCategories();
-      print(
-          "_loadCategories - Received ${ownCategories.length} owned Categories from service:"); // Log Received
-      
-      // Load shared categories with edit permissions
-      final sharedPermissions = await _sharingService.getSharedItemsForUser(userId);
-      final categoryPermissions = sharedPermissions
-          .where((perm) => perm.itemType == ShareableItemType.category && 
-                          perm.accessLevel == ShareAccessLevel.edit)
-          .toList();
-      
-      print("_loadCategories - Found ${categoryPermissions.length} shared categories with edit access");
-      
-      // Fetch the actual shared category data
-      final List<UserCategory> sharedCategories = [];
-      final Map<String, SharePermission> permissionMap = {};
-      
-      for (final permission in categoryPermissions) {
-        try {
-          final category = await _experienceService.getUserCategoryByOwner(
-            permission.ownerUserId, 
-            permission.itemId
-          );
-          if (category != null) {
-            sharedCategories.add(category);
-            permissionMap[category.id] = permission;
-            print("  - Loaded shared category: ${category.name} from owner: ${permission.ownerUserId}");
-          }
-        } catch (e) {
-          print("  - Failed to load shared category ${permission.itemId}: $e");
-        }
-      }
-      
-      // Combine owned and shared categories
-      final allCategories = [...ownCategories];
-      for (final shared in sharedCategories) {
-        if (!allCategories.any((c) => c.id == shared.id)) {
-          allCategories.add(shared);
-        }
-      }
+          "_loadCategories - Fetching categories (owned + shared editable) via ExperienceService.");
+      final UserCategoryFetchResult result =
+          await _experienceService.getUserCategoriesWithMeta(
+        includeSharedEditable: true,
+      );
+      final orderedCategories =
+          await _categoryOrderingService.orderUserCategories(result.categories,
+              sharedPermissions: result.sharedPermissions);
+      final sharedCount = result.sharedPermissions.length;
+      final ownedCount = orderedCategories.length - sharedCount;
 
       if (mounted) {
         setState(() {
-          _fetchedCategories = List.from(allCategories); // Store the original fetched order
-          _Categories = List.from(_fetchedCategories);
-          _sharedCategoryPermissions = permissionMap;
+          _fetchedCategories = List<UserCategory>.from(orderedCategories);
+          _Categories = List<UserCategory>.from(orderedCategories);
+          _sharedCategoryPermissions =
+              Map<String, SharePermission>.from(result.sharedPermissions);
           _isLoading = false;
           print(
-              "_loadCategories END - Set state with ${_Categories.length} total Categories (${ownCategories.length} owned, ${sharedCategories.length} shared)."); // Log State Set
+              "_loadCategories END - Set state with ${_Categories.length} total Categories (owned: $ownedCount, shared: $sharedCount).");
         });
       }
     } catch (error) {
@@ -271,15 +239,15 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
     final maxHeight = screenHeight * 0.9;
 
     return PopScope(
-      canPop: false, 
+      canPop: false,
       onPopInvoked: (bool didPop) async {
         if (didPop) {
-          return; 
+          return;
         }
         // If not popped (e.g., swipe gesture), call _handleCloseLogic
         bool result = await _handleCloseLogic();
         if (mounted) {
-          Navigator.of(context).pop(result); 
+          Navigator.of(context).pop(result);
         }
       },
       child: Container(
@@ -292,7 +260,8 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
             left: 16.0,
             right: 16.0,
             top: 8.0,
-            bottom: bottomPadding + 16.0, // Padding for keyboard is still needed
+            bottom:
+                bottomPadding + 16.0, // Padding for keyboard is still needed
           ),
           child: Column(
             // Re-add mainAxisSize: MainAxisSize.min so the column doesn't force max height if content is short
@@ -357,11 +326,15 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
                             itemCount: _Categories.length,
                             itemBuilder: (context, index) {
                               final category = _Categories[index];
-                              final bool isShared = _sharedCategoryPermissions.containsKey(category.id);
-                              final bool isOwned = category.ownerUserId == _authService.currentUser?.uid;
-                              final bool canEdit = isOwned || isShared; // If shared with edit permission
-                              final bool canDelete = isOwned; // Only owner can delete
-                              
+                              final bool isShared = _sharedCategoryPermissions
+                                  .containsKey(category.id);
+                              final bool isOwned = category.ownerUserId ==
+                                  _authService.currentUser?.uid;
+                              final bool canEdit = isOwned ||
+                                  isShared; // If shared with edit permission
+                              final bool canDelete =
+                                  isOwned; // Only owner can delete
+
                               // IMPORTANT: Each item MUST have a unique Key
                               return ListTile(
                                 key: ValueKey(category.id),
@@ -370,30 +343,44 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
                                   children: [
                                     Text(category.icon,
                                         style: const TextStyle(fontSize: 24)),
-                                    if (isShared) 
-                                      const SizedBox(width: 4),
+                                    if (isShared) const SizedBox(width: 4),
                                     if (isShared)
-                                      Icon(Icons.people, size: 16, color: Colors.blue[600]),
+                                      Icon(Icons.people,
+                                          size: 16, color: Colors.blue[600]),
                                   ],
                                 ),
                                 title: Text(category.name),
-                                subtitle: isShared ? Text('Shared with you', 
-                                    style: TextStyle(fontSize: 12, color: Colors.blue[600])) : null,
+                                subtitle: isShared
+                                    ? Text('Shared with you',
+                                        style: TextStyle(
+                                            fontSize: 12,
+                                            color: Colors.blue[600]))
+                                    : null,
                                 trailing: Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
                                     IconButton(
                                       icon: Icon(Icons.edit_outlined,
-                                          color: canEdit ? Colors.blue[700] : Colors.grey, size: 20),
-                                      tooltip: canEdit ? 'Edit ${category.name}' : 'Cannot edit shared category',
+                                          color: canEdit
+                                              ? Colors.blue[700]
+                                              : Colors.grey,
+                                          size: 20),
+                                      tooltip: canEdit
+                                          ? 'Edit ${category.name}'
+                                          : 'Cannot edit shared category',
                                       onPressed: _isLoading || !canEdit
                                           ? null
                                           : () => _editCategory(category),
                                     ),
                                     IconButton(
                                       icon: Icon(Icons.delete_outline,
-                                          color: canDelete ? Colors.red[700] : Colors.grey, size: 20),
-                                      tooltip: canDelete ? 'Delete ${category.name}' : 'Cannot delete shared category',
+                                          color: canDelete
+                                              ? Colors.red[700]
+                                              : Colors.grey,
+                                          size: 20),
+                                      tooltip: canDelete
+                                          ? 'Delete ${category.name}'
+                                          : 'Cannot delete shared category',
                                       onPressed: _isLoading || !canDelete
                                           ? null
                                           : () => _deleteCategory(category),
@@ -404,7 +391,10 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
                                     ReorderableDragStartListener(
                                       index: index,
                                       child: Icon(Icons.drag_handle,
-                                          color: isOwned ? Colors.grey : Colors.grey[400], size: 24),
+                                          color: isOwned
+                                              ? Colors.grey
+                                              : Colors.grey[400],
+                                          size: 24),
                                     ),
                                   ],
                                 ),
@@ -464,7 +454,9 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
                   },
                   style: OutlinedButton.styleFrom(
                     padding: const EdgeInsets.symmetric(vertical: 12),
-                    side: BorderSide(color: Colors.grey), // Match theme or provide subtle border
+                    side: BorderSide(
+                        color: Colors
+                            .grey), // Match theme or provide subtle border
                   ),
                   child: const Text('Close'),
                 ),
@@ -482,8 +474,7 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
     bool changesSuccessfullySaved = false;
     bool hadChanges = _CategoriesChanged; // Store initial state
 
-    print(
-        "Executing _handleCloseLogic. Had changes: $hadChanges");
+    print("Executing _handleCloseLogic. Had changes: $hadChanges");
 
     if (hadChanges) {
       setState(() {
@@ -510,9 +501,8 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
           print("Category order saved successfully.");
           changesSuccessfullySaved = true;
         } else if (updates.isEmpty && _CategoriesChanged) {
-          changesSuccessfullySaved = true; 
+          changesSuccessfullySaved = true;
         }
-
       } catch (e) {
         print("Error saving category order: $e");
         if (mounted) {
@@ -520,7 +510,7 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
             SnackBar(content: Text("Error saving category order: $e")),
           );
         }
-        changesSuccessfullySaved = false; 
+        changesSuccessfullySaved = false;
       } finally {
         if (mounted) {
           setState(() {
@@ -532,4 +522,3 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
     return changesSuccessfullySaved && hadChanges;
   }
 }
-

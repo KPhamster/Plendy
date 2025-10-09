@@ -15,6 +15,16 @@ import '../models/color_category.dart';
 import '../models/share_permission.dart';
 import '../models/enums/share_enums.dart';
 
+class UserCategoryFetchResult {
+  const UserCategoryFetchResult({
+    required this.categories,
+    required this.sharedPermissions,
+  });
+
+  final List<UserCategory> categories;
+  final Map<String, SharePermission> sharedPermissions;
+}
+
 /// Service for managing Experience-related operations
 class ExperienceService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -103,6 +113,19 @@ class ExperienceService {
     }
   }
 
+  Future<Map<String, SharePermission>>
+      getEditableCategoryPermissionsMap() async {
+    final permissions = await _getEditableCategoryPermissionsForCurrentUser();
+    final Map<String, SharePermission> map = {};
+    for (final permission in permissions) {
+      if (permission.itemId.isEmpty) {
+        continue;
+      }
+      map[permission.itemId] = permission;
+    }
+    return map;
+  }
+
   Future<String> _resolveShareOwnerDisplayName(
       String ownerUserId, Map<String, String> cache) async {
     if (ownerUserId.isEmpty) {
@@ -189,16 +212,19 @@ class ExperienceService {
 
   // ======= User Category Operations =======
 
-  /// Fetches the user's custom categories.
+  /// Fetches the user's custom categories along with metadata about shared permissions.
   /// Set [includeSharedEditable] to true to append categories shared with the user that have edit access.
-  Future<List<UserCategory>> getUserCategories(
+  Future<UserCategoryFetchResult> getUserCategoriesWithMeta(
       {bool includeSharedEditable = false}) async {
     final userId = _currentUserId;
     print(
         "getUserCategories START - User: $userId | includeSharedEditable: $includeSharedEditable");
     if (userId == null) {
       print("getUserCategories END - No user, returning empty list.");
-      return [];
+      return const UserCategoryFetchResult(
+        categories: <UserCategory>[],
+        sharedPermissions: <String, SharePermission>{},
+      );
     }
 
     final collectionRef = _userCategoriesCollection(userId);
@@ -213,6 +239,7 @@ class ExperienceService {
         "getUserCategories - Fetched ${ownedCategories.length} owned categories from Firestore.");
 
     List<UserCategory> sharedCategories = [];
+    final Map<String, SharePermission> sharedPermissionMap = {};
     if (includeSharedEditable) {
       final permissions = await _getEditableCategoryPermissionsForCurrentUser();
       print(
@@ -221,6 +248,7 @@ class ExperienceService {
       if (permissions.isNotEmpty) {
         final processedKeys = <String>{};
         final fetchFutures = <Future<UserCategory?>>[];
+        final fetchPermissions = <SharePermission>[];
         final ownerNameCache = <String, String>{};
 
         for (final permission in permissions) {
@@ -232,6 +260,7 @@ class ExperienceService {
             continue;
           }
 
+          fetchPermissions.add(permission);
           fetchFutures.add(() async {
             try {
               final doc =
@@ -257,8 +286,18 @@ class ExperienceService {
 
         if (fetchFutures.isNotEmpty) {
           final results = await Future.wait(fetchFutures);
-          sharedCategories =
-              results.whereType<UserCategory>().toList(growable: false);
+          final List<UserCategory> fetchedShared = [];
+          for (int i = 0; i < results.length; i++) {
+            final UserCategory? category = results[i];
+            final SharePermission permission = fetchPermissions[i];
+            if (category != null) {
+              fetchedShared.add(category);
+              if (permission.itemId.isNotEmpty) {
+                sharedPermissionMap[permission.itemId] = permission;
+              }
+            }
+          }
+          sharedCategories = fetchedShared;
           sharedCategories.sort(
               (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
         }
@@ -281,8 +320,19 @@ class ExperienceService {
 
     print(
         "getUserCategories END - Returning ${finalCategories.length} categories (owned: ${ownedCategories.length}, shared: ${sharedCategories.length}).");
-    return finalCategories;
+    return UserCategoryFetchResult(
+      categories: finalCategories,
+      sharedPermissions: sharedPermissionMap,
+    );
   }
+
+  /// Fetches the user's custom categories.
+  /// Set [includeSharedEditable] to true to append categories shared with the user that have edit access.
+  Future<List<UserCategory>> getUserCategories(
+          {bool includeSharedEditable = false}) async =>
+      (await getUserCategoriesWithMeta(
+              includeSharedEditable: includeSharedEditable))
+          .categories;
 
   /// Initializes the default categories for a user in Firestore.
   /// Note: This should now be called explicitly ONCE during user creation flow.
@@ -1161,11 +1211,11 @@ class ExperienceService {
   }
 
   /// Get an experience by ID
-  Future<Experience?> getExperience(String experienceId, {bool forceServerFetch = false}) async {
-    final GetOptions? options = forceServerFetch 
-        ? GetOptions(source: Source.server) 
-        : null;
-    final doc = options != null 
+  Future<Experience?> getExperience(String experienceId,
+      {bool forceServerFetch = false}) async {
+    final GetOptions? options =
+        forceServerFetch ? GetOptions(source: Source.server) : null;
+    final doc = options != null
         ? await _experiencesCollection.doc(experienceId).get(options)
         : await _experiencesCollection.doc(experienceId).get();
     if (!doc.exists) {
@@ -1183,7 +1233,8 @@ class ExperienceService {
       if (existingDoc.exists) {
         final existingData = existingDoc.data() as Map<String, dynamic>?;
         oldCategoryId = existingData?['categoryId'] as String?;
-        debugPrint('updateExperience: OLD categoryId in Firestore: $oldCategoryId');
+        debugPrint(
+            'updateExperience: OLD categoryId in Firestore: $oldCategoryId');
       }
     } catch (e) {
       debugPrint('updateExperience: Error reading existing experience: $e');
@@ -1214,15 +1265,20 @@ class ExperienceService {
     debugPrint('  - location keys: ${data['location']?.keys.toList()}');
 
     // DEBUG: Check if permission exists for the NEW category
-    if (experience.categoryId != null && createdBy != null && _currentUserId != null && createdBy != _currentUserId) {
-      final permId = '${createdBy}_category_${experience.categoryId}_$_currentUserId';
+    if (experience.categoryId != null &&
+        createdBy != null &&
+        _currentUserId != null &&
+        createdBy != _currentUserId) {
+      final permId =
+          '${createdBy}_category_${experience.categoryId}_$_currentUserId';
       debugPrint('  - Checking NEW category permission doc: $permId');
       try {
         final permDoc = await _sharePermissionsCollection.doc(permId).get();
         debugPrint('  - NEW category permission exists: ${permDoc.exists}');
         if (permDoc.exists) {
           final permData = permDoc.data() as Map<String, dynamic>?;
-          debugPrint('  - NEW category permission accessLevel: ${permData?['accessLevel']}');
+          debugPrint(
+              '  - NEW category permission accessLevel: ${permData?['accessLevel']}');
         }
       } catch (e) {
         debugPrint('  - Error checking NEW category permission: $e');
@@ -1230,7 +1286,10 @@ class ExperienceService {
     }
 
     // DEBUG: Check if permission exists for the OLD category
-    if (oldCategoryId != null && createdBy != null && _currentUserId != null && createdBy != _currentUserId) {
+    if (oldCategoryId != null &&
+        createdBy != null &&
+        _currentUserId != null &&
+        createdBy != _currentUserId) {
       final permId = '${createdBy}_category_${oldCategoryId}_$_currentUserId';
       debugPrint('  - Checking OLD category permission doc: $permId');
       try {
@@ -1238,7 +1297,8 @@ class ExperienceService {
         debugPrint('  - OLD category permission exists: ${permDoc.exists}');
         if (permDoc.exists) {
           final permData = permDoc.data() as Map<String, dynamic>?;
-          debugPrint('  - OLD category permission accessLevel: ${permData?['accessLevel']}');
+          debugPrint(
+              '  - OLD category permission accessLevel: ${permData?['accessLevel']}');
         }
       } catch (e) {
         debugPrint('  - Error checking OLD category permission: $e');

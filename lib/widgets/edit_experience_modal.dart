@@ -14,6 +14,7 @@ import 'package:plendy/widgets/edit_color_categories_modal.dart'; // Placeholder
 import 'package:plendy/widgets/add_category_modal.dart';
 import 'package:plendy/widgets/edit_categories_modal.dart';
 import 'package:plendy/services/experience_service.dart';
+import 'package:plendy/services/category_ordering_service.dart';
 import 'package:collection/collection.dart'; // ADDED: Import for firstWhereOrNull
 import 'package:plendy/screens/location_picker_screen.dart'; // ADDED: Import for LocationPickerScreen
 
@@ -45,6 +46,8 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
 
   // --- ADDED: Service instance and local state for categories ---
   final ExperienceService _experienceService = ExperienceService();
+  final CategoryOrderingService _categoryOrderingService =
+      CategoryOrderingService();
   List<UserCategory> _currentUserCategories = [];
   List<ColorCategory> _currentColorCategories = [];
   bool _isLoadingCategories = true; // Loading indicator for categories
@@ -134,6 +137,22 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
     }
   }
 
+  Future<void> _applyCollectionsOrderingToCurrentLists() async {
+    final orderedCategories = await _categoryOrderingService
+        .orderUserCategories(_currentUserCategories);
+    final orderedColorCategories = await _categoryOrderingService
+        .orderColorCategories(_currentColorCategories);
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _currentUserCategories = orderedCategories;
+      _currentColorCategories = orderedColorCategories;
+    });
+    _userCategoriesNotifier.value = orderedCategories;
+    _colorCategoriesNotifier.value = orderedColorCategories;
+  }
+
   String? _sharedOwnerLabel(String? ownerName) {
     if (ownerName == null) return null;
     final trimmed = ownerName.trim();
@@ -146,19 +165,27 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
   Future<void> _loadAllCategories() async {
     setState(() => _isLoadingCategories = true);
     try {
-      final results = await Future.wait([
-        _experienceService.getUserCategories(includeSharedEditable: true),
-        _experienceService.getUserColorCategories(includeSharedEditable: true),
-      ]);
+      final UserCategoryFetchResult categoryResult =
+          await _experienceService.getUserCategoriesWithMeta(
+        includeSharedEditable: true,
+      );
+      final orderedCategories = await _categoryOrderingService
+          .orderUserCategories(categoryResult.categories,
+              sharedPermissions: categoryResult.sharedPermissions);
+      final colorCategories = await _experienceService.getUserColorCategories(
+        includeSharedEditable: true,
+      );
+      final orderedColorCategories =
+          await _categoryOrderingService.orderColorCategories(colorCategories);
       if (mounted) {
         setState(() {
-          _currentUserCategories = results[0] as List<UserCategory>;
-          _currentColorCategories = results[1] as List<ColorCategory>;
+          _currentUserCategories = orderedCategories;
+          _currentColorCategories = orderedColorCategories;
           _isLoadingCategories = false;
         });
         // --- ADDED: Update ValueNotifiers ---
-        _userCategoriesNotifier.value = _currentUserCategories;
-        _colorCategoriesNotifier.value = _currentColorCategories;
+        _userCategoriesNotifier.value = orderedCategories;
+        _colorCategoriesNotifier.value = orderedColorCategories;
         // --- END ADDED ---
       }
     } catch (e) {
@@ -250,16 +277,20 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
     // Simplified version for targeted refresh
     setState(() => _isLoadingCategories = true);
     try {
-      final categories = await _experienceService.getUserCategories(
+      final UserCategoryFetchResult categoryResult =
+          await _experienceService.getUserCategoriesWithMeta(
         includeSharedEditable: true,
       );
+      final orderedCategories = await _categoryOrderingService
+          .orderUserCategories(categoryResult.categories,
+              sharedPermissions: categoryResult.sharedPermissions);
       if (mounted) {
         setState(() {
-          _currentUserCategories = categories;
+          _currentUserCategories = orderedCategories;
           _isLoadingCategories = false;
         });
         // --- ADDED: Update ValueNotifier ---
-        _userCategoriesNotifier.value = _currentUserCategories;
+        _userCategoriesNotifier.value = orderedCategories;
         // --- END ADDED ---
       }
     } catch (e) {
@@ -280,13 +311,15 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
       final categories = await _experienceService.getUserColorCategories(
         includeSharedEditable: true,
       );
+      final orderedCategories =
+          await _categoryOrderingService.orderColorCategories(categories);
       if (mounted) {
         setState(() {
-          _currentColorCategories = categories;
+          _currentColorCategories = orderedCategories;
           _isLoadingCategories = false;
         });
         // --- ADDED: Update ValueNotifier ---
-        _colorCategoriesNotifier.value = _currentColorCategories;
+        _colorCategoriesNotifier.value = orderedCategories;
         // --- END ADDED ---
       }
     } catch (e) {

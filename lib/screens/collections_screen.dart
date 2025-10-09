@@ -5,12 +5,10 @@ import '../models/experience.dart';
 import '../models/user_category.dart';
 import '../models/color_category.dart';
 import '../widgets/add_color_category_modal.dart';
-import '../widgets/edit_color_categories_modal.dart' show ColorCategorySortType;
 import '../services/auth_service.dart';
 import '../services/experience_service.dart';
 import '../services/experience_share_service.dart';
 import '../widgets/add_category_modal.dart';
-import '../widgets/edit_categories_modal.dart' show CategorySortType;
 import '../widgets/add_experience_modal.dart'; // ADDED: Import for AddExperienceModal
 import 'experience_page_screen.dart';
 import 'package:geolocator/geolocator.dart';
@@ -33,6 +31,7 @@ import 'receive_share/widgets/maps_preview_widget.dart';
 import '../models/shared_media_item.dart'; // ADDED Import
 import '../models/share_permission.dart'; // ADDED Import for SharePermission
 import '../models/enums/share_enums.dart'; // ADDED Import for ShareableItemType and ShareAccessLevel
+import '../models/category_sort_type.dart';
 import 'package:collection/collection.dart'; // ADDED: Import for groupBy
 import 'map_screen.dart'; // ADDED: Import for MapScreen
 import 'package:flutter/foundation.dart'; // ADDED: Import for kIsWeb
@@ -342,10 +341,10 @@ class _CollectionsScreenState extends State<CollectionsScreen>
             prefs.getStringList('$_prefsKeyCategoryOrderPrefix$userId');
         manualColorCategoryOrder =
             prefs.getStringList('$_prefsKeyColorCategoryOrderPrefix$userId');
-        manualCategoryOrderEnabled = prefs
-            .getBool('$_prefsKeyUseManualCategoryOrderPrefix$userId');
-        manualColorCategoryOrderEnabled = prefs
-            .getBool('$_prefsKeyUseManualColorCategoryOrderPrefix$userId');
+        manualCategoryOrderEnabled =
+            prefs.getBool('$_prefsKeyUseManualCategoryOrderPrefix$userId');
+        manualColorCategoryOrderEnabled =
+            prefs.getBool('$_prefsKeyUseManualColorCategoryOrderPrefix$userId');
       }
 
       setState(() {
@@ -558,15 +557,13 @@ class _CollectionsScreenState extends State<CollectionsScreen>
 
   void _applyColorCategorySortInMemory() {
     List<ColorCategory> sorted = List<ColorCategory>.from(_colorCategories);
-    if (_useManualColorCategoryOrder &&
-        _manualColorCategoryOrder.isNotEmpty) {
+    if (_useManualColorCategoryOrder && _manualColorCategoryOrder.isNotEmpty) {
       sorted = _applyManualOrder<ColorCategory>(
         items: sorted,
         manualOrderIds: _manualColorCategoryOrder,
         idSelector: (category) => category.id,
       );
-    } else if (_colorCategorySortType ==
-        ColorCategorySortType.alphabetical) {
+    } else if (_colorCategorySortType == ColorCategorySortType.alphabetical) {
       sorted
           .sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
     } else {
@@ -787,6 +784,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       _loadData();
     });
   }
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -1583,6 +1581,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     final i = order.indexOf(level);
     return i >= 0 && i < order.length - 1 ? order[i + 1] : '__end__';
   }
+
   Future<void> _loadData() async {
     setState(() {
       _isLoading = true;
@@ -1725,10 +1724,13 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         experiencePermissionMap[experienceId] = data.permission;
         sharedExperiences.add(data.experience);
       });
-      
-      print('[Collections] DEBUG: Total shared experiences from categories: ${sharedExperiences.length}');
-      print('[Collections] DEBUG: Experience IDs: ${sharedExperiences.map((e) => e.id).take(5).join(", ")}...');
-      print('[Collections] DEBUG: Experience names: ${sharedExperiences.map((e) => e.name).take(5).join(", ")}...');
+
+      print(
+          '[Collections] DEBUG: Total shared experiences from categories: ${sharedExperiences.length}');
+      print(
+          '[Collections] DEBUG: Experience IDs: ${sharedExperiences.map((e) => e.id).take(5).join(", ")}...');
+      print(
+          '[Collections] DEBUG: Experience names: ${sharedExperiences.map((e) => e.name).take(5).join(", ")}...');
 
       final List<UserCategory> combinedCategories = List.of(ownCategories);
       for (final shared in sharedUserCategories) {
@@ -1751,18 +1753,19 @@ class _CollectionsScreenState extends State<CollectionsScreen>
           combinedColorCategories.map((c) => c.id).toList();
       final List<String> updatedManualCategoryOrder =
           _syncManualOrderList(_manualCategoryOrder, combinedCategoryIdList);
-      final List<String> updatedManualColorCategoryOrder =
-          _syncManualOrderList(
-              _manualColorCategoryOrder, combinedColorCategoryIdList);
-      final Set<String> combinedCategoryIds =
-          combinedCategoryIdList.toSet();
+      final List<String> updatedManualColorCategoryOrder = _syncManualOrderList(
+          _manualColorCategoryOrder, combinedColorCategoryIdList);
+      final Set<String> combinedCategoryIds = combinedCategoryIdList.toSet();
       final Set<String> combinedColorCategoryIds =
           combinedColorCategoryIdList.toSet();
-      
-      print('[Collections] DEBUG: Combined categories count: ${combinedCategoryIds.length}');
-      print('[Collections] DEBUG: Combined color categories count: ${combinedColorCategoryIds.length}');
-      print('[Collections] DEBUG: Combined category IDs: ${combinedCategoryIds.take(5).join(", ")}...');
-      
+
+      print(
+          '[Collections] DEBUG: Combined categories count: ${combinedCategoryIds.length}');
+      print(
+          '[Collections] DEBUG: Combined color categories count: ${combinedColorCategoryIds.length}');
+      print(
+          '[Collections] DEBUG: Combined category IDs: ${combinedCategoryIds.take(5).join(", ")}...');
+
       // Filter shared experiences, but pass the new permission map so filtering can check it
       final List<Experience> filteredSharedExperiences =
           _filterExperiencesWithAssignments(
@@ -1771,13 +1774,18 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         combinedColorCategoryIds,
         permissionsToCheck: experiencePermissionMap,
       );
-      
-      print('[Collections] DEBUG: After filtering - Shared experiences: ${filteredSharedExperiences.length}');
+
+      print(
+          '[Collections] DEBUG: After filtering - Shared experiences: ${filteredSharedExperiences.length}');
       if (sharedExperiences.length != filteredSharedExperiences.length) {
-        print('[Collections] DEBUG WARNING: ${sharedExperiences.length - filteredSharedExperiences.length} experiences were filtered out!');
-        final filtered = sharedExperiences.where((e) => !filteredSharedExperiences.contains(e)).toList();
+        print(
+            '[Collections] DEBUG WARNING: ${sharedExperiences.length - filteredSharedExperiences.length} experiences were filtered out!');
+        final filtered = sharedExperiences
+            .where((e) => !filteredSharedExperiences.contains(e))
+            .toList();
         for (final exp in filtered.take(3)) {
-          print('[Collections] DEBUG: Filtered out: "${exp.name}" - categoryId: ${exp.categoryId}, colorCategoryId: ${exp.colorCategoryId}');
+          print(
+              '[Collections] DEBUG: Filtered out: "${exp.name}" - categoryId: ${exp.categoryId}, colorCategoryId: ${exp.colorCategoryId}');
         }
       }
 
@@ -1905,7 +1913,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     if (_sharedExperiencePermissions.containsKey(experience.id)) {
       return true;
     }
-    if (permissionsToCheck != null && permissionsToCheck.containsKey(experience.id)) {
+    if (permissionsToCheck != null &&
+        permissionsToCheck.containsKey(experience.id)) {
       return true;
     }
 
@@ -1942,8 +1951,9 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       return experiences;
     }
     return experiences
-        .where((exp) =>
-            _experienceHasValidAssignment(exp, categoryIds, colorCategoryIds, permissionsToCheck: permissionsToCheck))
+        .where((exp) => _experienceHasValidAssignment(
+            exp, categoryIds, colorCategoryIds,
+            permissionsToCheck: permissionsToCheck))
         .toList();
   }
 
@@ -2106,13 +2116,11 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     required List<_SharedCategoryData> sharedCategoryData,
   }) async {
     final Map<String, _SharedExperienceData> combined = {
-      for (final data in directSharedExperiences)
-        data.experience.id: data,
+      for (final data in directSharedExperiences) data.experience.id: data,
     };
 
-    final List<_SharedCategoryData> categoriesToProcess = sharedCategoryData
-        .where((data) => data.categoryId.isNotEmpty)
-        .toList();
+    final List<_SharedCategoryData> categoriesToProcess =
+        sharedCategoryData.where((data) => data.categoryId.isNotEmpty).toList();
     if (categoriesToProcess.isEmpty) {
       return combined;
     }
@@ -2121,14 +2129,16 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         await Future.wait(
       categoriesToProcess.map(
         (categoryData) async {
-          print('[Collections] DEBUG: Fetching experiences for ${categoryData.isColorCategory ? "color" : "user"} category ${categoryData.categoryId} from owner ${categoryData.permission.ownerUserId}');
+          print(
+              '[Collections] DEBUG: Fetching experiences for ${categoryData.isColorCategory ? "color" : "user"} category ${categoryData.categoryId} from owner ${categoryData.permission.ownerUserId}');
           final List<Experience> experiences =
               await _experienceService.getExperiencesForOwnerCategory(
             ownerUserId: categoryData.permission.ownerUserId,
             categoryId: categoryData.categoryId,
             isColorCategory: categoryData.isColorCategory,
           );
-          print('[Collections] DEBUG: Fetched ${experiences.length} experiences from this category');
+          print(
+              '[Collections] DEBUG: Fetched ${experiences.length} experiences from this category');
           return MapEntry(categoryData, experiences);
         },
       ),
@@ -2368,6 +2378,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
 
     return candidates;
   }
+
   Future<int> _removeSharedUserCategory(
       UserCategory category, SharePermission permission) async {
     final List<SharePermission> experiencePermissionsToRemove =
@@ -3088,6 +3099,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         .map((item) => item['experience'] as Experience)
         .toList());
   }
+
   // --- END ADDED ---
   // --- REFACTORED: Method to apply sorting to the grouped content items list ---
   // ADDED: Optional parameter to apply sort to the filtered list
@@ -4173,6 +4185,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       },
     );
   }
+
   // REFACTORED: Extracted list item builder for reuse
   Widget _buildExperienceListItem(Experience experience) {
     // Find the matching category icon and name using categoryId
@@ -4751,6 +4764,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       ],
     );
   }
+
   // MODIFIED: Widget builder for the Experience List View uses the refactored item builder
   Widget _buildExperiencesListView() {
     if (_filteredExperiences.isEmpty) {
@@ -5287,6 +5301,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       ],
     );
   }
+
   // --- REFACTORED: Widget builder for the Content Tab Body --- ///
   Widget _buildContentTabBody() {
     if (!_contentLoaded || _isContentLoading) {
@@ -6590,6 +6605,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       await _loadData();
     }
   }
+
   Future<void> _handleBulkDeleteSelectedColorCategories() async {
     final List<ColorCategory> selectedCategories = _colorCategories
         .where((category) => _selectedColorCategoryIds.contains(category.id))
@@ -6772,8 +6788,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       if (category.ownerUserId != currentUserId) {
         continue;
       }
-      _colorCategories[i] =
-          category.copyWith(orderIndex: nextOrder);
+      _colorCategories[i] = category.copyWith(orderIndex: nextOrder);
       nextOrder++;
     }
   }
@@ -6816,8 +6831,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     final List<ColorCategory> sorted =
         List<ColorCategory>.from(_colorCategories);
     if (sortType == ColorCategorySortType.alphabetical) {
-      sorted.sort(
-          (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+      sorted
+          .sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
     } else {
       sorted.sort((a, b) {
         final tsA = a.lastUsedTimestamp;
@@ -7363,6 +7378,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       ],
     );
   }
+
   // --- ADDED: Widget to display experiences for a specific color category --- END ---
   // ADDED: Helper function to build popup menu items with visual indicators
   PopupMenuItem<T> _buildPopupMenuItem<T>({
@@ -8153,6 +8169,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     );
     return contentItem;
   }
+
   // ADDED: Dialog to show media details (associated experiences)
   void _showMediaDetailsDialog(GroupedContentItem group) {
     showDialog(
@@ -8445,21 +8462,21 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       // Get shared category data (reusing existing logic)
       final List<SharePermission> categoryPermissions =
           await _sharingService.getSharedItemsForUser(userId);
-      
+
       final List<_SharedCategoryData> sharedCategoryData = [];
-      
+
       for (final permission in categoryPermissions) {
         if (permission.itemType != ShareableItemType.category) continue;
-        
+
         final categoryId = permission.itemId;
         final ownerUserId = permission.ownerUserId;
-        
+
         // Try to load as user category
         final userCategory = await _experienceService.getUserCategoryByOwner(
           ownerUserId,
           categoryId,
         );
-        
+
         if (userCategory != null) {
           final ownerName = await _getOwnerDisplayName(ownerUserId);
           sharedCategoryData.add(_SharedCategoryData(
@@ -8470,13 +8487,13 @@ class _CollectionsScreenState extends State<CollectionsScreen>
           ));
           continue;
         }
-        
+
         // Try to load as color category
         final colorCategory = await _experienceService.getColorCategoryByOwner(
           ownerUserId,
           categoryId,
         );
-        
+
         if (colorCategory != null) {
           final ownerName = await _getOwnerDisplayName(ownerUserId);
           sharedCategoryData.add(_SharedCategoryData(
@@ -8487,31 +8504,32 @@ class _CollectionsScreenState extends State<CollectionsScreen>
           ));
         }
       }
-      
+
       // Fetch experiences from all shared categories
       final futures = sharedCategoryData.map((categoryData) async {
-        final experiences = await _experienceService.getExperiencesForOwnerCategory(
+        final experiences =
+            await _experienceService.getExperiencesForOwnerCategory(
           ownerUserId: categoryData.permission.ownerUserId,
           categoryId: categoryData.categoryId,
           isColorCategory: categoryData.isColorCategory,
         );
         return MapEntry(categoryData, experiences);
       }).toList();
-      
+
       final fetchResults = await Future.wait(futures);
-      
+
       // Update shared experiences and permissions
       final Map<String, SharePermission> newExperiencePermissions = {};
       final List<Experience> newSharedExperiences = [];
       final Set<String> seenIds = {};
-      
+
       for (final entry in fetchResults) {
         final categoryData = entry.key;
         final experiences = entry.value;
-        
+
         for (final experience in experiences) {
           if (!seenIds.add(experience.id)) continue;
-          
+
           // Create synthetic permission for this experience
           final syntheticPermission = SharePermission(
             id: 'category_${categoryData.permission.id}_${experience.id}',
@@ -8523,18 +8541,18 @@ class _CollectionsScreenState extends State<CollectionsScreen>
             createdAt: categoryData.permission.createdAt,
             updatedAt: categoryData.permission.updatedAt,
           );
-          
+
           newExperiencePermissions[experience.id] = syntheticPermission;
           newSharedExperiences.add(experience);
         }
       }
-      
+
       // Update state if mounted
       if (mounted) {
         setState(() {
           // Update shared experience permissions
           _sharedExperiencePermissions.addAll(newExperiencePermissions);
-          
+
           // Update shared experiences list (merge with existing, avoiding duplicates)
           final Map<String, Experience> experienceMap = {
             for (final exp in _sharedExperiences) exp.id: exp,
@@ -8546,7 +8564,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         });
       }
     } catch (e) {
-      debugPrint('_refreshSharedExperiencesFromCategories: Error refreshing shared experiences: $e');
+      debugPrint(
+          '_refreshSharedExperiencesFromCategories: Error refreshing shared experiences: $e');
     }
   }
 
@@ -8685,6 +8704,7 @@ class _ShareBottomSheetContent extends StatefulWidget {
   State<_ShareBottomSheetContent> createState() =>
       _ShareBottomSheetContentState();
 }
+
 class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
   String _shareMode = 'view_access'; // 'view_access' | 'edit_access'
   bool _giveEditAccess = false;
@@ -9429,6 +9449,7 @@ class _BulkShareBottomSheetContent extends StatefulWidget {
   State<_BulkShareBottomSheetContent> createState() =>
       _BulkShareBottomSheetContentState();
 }
+
 class _BulkShareBottomSheetContentState
     extends State<_BulkShareBottomSheetContent> {
   String _shareMode = 'view_access';
