@@ -46,6 +46,7 @@ import 'category_share_preview_screen.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:shared_preferences/shared_preferences.dart';
+import '../utils/backfill_shared_user_ids.dart';
 
 // Helper classes for shared data
 class _SharedCategoryData {
@@ -787,7 +788,6 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       _loadData();
     });
   }
-
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -1584,7 +1584,6 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     final i = order.indexOf(level);
     return i >= 0 && i < order.length - 1 ? order[i + 1] : '__end__';
   }
-
   Future<void> _loadData() async {
     setState(() {
       _isLoading = true;
@@ -1712,13 +1711,25 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         sharedCategoryIsColorMap[id] = data.isColorCategory;
       }
 
+      final Map<String, _SharedExperienceData> combinedSharedExperienceData =
+          await _combineSharedExperiences(
+        directSharedExperiences: sharedExperienceData,
+        sharedCategoryData: sharedCategoryData,
+      );
+      print(
+          '[Collections] Combined shared experiences total: ${combinedSharedExperienceData.length}');
+
       final Map<String, SharePermission> experiencePermissionMap = {};
       final List<Experience> sharedExperiences = [];
-      for (final data in sharedExperienceData) {
-        final exp = data.experience;
-        experiencePermissionMap[exp.id] = data.permission;
-        sharedExperiences.add(exp);
-      }
+      combinedSharedExperienceData
+          .forEach((experienceId, _SharedExperienceData data) {
+        experiencePermissionMap[experienceId] = data.permission;
+        sharedExperiences.add(data.experience);
+      });
+      
+      print('[Collections] DEBUG: Total shared experiences from categories: ${sharedExperiences.length}');
+      print('[Collections] DEBUG: Experience IDs: ${sharedExperiences.map((e) => e.id).take(5).join(", ")}...');
+      print('[Collections] DEBUG: Experience names: ${sharedExperiences.map((e) => e.name).take(5).join(", ")}...');
 
       final List<UserCategory> combinedCategories = List.of(ownCategories);
       for (final shared in sharedUserCategories) {
@@ -1748,12 +1759,28 @@ class _CollectionsScreenState extends State<CollectionsScreen>
           combinedCategoryIdList.toSet();
       final Set<String> combinedColorCategoryIds =
           combinedColorCategoryIdList.toSet();
+      
+      print('[Collections] DEBUG: Combined categories count: ${combinedCategoryIds.length}');
+      print('[Collections] DEBUG: Combined color categories count: ${combinedColorCategoryIds.length}');
+      print('[Collections] DEBUG: Combined category IDs: ${combinedCategoryIds.take(5).join(", ")}...');
+      
+      // Filter shared experiences, but pass the new permission map so filtering can check it
       final List<Experience> filteredSharedExperiences =
           _filterExperiencesWithAssignments(
         sharedExperiences,
         combinedCategoryIds,
         combinedColorCategoryIds,
+        permissionsToCheck: experiencePermissionMap,
       );
+      
+      print('[Collections] DEBUG: After filtering - Shared experiences: ${filteredSharedExperiences.length}');
+      if (sharedExperiences.length != filteredSharedExperiences.length) {
+        print('[Collections] DEBUG WARNING: ${sharedExperiences.length - filteredSharedExperiences.length} experiences were filtered out!');
+        final filtered = sharedExperiences.where((e) => !filteredSharedExperiences.contains(e)).toList();
+        for (final exp in filtered.take(3)) {
+          print('[Collections] DEBUG: Filtered out: "${exp.name}" - categoryId: ${exp.categoryId}, colorCategoryId: ${exp.colorCategoryId}');
+        }
+      }
 
       final bool hadFilters = _hasActiveFilters;
 
@@ -1870,8 +1897,19 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   bool _experienceHasValidAssignment(
     Experience experience,
     Set<String> categoryIds,
-    Set<String> colorCategoryIds,
-  ) {
+    Set<String> colorCategoryIds, {
+    Map<String, SharePermission>? permissionsToCheck,
+  }) {
+    // First check: if this experience was fetched from a shared category,
+    // it should always be visible regardless of its color category assignment
+    // Check both the instance variable and the optional parameter
+    if (_sharedExperiencePermissions.containsKey(experience.id)) {
+      return true;
+    }
+    if (permissionsToCheck != null && permissionsToCheck.containsKey(experience.id)) {
+      return true;
+    }
+
     final String? primary = experience.categoryId;
     if (primary != null &&
         primary.isNotEmpty &&
@@ -1898,14 +1936,15 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   List<Experience> _filterExperiencesWithAssignments(
     List<Experience> experiences,
     Set<String> categoryIds,
-    Set<String> colorCategoryIds,
-  ) {
+    Set<String> colorCategoryIds, {
+    Map<String, SharePermission>? permissionsToCheck,
+  }) {
     if (experiences.isEmpty) {
       return experiences;
     }
     return experiences
         .where((exp) =>
-            _experienceHasValidAssignment(exp, categoryIds, colorCategoryIds))
+            _experienceHasValidAssignment(exp, categoryIds, colorCategoryIds, permissionsToCheck: permissionsToCheck))
         .toList();
   }
 
@@ -2061,6 +2100,93 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         '[Collections] Resolved ${results.length} shared experiences in ${sw.elapsedMilliseconds}ms');
 
     return results;
+  }
+
+  Future<Map<String, _SharedExperienceData>> _combineSharedExperiences({
+    required List<_SharedExperienceData> directSharedExperiences,
+    required List<_SharedCategoryData> sharedCategoryData,
+  }) async {
+    final Map<String, _SharedExperienceData> combined = {
+      for (final data in directSharedExperiences)
+        data.experience.id: data,
+    };
+
+    final List<_SharedCategoryData> categoriesToProcess = sharedCategoryData
+        .where((data) => data.categoryId.isNotEmpty)
+        .toList();
+    if (categoriesToProcess.isEmpty) {
+      return combined;
+    }
+
+    final List<MapEntry<_SharedCategoryData, List<Experience>>> fetchResults =
+        await Future.wait(
+      categoriesToProcess.map(
+        (categoryData) async {
+          print('[Collections] DEBUG: Fetching experiences for ${categoryData.isColorCategory ? "color" : "user"} category ${categoryData.categoryId} from owner ${categoryData.permission.ownerUserId}');
+          final List<Experience> experiences =
+              await _experienceService.getExperiencesForOwnerCategory(
+            ownerUserId: categoryData.permission.ownerUserId,
+            categoryId: categoryData.categoryId,
+            isColorCategory: categoryData.isColorCategory,
+          );
+          print('[Collections] DEBUG: Fetched ${experiences.length} experiences from this category');
+          return MapEntry(categoryData, experiences);
+        },
+      ),
+    );
+
+    for (final MapEntry<_SharedCategoryData, List<Experience>> entry
+        in fetchResults) {
+      final _SharedCategoryData categoryData = entry.key;
+      final List<Experience> experiences = entry.value;
+      if (experiences.isEmpty) {
+        continue;
+      }
+
+      final ShareAccessLevel categoryAccess =
+          categoryData.permission.accessLevel;
+      final String ownerId = categoryData.permission.ownerUserId;
+      _shareOwnerNames[ownerId] = categoryData.ownerDisplayName;
+
+      for (final Experience experience in experiences) {
+        final _SharedExperienceData? existing = combined[experience.id];
+        if (existing != null) {
+          final bool upgradeToEdit =
+              existing.permission.accessLevel == ShareAccessLevel.view &&
+                  categoryAccess == ShareAccessLevel.edit;
+          if (upgradeToEdit) {
+            combined[experience.id] = _SharedExperienceData(
+              experience: existing.experience,
+              permission: existing.permission.copyWith(
+                accessLevel: ShareAccessLevel.edit,
+                updatedAt: categoryData.permission.updatedAt,
+              ),
+              ownerDisplayName: existing.ownerDisplayName,
+            );
+          }
+          continue;
+        }
+
+        final SharePermission syntheticPermission = SharePermission(
+          id: 'category_${categoryData.permission.id}_${experience.id}',
+          itemId: experience.id,
+          itemType: ShareableItemType.experience,
+          ownerUserId: ownerId,
+          sharedWithUserId: categoryData.permission.sharedWithUserId,
+          accessLevel: categoryAccess,
+          createdAt: categoryData.permission.createdAt,
+          updatedAt: categoryData.permission.updatedAt,
+        );
+
+        combined[experience.id] = _SharedExperienceData(
+          experience: experience,
+          permission: syntheticPermission,
+          ownerDisplayName: categoryData.ownerDisplayName,
+        );
+      }
+    }
+
+    return combined;
   }
 
   Future<String> _getOwnerDisplayName(String userId) async {
@@ -2243,7 +2369,6 @@ class _CollectionsScreenState extends State<CollectionsScreen>
 
     return candidates;
   }
-
   Future<int> _removeSharedUserCategory(
       UserCategory category, SharePermission permission) async {
     final List<SharePermission> experiencePermissionsToRemove =
@@ -2965,7 +3090,6 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         .toList());
   }
   // --- END ADDED ---
-
   // --- REFACTORED: Method to apply sorting to the grouped content items list ---
   // ADDED: Optional parameter to apply sort to the filtered list
   Future<void> _applyContentSort(ContentSortType sortType,
@@ -3506,6 +3630,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                       return searchBarWidget; // Original layout for mobile/mobile-web
                     }
                   }),
+                  const BackfillSharedUserIdsButton(),
                   // ADDED: TabBar placed here in the body's Column
                   Container(
                     color: Colors.white,
@@ -4050,7 +4175,6 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       },
     );
   }
-
   // REFACTORED: Extracted list item builder for reuse
   Widget _buildExperienceListItem(Experience experience) {
     // Find the matching category icon and name using categoryId
@@ -4629,7 +4753,6 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       ],
     );
   }
-
   // MODIFIED: Widget builder for the Experience List View uses the refactored item builder
   Widget _buildExperiencesListView() {
     if (_filteredExperiences.isEmpty) {
@@ -5166,7 +5289,6 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       ],
     );
   }
-
   // --- REFACTORED: Widget builder for the Content Tab Body --- ///
   Widget _buildContentTabBody() {
     if (!_contentLoaded || _isContentLoading) {
@@ -5815,8 +5937,22 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     final ExperienceShareService shareService = ExperienceShareService();
     final List<MapEntry<Experience, String>> createdLinks = [];
     final List<String> errors = [];
+    String? bulkUrl;
+    List<Experience> bulkExperiences = const <Experience>[];
 
-    for (final Experience experience in shareableExperiences) {
+    if (shareableExperiences.length > 1) {
+      bulkExperiences = List<Experience>.from(shareableExperiences);
+      try {
+        bulkUrl = await shareService.createLinkShareForMultiple(
+          experiences: shareableExperiences,
+          expiresAt: DateTime.now().add(const Duration(days: 30)),
+          grantEdit: false,
+        );
+      } catch (e) {
+        errors.add('Multi-share: $e');
+      }
+    } else {
+      final Experience experience = shareableExperiences.first;
       try {
         final String url = await shareService.createLinkShare(
           experience: experience,
@@ -5838,8 +5974,94 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       _isLoading = false;
     });
 
-    if (createdLinks.isNotEmpty) {
-      final scaffoldMessenger = ScaffoldMessenger.of(context);
+    final scaffoldMessenger = ScaffoldMessenger.of(context);
+
+    if (bulkUrl != null) {
+      final String multiUrl = bulkUrl!;
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) {
+          return AlertDialog(
+            title: const Text('Shareable link created'),
+            content: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Included experiences (${bulkExperiences.length}):',
+                    style: Theme.of(ctx).textTheme.bodyMedium,
+                  ),
+                  const SizedBox(height: 8),
+                  ...bulkExperiences.map(
+                    (exp) => Padding(
+                      padding: const EdgeInsets.only(bottom: 4.0),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Icon(Icons.check_circle_outline,
+                              size: 16, color: Colors.green),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              exp.name,
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w600),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Share link',
+                    style: Theme.of(ctx).textTheme.bodyMedium,
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: SelectableText(
+                          multiUrl,
+                          style: const TextStyle(fontSize: 13),
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: 'Copy link',
+                        icon: const Icon(Icons.copy),
+                        onPressed: () async {
+                          await Clipboard.setData(
+                            ClipboardData(text: multiUrl),
+                          );
+                          scaffoldMessenger.showSnackBar(
+                            const SnackBar(content: Text('Link copied')),
+                          );
+                        },
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () async {
+                  await Share.share(multiUrl);
+                  Navigator.of(ctx).pop();
+                },
+                child: const Text('Share'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: const Text('Close'),
+              ),
+            ],
+          );
+        },
+      );
+    } else if (createdLinks.isNotEmpty) {
       await showDialog<void>(
         context: context,
         builder: (ctx) {
@@ -5895,7 +6117,11 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     }
 
     final List<String> messageParts = [];
-    if (createdLinks.isNotEmpty) {
+    if (bulkUrl != null) {
+      final int count = bulkExperiences.length;
+      messageParts.add(
+          'Created 1 shareable link for $count ${count == 1 ? 'experience' : 'experiences'}');
+    } else if (createdLinks.isNotEmpty) {
       messageParts.add(
           'Created ${createdLinks.length} ${createdLinks.length == 1 ? 'shareable link' : 'shareable links'}');
     }
@@ -6366,7 +6592,6 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       await _loadData();
     }
   }
-
   Future<void> _handleBulkDeleteSelectedColorCategories() async {
     final List<ColorCategory> selectedCategories = _colorCategories
         .where((category) => _selectedColorCategoryIds.contains(category.id))
@@ -7141,7 +7366,6 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     );
   }
   // --- ADDED: Widget to display experiences for a specific color category --- END ---
-
   // ADDED: Helper function to build popup menu items with visual indicators
   PopupMenuItem<T> _buildPopupMenuItem<T>({
     required T value,
@@ -7931,7 +8155,6 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     );
     return contentItem;
   }
-
   // ADDED: Dialog to show media details (associated experiences)
   void _showMediaDetailsDialog(GroupedContentItem group) {
     showDialog(
@@ -8215,11 +8438,128 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     return null;
   }
 
+  /// Refresh shared experiences from shared categories to pick up newly added experiences
+  Future<void> _refreshSharedExperiencesFromCategories() async {
+    final userId = _authService.currentUser?.uid;
+    if (userId == null) return;
+
+    try {
+      // Get shared category data (reusing existing logic)
+      final List<SharePermission> categoryPermissions =
+          await _sharingService.getSharedItemsForUser(userId);
+      
+      final List<_SharedCategoryData> sharedCategoryData = [];
+      
+      for (final permission in categoryPermissions) {
+        if (permission.itemType != ShareableItemType.category) continue;
+        
+        final categoryId = permission.itemId;
+        final ownerUserId = permission.ownerUserId;
+        
+        // Try to load as user category
+        final userCategory = await _experienceService.getUserCategoryByOwner(
+          ownerUserId,
+          categoryId,
+        );
+        
+        if (userCategory != null) {
+          final ownerName = await _getOwnerDisplayName(ownerUserId);
+          sharedCategoryData.add(_SharedCategoryData(
+            userCategory: userCategory,
+            colorCategory: null,
+            permission: permission,
+            ownerDisplayName: ownerName,
+          ));
+          continue;
+        }
+        
+        // Try to load as color category
+        final colorCategory = await _experienceService.getColorCategoryByOwner(
+          ownerUserId,
+          categoryId,
+        );
+        
+        if (colorCategory != null) {
+          final ownerName = await _getOwnerDisplayName(ownerUserId);
+          sharedCategoryData.add(_SharedCategoryData(
+            userCategory: null,
+            colorCategory: colorCategory,
+            permission: permission,
+            ownerDisplayName: ownerName,
+          ));
+        }
+      }
+      
+      // Fetch experiences from all shared categories
+      final futures = sharedCategoryData.map((categoryData) async {
+        final experiences = await _experienceService.getExperiencesForOwnerCategory(
+          ownerUserId: categoryData.permission.ownerUserId,
+          categoryId: categoryData.categoryId,
+          isColorCategory: categoryData.isColorCategory,
+        );
+        return MapEntry(categoryData, experiences);
+      }).toList();
+      
+      final fetchResults = await Future.wait(futures);
+      
+      // Update shared experiences and permissions
+      final Map<String, SharePermission> newExperiencePermissions = {};
+      final List<Experience> newSharedExperiences = [];
+      final Set<String> seenIds = {};
+      
+      for (final entry in fetchResults) {
+        final categoryData = entry.key;
+        final experiences = entry.value;
+        
+        for (final experience in experiences) {
+          if (!seenIds.add(experience.id)) continue;
+          
+          // Create synthetic permission for this experience
+          final syntheticPermission = SharePermission(
+            id: 'category_${categoryData.permission.id}_${experience.id}',
+            itemId: experience.id,
+            itemType: ShareableItemType.experience,
+            ownerUserId: categoryData.permission.ownerUserId,
+            sharedWithUserId: userId,
+            accessLevel: categoryData.permission.accessLevel,
+            createdAt: categoryData.permission.createdAt,
+            updatedAt: categoryData.permission.updatedAt,
+          );
+          
+          newExperiencePermissions[experience.id] = syntheticPermission;
+          newSharedExperiences.add(experience);
+        }
+      }
+      
+      // Update state if mounted
+      if (mounted) {
+        setState(() {
+          // Update shared experience permissions
+          _sharedExperiencePermissions.addAll(newExperiencePermissions);
+          
+          // Update shared experiences list (merge with existing, avoiding duplicates)
+          final Map<String, Experience> experienceMap = {
+            for (final exp in _sharedExperiences) exp.id: exp,
+          };
+          for (final exp in newSharedExperiences) {
+            experienceMap[exp.id] = exp;
+          }
+          _sharedExperiences = experienceMap.values.toList();
+        });
+      }
+    } catch (e) {
+      debugPrint('_refreshSharedExperiencesFromCategories: Error refreshing shared experiences: $e');
+    }
+  }
+
   Future<void> _loadExperiences(String userId) async {
     _isExperiencesLoading = true;
     try {
       final Set<String> currentCategoryIds = _currentCategoryIdSet();
       final Set<String> currentColorCategoryIds = _currentColorCategoryIdSet();
+
+      // Refresh shared experiences from shared categories to include newly added experiences
+      await _refreshSharedExperiencesFromCategories();
 
       try {
         final cached = await _experienceService.getExperiencesByUser(userId);
@@ -8347,7 +8687,6 @@ class _ShareBottomSheetContent extends StatefulWidget {
   State<_ShareBottomSheetContent> createState() =>
       _ShareBottomSheetContentState();
 }
-
 class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
   String _shareMode = 'view_access'; // 'view_access' | 'edit_access'
   bool _giveEditAccess = false;
@@ -9092,7 +9431,6 @@ class _BulkShareBottomSheetContent extends StatefulWidget {
   State<_BulkShareBottomSheetContent> createState() =>
       _BulkShareBottomSheetContentState();
 }
-
 class _BulkShareBottomSheetContentState
     extends State<_BulkShareBottomSheetContent> {
   String _shareMode = 'view_access';

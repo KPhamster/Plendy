@@ -71,7 +71,20 @@ class SharePreviewScreen extends StatelessWidget {
               return const Center(child: Text('This share isn\'t available.'));
             }
             final payload = snapshot.data!;
-            final experience = payload.experience;
+            if (payload.isMulti) {
+              if (payload.multiExperiences.isEmpty) {
+                return const Center(
+                  child: Text('No experiences were included in this share.'),
+                );
+              }
+              return _MultiExperiencePreviewList(
+                experiences: payload.multiExperiences,
+                fromUserId: payload.fromUserId,
+                shareType: payload.shareType,
+                accessMode: payload.accessMode,
+              );
+            }
+            final experience = payload.experience!;
             final placeholderCategory = UserCategory(
                 id: 'shared', name: 'Shared', icon: '🌐', ownerUserId: '');
             return ExperiencePageScreen(
@@ -94,7 +107,7 @@ class SharePreviewScreen extends StatelessWidget {
 
   Future<void> _handleOpenInApp(BuildContext context) async {
     // Try to open the app via your universal link first (should trigger App/Universal Links)
-    final Uri deepLink = Uri.parse('https://plendy.app/shared/' + token);
+    final Uri deepLink = Uri.parse('https://plendy.app/shared/$token');
     
     // On web, handle Universal Links differently to avoid opening both app and browser
     if (kIsWeb) {
@@ -286,6 +299,9 @@ class SharePreviewScreen extends StatelessWidget {
       // ADDED: include share type and access mode for banner messaging
       'shareType': decoded['shareType'], // 'my_copy' | 'separate_copy'
       'accessMode': decoded['accessMode'], // 'view' | 'edit'
+      'experienceIds': decoded['experienceIds'],
+      'experienceSnapshots': decoded['experienceSnapshots'],
+      'payloadType': decoded['payloadType'],
     };
   }
 
@@ -373,22 +389,69 @@ class SharePreviewScreen extends StatelessWidget {
     );
   }
 
-  _PreviewPayload _payloadFromMapped(Map<String, dynamic> mapped) {
-    final exp = _experienceFromMapped(mapped);
-    final snap = (mapped['snapshot'] as Map<String, dynamic>?) ?? const {};
-    final mediaUrls =
-        ((snap['mediaUrls'] as List?) ?? []).map((e) => e.toString()).toList();
-    final List<SharedMediaItem> mediaItems = mediaUrls
+  List<SharedMediaItem> _mediaItemsFromSnapshot(
+      Map<String, dynamic> snap, Experience experience) {
+    final List mediaValues = (snap['mediaUrls'] as List?) ?? const [];
+    final List<String> mediaUrls = mediaValues
+        .map((dynamic e) => e.toString())
+        .where((url) => url.isNotEmpty)
+        .toList();
+    final String experienceId =
+        experience.id.isNotEmpty ? experience.id : 'preview_${experience.hashCode}';
+    return mediaUrls
         .map((u) => SharedMediaItem(
-              id: 'preview_${u.hashCode}',
+              id: 'preview_${experienceId}_${u.hashCode}',
               path: u,
               createdAt: DateTime.now(),
               ownerUserId: 'public',
-              experienceIds: [exp.id],
+              experienceIds: [experienceId],
               isTiktokPhoto: null,
             ))
         .toList();
-    return _PreviewPayload(
+  }
+
+  _PreviewPayload _payloadFromMapped(Map<String, dynamic> mapped) {
+    final List<dynamic> snapshotList =
+        (mapped['experienceSnapshots'] as List?) ?? const [];
+    if (snapshotList.isNotEmpty) {
+      final String shareId = (mapped['shareId'] as String?) ?? '';
+      final List<_PreviewExperienceItem> experiences = [];
+      for (int i = 0; i < snapshotList.length; i++) {
+        final dynamic raw = snapshotList[i];
+        if (raw is! Map<String, dynamic>) {
+          continue;
+        }
+        final Map<String, dynamic> snap =
+            (raw['snapshot'] as Map<String, dynamic>?) ?? const {};
+        final Map<String, dynamic> mappedItem = {
+          'shareId': '${shareId}_$i',
+          'experienceId': raw['experienceId'],
+          'snapshot': snap,
+        };
+        final Experience exp = _experienceFromMapped(mappedItem);
+        final List<SharedMediaItem> mediaItems =
+            _mediaItemsFromSnapshot(snap, exp);
+        experiences.add(
+          _PreviewExperienceItem(
+            experience: exp,
+            mediaItems: mediaItems,
+          ),
+        );
+      }
+      return _PreviewPayload.multi(
+        experiences: experiences,
+        fromUserId: (mapped['fromUserId'] as String?) ?? '',
+        shareType: (mapped['shareType'] as String?),
+        accessMode: (mapped['accessMode'] as String?),
+      );
+    }
+
+    final Experience exp = _experienceFromMapped(mapped);
+    final Map<String, dynamic> snap =
+        (mapped['snapshot'] as Map<String, dynamic>?) ?? const {};
+    final List<SharedMediaItem> mediaItems =
+        _mediaItemsFromSnapshot(snap, exp);
+    return _PreviewPayload.single(
       experience: exp,
       mediaItems: mediaItems,
       fromUserId: (mapped['fromUserId'] as String?) ?? '',
@@ -401,7 +464,10 @@ class SharePreviewScreen extends StatelessWidget {
 Future<void> _handleSaveExperience(
     BuildContext context, _PreviewPayload payload) async {
   final expService = ExperienceService();
-  final experience = payload.experience;
+  final Experience? experience = payload.experience;
+  if (experience == null) {
+    return;
+  }
 
   try {
     // Build base for modal: clear categories; keep title/location/links/notes
@@ -457,16 +523,281 @@ Future<void> _handleSaveExperience(
   }
 }
 
-class _PreviewPayload {
+class _PreviewExperienceItem {
   final Experience experience;
+  final List<SharedMediaItem> mediaItems;
+
+  const _PreviewExperienceItem({
+    required this.experience,
+    required this.mediaItems,
+  });
+
+  String? get subtitle {
+    final Location location = experience.location;
+    final String? address = location.address;
+    if (address != null && address.isNotEmpty) {
+      return address;
+    }
+    return location.displayName;
+  }
+
+  String? get primaryImage {
+    if (experience.imageUrls.isNotEmpty) {
+      return experience.imageUrls.first;
+    }
+    if (mediaItems.isNotEmpty) {
+      return mediaItems.first.path;
+    }
+    return null;
+  }
+}
+
+class _PreviewPayload {
+  final Experience? experience;
   final List<SharedMediaItem> mediaItems;
   final String fromUserId;
   final String? shareType; // 'my_copy' | 'separate_copy'
   final String? accessMode; // 'view' | 'edit'
-  const _PreviewPayload(
-      {required this.experience,
-      required this.mediaItems,
-      required this.fromUserId,
-      this.shareType,
-      this.accessMode});
+  final bool isMulti;
+  final List<_PreviewExperienceItem> multiExperiences;
+
+  _PreviewPayload.single({
+    required Experience experience,
+    required List<SharedMediaItem> mediaItems,
+    required this.fromUserId,
+    this.shareType,
+    this.accessMode,
+  })  : experience = experience,
+        mediaItems = mediaItems,
+        isMulti = false,
+        multiExperiences = const <_PreviewExperienceItem>[];
+
+  _PreviewPayload.multi({
+    required List<_PreviewExperienceItem> experiences,
+    required this.fromUserId,
+    this.shareType,
+    this.accessMode,
+  })  : experience = null,
+        mediaItems = const <SharedMediaItem>[],
+        isMulti = true,
+        multiExperiences = experiences;
+}
+
+class _MultiExperiencePreviewList extends StatefulWidget {
+  final List<_PreviewExperienceItem> experiences;
+  final String fromUserId;
+  final String? shareType;
+  final String? accessMode;
+
+  const _MultiExperiencePreviewList({
+    required this.experiences,
+    required this.fromUserId,
+    this.shareType,
+    this.accessMode,
+  });
+
+  @override
+  State<_MultiExperiencePreviewList> createState() =>
+      _MultiExperiencePreviewListState();
+}
+
+class _MultiExperiencePreviewListState
+    extends State<_MultiExperiencePreviewList> {
+  String? _senderDisplayName;
+  bool _isLoadingSender = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _resolveSender();
+  }
+
+  Future<void> _resolveSender() async {
+    if (widget.fromUserId.isEmpty) {
+      if (mounted) {
+        setState(() {
+          _senderDisplayName = null;
+          _isLoadingSender = false;
+        });
+      }
+      return;
+    }
+    try {
+      final profile =
+          await ExperienceService().getUserProfileById(widget.fromUserId);
+      if (!mounted) return;
+      setState(() {
+        _senderDisplayName =
+            profile?.displayName ?? profile?.username ?? 'Someone';
+        _isLoadingSender = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _senderDisplayName = 'Someone';
+        _isLoadingSender = false;
+      });
+    }
+  }
+
+  String _bannerText() {
+    final int count = widget.experiences.length;
+    final String experienceLabel = count == 1 ? 'experience' : 'experiences';
+    final String sender = _senderDisplayName ?? 'Someone';
+    final String? type = widget.shareType;
+    final String access = (widget.accessMode ?? 'view').toLowerCase();
+    if (type == 'my_copy') {
+      return '$sender invited you to collaborate on $count $experienceLabel.';
+    }
+    if (access == 'edit') {
+      return '$sender shared $count $experienceLabel with edit access.';
+    }
+    return '$sender shared $count $experienceLabel with you.';
+  }
+
+  void _openExperience(BuildContext context, _PreviewExperienceItem item) {
+    final UserCategory placeholderCategory = UserCategory(
+        id: 'shared', name: 'Shared', icon: '🌐', ownerUserId: '');
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ExperiencePageScreen(
+          experience: item.experience,
+          category: placeholderCategory,
+          userColorCategories: const <ColorCategory>[],
+          initialMediaItems: item.mediaItems,
+          readOnlyPreview: true,
+          shareBannerFromUserId: widget.fromUserId,
+          sharePreviewType: widget.shareType,
+          shareAccessMode: widget.accessMode,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildThumbnail(_PreviewExperienceItem item) {
+    final String? imageUrl = item.primaryImage;
+    final BorderRadius borderRadius = BorderRadius.circular(8);
+    if (imageUrl == null || imageUrl.isEmpty) {
+      return Container(
+        width: 72,
+        height: 72,
+        decoration: BoxDecoration(
+          color: Colors.grey.shade200,
+          borderRadius: borderRadius,
+        ),
+        child: const Icon(Icons.photo_outlined, color: Colors.grey),
+      );
+    }
+    return ClipRRect(
+      borderRadius: borderRadius,
+      child: Image.network(
+        imageUrl,
+        width: 72,
+        height: 72,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) {
+          return Container(
+            width: 72,
+            height: 72,
+            decoration: BoxDecoration(
+              color: Colors.grey.shade200,
+              borderRadius: borderRadius,
+            ),
+            child: const Icon(Icons.photo_outlined, color: Colors.grey),
+          );
+        },
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final List<_PreviewExperienceItem> experiences = widget.experiences;
+    if (experiences.isEmpty) {
+      return const Center(child: Text('No experiences were shared.'));
+    }
+    final ThemeData theme = Theme.of(context);
+    final String bannerText =
+        _isLoadingSender ? 'Loading shared experiences...' : _bannerText();
+    final Color bannerColor = theme.colorScheme.surfaceVariant;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Container(
+          width: double.infinity,
+          color: bannerColor,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Text(
+            bannerText,
+            style: theme.textTheme.bodyMedium,
+          ),
+        ),
+        Expanded(
+          child: ListView.separated(
+            padding: const EdgeInsets.all(16),
+            itemCount: experiences.length,
+            separatorBuilder: (_, __) => const SizedBox(height: 12),
+            itemBuilder: (context, index) {
+              final _PreviewExperienceItem item = experiences[index];
+              final String? subtitle = item.subtitle;
+              final bool hasDescription =
+                  item.experience.description.isNotEmpty;
+              return Card(
+                margin: EdgeInsets.zero,
+                clipBehavior: Clip.antiAlias,
+                child: InkWell(
+                  onTap: () => _openExperience(context, item),
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _buildThumbnail(item),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                item.experience.name,
+                                style: theme.textTheme.titleMedium
+                                    ?.copyWith(fontWeight: FontWeight.w600),
+                              ),
+                              if (subtitle != null && subtitle.isNotEmpty)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 4.0),
+                                  child: Text(
+                                    subtitle,
+                                    style: theme.textTheme.bodySmall,
+                                  ),
+                                ),
+                              if (hasDescription)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 4.0),
+                                  child: Text(
+                                    item.experience.description,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: theme.textTheme.bodySmall?.copyWith(
+                                      color: theme.colorScheme.onSurfaceVariant,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        const Icon(Icons.chevron_right),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
 }

@@ -79,8 +79,53 @@ class ExperienceShareService {
     await _shares.add(data);
 
     // Build a public URL on plendy.app using the token
-    final String shareUrl = 'https://plendy.app/shared/' + token;
+    final String shareUrl = 'https://plendy.app/shared/$token';
     return shareUrl;
+  }
+
+  Future<String> createLinkShareForMultiple({
+    required List<Experience> experiences,
+    String? message,
+    bool public = false,
+    DateTime? expiresAt,
+    bool grantEdit = false,
+  }) async {
+    final userId = _currentUserId;
+    if (userId == null) throw Exception('User not authenticated');
+    if (experiences.isEmpty) throw Exception('No experiences provided');
+
+    final token = _generateToken();
+    final snapshots = await Future.wait(experiences.map((Experience exp) async {
+      final snapshot = await _buildSnapshotFromExperienceAsync(exp);
+      return {
+        'experienceId': exp.id,
+        'snapshot': snapshot,
+      };
+    }));
+    final experienceIds = experiences
+        .map((e) => e.id)
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList();
+
+    final data = {
+      'experienceIds': experienceIds,
+      'fromUserId': userId,
+      'toUserIds': [],
+      'visibility': public ? 'public' : 'unlisted',
+      'collaboration': false,
+      'shareType': 'separate_copy',
+      'accessMode': grantEdit ? 'edit' : 'view',
+      if (message != null && message.isNotEmpty) 'message': message,
+      'token': token,
+      if (expiresAt != null) 'expiresAt': Timestamp.fromDate(expiresAt),
+      'createdAt': FieldValue.serverTimestamp(),
+      'experienceSnapshots': snapshots,
+      'payloadType': 'multi_experience',
+    };
+
+    await _shares.add(data);
+    return 'https://plendy.app/shared/$token';
   }
 
   Future<Map<String, dynamic>> _buildSnapshotFromExperienceAsync(Experience exp) async {
@@ -120,5 +165,3 @@ class ExperienceShareService {
     };
   }
 }
-
-

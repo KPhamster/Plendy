@@ -31,6 +31,8 @@ class ExperienceService {
       _firestore.collection('public_experiences');
   CollectionReference get _sharedMediaItemsCollection =>
       _firestore.collection('sharedMediaItems');
+  CollectionReference get _sharePermissionsCollection =>
+      _firestore.collection('share_permissions');
 
   // User-related operations
   String? get _currentUserId => _auth.currentUser?.uid;
@@ -45,6 +47,30 @@ class ExperienceService {
       return UserProfile.fromMap(doc.id, data);
     } catch (e) {
       print('getUserProfileById: Error fetching user $userId: $e');
+      return null;
+    }
+  }
+
+  /// Check if a category is shared with the current user and return the owner's userId
+  Future<String?> _getCategoryShareOwner(String categoryId) async {
+    final currentUserId = _currentUserId;
+    if (currentUserId == null || categoryId.isEmpty) return null;
+    
+    try {
+      // Query for share permissions where this user is the recipient and the item is this category
+      final snapshot = await _sharePermissionsCollection
+          .where('itemType', isEqualTo: 'category')
+          .where('itemId', isEqualTo: categoryId)
+          .where('sharedWithUserId', isEqualTo: currentUserId)
+          .limit(1)
+          .get();
+      
+      if (snapshot.docs.isEmpty) return null;
+      
+      final data = snapshot.docs.first.data() as Map<String, dynamic>?;
+      return data?['ownerUserId'] as String?;
+    } catch (e) {
+      debugPrint('_getCategoryShareOwner: Error checking category share for $categoryId: $e');
       return null;
     }
   }
@@ -822,6 +848,105 @@ class ExperienceService {
 
   // ======= Experience CRUD Operations =======
 
+  /// Get all users who have access to an experience via category shares
+  /// This denormalizes share permissions to populate sharedWithUserIds
+  Future<List<String>> _getUsersWithCategoryAccess(Experience experience) async {
+    final currentUserId = _currentUserId;
+    if (currentUserId == null) return [];
+    
+    final Set<String> sharedUserIds = {};
+    final Set<String> categoriesToCheck = {};
+    
+    // Collect all category IDs to check
+    if (experience.categoryId != null && experience.categoryId!.isNotEmpty) {
+      categoriesToCheck.add(experience.categoryId!);
+    }
+    categoriesToCheck.addAll(experience.otherCategories);
+    if (experience.colorCategoryId != null && experience.colorCategoryId!.isNotEmpty) {
+      categoriesToCheck.add(experience.colorCategoryId!);
+    }
+    
+    // For each category, find users who have share access
+    for (final categoryId in categoriesToCheck) {
+      try {
+        final shareSnapshot = await _sharePermissionsCollection
+            .where('itemType', isEqualTo: 'category')
+            .where('itemId', isEqualTo: categoryId)
+            .where('ownerUserId', isEqualTo: currentUserId)
+            .get();
+        
+        for (final doc in shareSnapshot.docs) {
+          final data = doc.data() as Map<String, dynamic>?;
+          final sharedWithUserId = data?['sharedWithUserId'] as String?;
+          if (sharedWithUserId != null && sharedWithUserId.isNotEmpty) {
+            sharedUserIds.add(sharedWithUserId);
+          }
+        }
+      } catch (e) {
+        debugPrint('_getUsersWithCategoryAccess: Error checking category $categoryId: $e');
+      }
+    }
+    
+    return sharedUserIds.toList();
+  }
+
+  /// Backfill sharedWithUserIds for existing experiences in shared categories
+  /// Call this once to fix existing data (can be triggered manually or via admin panel)
+  Future<int> backfillSharedUserIdsForExperiences({int batchSize = 50}) async {
+    final currentUserId = _currentUserId;
+    if (currentUserId == null) {
+      throw Exception('User not authenticated');
+    }
+    
+    int updatedCount = 0;
+    
+    try {
+      // Get all experiences created by this user
+      final snapshot = await _experiencesCollection
+          .where('createdBy', isEqualTo: currentUserId)
+          .get();
+      
+      debugPrint('backfillSharedUserIds: Processing ${snapshot.docs.length} experiences');
+      
+      // Process in batches
+      WriteBatch batch = _firestore.batch();
+      int batchCount = 0;
+      
+      for (final doc in snapshot.docs) {
+        final experience = Experience.fromFirestore(doc);
+        final sharedUserIds = await _getUsersWithCategoryAccess(experience);
+        
+        // Only update if there are shared users
+        if (sharedUserIds.isNotEmpty) {
+          batch.update(doc.reference, {'sharedWithUserIds': sharedUserIds});
+          batchCount++;
+          updatedCount++;
+          
+          debugPrint('  Backfilling experience "${experience.name}" with ${sharedUserIds.length} shared users');
+          
+          // Commit batch if it reaches the size limit
+          if (batchCount >= batchSize) {
+            await batch.commit();
+            // IMPORTANT: create a fresh batch after committing
+            batch = _firestore.batch();
+            batchCount = 0;
+          }
+        }
+      }
+      
+      // Commit any remaining updates
+      if (batchCount > 0) {
+        await batch.commit();
+      }
+      
+      debugPrint('backfillSharedUserIds: Updated $updatedCount experiences');
+      return updatedCount;
+    } catch (e) {
+      debugPrint('backfillSharedUserIds: Error: $e');
+      rethrow;
+    }
+  }
+
   /// Create a new experience
   Future<String> createExperience(Experience experience) async {
     if (_currentUserId == null) {
@@ -834,9 +959,17 @@ class ExperienceService {
     data['createdAt'] = now;
     data['updatedAt'] = now;
     data['createdBy'] = _currentUserId;
+    
+    // Denormalize share permissions: populate sharedWithUserIds based on category shares
+    final sharedUserIds = await _getUsersWithCategoryAccess(experience);
+    if (sharedUserIds.isNotEmpty) {
+      data['sharedWithUserIds'] = sharedUserIds;
+      debugPrint('createExperience: Adding sharedWithUserIds: $sharedUserIds');
+    }
 
     // Add the experience to Firestore
     final docRef = await _experiencesCollection.add(data);
+    debugPrint('createExperience: Created experience ${docRef.id} with ${sharedUserIds.length} shared users');
     return docRef.id;
   }
 
@@ -853,6 +986,11 @@ class ExperienceService {
   Future<void> updateExperience(Experience experience) async {
     final data = experience.toMap();
     data['updatedAt'] = FieldValue.serverTimestamp();
+    
+    // Denormalize share permissions: update sharedWithUserIds based on current category shares
+    final sharedUserIds = await _getUsersWithCategoryAccess(experience);
+    data['sharedWithUserIds'] = sharedUserIds; // Always set it (empty array if no shares)
+    debugPrint('updateExperience: Updating sharedWithUserIds to: $sharedUserIds');
 
     await _experiencesCollection.doc(experience.id).update(data);
   }
@@ -912,9 +1050,27 @@ class ExperienceService {
   }
 
   /// Get experiences by user category ID
+  /// If the category is shared with the current user, this will fetch all experiences
+  /// from the owner's category, including newly added ones.
   Future<List<Experience>> getExperiencesByUserCategoryId(String categoryId,
       {int limit = 100}) async {
     if (categoryId.isEmpty) return [];
+    
+    // Check if this category is shared with the current user
+    final ownerUserId = await _getCategoryShareOwner(categoryId);
+    
+    // If it's a shared category, fetch all experiences from the owner's category
+    if (ownerUserId != null && ownerUserId.isNotEmpty) {
+      debugPrint('getExperiencesByUserCategoryId: Category $categoryId is shared from owner $ownerUserId. Fetching owner\'s experiences.');
+      return getExperiencesForOwnerCategory(
+        ownerUserId: ownerUserId,
+        categoryId: categoryId,
+        isColorCategory: false,
+        limitPerQuery: limit,
+      );
+    }
+    
+    // Otherwise, fetch experiences normally (for owned categories)
     final snapshot = await _experiencesCollection
         .where('categoryId', isEqualTo: categoryId)
         .limit(limit)
@@ -924,9 +1080,27 @@ class ExperienceService {
 
   /// Get all experiences linked to a user category, including primary categoryId
   /// and entries where the category is present in otherCategories array.
+  /// If the category is shared with the current user, this will fetch all experiences
+  /// from the owner's category, including newly added ones.
   Future<List<Experience>> getExperiencesByUserCategoryAll(String categoryId,
       {int limitPerQuery = 100}) async {
     if (categoryId.isEmpty) return [];
+    
+    // Check if this category is shared with the current user
+    final ownerUserId = await _getCategoryShareOwner(categoryId);
+    
+    // If it's a shared category, fetch all experiences from the owner's category
+    if (ownerUserId != null && ownerUserId.isNotEmpty) {
+      debugPrint('getExperiencesByUserCategoryAll: Category $categoryId is shared from owner $ownerUserId. Fetching owner\'s experiences.');
+      return getExperiencesForOwnerCategory(
+        ownerUserId: ownerUserId,
+        categoryId: categoryId,
+        isColorCategory: false,
+        limitPerQuery: limitPerQuery,
+      );
+    }
+    
+    // Otherwise, fetch experiences normally (for owned categories)
     final futures = await Future.wait([
       _experiencesCollection
           .where('categoryId', isEqualTo: categoryId)
@@ -961,37 +1135,90 @@ class ExperienceService {
       return const <Experience>[];
     }
     try {
+      final String? viewerUserId = _currentUserId;
+      final bool isOwnerViewing = viewerUserId != null && viewerUserId == ownerUserId;
+
       if (isColorCategory) {
-        final QuerySnapshot snapshot = await _experiencesCollection
-            .where('createdBy', isEqualTo: ownerUserId)
-            .where('colorCategoryId', isEqualTo: categoryId)
-            .limit(limitPerQuery)
-            .get();
-        return snapshot.docs
+        final Query colorQuery = isOwnerViewing
+            ? _experiencesCollection
+                .where('createdBy', isEqualTo: ownerUserId)
+                .where('colorCategoryId', isEqualTo: categoryId)
+                .limit(limitPerQuery)
+            : _experiencesCollection
+                .where('sharedWithUserIds', arrayContains: viewerUserId)
+                .where('colorCategoryId', isEqualTo: categoryId)
+                .limit(limitPerQuery);
+        final QuerySnapshot snapshot = await colorQuery.get();
+        final experiences = snapshot.docs
             .map((doc) => Experience.fromFirestore(doc))
             .toList();
+        debugPrint('getExperiencesForOwnerCategory: Fetched ${experiences.length} experiences for color category $categoryId (${isOwnerViewing ? 'owner-view' : 'shared-view'})');
+        return experiences;
       }
-      final futures = await Future.wait([
-        _experiencesCollection
+      List<Experience> results = [];
+      if (isOwnerViewing) {
+        final Query basePrimary = _experiencesCollection
             .where('createdBy', isEqualTo: ownerUserId)
             .where('categoryId', isEqualTo: categoryId)
-            .limit(limitPerQuery)
-            .get(),
-        _experiencesCollection
+            .limit(limitPerQuery);
+        final Query baseOther = _experiencesCollection
             .where('createdBy', isEqualTo: ownerUserId)
             .where('otherCategories', arrayContains: categoryId)
-            .limit(limitPerQuery)
-            .get(),
-      ]);
-      final List<Experience> results = [];
-      final Set<String> seen = <String>{};
-      for (final snapshot in futures) {
-        for (final doc in snapshot.docs) {
-          final experience = Experience.fromFirestore(doc);
-          if (seen.add(experience.id)) {
-            results.add(experience);
+            .limit(limitPerQuery);
+
+        final futures = await Future.wait([
+          basePrimary.get(),
+          baseOther.get(),
+        ]);
+        final Set<String> seen = <String>{};
+        for (final snapshot in futures) {
+          for (final doc in snapshot.docs) {
+            final experience = Experience.fromFirestore(doc);
+            if (seen.add(experience.id)) {
+              results.add(experience);
+            }
           }
         }
+      } else {
+        // Non-owner viewer: Avoid multiple array-contains combos that violate Firestore constraints or rules
+        // Try the tighter query first; if permission-denied, fall back to a single array-contains and filter client-side
+        final Map<String, Experience> byId = {};
+        try {
+          final Query primaryQuery = _experiencesCollection
+              .where('sharedWithUserIds', arrayContains: viewerUserId)
+              .where('categoryId', isEqualTo: categoryId)
+              .limit(limitPerQuery);
+          final primarySnap = await primaryQuery.get();
+          for (final d in primarySnap.docs) {
+            byId[d.id] = Experience.fromFirestore(d);
+          }
+        } catch (e) {
+          debugPrint('getExperiencesForOwnerCategory: primary query denied, falling back to broad+filter. Error: $e');
+        }
+
+        // Broad fetch using single array-contains, then filter in-memory
+        try {
+          final broadSnap = await _experiencesCollection
+              .where('sharedWithUserIds', arrayContains: viewerUserId)
+              .limit(limitPerQuery)
+              .get();
+          for (final d in broadSnap.docs) {
+            final exp = Experience.fromFirestore(d);
+            final bool matchesPrimary = exp.categoryId != null && exp.categoryId == categoryId;
+            final bool matchesOther = exp.otherCategories.contains(categoryId);
+            if ((matchesPrimary || matchesOther)) {
+              byId.putIfAbsent(exp.id, () => exp);
+            }
+          }
+        } catch (e) {
+          debugPrint('getExperiencesForOwnerCategory: broad sharedWith fallback failed: $e');
+        }
+
+        results = byId.values.toList();
+      }
+      debugPrint('getExperiencesForOwnerCategory: Fetched ${results.length} experiences for user category $categoryId (${isOwnerViewing ? 'owner-view' : 'shared-view'})');
+      if (results.isNotEmpty) {
+        debugPrint('  Sample experiences: ${results.take(3).map((e) => e.name).join(", ")}');
       }
       return results;
     } catch (e) {
@@ -1002,10 +1229,28 @@ class ExperienceService {
   }
 
   /// Get experiences by color category ID
+  /// If the category is shared with the current user, this will fetch all experiences
+  /// from the owner's category, including newly added ones.
   Future<List<Experience>> getExperiencesByColorCategoryId(
       String colorCategoryId,
       {int limit = 100}) async {
     if (colorCategoryId.isEmpty) return [];
+    
+    // Check if this color category is shared with the current user
+    final ownerUserId = await _getCategoryShareOwner(colorCategoryId);
+    
+    // If it's a shared category, fetch all experiences from the owner's category
+    if (ownerUserId != null && ownerUserId.isNotEmpty) {
+      debugPrint('getExperiencesByColorCategoryId: Color category $colorCategoryId is shared from owner $ownerUserId. Fetching owner\'s experiences.');
+      return getExperiencesForOwnerCategory(
+        ownerUserId: ownerUserId,
+        categoryId: colorCategoryId,
+        isColorCategory: true,
+        limitPerQuery: limit,
+      );
+    }
+    
+    // Otherwise, fetch experiences normally (for owned categories)
     final snapshot = await _experiencesCollection
         .where('colorCategoryId', isEqualTo: colorCategoryId)
         .limit(limit)
@@ -1249,6 +1494,89 @@ class ExperienceService {
     } catch (e) {
       print("Error fetching user experiences for user $userId: $e");
       return []; // Return empty list on error
+    }
+  }
+
+  /// Get all experiences from shared categories (categories shared with the current user)
+  /// This fetches experiences from all categories where the user has been granted access,
+  /// including newly added experiences.
+  Future<List<Experience>> getExperiencesFromSharedCategories() async {
+    final userId = _currentUserId;
+    if (userId == null) {
+      debugPrint("getExperiencesFromSharedCategories: No user authenticated.");
+      return [];
+    }
+    
+    try {
+      // Get all category share permissions for this user
+      final shareSnapshot = await _sharePermissionsCollection
+          .where('itemType', isEqualTo: 'category')
+          .where('sharedWithUserId', isEqualTo: userId)
+          .get();
+      
+      if (shareSnapshot.docs.isEmpty) {
+        debugPrint("getExperiencesFromSharedCategories: No shared categories found for user $userId.");
+        return [];
+      }
+      
+      // Collect all experiences from all shared categories
+      final List<Experience> allExperiences = [];
+      final Set<String> seenExperienceIds = {};
+      
+      for (final doc in shareSnapshot.docs) {
+        final data = doc.data() as Map<String, dynamic>?;
+        if (data == null) continue;
+        
+        final categoryId = data['itemId'] as String?;
+        final ownerUserId = data['ownerUserId'] as String?;
+        
+        if (categoryId == null || ownerUserId == null) continue;
+        
+        // Try to fetch as user category first, then as color category
+        // We need to determine if it's a user category or color category
+        // Try both and combine results
+        try {
+          // Try as user category
+          final userCategoryExperiences = await getExperiencesForOwnerCategory(
+            ownerUserId: ownerUserId,
+            categoryId: categoryId,
+            isColorCategory: false,
+            limitPerQuery: 500,
+          );
+          
+          for (final exp in userCategoryExperiences) {
+            if (seenExperienceIds.add(exp.id)) {
+              allExperiences.add(exp);
+            }
+          }
+        } catch (e) {
+          debugPrint("getExperiencesFromSharedCategories: Error fetching user category $categoryId: $e");
+        }
+        
+        try {
+          // Try as color category
+          final colorCategoryExperiences = await getExperiencesForOwnerCategory(
+            ownerUserId: ownerUserId,
+            categoryId: categoryId,
+            isColorCategory: true,
+            limitPerQuery: 500,
+          );
+          
+          for (final exp in colorCategoryExperiences) {
+            if (seenExperienceIds.add(exp.id)) {
+              allExperiences.add(exp);
+            }
+          }
+        } catch (e) {
+          debugPrint("getExperiencesFromSharedCategories: Error fetching color category $categoryId: $e");
+        }
+      }
+      
+      debugPrint("getExperiencesFromSharedCategories: Found ${allExperiences.length} experiences from ${shareSnapshot.docs.length} shared categories.");
+      return allExperiences;
+    } catch (e) {
+      debugPrint("getExperiencesFromSharedCategories: Error: $e");
+      return [];
     }
   }
 
