@@ -181,8 +181,8 @@ class _MapScreenState extends State<MapScreen> {
 
       // Fetch owned data in parallel (categories, color categories, owned experiences)
       final ownedResults = await Future.wait([
-        _experienceService.getUserCategories(),
-        _experienceService.getUserColorCategories(),
+        _experienceService.getUserCategories(includeSharedEditable: true),
+        _experienceService.getUserColorCategories(includeSharedEditable: true),
         _experienceService.getExperiencesByUser(userId),
       ]);
 
@@ -486,7 +486,8 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   // Helper function to navigate to the Experience Page
-  void _navigateToExperience(Experience experience, UserCategory category) {
+  Future<void> _navigateToExperience(
+      Experience experience, UserCategory category) async {
     print("🗺️ MAP SCREEN: Navigating to experience: ${experience.name}");
     // Clear the temporary tapped marker when navigating away
     setState(() {
@@ -497,7 +498,7 @@ class _MapScreenState extends State<MapScreen> {
       _tappedLocationBusinessStatus = null; // ADDED: Clear business status
       _tappedLocationOpenNow = null; // ADDED: Clear open-now status
     });
-    Navigator.push(
+    final result = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
         builder: (context) => ExperiencePageScreen(
@@ -507,6 +508,10 @@ class _MapScreenState extends State<MapScreen> {
         ),
       ),
     );
+    if (!mounted) return;
+    if (result == true) {
+      await _loadDataAndGenerateMarkers();
+    }
   }
 
   // Callback to get the map controller from the widget
