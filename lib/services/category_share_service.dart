@@ -278,6 +278,16 @@ class CategoryShareService {
       completedSteps = completedSteps + 1;
       reportProgress();
     }
+    
+    // After granting category share, update sharedWithUserIds for all experiences in this category
+    // This ensures new experiences added after the initial share are also visible
+    try {
+      await _experienceService.updateSharedUserIdsForCategory(categoryId);
+      print('CategoryShareService: Updated sharedWithUserIds for experiences in category $categoryId');
+    } catch (e) {
+      print('CategoryShareService: Error updating sharedWithUserIds for category $categoryId: $e');
+      // Don't throw - the share permission was created successfully
+    }
   }
 
   Map<String, dynamic> _buildExperienceSnapshot(Experience exp) {
