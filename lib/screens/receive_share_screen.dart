@@ -1120,7 +1120,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
   Future<void> _loadUserCategories() async {
     try {
-      final Categories = await _experienceService.getUserCategories();
+      final Categories = await _experienceService.getUserCategories(
+        includeSharedEditable: true,
+      );
       if (mounted) {
         _userCategories = Categories;
         _userCategoriesNotifier.value = Categories;
@@ -1153,7 +1155,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   }
 
   Future<void> _refreshUserCategoriesFromDialog() {
-    return _experienceService.getUserCategories().then((categories) {
+    return _experienceService
+        .getUserCategories(includeSharedEditable: true)
+        .then((categories) {
       if (mounted) {
         _userCategories = categories; 
         _userCategoriesNotifier.value = categories; 
@@ -1168,7 +1172,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   }
 
   Future<void> _refreshUserColorCategoriesFromDialog() {
-    return _experienceService.getUserColorCategories().then((colorCategories) {
+    return _experienceService
+        .getUserColorCategories(includeSharedEditable: true)
+        .then((colorCategories) {
       if (mounted) {
         _userColorCategories = colorCategories; 
                   _userColorCategoriesNotifier.value =
@@ -1214,7 +1220,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     }
 
     try {
-      final fetchedCategories = await _experienceService.getUserCategories();
+      final fetchedCategories = await _experienceService.getUserCategories(
+        includeSharedEditable: true,
+      );
       // Check if we should continue after the async operation
       if (!shouldContinue()) return;
 
@@ -1230,7 +1238,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     }
 
     try {
-      final fetchedColorCategories = await _experienceService.getUserColorCategories();
+      final fetchedColorCategories =
+          await _experienceService.getUserColorCategories(
+        includeSharedEditable: true,
+      );
       // Check if we should continue after the async operation
       if (!shouldContinue()) return;
 
@@ -4474,20 +4485,24 @@ return null;
   }
 
   Future<void> _loadUserColorCategories() async {
-try {
-      final colorCategories = await _experienceService.getUserColorCategories();
-if (mounted) {
+    try {
+      final colorCategories =
+          await _experienceService.getUserColorCategories(
+        includeSharedEditable: true,
+      );
+      if (mounted) {
         _userColorCategories = colorCategories;
         _userColorCategoriesNotifier.value = colorCategories;
-} else {
-}
-      _userColorCategoriesFuture = Future.value(colorCategories); // Ensure future resolves to the fetched list
+      }
+      _userColorCategoriesFuture =
+          Future.value(colorCategories); // Ensure future resolves to the fetched list
     } catch (error) {
-if (mounted) {
+      if (mounted) {
         _userColorCategories = [];
         _userColorCategoriesNotifier.value = [];
       }
-      _userColorCategoriesFuture = Future.value([]); // Ensure future resolves to an empty list on error
+      _userColorCategoriesFuture = Future.value(
+          []); // Ensure future resolves to an empty list on error
     }
   }
 

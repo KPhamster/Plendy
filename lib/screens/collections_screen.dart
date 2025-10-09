@@ -46,7 +46,6 @@ import 'category_share_preview_screen.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:shared_preferences/shared_preferences.dart';
-import '../utils/backfill_shared_user_ids.dart';
 
 // Helper classes for shared data
 class _SharedCategoryData {
@@ -3630,7 +3629,6 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                       return searchBarWidget; // Original layout for mobile/mobile-web
                     }
                   }),
-                  const BackfillSharedUserIdsButton(),
                   // ADDED: TabBar placed here in the body's Column
                   Container(
                     color: Colors.white,

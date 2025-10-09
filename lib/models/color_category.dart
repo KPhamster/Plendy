@@ -8,6 +8,7 @@ class ColorCategory extends Equatable {
   final String name;
   final String colorHex; // Hex string for the color (e.g., "FF00FF00")
   final String ownerUserId; // ID of the user who owns this category
+  final String? sharedOwnerDisplayName; // Display name when category is shared
   final Timestamp? lastUsedTimestamp;
   final int? orderIndex;
 
@@ -16,6 +17,7 @@ class ColorCategory extends Equatable {
     required this.name,
     required this.colorHex,
     required this.ownerUserId,
+    this.sharedOwnerDisplayName,
     this.lastUsedTimestamp,
     this.orderIndex,
   });
@@ -26,6 +28,7 @@ class ColorCategory extends Equatable {
         name,
         colorHex,
         ownerUserId,
+        sharedOwnerDisplayName,
         lastUsedTimestamp,
         orderIndex,
       ];
@@ -50,6 +53,7 @@ class ColorCategory extends Equatable {
       colorHex:
           colorHex, // Default color if missing? Or throw error? Let's throw for now.
       ownerUserId: ownerId,
+      sharedOwnerDisplayName: null,
       lastUsedTimestamp: data['lastUsedTimestamp'] as Timestamp?,
       orderIndex: data['orderIndex'] as int?,
     );
@@ -63,6 +67,7 @@ class ColorCategory extends Equatable {
       'ownerUserId': ownerUserId,
       'lastUsedTimestamp': lastUsedTimestamp,
       'orderIndex': orderIndex,
+      // sharedOwnerDisplayName is derived metadata; omit from persistence.
     };
   }
 
@@ -72,6 +77,7 @@ class ColorCategory extends Equatable {
     String? name,
     String? colorHex,
     String? ownerUserId,
+    String? sharedOwnerDisplayName,
     Timestamp? lastUsedTimestamp,
     bool setLastUsedTimestampNull = false,
     int? orderIndex,
@@ -82,6 +88,8 @@ class ColorCategory extends Equatable {
       name: name ?? this.name,
       colorHex: colorHex ?? this.colorHex,
       ownerUserId: ownerUserId ?? this.ownerUserId,
+      sharedOwnerDisplayName:
+          sharedOwnerDisplayName ?? this.sharedOwnerDisplayName,
       lastUsedTimestamp: setLastUsedTimestampNull
           ? null
           : lastUsedTimestamp ?? this.lastUsedTimestamp,
@@ -122,6 +130,7 @@ class ColorCategory extends Equatable {
         name: entry.key,
         colorHex: entry.value,
         ownerUserId: ownerId,
+        sharedOwnerDisplayName: null,
         lastUsedTimestamp: null,
         orderIndex: index++, // Assign initial order
       );

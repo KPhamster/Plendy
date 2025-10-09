@@ -189,6 +189,13 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
   static const String _dialogActionEdit = '__edit__';
   // --- END ADDED ---
 
+  String? _sharedOwnerLabel(String? ownerName) {
+    if (ownerName == null) return null;
+    final trimmed = ownerName.trim();
+    if (trimmed.isEmpty) return null;
+    return 'Shared by $trimmed';
+  }
+
   @override
   void initState() {
     super.initState();
@@ -277,7 +284,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
     print('DEBUG YELP: _launchYelpUrl() called');
     // Notify parent that Yelp button was tapped for this card
     widget.onYelpButtonTapped?.call(widget.cardData.id);
-    
+
     String yelpUrlString = widget.cardData.yelpUrlController.text.trim();
     print('DEBUG YELP: yelpUrlString = "$yelpUrlString"');
     Uri uri;
@@ -301,7 +308,8 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
       String? addressString = currentLocation?.address?.trim();
 
       if (titleString.isNotEmpty) {
-        print('DEBUG YELP: Using title "$titleString" and address "$addressString"');
+        print(
+            'DEBUG YELP: Using title "$titleString" and address "$addressString"');
         String searchDesc = Uri.encodeComponent(titleString);
         // Add timestamp to force new navigation even if app is already open
         String timestamp = DateTime.now().millisecondsSinceEpoch.toString();
@@ -313,7 +321,8 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
           print('DEBUG YELP: Created URL with both title and location: $uri');
         } else {
           // Only title is available, address is not
-          uri = Uri.parse('https://www.yelp.com/search?find_desc=$searchDesc&t=$timestamp');
+          uri = Uri.parse(
+              'https://www.yelp.com/search?find_desc=$searchDesc&t=$timestamp');
           print('DEBUG YELP: Created URL with title only: $uri');
         }
       } else {
@@ -328,7 +337,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
       print('DEBUG YELP: About to launch URL: $uri');
       // For Yelp URLs, try multiple approaches to force new navigation
       bool launched = false;
-      
+
       // iOS-specific: Prefer Yelp app deep link for search to avoid landing on homepage
       if (Platform.isIOS && uri.toString().contains('yelp.com/search')) {
         final String? terms = uri.queryParameters['find_desc'];
@@ -342,7 +351,8 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
           print('DEBUG YELP: iOS deep link for search: $iosDeepLink');
           try {
             if (await canLaunchUrl(iosDeepLink)) {
-              launched = await launchUrl(iosDeepLink, mode: LaunchMode.externalApplication);
+              launched = await launchUrl(iosDeepLink,
+                  mode: LaunchMode.externalApplication);
               print('DEBUG YELP: iOS deep link launch result: $launched');
               if (launched) {
                 return; // Successfully launched deep link; stop here
@@ -353,20 +363,20 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
           }
         }
       }
-      
+
       // For Yelp search URLs, try a special technique to force new navigation
       if (uri.toString().contains('yelp.com/search')) {
         print('DEBUG YELP: Trying special technique for search URL');
-        
+
         // First, try to launch Yelp homepage to "reset" the app state
         try {
           final yelpHomepage = Uri.parse('https://www.yelp.com');
           print('DEBUG YELP: Launching Yelp homepage first: $yelpHomepage');
           await launchUrl(yelpHomepage, mode: LaunchMode.externalApplication);
-          
+
           // Small delay to let the homepage load
           await Future.delayed(Duration(milliseconds: 500));
-          
+
           // Now launch the search URL
           print('DEBUG YELP: Now launching search URL: $uri');
           launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
@@ -383,21 +393,21 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
         launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
         print('DEBUG YELP: Standard launch result: $launched');
       }
-      
+
       if (!launched) {
         print('DEBUG YELP: Trying platformDefault');
         // Try platformDefault as fallback
         launched = await launchUrl(uri, mode: LaunchMode.platformDefault);
         print('DEBUG YELP: platformDefault result: $launched');
       }
-      
+
       if (!launched) {
         print('DEBUG YELP: Trying final externalApplication fallback');
         // Final fallback to externalApplication
         launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
         print('DEBUG YELP: final externalApplication result: $launched');
       }
-      
+
       if (!launched) {
         print('DEBUG YELP: All launch attempts failed for $uri');
         // Optionally show a snackbar to the user
@@ -453,11 +463,11 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
     );
     if (newCategory != null && mounted) {
       print("New category added: ${newCategory.name} (${newCategory.icon})");
-      
+
       // Always just refresh the list without passing newCategoryName
       // This prevents the parent from trying to select the category
       widget.onUpdate(refreshCategories: true);
-      
+
       // Handle selection locally within the form component
       if (selectAfterAdding) {
         // Wait a bit for the refresh to complete, then select the new category
@@ -548,10 +558,21 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                               final category = uniqueCategoryList[index];
                               final bool isSelected = category.id ==
                                   widget.cardData.selectedCategoryId;
+                              final sharedLabel = _sharedOwnerLabel(
+                                  category.sharedOwnerDisplayName);
                               return ListTile(
                                 leading: Text(category.icon,
                                     style: const TextStyle(fontSize: 20)),
                                 title: Text(category.name),
+                                subtitle: sharedLabel != null
+                                    ? Text(
+                                        sharedLabel,
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodySmall
+                                            ?.copyWith(color: Colors.grey[600]),
+                                      )
+                                    : null,
                                 trailing: isSelected
                                     ? const Icon(Icons.check,
                                         color: Colors.blue)
@@ -772,6 +793,8 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                               final category = categoriesToShow[index];
                               final bool isSelected = category.id ==
                                   widget.cardData.selectedColorCategoryId;
+                              final sharedLabel = _sharedOwnerLabel(
+                                  category.sharedOwnerDisplayName);
                               return ListTile(
                                 leading: Container(
                                   width: 24,
@@ -784,6 +807,15 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                           width: 1)),
                                 ),
                                 title: Text(category.name),
+                                subtitle: sharedLabel != null
+                                    ? Text(
+                                        sharedLabel,
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodySmall
+                                            ?.copyWith(color: Colors.grey[600]),
+                                      )
+                                    : null,
                                 trailing: isSelected
                                     ? const Icon(Icons.check,
                                         color: Colors.blue)
@@ -933,38 +965,38 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
       onTap: () {
         FocusManager.instance.primaryFocus?.unfocus();
       },
-             child: Container(
-         margin: EdgeInsets.only(bottom: 16),
-         decoration: BoxDecoration(
-           color: Colors.white,
-           borderRadius: BorderRadius.circular(8),
-           boxShadow: [
-             BoxShadow(
-               color: Colors.black.withOpacity(0.08),
-               spreadRadius: 2,
-               blurRadius: 8,
-               offset: Offset(0, 4),
-             ),
-             BoxShadow(
-               color: Colors.black.withOpacity(0.04),
-               spreadRadius: 1,
-               blurRadius: 4,
-               offset: Offset(0, -2),
-             ),
-             BoxShadow(
-               color: Colors.black.withOpacity(0.04),
-               spreadRadius: 1,
-               blurRadius: 4,
-               offset: Offset(-2, 0),
-             ),
-             BoxShadow(
-               color: Colors.black.withOpacity(0.04),
-               spreadRadius: 1,
-               blurRadius: 4,
-               offset: Offset(2, 0),
-             ),
-           ],
-         ),
+      child: Container(
+        margin: EdgeInsets.only(bottom: 16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(8),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.08),
+              spreadRadius: 2,
+              blurRadius: 8,
+              offset: Offset(0, 4),
+            ),
+            BoxShadow(
+              color: Colors.black.withOpacity(0.04),
+              spreadRadius: 1,
+              blurRadius: 4,
+              offset: Offset(0, -2),
+            ),
+            BoxShadow(
+              color: Colors.black.withOpacity(0.04),
+              spreadRadius: 1,
+              blurRadius: 4,
+              offset: Offset(-2, 0),
+            ),
+            BoxShadow(
+              color: Colors.black.withOpacity(0.04),
+              spreadRadius: 1,
+              blurRadius: 4,
+              offset: Offset(2, 0),
+            ),
+          ],
+        ),
         child: Form(
           key: widget.formKey, // Use the passed form key
           child: Column(
@@ -1399,11 +1431,15 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                           },
                                           materialTapTargetSize:
                                               MaterialTapTargetSize.shrinkWrap,
-                                          padding: const EdgeInsets.symmetric(horizontal: 0),
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 0),
                                           visualDensity: VisualDensity.compact,
-                                          labelPadding: const EdgeInsets.symmetric(horizontal: 4.0),
+                                          labelPadding:
+                                              const EdgeInsets.symmetric(
+                                                  horizontal: 4.0),
                                           deleteIconColor: Colors.grey[600],
-                                          deleteButtonTooltipMessage: 'Remove category',
+                                          deleteButtonTooltipMessage:
+                                              'Remove category',
                                         );
                                       }).toList(),
                                     ),
@@ -1695,6 +1731,13 @@ class _OtherCategoriesSelectionDialogState
     extends State<_OtherCategoriesSelectionDialog> {
   late Set<String> _selectedIds;
 
+  String? _sharedOwnerLabel(String? ownerName) {
+    if (ownerName == null) return null;
+    final trimmed = ownerName.trim();
+    if (trimmed.isEmpty) return null;
+    return 'Shared by $trimmed';
+  }
+
   @override
   void initState() {
     super.initState();
@@ -1719,7 +1762,7 @@ class _OtherCategoriesSelectionDialogState
               uniqueCategoriesByName[category.name] = category;
             }
             final uniqueCategoryList = uniqueCategoriesByName.values.toList();
-            
+
             // Filter out the primary category from the deduplicated list
             final availableCategories = uniqueCategoryList
                 .where((cat) => cat.id != widget.primaryCategoryId)
@@ -1733,10 +1776,22 @@ class _OtherCategoriesSelectionDialogState
                     itemCount: availableCategories.length,
                     itemBuilder: (context, index) {
                       final category = availableCategories[index];
-                      final bool isSelected = _selectedIds.contains(category.id);
+                      final bool isSelected =
+                          _selectedIds.contains(category.id);
+                      final sharedLabel =
+                          _sharedOwnerLabel(category.sharedOwnerDisplayName);
                       return CheckboxListTile(
                         title: Text(category.name),
-                        secondary: Text(category.icon, 
+                        subtitle: sharedLabel != null
+                            ? Text(
+                                sharedLabel,
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .bodySmall
+                                    ?.copyWith(color: Colors.grey[600]),
+                              )
+                            : null,
+                        secondary: Text(category.icon,
                             style: const TextStyle(fontSize: 20)),
                         value: isSelected,
                         onChanged: (bool? value) {
@@ -1762,8 +1817,8 @@ class _OtherCategoriesSelectionDialogState
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       TextButton.icon(
-                        icon: Icon(Icons.add,
-                            size: 20, color: Colors.blue[700]),
+                        icon:
+                            Icon(Icons.add, size: 20, color: Colors.blue[700]),
                         label: Text('Add New Category',
                             style: TextStyle(color: Colors.blue[700])),
                         onPressed: () async {

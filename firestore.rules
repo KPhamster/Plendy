@@ -106,10 +106,12 @@ service cloud.firestore {
       );
       allow create: if request.auth != null;
       // Allow updates by creator or any current editor listed in the document
-      allow update: if request.auth != null && (
-        request.resource.data.createdBy == request.auth.uid ||
-        (resource.data.editorUserIds is list && request.auth.uid in resource.data.editorUserIds)
-      ) && isValidLocationData(request.resource.data.location);
+      allow update: if request.auth != null && isValidLocationData(request.resource.data.location) && (
+        resource.data.createdBy == request.auth.uid ||
+        (resource.data.editorUserIds is list && request.auth.uid in resource.data.editorUserIds) ||
+        // Check if user is in denormalized sharedWithUserIds (updated by service layer based on category shares)
+        (resource.data.keys().hasAny(['sharedWithUserIds']) && request.auth.uid in resource.data.sharedWithUserIds)
+      );
       
       // Allow deletes by creator, or the last remaining editor (when they are the only editor)
       allow delete: if request.auth != null && (
@@ -298,7 +300,8 @@ service cloud.firestore {
   function hasMatchingCategoryEditPermission(ownerId, categoryId, editorId) {
     let permId = sharedPermissionDocId(ownerId, 'category', categoryId, editorId);
     let permPath = /databases/$(database)/documents/share_permissions/$(permId);
-    // Temporarily just check existence (for debugging)
+    // Just check existence - we control permission creation and only create 'edit' level for category shares
+    // Using get() would fail with permission-denied if the user doesn't have access to that permission doc
     return exists(permPath);
   }
 
@@ -330,12 +333,12 @@ service cloud.firestore {
 
   function isValidLocationData(loc) {
     return (loc == null) || (
-      (loc.get('administrativeAreaLevel2', '') is string) &&
-      (loc.get('administrativeAreaLevel3', '') is string) &&
-      (loc.get('administrativeAreaLevel4', '') is string) &&
-      (loc.get('administrativeAreaLevel5', '') is string) &&
-      (loc.get('administrativeAreaLevel6', '') is string) &&
-      (loc.get('administrativeAreaLevel7', '') is string)
+      (!loc.keys().hasAny(['administrativeAreaLevel2']) || loc.administrativeAreaLevel2 is string) &&
+      (!loc.keys().hasAny(['administrativeAreaLevel3']) || loc.administrativeAreaLevel3 is string) &&
+      (!loc.keys().hasAny(['administrativeAreaLevel4']) || loc.administrativeAreaLevel4 is string) &&
+      (!loc.keys().hasAny(['administrativeAreaLevel5']) || loc.administrativeAreaLevel5 is string) &&
+      (!loc.keys().hasAny(['administrativeAreaLevel6']) || loc.administrativeAreaLevel6 is string) &&
+      (!loc.keys().hasAny(['administrativeAreaLevel7']) || loc.administrativeAreaLevel7 is string)
     );
   }
 
