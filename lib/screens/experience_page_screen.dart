@@ -197,6 +197,22 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     return null;
   }
 
+  // --- ADDED: Helper to get the current category based on experience's categoryId ---
+  UserCategory _getCurrentCategory() {
+    if (_currentExperience.categoryId == null) {
+      // Fallback to widget.category if no categoryId
+      return widget.category;
+    }
+    
+    // Try to find the category from loaded user categories
+    final category = _userCategories.firstWhereOrNull(
+      (cat) => cat.id == _currentExperience.categoryId,
+    );
+    
+    // Return found category or fallback to widget.category
+    return category ?? widget.category;
+  }
+
   bool _isLocationUnset(Experience experience) {
     final String? address = experience.location.address;
     if (address != null && address.trim().toLowerCase() == 'no location specified') {
@@ -488,8 +504,11 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
 
     try {
       // Fetch categories only if user ID was obtained (or handle public categories)
+      // Include shared editable categories so we can display shared category names correctly
       if (_currentUserId != null) {
-        final categories = await _experienceService.getUserCategories();
+        final categories = await _experienceService.getUserCategories(
+          includeSharedEditable: true,
+        );
         if (mounted) {
           setState(() {
             _userCategories = categories;
@@ -559,21 +578,27 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     // Handle the result from the modal
     if (result != null && mounted) {
       print("Edit modal returned updated experience. Saving...");
-      // Optimistic update locally first? Or wait for save? Let's wait.
+
+      // Optimistically update the local experience so UI reflects the edits immediately.
+      // Note: We don't fetch from Firestore after this because:
+      // 1. We already have the correct updated data from the modal
+      // 2. Firestore cache might return stale data
+      // 3. Parent screens will refresh when they receive _didDataChange = true
+      final previousExperience = _currentExperience;
       setState(() {
-        _isLoadingExperience = true; // Show loading indicator
+        _currentExperience = result;
       });
+
       try {
         // Save the updated experience using the service
         await _experienceService.updateExperience(result);
 
-        // Refresh the full experience data on the screen
-        await _refreshExperienceData(); // This handles setting loading state
-
-        // Set flag for popping result
-        setState(() {
-          _didDataChange = true;
-        });
+        // Set flag for popping result so parent screens can refresh
+        if (mounted) {
+          setState(() {
+            _didDataChange = true;
+          });
+        }
 
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Experience updated successfully!')),
@@ -581,13 +606,13 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       } catch (e) {
         print("Error saving updated experience: $e");
         if (mounted) {
+          // Revert optimistic update on failure
+          setState(() {
+            _currentExperience = previousExperience;
+          });
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('Error saving changes: $e')),
           );
-          // Revert loading state if save fails
-          setState(() {
-            _isLoadingExperience = false;
-          });
         }
       }
     } else {
@@ -1175,13 +1200,13 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                     child: Row(
                       children: [
                         Text(
-                          widget.category.icon, // Use widget.category
+                          _getCurrentCategory().icon,
                           style: const TextStyle(fontSize: 20),
                         ),
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
-                            _computeSharePreviewCategoryLabel() ?? widget.category.name,
+                            _computeSharePreviewCategoryLabel() ?? _getCurrentCategory().name,
                             style: Theme.of(context).textTheme.titleSmall?.copyWith(
                                   color: Colors.black87,
                                 ),
@@ -2796,7 +2821,9 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
         print(
             "[ExpPage - _loadOtherExperienceData] Not all required categories found in local cache. Fetching all categories again to ensure completeness.");
       try {
-        final allUserCategories = await _experienceService.getUserCategories();
+        final allUserCategories = await _experienceService.getUserCategories(
+          includeSharedEditable: true,
+        );
         categoryLookupMapById = {for (var cat in allUserCategories) cat.id: cat}; // Rebuild map with all categories by ID
         print(
             "[ExpPage - _loadOtherExperienceData] Fetched ${categoryLookupMapById.length} categories and mapped by ID.");

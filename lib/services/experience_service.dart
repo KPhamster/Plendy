@@ -1161,8 +1161,13 @@ class ExperienceService {
   }
 
   /// Get an experience by ID
-  Future<Experience?> getExperience(String experienceId) async {
-    final doc = await _experiencesCollection.doc(experienceId).get();
+  Future<Experience?> getExperience(String experienceId, {bool forceServerFetch = false}) async {
+    final GetOptions? options = forceServerFetch 
+        ? GetOptions(source: Source.server) 
+        : null;
+    final doc = options != null 
+        ? await _experiencesCollection.doc(experienceId).get(options)
+        : await _experiencesCollection.doc(experienceId).get();
     if (!doc.exists) {
       return null;
     }

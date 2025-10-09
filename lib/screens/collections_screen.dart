@@ -1593,8 +1593,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     try {
       final fetchSw = Stopwatch()..start();
       final results = await Future.wait([
-        _experienceService.getUserCategories(),
-        _experienceService.getUserColorCategories(),
+        _experienceService.getUserCategories(includeSharedEditable: true),
+        _experienceService.getUserColorCategories(includeSharedEditable: true),
       ]);
       if (_perfLogs) {
         fetchSw.stop();
