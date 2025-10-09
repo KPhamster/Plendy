@@ -890,6 +890,88 @@ class ExperienceService {
     return sharedUserIds.toList();
   }
 
+  /// Update sharedWithUserIds for all experiences in a specific category
+  /// This should be called when a new category share is granted
+  Future<int> updateSharedUserIdsForCategory(String categoryId, {int batchSize = 50}) async {
+    final currentUserId = _currentUserId;
+    if (currentUserId == null) {
+      throw Exception('User not authenticated');
+    }
+    
+    int updatedCount = 0;
+    
+    try {
+      // Query all experiences that have this category as primary, other, or color category
+      // We need to do three separate queries and combine results
+      final Set<String> experienceIds = {};
+      
+      // Query by primary categoryId
+      final primarySnapshot = await _experiencesCollection
+          .where('createdBy', isEqualTo: currentUserId)
+          .where('categoryId', isEqualTo: categoryId)
+          .get();
+      experienceIds.addAll(primarySnapshot.docs.map((d) => d.id));
+      
+      // Query by otherCategories (array-contains)
+      final otherSnapshot = await _experiencesCollection
+          .where('createdBy', isEqualTo: currentUserId)
+          .where('otherCategories', arrayContains: categoryId)
+          .get();
+      experienceIds.addAll(otherSnapshot.docs.map((d) => d.id));
+      
+      // Query by colorCategoryId
+      final colorSnapshot = await _experiencesCollection
+          .where('createdBy', isEqualTo: currentUserId)
+          .where('colorCategoryId', isEqualTo: categoryId)
+          .get();
+      experienceIds.addAll(colorSnapshot.docs.map((d) => d.id));
+      
+      debugPrint('updateSharedUserIdsForCategory: Found ${experienceIds.length} experiences for category $categoryId');
+      
+      if (experienceIds.isEmpty) {
+        return 0;
+      }
+      
+      // Process in batches
+      WriteBatch batch = _firestore.batch();
+      int batchCount = 0;
+      
+      for (final experienceId in experienceIds) {
+        final doc = await _experiencesCollection.doc(experienceId).get();
+        if (!doc.exists) continue;
+        
+        final experience = Experience.fromFirestore(doc);
+        final sharedUserIds = await _getUsersWithCategoryAccess(experience);
+        
+        // Update the experience with new sharedWithUserIds
+        batch.update(doc.reference, {'sharedWithUserIds': sharedUserIds});
+        batchCount++;
+        updatedCount++;
+        
+        debugPrint('  Updating experience "${experience.name}" with ${sharedUserIds.length} shared users');
+        
+        // Commit batch if it reaches the size limit
+        if (batchCount >= batchSize) {
+          await batch.commit();
+          // IMPORTANT: create a fresh batch after committing
+          batch = _firestore.batch();
+          batchCount = 0;
+        }
+      }
+      
+      // Commit any remaining updates
+      if (batchCount > 0) {
+        await batch.commit();
+      }
+      
+      debugPrint('updateSharedUserIdsForCategory: Updated $updatedCount experiences');
+      return updatedCount;
+    } catch (e) {
+      debugPrint('updateSharedUserIdsForCategory: Error: $e');
+      rethrow;
+    }
+  }
+
   /// Backfill sharedWithUserIds for existing experiences in shared categories
   /// Call this once to fix existing data (can be triggered manually or via admin panel)
   Future<int> backfillSharedUserIdsForExperiences({int batchSize = 50}) async {
