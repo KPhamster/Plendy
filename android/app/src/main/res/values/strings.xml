@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="default_web_client_id">AIzaSyAS-UbmU9cmQbr9pcnVkL3O3mvKE6iuM70
-</string>
-</resources> 
+    <string name="default_web_client_id">
+        449728842508-2o1dfbn37370v03t3qald1756iim4i4f.apps.googleusercontent.com
+    </string>
+</resources>
