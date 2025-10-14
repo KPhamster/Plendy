@@ -101,6 +101,7 @@ service cloud.firestore {
       // cross-document lookups which are not supported in query rules.
       allow read: if request.auth != null && (
         resource.data.createdBy == request.auth.uid ||
+        resource.data.ownerUserId == request.auth.uid ||
         (resource.data.editorUserIds is list && request.auth.uid in resource.data.editorUserIds) ||
         (resource.data.keys().hasAny(['sharedWithUserIds']) && request.auth.uid in resource.data.sharedWithUserIds)
       );
@@ -108,6 +109,7 @@ service cloud.firestore {
       // Allow updates by creator or any current editor listed in the document
       allow update: if request.auth != null && isValidLocationData(request.resource.data.location) && (
         resource.data.createdBy == request.auth.uid ||
+        resource.data.ownerUserId == request.auth.uid ||
         (resource.data.editorUserIds is list && request.auth.uid in resource.data.editorUserIds) ||
         // Check if user is in denormalized sharedWithUserIds (updated by service layer based on category shares)
         (resource.data.keys().hasAny(['sharedWithUserIds']) && request.auth.uid in resource.data.sharedWithUserIds)
@@ -116,6 +118,7 @@ service cloud.firestore {
       // Allow deletes by creator, or the last remaining editor (when they are the only editor)
       allow delete: if request.auth != null && (
         resource.data.createdBy == request.auth.uid ||
+        resource.data.ownerUserId == request.auth.uid ||
         ((resource.data.editorUserIds is list) && resource.data.editorUserIds.size() == 1 && request.auth.uid in resource.data.editorUserIds)
       );
     }

@@ -1792,32 +1792,66 @@ class ExperienceService {
     return byId.values.toList();
   }
 
-  /// Get all experiences created by the current user.
   Future<List<Experience>> getUserExperiences() async {
     final userId = _currentUserId;
     if (userId == null) {
       print("getUserExperiences: No user authenticated, returning empty list.");
       return []; // Or throw Exception('User not authenticated');
     }
-    try {
-      print(
-          "getUserExperiences: Fetching all experiences for user ID: $userId");
-      final snapshot = await _experiencesCollection
-          .where('editorUserIds',
-              arrayContains: userId) // Check if user is an editor
-          .orderBy('updatedAt',
-              descending: true) // Order by most recently updated
-          .get();
+    print(
+        "getUserExperiences: Fetching experiences for user ID: $userId");
 
-      final experiences =
-          snapshot.docs.map((doc) => Experience.fromFirestore(doc)).toList();
-      print(
-          "getUserExperiences: Fetched ${experiences.length} experiences for user $userId.");
-      return experiences;
-    } catch (e) {
-      print("Error fetching user experiences for user $userId: $e");
-      return []; // Return empty list on error
+    final Map<String, Experience> experiencesById = {};
+
+    Future<void> addExperiencesFromQuery(
+        Query query, String label) async {
+      try {
+        final snapshot = await query.get();
+        print(
+            'getUserExperiences: $label query fetched ${snapshot.docs.length} docs for $userId.');
+        for (final doc in snapshot.docs) {
+          try {
+            final exp = Experience.fromFirestore(doc);
+            experiencesById[exp.id] = exp;
+          } catch (e) {
+            print(
+                'getUserExperiences: Failed to parse experience ${doc.id} from $label query: $e');
+          }
+        }
+      } on FirebaseException catch (e) {
+        print(
+            'getUserExperiences: Firebase error during $label query: $e');
+        // Continue with other queries even if this one fails
+      } catch (e) {
+        print(
+            'getUserExperiences: Unexpected error during $label query: $e');
+      }
     }
+
+    // Primary query: Get experiences created by this user
+    await addExperiencesFromQuery(
+        _experiencesCollection.where('createdBy', isEqualTo: userId),
+        'createdBy');
+
+    // Secondary query: Get experiences owned by this user (for transferred ownership)
+    await addExperiencesFromQuery(
+        _experiencesCollection.where('ownerUserId', isEqualTo: userId),
+        'ownerUserId');
+
+    // Tertiary query: Get experiences where user is an editor (collaborative access)
+    await addExperiencesFromQuery(
+        _experiencesCollection.where('editorUserIds', arrayContains: userId),
+        'editorUserIds');
+
+    final experiences = experiencesById.values.toList()
+      ..sort((a, b) {
+        // Sort by updatedAt (most recent first)
+        return b.updatedAt.compareTo(a.updatedAt);
+      });
+
+    print(
+        "getUserExperiences: Returning ${experiences.length} deduplicated experiences for user $userId.");
+    return experiences;
   }
 
   /// Get all experiences from shared categories (categories shared with the current user)
