@@ -15,7 +15,6 @@ import 'package:plendy/widgets/add_category_modal.dart';
 import 'package:plendy/widgets/edit_categories_modal.dart';
 // ADDED: Import for Clipboard
 import 'package:flutter/services.dart';
-import 'dart:io';
 // ADDED: Import for ColorCategory
 import 'package:plendy/models/color_category.dart';
 // --- ADDED: Placeholders for Color Category Modals ---
@@ -338,8 +337,11 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
       // For Yelp URLs, try multiple approaches to force new navigation
       bool launched = false;
 
-      // iOS-specific: Prefer Yelp app deep link for search to avoid landing on homepage
-      if (Platform.isIOS && uri.toString().contains('yelp.com/search')) {
+      // Try Yelp app deep link for search URLs - cleaner navigation
+      // Note: Yelp's Android app has a known issue where it shows a blank screen
+      // when the deep link is used while the app is already open. This is a Yelp app bug.
+      // The workaround is to close Yelp before tapping the button, or restart after blank screen.
+      if (uri.toString().contains('yelp.com/search')) {
         final String? terms = uri.queryParameters['find_desc'];
         final String? location = uri.queryParameters['find_loc'];
         if (terms != null && terms.isNotEmpty) {
@@ -347,66 +349,28 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
           final String l = location != null && location.isNotEmpty
               ? '&location=${Uri.encodeComponent(location)}'
               : '';
-          final Uri iosDeepLink = Uri.parse('yelp:///search?terms=$t$l');
-          print('DEBUG YELP: iOS deep link for search: $iosDeepLink');
+          final Uri deepLink = Uri.parse('yelp:///search?terms=$t$l');
+          print('DEBUG YELP: Using deep link: $deepLink');
           try {
-            if (await canLaunchUrl(iosDeepLink)) {
-              launched = await launchUrl(iosDeepLink,
+            if (await canLaunchUrl(deepLink)) {
+              launched = await launchUrl(deepLink,
                   mode: LaunchMode.externalApplication);
-              print('DEBUG YELP: iOS deep link launch result: $launched');
+              print('DEBUG YELP: Deep link launch result: $launched');
               if (launched) {
+                print('DEBUG YELP: Successfully launched via deep link');
                 return; // Successfully launched deep link; stop here
               }
             }
           } catch (e) {
-            print('DEBUG YELP: Error launching iOS deep link: $e');
+            print('DEBUG YELP: Error launching deep link: $e');
           }
         }
       }
 
-      // For Yelp search URLs, try a special technique to force new navigation
-      if (uri.toString().contains('yelp.com/search')) {
-        print('DEBUG YELP: Trying special technique for search URL');
-
-        // First, try to launch Yelp homepage to "reset" the app state
-        try {
-          final yelpHomepage = Uri.parse('https://www.yelp.com');
-          print('DEBUG YELP: Launching Yelp homepage first: $yelpHomepage');
-          await launchUrl(yelpHomepage, mode: LaunchMode.externalApplication);
-
-          // Small delay to let the homepage load
-          await Future.delayed(Duration(milliseconds: 500));
-
-          // Now launch the search URL
-          print('DEBUG YELP: Now launching search URL: $uri');
-          launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
-          print('DEBUG YELP: Search URL launch result: $launched');
-        } catch (e) {
-          print('DEBUG YELP: Error in double-launch technique: $e');
-          // Fallback to direct launch
-          launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
-          print('DEBUG YELP: Fallback direct launch result: $launched');
-        }
-      } else {
-        // For non-search URLs, use standard approach
-        print('DEBUG YELP: Using standard launch for non-search URL');
-        launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
-        print('DEBUG YELP: Standard launch result: $launched');
-      }
-
-      if (!launched) {
-        print('DEBUG YELP: Trying platformDefault');
-        // Try platformDefault as fallback
-        launched = await launchUrl(uri, mode: LaunchMode.platformDefault);
-        print('DEBUG YELP: platformDefault result: $launched');
-      }
-
-      if (!launched) {
-        print('DEBUG YELP: Trying final externalApplication fallback');
-        // Final fallback to externalApplication
-        launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
-        print('DEBUG YELP: final externalApplication result: $launched');
-      }
+      // Fallback: Launch the HTTPS URL directly
+      print('DEBUG YELP: Fallback to HTTPS URL: $uri');
+      launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      print('DEBUG YELP: HTTPS URL launch result: $launched');
 
       if (!launched) {
         print('DEBUG YELP: All launch attempts failed for $uri');
