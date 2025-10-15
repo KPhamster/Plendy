@@ -10,6 +10,14 @@ admin.initializeApp();
 const db = getFirestore(); // Use getFirestore() from firebase-admin/firestore
 const messaging = admin.messaging();
 
+// Import and export share permission maintenance functions
+const maintainSharedUserIds = require("./src/maintain_shared_userids");
+Object.assign(exports, maintainSharedUserIds);
+
+// Import and export backfill functions
+const backfillModule = require("./src/backfill_shared_userids");
+Object.assign(exports, backfillModule);
+
 
 /**
  * Sends a notification when a new follow request is created (2nd Gen).

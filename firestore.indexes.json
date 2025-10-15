@@ -7,6 +7,22 @@
         { "fieldPath": "sharedWithUserIds", "arrayConfig": "CONTAINS" },
         { "fieldPath": "updatedAt", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "experiences",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "sharedWithUserIds", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "name", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "experiences",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "sharedWithUserIds", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "location.city", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": [

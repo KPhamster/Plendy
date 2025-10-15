@@ -45,7 +45,20 @@ class _FollowRequestsScreenState extends State<FollowRequestsScreen> {
     if (_authService != authService) {
       _authService = authService;
       _currentUserId = _authService?.currentUser?.uid;
-      _subscribeToFollowRequests();
+      
+      if (_currentUserId != null) {
+        _subscribeToFollowRequests(); // Re-subscribe with new auth service
+      } else {
+        // User signed out - cancel subscription to prevent permission errors
+        _requestsSubscription?.cancel();
+        _requestsSubscription = null;
+        if (mounted) {
+          setState(() {
+            _followRequests = [];
+            _isLoadingInitial = false;
+          });
+        }
+      }
     }
     
     // Store reference to notification service
@@ -73,10 +86,18 @@ class _FollowRequestsScreenState extends State<FollowRequestsScreen> {
       },
       onError: (error) {
         if (mounted) setState(() => _isLoadingInitial = false);
-        print("Error listening to follow requests: $error");
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not load follow requests: ${error.toString()}')),
-        );
+        
+        // Silently ignore permission errors after logout
+        if (error.toString().contains('PERMISSION_DENIED')) {
+          print("Follow requests stream: User no longer authenticated");
+        } else {
+          print("Error listening to follow requests: $error");
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Could not load follow requests: ${error.toString()}')),
+            );
+          }
+        }
       },
     );
   }
