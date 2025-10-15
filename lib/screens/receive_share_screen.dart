@@ -4800,19 +4800,30 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         context: context,
         barrierDismissible: false, // User must choose an action
         builder: (BuildContext dialogContext) {
+          final Color primaryColor =
+              Theme.of(dialogContext).colorScheme.primary;
           return AlertDialog(
+            backgroundColor: Colors.white,
             title: const Text('Potential Duplicate Found'),
             // MODIFIED: Dialog content to show both title and address
             content: Text(
                 'You already saved an experience named "${foundDuplicate!.name}" located at "${foundDuplicate.location.address ?? 'No address provided'}." Do you want to use this existing experience?'),
             actions: <Widget>[
               TextButton(
+                style: TextButton.styleFrom(
+                  backgroundColor: Colors.white,
+                  foregroundColor: primaryColor,
+                ),
                 child: const Text('Create New'),
                 onPressed: () {
                   Navigator.of(dialogContext).pop(false); // Don't use existing
                 },
               ),
               ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: primaryColor,
+                  foregroundColor: Colors.white,
+                ),
                 child: const Text('Use Existing'),
                 onPressed: () {
                   Navigator.of(dialogContext).pop(true); // Use existing

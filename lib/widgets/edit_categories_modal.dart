@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:plendy/models/user_category.dart';
 import 'package:plendy/models/share_permission.dart';
@@ -6,6 +8,7 @@ import 'package:plendy/services/auth_service.dart';
 import 'package:plendy/widgets/add_category_modal.dart';
 import 'package:plendy/models/category_sort_type.dart';
 import 'package:plendy/services/category_ordering_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class EditCategoriesModal extends StatefulWidget {
   const EditCategoriesModal({super.key});
@@ -27,6 +30,10 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
   bool _isLoading = false;
   bool _CategoriesChanged =
       false; // Track if *any* change to order/content occurred
+  static const String _prefsKeyCategoryOrderPrefix =
+      'collections_category_order_';
+  static const String _prefsKeyUseManualCategoryOrderPrefix =
+      'collections_use_manual_category_order_';
 
   @override
   void initState() {
@@ -119,12 +126,100 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
     });
   }
 
-  // ADDED: Helper to update local orderIndex properties
   void _updateLocalOrderIndices() {
-    for (int i = 0; i < _Categories.length; i++) {
-      _Categories[i] = _Categories[i].copyWith(orderIndex: i);
+    final String? currentUserId = _authService.currentUser?.uid;
+    if (currentUserId == null || currentUserId.isEmpty) {
+      return;
     }
-    print("Updated local order indices.");
+    int nextOrder = 0;
+    for (int i = 0; i < _Categories.length; i++) {
+      final UserCategory category = _Categories[i];
+      if (category.ownerUserId != currentUserId) {
+        continue;
+      }
+      _Categories[i] = category.copyWith(orderIndex: nextOrder);
+      nextOrder++;
+    }
+    print("Updated local order indices for owned categories.");
+  }
+
+  String? _userSpecificPrefsKey(String prefix) {
+    final String? userId = _authService.currentUser?.uid;
+    if (userId == null || userId.isEmpty) {
+      return null;
+    }
+    return '$prefix$userId';
+  }
+
+  Future<void> _persistManualCategoryOrderPrefs(
+      List<String> manualOrder) async {
+    final String? key = _userSpecificPrefsKey(_prefsKeyCategoryOrderPrefix);
+    if (key == null) {
+      return;
+    }
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (manualOrder.isEmpty) {
+        await prefs.remove(key);
+      } else {
+        await prefs.setStringList(key, manualOrder);
+      }
+    } catch (e) {
+      print("Error saving manual category order preference: $e");
+    }
+  }
+
+  Future<void> _persistUseManualCategoryOrder(bool useManual) async {
+    final String? key =
+        _userSpecificPrefsKey(_prefsKeyUseManualCategoryOrderPrefix);
+    if (key == null) {
+      return;
+    }
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(key, useManual);
+    } catch (e) {
+      print("Error saving manual category order toggle: $e");
+    }
+  }
+
+  Future<bool> _saveCategoryOrder({bool showErrors = false}) async {
+    final String? currentUserId = _authService.currentUser?.uid;
+    if (currentUserId == null || currentUserId.isEmpty) {
+      return false;
+    }
+
+    final List<Map<String, dynamic>> updates = [];
+    for (final category in _Categories) {
+      if (category.ownerUserId != currentUserId) {
+        continue;
+      }
+      if (category.id.isNotEmpty && category.orderIndex != null) {
+        updates.add({
+          'id': category.id,
+          'orderIndex': category.orderIndex!,
+        });
+      }
+    }
+
+    if (updates.isEmpty) {
+      print("No owned category order updates to save.");
+      return true;
+    }
+
+    try {
+      await _experienceService.updateCategoryOrder(updates);
+      print("Category order saved successfully.");
+      return true;
+    } catch (e) {
+      print("Error saving category order: $e");
+      if (showErrors && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Error saving category order: $e")),
+        );
+      }
+      return false;
+    }
   }
 
   Future<void> _deleteCategory(UserCategory category) async {
@@ -401,29 +496,33 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
                               );
                             },
                             onReorder: (int oldIndex, int newIndex) {
+                              if (newIndex > oldIndex) {
+                                newIndex -= 1;
+                              }
+                              if (oldIndex < 0 ||
+                                  oldIndex >= _Categories.length ||
+                                  newIndex < 0 ||
+                                  newIndex >= _Categories.length) {
+                                return;
+                              }
                               setState(() {
-                                // Adjust index if item is moved down in the list
-                                if (newIndex > oldIndex) {
-                                  newIndex -= 1;
-                                }
-                                // Remove item from old position and insert into new position
                                 final UserCategory item =
                                     _Categories.removeAt(oldIndex);
                                 _Categories.insert(newIndex, item);
-
-                                // Update orderIndex property in the local list
-                                _updateLocalOrderIndices(); // Use helper
-
-                                _CategoriesChanged =
-                                    true; // Mark that changes were made
+                                _updateLocalOrderIndices();
+                                _CategoriesChanged = true;
                                 print(
-                                    "Category reordered, _CategoriesChanged set to true."); // Log flag set
-
-                                // Update orderIndex property in the local list
-                                _updateLocalOrderIndices(); // Use helper
-
-                                print("Categories reordered.");
+                                    "Category reordered, _CategoriesChanged set to true.");
                               });
+                              final List<String> manualOrder =
+                                  List<String>.from(
+                                      _Categories.map((c) => c.id));
+                              unawaited(_persistManualCategoryOrderPrefs(
+                                  manualOrder));
+                              unawaited(_persistUseManualCategoryOrder(
+                                  manualOrder.isNotEmpty));
+                              unawaited(_saveCategoryOrder());
+                              print("Categories reordered.");
                             },
                           ),
               ),
@@ -481,28 +580,15 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
         _isLoading = true;
       });
       try {
-        final List<Map<String, dynamic>> updates = [];
-        for (int i = 0; i < _Categories.length; i++) {
-          if (_Categories[i].id.isNotEmpty &&
-              _Categories[i].orderIndex != null) {
-            updates.add({
-              'id': _Categories[i].id,
-              'orderIndex': _Categories[i].orderIndex!,
-            });
-          } else {
-            print(
-                "Warning: Skipping category with missing id or index: ${_Categories[i].name}");
-          }
-        }
-
-        if (updates.isNotEmpty) {
-          print("Attempting to save order for ${updates.length} Categories.");
-          await _experienceService.updateCategoryOrder(updates);
-          print("Category order saved successfully.");
-          changesSuccessfullySaved = true;
-        } else if (updates.isEmpty && _CategoriesChanged) {
-          changesSuccessfullySaved = true;
-        }
+        final List<String> manualOrder =
+            List<String>.from(_Categories.map((c) => c.id));
+        print(
+            "Attempting to persist manual category order (${manualOrder.length} items).");
+        await _persistManualCategoryOrderPrefs(manualOrder);
+        await _persistUseManualCategoryOrder(manualOrder.isNotEmpty);
+        final bool orderSaved =
+            await _saveCategoryOrder(showErrors: true);
+        changesSuccessfullySaved = orderSaved;
       } catch (e) {
         print("Error saving category order: $e");
         if (mounted) {

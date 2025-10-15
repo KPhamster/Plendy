@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:plendy/models/color_category.dart';
 import 'package:plendy/models/share_permission.dart';
@@ -7,6 +9,7 @@ import 'package:plendy/services/sharing_service.dart';
 import 'package:plendy/services/auth_service.dart';
 import 'package:plendy/widgets/add_color_category_modal.dart';
 import 'package:plendy/models/category_sort_type.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class EditColorCategoriesModal extends StatefulWidget {
   const EditColorCategoriesModal({super.key});
@@ -28,6 +31,10 @@ class _EditColorCategoriesModalState extends State<EditColorCategoriesModal> {
   bool _isLoading = false;
   bool _categoriesChanged =
       false; // Track if any change to order/content occurred
+  static const String _prefsKeyColorCategoryOrderPrefix =
+      'collections_color_category_order_';
+  static const String _prefsKeyUseManualColorCategoryOrderPrefix =
+      'collections_use_manual_color_category_order_';
 
   @override
   void initState() {
@@ -153,10 +160,99 @@ class _EditColorCategoriesModalState extends State<EditColorCategoriesModal> {
   }
 
   void _updateLocalOrderIndices() {
-    for (int i = 0; i < _categories.length; i++) {
-      _categories[i] = _categories[i].copyWith(orderIndex: i);
+    final String? currentUserId = _authService.currentUser?.uid;
+    if (currentUserId == null || currentUserId.isEmpty) {
+      return;
     }
-    print("Updated local color category order indices.");
+    int nextOrder = 0;
+    for (int i = 0; i < _categories.length; i++) {
+      final ColorCategory category = _categories[i];
+      if (category.ownerUserId != currentUserId) {
+        continue;
+      }
+      _categories[i] = category.copyWith(orderIndex: nextOrder);
+      nextOrder++;
+    }
+    print("Updated local color category order indices for owned categories.");
+  }
+
+  String? _userSpecificPrefsKey(String prefix) {
+    final String? userId = _authService.currentUser?.uid;
+    if (userId == null || userId.isEmpty) {
+      return null;
+    }
+    return '$prefix$userId';
+  }
+
+  Future<void> _persistManualColorCategoryOrderPrefs(
+      List<String> manualOrder) async {
+    final String? key = _userSpecificPrefsKey(_prefsKeyColorCategoryOrderPrefix);
+    if (key == null) {
+      return;
+    }
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (manualOrder.isEmpty) {
+        await prefs.remove(key);
+      } else {
+        await prefs.setStringList(key, manualOrder);
+      }
+    } catch (e) {
+      print("Error saving manual color category order preference: $e");
+    }
+  }
+
+  Future<void> _persistUseManualColorCategoryOrder(bool useManual) async {
+    final String? key = _userSpecificPrefsKey(
+        _prefsKeyUseManualColorCategoryOrderPrefix);
+    if (key == null) {
+      return;
+    }
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(key, useManual);
+    } catch (e) {
+      print("Error saving manual color category order toggle: $e");
+    }
+  }
+
+  Future<bool> _saveColorCategoryOrder({bool showErrors = false}) async {
+    final String? currentUserId = _authService.currentUser?.uid;
+    if (currentUserId == null || currentUserId.isEmpty) {
+      return false;
+    }
+
+    final List<Map<String, dynamic>> updates = [];
+    for (final category in _categories) {
+      if (category.ownerUserId != currentUserId) {
+        continue;
+      }
+      if (category.id.isNotEmpty && category.orderIndex != null) {
+        updates.add({
+          'id': category.id,
+          'orderIndex': category.orderIndex!,
+        });
+      }
+    }
+
+    if (updates.isEmpty) {
+      print("No owned color category order updates to save.");
+      return true;
+    }
+
+    try {
+      await _experienceService.updateColorCategoryOrder(updates);
+      print("Color category order saved successfully.");
+      return true;
+    } catch (e) {
+      print("Error saving color category order: $e");
+      if (showErrors && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Error saving color category order: $e")),
+        );
+      }
+      return false;
+    }
   }
 
   Future<void> _deleteCategory(ColorCategory category) async {
@@ -429,10 +525,16 @@ class _EditColorCategoriesModalState extends State<EditColorCategoriesModal> {
                               );
                             },
                             onReorder: (int oldIndex, int newIndex) {
+                              if (newIndex > oldIndex) {
+                                newIndex -= 1;
+                              }
+                              if (oldIndex < 0 ||
+                                  oldIndex >= _categories.length ||
+                                  newIndex < 0 ||
+                                  newIndex >= _categories.length) {
+                                return;
+                              }
                               setState(() {
-                                if (newIndex > oldIndex) {
-                                  newIndex -= 1;
-                                }
                                 final ColorCategory item =
                                     _categories.removeAt(oldIndex);
                                 _categories.insert(newIndex, item);
@@ -441,6 +543,15 @@ class _EditColorCategoriesModalState extends State<EditColorCategoriesModal> {
                                 print(
                                     "Color category reordered, _categoriesChanged set to true.");
                               });
+                              final List<String> manualOrder =
+                                  List<String>.from(
+                                      _categories.map((c) => c.id));
+                              unawaited(_persistManualColorCategoryOrderPrefs(
+                                  manualOrder));
+                              unawaited(_persistUseManualColorCategoryOrder(
+                                  manualOrder.isNotEmpty));
+                              unawaited(_saveColorCategoryOrder());
+                              print("Color categories reordered.");
                             },
                           ),
               ),
@@ -494,29 +605,15 @@ class _EditColorCategoriesModalState extends State<EditColorCategoriesModal> {
         _isLoading = true;
       });
       try {
-        final List<Map<String, dynamic>> updates = [];
-        for (int i = 0; i < _categories.length; i++) {
-          if (_categories[i].id.isNotEmpty &&
-              _categories[i].orderIndex != null) {
-            updates.add({
-              'id': _categories[i].id,
-              'orderIndex': _categories[i].orderIndex!,
-            });
-          } else {
-            print(
-                "Warning: Skipping color category with missing id or index: ${_categories[i].name}");
-          }
-        }
-
-        if (updates.isNotEmpty) {
-          print(
-              "Attempting to save order for ${updates.length} color categories.");
-          await _experienceService.updateColorCategoryOrder(updates);
-          print("Color category order saved successfully.");
-          changesSuccessfullySaved = true;
-        } else if (updates.isEmpty && _categoriesChanged) {
-          changesSuccessfullySaved = true;
-        }
+        final List<String> manualOrder =
+            List<String>.from(_categories.map((c) => c.id));
+        print(
+            "Attempting to persist manual color category order (${manualOrder.length} items).");
+        await _persistManualColorCategoryOrderPrefs(manualOrder);
+        await _persistUseManualColorCategoryOrder(manualOrder.isNotEmpty);
+        final bool orderSaved =
+            await _saveColorCategoryOrder(showErrors: true);
+        changesSuccessfullySaved = orderSaved;
       } catch (e) {
         print("Error saving color category order: $e");
         if (mounted) {
