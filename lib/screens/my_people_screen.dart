@@ -89,6 +89,15 @@ class _MyPeopleScreenState extends State<MyPeopleScreen>
       _authService = authService;
       if (_authService?.currentUser != null) {
         _loadInitialDataAndSubscribe(); 
+      } else {
+        // User signed out - cancel subscriptions to prevent permission errors
+        _requestCountSubscription?.cancel();
+        _requestCountSubscription = null;
+        if (mounted) {
+          setState(() {
+            _pendingRequestCount = 0;
+          });
+        }
       }
     } else if (_authService?.currentUser != null && _currentUserProfile == null && !_isLoadingCounts) {
         _loadInitialDataAndSubscribe(); 
@@ -141,7 +150,12 @@ class _MyPeopleScreenState extends State<MyPeopleScreen>
         });
       }
     }, onError: (error) {
-      print("Error listening to follow request count: $error");
+      // Silently ignore permission errors after logout
+      if (error.toString().contains('PERMISSION_DENIED')) {
+        print("Follow request count stream: User no longer authenticated");
+      } else {
+        print("Error listening to follow request count: $error");
+      }
       if (mounted) setState(() => _pendingRequestCount = 0); // Reset on error
     });
   }

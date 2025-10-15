@@ -171,66 +171,21 @@ void main() async {
     usePathUrlStrategy();
   }
 
-  // Load environment variables (if .env file exists)
-  try {
-    await dotenv.load(fileName: ".env");
-  } catch (e) {
+  // Load environment variables (if .env file exists) - non-blocking
+  unawaited(dotenv.load(fileName: ".env").catchError((e) {
     print('No .env file found - using API keys from config files instead: $e');
-  }
+  }));
 
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
 
   // Initialize Firebase App Check (invisible; no user prompt)
-  try {
-    if (kIsWeb) {
-      await FirebaseAppCheck.instance.activate(
-        webProvider: ReCaptchaV3Provider('6Ldt0sIrAAAAABBHbSmj07DU8gEEzqijAk70XwKA'),
-        androidProvider: AndroidProvider.playIntegrity,
-        appleProvider: AppleProvider.appAttest,
-      );
-      print('App Check activated (web + providers).');
-    } else {
-      // Use Debug provider for debug/profile builds to simplify local dev.
-      final androidProvider = kReleaseMode
-          ? AndroidProvider.playIntegrity
-          : AndroidProvider.debug;
-      final appleProvider = kReleaseMode
-          ? AppleProvider.appAttest
-          : AppleProvider.debug;
+  // Kick off App Check without delaying the first Flutter frame
+  unawaited(_initializeAppCheck());
 
-      await FirebaseAppCheck.instance.activate(
-        androidProvider: androidProvider,
-        appleProvider: appleProvider,
-      );
-      print('App Check activated (native providers: ' +
-          (kReleaseMode ? 'release' : 'debug') + ')');
-    }
-    await FirebaseAppCheck.instance.setTokenAutoRefreshEnabled(true);
-    // Force initial token request so reCAPTCHA key leaves "Incomplete" and headers appear
-    try {
-      final token = await FirebaseAppCheck.instance.getToken(true);
-      print('App Check initial token fetched: ' + (token != null && token.isNotEmpty ? 'ok' : 'empty'));
-    } catch (e) {
-      print('App Check initial token fetch error: $e');
-    }
-  } catch (e) {
-    print('App Check activation error: $e');
-  }
-
-  // --- ADDED: Preload user location silently --- START ---
-  try {
-    print("📍 MAIN: Starting background location preload...");
-    final mapsService = GoogleMapsService();
-    await mapsService.getCurrentLocation(); // Attempt to get location
-    print("📍 MAIN: Background location preload attempt finished.");
-  } catch (e) {
-    // Catch errors silently - we don't want to crash the app or bother the user here.
-    print(
-        "📍 MAIN: Error during background location preload (expected if permissions not granted yet): $e");
-  }
-  // --- ADDED: Preload user location silently --- END ---
+  // Preload user location in the background to keep startup fast
+  unawaited(_preloadUserLocation());
 
   // Initialize sharing service
   // Conditionally initialize SharingService if not on web
@@ -243,7 +198,8 @@ void main() async {
     }
 
     // --- FCM Setup ---
-    await _configureLocalNotifications(); // Setup for local notifications (foreground)
+    // Setup local notifications in background to not delay splash screen
+    unawaited(_configureLocalNotifications());
 
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {
       print('FCM: Got a message whilst in the foreground!');
@@ -336,6 +292,58 @@ void main() async {
       child: const MyApp(),
     ),
   );
+}
+
+
+Future<void> _initializeAppCheck() async {
+  try {
+    if (kIsWeb) {
+      await FirebaseAppCheck.instance.activate(
+        webProvider: ReCaptchaV3Provider('6Ldt0sIrAAAAABBHbSmj07DU8gEEzqijAk70XwKA'),
+        androidProvider: AndroidProvider.playIntegrity,
+        appleProvider: AppleProvider.appAttest,
+      );
+      print('App Check activated (web + providers).');
+    } else {
+      // Use Debug provider for debug/profile builds to simplify local dev.
+      final androidProvider = kReleaseMode
+          ? AndroidProvider.playIntegrity
+          : AndroidProvider.debug;
+      final appleProvider = kReleaseMode
+          ? AppleProvider.appAttest
+          : AppleProvider.debug;
+
+      await FirebaseAppCheck.instance.activate(
+        androidProvider: androidProvider,
+        appleProvider: appleProvider,
+      );
+      print('App Check activated (native providers: ' +
+          (kReleaseMode ? 'release' : 'debug') + ')');
+    }
+    await FirebaseAppCheck.instance.setTokenAutoRefreshEnabled(true);
+    // Force initial token request so reCAPTCHA key leaves "Incomplete" and headers appear
+    try {
+      final token = await FirebaseAppCheck.instance.getToken(true);
+      print('App Check initial token fetched: ' + (token != null && token.isNotEmpty ? 'ok' : 'empty'));
+    } catch (e) {
+      print('App Check initial token fetch error: $e');
+    }
+  } catch (e) {
+    print('App Check activation error: $e');
+  }
+}
+
+Future<void> _preloadUserLocation() async {
+  try {
+    print("MAIN: Starting background location preload...");
+    final mapsService = GoogleMapsService();
+    await mapsService.getCurrentLocation(); // Attempt to get location
+    print("MAIN: Background location preload attempt finished.");
+  } catch (e) {
+    // Catch errors silently - we don't want to crash the app or bother the user here.
+    print(
+        "MAIN: Error during background location preload (expected if permissions not granted yet): $e");
+  }
 }
 
 class MyApp extends StatefulWidget {

@@ -63,6 +63,37 @@ class ExperienceService {
     }
   }
 
+  /// Batch fetch multiple user profiles by IDs using whereIn
+  Future<List<UserProfile>> getUserProfilesByIds(List<String> userIds) async {
+    if (userIds.isEmpty) return [];
+
+    final uniqueIds = userIds.toSet().toList();
+    const chunkSize = 30; // Firestore whereIn limit
+    final List<UserProfile> results = [];
+
+    // Split into chunks
+    for (int i = 0; i < uniqueIds.length; i += chunkSize) {
+      final end =
+          (i + chunkSize) > uniqueIds.length ? uniqueIds.length : (i + chunkSize);
+      final chunk = uniqueIds.sublist(i, end);
+
+      try {
+        final snapshot =
+            await _usersCollection.where(FieldPath.documentId, whereIn: chunk).get();
+        for (final doc in snapshot.docs) {
+          final data = doc.data() as Map<String, dynamic>?;
+          if (data != null) {
+            results.add(UserProfile.fromMap(doc.id, data));
+          }
+        }
+      } catch (e) {
+        print('getUserProfilesByIds: Error fetching chunk: $e');
+      }
+    }
+
+    return results;
+  }
+
   /// Check if a category is shared with the current user and return the owner's userId
   Future<String?> _getCategoryShareOwner(String categoryId) async {
     final currentUserId = _currentUserId;
@@ -208,6 +239,66 @@ class ExperienceService {
           'getColorCategoryByOwner: Failed to fetch $categoryId for $ownerUserId: $e');
       return null;
     }
+  }
+
+  /// Batch fetch multiple user categories by owner and IDs using whereIn
+  Future<List<UserCategory>> getUserCategoriesByOwnerAndIds(
+      String ownerUserId, List<String> categoryIds) async {
+    if (ownerUserId.isEmpty || categoryIds.isEmpty) return [];
+
+    final uniqueIds = categoryIds.toSet().toList();
+    const chunkSize = 30; // Firestore whereIn limit
+    final List<UserCategory> results = [];
+
+    // Split into chunks
+    for (int i = 0; i < uniqueIds.length; i += chunkSize) {
+      final end =
+          (i + chunkSize) > uniqueIds.length ? uniqueIds.length : (i + chunkSize);
+      final chunk = uniqueIds.sublist(i, end);
+
+      try {
+        final snapshot = await _userCategoriesCollection(ownerUserId)
+            .where(FieldPath.documentId, whereIn: chunk)
+            .get();
+        results.addAll(
+            snapshot.docs.map((doc) => UserCategory.fromFirestore(doc)));
+      } catch (e) {
+        print(
+            'getUserCategoriesByOwnerAndIds: Error fetching chunk for owner $ownerUserId: $e');
+      }
+    }
+
+    return results;
+  }
+
+  /// Batch fetch multiple color categories by owner and IDs using whereIn
+  Future<List<ColorCategory>> getColorCategoriesByOwnerAndIds(
+      String ownerUserId, List<String> categoryIds) async {
+    if (ownerUserId.isEmpty || categoryIds.isEmpty) return [];
+
+    final uniqueIds = categoryIds.toSet().toList();
+    const chunkSize = 30; // Firestore whereIn limit
+    final List<ColorCategory> results = [];
+
+    // Split into chunks
+    for (int i = 0; i < uniqueIds.length; i += chunkSize) {
+      final end =
+          (i + chunkSize) > uniqueIds.length ? uniqueIds.length : (i + chunkSize);
+      final chunk = uniqueIds.sublist(i, end);
+
+      try {
+        final snapshot = await _userColorCategoriesCollection(ownerUserId)
+            .where(FieldPath.documentId, whereIn: chunk)
+            .get();
+        results.addAll(
+            snapshot.docs.map((doc) => ColorCategory.fromFirestore(doc)));
+      } catch (e) {
+        print(
+            'getColorCategoriesByOwnerAndIds: Error fetching chunk for owner $ownerUserId: $e');
+      }
+    }
+
+    return results;
   }
 
   // ======= User Category Operations =======
@@ -1040,6 +1131,8 @@ class ExperienceService {
 
   /// Update sharedWithUserIds for all experiences in a specific category
   /// This should be called when a new category share is granted
+  /// NOTE: Cloud Functions (onCategoryShareCreated) now handle this automatically.
+  /// This method serves as a backup for manual triggers or if functions fail.
   Future<int> updateSharedUserIdsForCategory(String categoryId,
       {int batchSize = 50}) async {
     final currentUserId = _currentUserId;
@@ -1126,6 +1219,8 @@ class ExperienceService {
 
   /// Backfill sharedWithUserIds for existing experiences in shared categories
   /// Call this once to fix existing data (can be triggered manually or via admin panel)
+  /// NOTE: The Cloud Function backfillSharedUserIds (HTTP endpoint) handles this more efficiently.
+  /// This method serves as a client-side alternative for small-scale backfills.
   Future<int> backfillSharedUserIdsForExperiences({int batchSize = 50}) async {
     final currentUserId = _currentUserId;
     if (currentUserId == null) {
@@ -1637,17 +1732,20 @@ class ExperienceService {
 
   /// Page experiences shared with a specific user, using denormalized sharedWithUserIds.
   /// Returns both items and the last DocumentSnapshot for pagination.
+  /// Supports different sort orders via orderByField and descending parameters.
   Future<(List<Experience>, DocumentSnapshot<Object?>?)>
       getExperiencesSharedWith(
     String userId, {
     int limit = 200,
     DocumentSnapshot<Object?>? startAfter,
+    String orderByField = 'updatedAt',
+    bool descending = true,
   }) async {
     if (userId.isEmpty) return (<Experience>[], null);
 
     Query query = _experiencesCollection
         .where('sharedWithUserIds', arrayContains: userId)
-        .orderBy('updatedAt', descending: true)
+        .orderBy(orderByField, descending: descending)
         .limit(limit);
     if (startAfter != null) {
       query = query.startAfterDocument(startAfter);

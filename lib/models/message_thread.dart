@@ -1,6 +1,21 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'message_thread_participant.dart';
 
+class MessageTextSegment {
+  final String text;
+  final Uri? uri;
+
+  const MessageTextSegment._(this.text, this.uri);
+
+  factory MessageTextSegment.text(String text) =>
+      MessageTextSegment._(text, null);
+
+  factory MessageTextSegment.link(String text, Uri uri) =>
+      MessageTextSegment._(text, uri);
+
+  bool get isLink => uri != null;
+}
+
 class MessageThread {
   final String id;
   final List<String> participantIds;
@@ -11,6 +26,11 @@ class MessageThread {
   final DateTime? createdAt;
   final DateTime? updatedAt;
   final String participantsKey;
+
+  static final RegExp _urlRegex = RegExp(
+    r'''((?:https?:\/\/|www\.)[^\s<>()\[\]{}"'`]+)''',
+    caseSensitive: false,
+  );
 
   MessageThread({
     required this.id,
@@ -60,6 +80,64 @@ class MessageThread {
 
   MessageThreadParticipant? participant(String userId) {
     return participantProfiles[userId];
+  }
+
+  static List<MessageTextSegment> extractMessageSegments(String? message) {
+    if (message == null || message.isEmpty) {
+      return [MessageTextSegment.text('')];
+    }
+
+    final matches = _urlRegex.allMatches(message);
+    if (matches.isEmpty) {
+      return [MessageTextSegment.text(message)];
+    }
+
+    final segments = <MessageTextSegment>[];
+    var currentIndex = 0;
+
+    for (final match in matches) {
+      if (match.start > currentIndex) {
+        segments.add(
+          MessageTextSegment.text(message.substring(currentIndex, match.start)),
+        );
+      }
+
+      var urlText = match.group(0) ?? '';
+
+      // Strip trailing punctuation that is unlikely to belong to the URL.
+      final trailingBuffer = StringBuffer();
+      const trailingCharacters = '.,?!:;)]}\'"';
+      while (urlText.isNotEmpty &&
+          trailingCharacters.contains(urlText[urlText.length - 1])) {
+        trailingBuffer.write(urlText[urlText.length - 1]);
+        urlText = urlText.substring(0, urlText.length - 1);
+      }
+
+      final normalized = urlText.contains('://') ? urlText : 'https://$urlText';
+      final uri = Uri.tryParse(normalized);
+
+      if (uri != null) {
+        segments.add(MessageTextSegment.link(urlText, uri));
+      } else {
+        segments.add(MessageTextSegment.text(urlText));
+      }
+
+      final trailing = trailingBuffer.toString();
+      if (trailing.isNotEmpty) {
+        segments
+            .add(MessageTextSegment.text(trailing.split('').reversed.join()));
+      }
+
+      currentIndex = match.end;
+    }
+
+    if (currentIndex < message.length) {
+      segments.add(
+        MessageTextSegment.text(message.substring(currentIndex)),
+      );
+    }
+
+    return segments.where((segment) => segment.text.isNotEmpty).toList();
   }
 
   static DateTime? _parseTimestamp(dynamic value) {

@@ -1,8 +1,12 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
+
 import '../models/chat_message.dart';
 import '../models/message_thread.dart';
 import '../models/message_thread_participant.dart';
 import '../services/message_service.dart';
+import 'messages_screen.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({
@@ -70,6 +74,27 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  Future<void> _openLink(Uri uri) async {
+    try {
+      final launched = await launchUrl(
+        uri,
+        mode: LaunchMode.externalApplication,
+      );
+      if (!launched && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open link.')),
+        );
+      }
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not open link: $error')),
+      );
+    }
+  }
+
   void _scrollToBottom() {
     if (!_scrollController.hasClients) {
       return;
@@ -86,6 +111,12 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
+  void _handleBackPressed() {
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(builder: (context) => const MessagesScreen()),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<MessageThread?>(
@@ -96,6 +127,7 @@ class _ChatScreenState extends State<ChatScreen> {
         final title = _buildTitle(thread);
         return Scaffold(
           appBar: AppBar(
+            leading: BackButton(onPressed: _handleBackPressed),
             title: Text(title),
           ),
           body: Column(
@@ -204,10 +236,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   ),
                 ),
               ),
-            Text(
-              message.text,
-              style: TextStyle(color: textColor, fontSize: 16),
-            ),
+            _buildMessageText(message, textColor, isMine),
             const SizedBox(height: 4),
             Text(
               _formatMessageTime(message.createdAt),
@@ -216,6 +245,45 @@ class _ChatScreenState extends State<ChatScreen> {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildMessageText(
+    ChatMessage message,
+    Color textColor,
+    bool isMine,
+  ) {
+    final segments = MessageThread.extractMessageSegments(message.text);
+    final baseStyle = TextStyle(color: textColor, fontSize: 16);
+
+    if (segments.isEmpty || segments.every((segment) => !segment.isLink)) {
+      return Text(
+        message.text,
+        style: baseStyle,
+      );
+    }
+
+    final linkColor = isMine ? Colors.white : Theme.of(context).primaryColor;
+    final linkStyle = baseStyle.copyWith(
+      color: linkColor,
+      decoration: TextDecoration.underline,
+    );
+
+    return Text.rich(
+      TextSpan(
+        children: segments.map((segment) {
+          if (segment.isLink && segment.uri != null) {
+            return TextSpan(
+              text: segment.text,
+              style: linkStyle,
+              recognizer: TapGestureRecognizer()
+                ..onTap = () => _openLink(segment.uri!),
+            );
+          }
+          return TextSpan(text: segment.text);
+        }).toList(),
+      ),
+      style: baseStyle,
     );
   }
 

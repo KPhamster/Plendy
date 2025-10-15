@@ -4,6 +4,7 @@ import 'package:flutter_typeahead/flutter_typeahead.dart';
 import '../models/experience.dart';
 import '../models/user_category.dart';
 import '../models/color_category.dart';
+import '../models/user_profile.dart'; // ADDED: Import for UserProfile
 import '../widgets/add_color_category_modal.dart';
 import '../services/auth_service.dart';
 import '../services/experience_service.dart';
@@ -41,7 +42,6 @@ import '../services/google_maps_service.dart';
 import '../services/category_share_service.dart';
 import '../services/sharing_service.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'category_share_preview_screen.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -183,6 +183,13 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   bool _isSelectingCategories = false;
   bool _isSelectingExperiences = false;
   final Set<String> _selectedExperienceIds = <String>{};
+
+  // Pagination state for Experiences tab
+  static const int _experiencesPageSize = 100;
+  DocumentSnapshot<Object?>? _lastExperienceDoc;
+  bool _hasMoreExperiences = true;
+  bool _isLoadingMoreExperiences = false;
+  final ScrollController _experiencesScrollController = ScrollController();
 
   bool _isSharedCategory(UserCategory category) =>
       _sharedCategoryPermissions.containsKey(category.id);
@@ -362,6 +369,9 @@ class _CollectionsScreenState extends State<CollectionsScreen>
           _experienceSortType = ExperienceSortType.values.firstWhere(
               (e) => e.name == exp,
               orElse: () => _experienceSortType);
+          print('[Collections] Loaded experience sort preference: $exp -> $_experienceSortType');
+        } else {
+          print('[Collections] No saved experience sort preference, using default: $_experienceSortType');
         }
         if (content != null) {
           _contentSortType = ContentSortType.values.firstWhere(
@@ -409,7 +419,10 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_prefsKeyExperienceSort, sortType.name);
-    } catch (_) {}
+      print('[Collections] Saved experience sort preference: ${sortType.name}');
+    } catch (e) {
+      print('[Collections] Error saving experience sort preference: $e');
+    }
   }
 
   Future<void> _saveContentSort(ContentSortType sortType) async {
@@ -780,6 +793,10 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         _loadGroupedContent();
       }
     });
+    
+    // Set up infinite scroll for Experiences tab
+    _experiencesScrollController.addListener(_onExperiencesScroll);
+    
     _loadSortPreferences().whenComplete(() {
       _loadData();
     });
@@ -1052,12 +1069,23 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     );
   }
 
+  void _onExperiencesScroll() {
+    if (_experiencesScrollController.position.pixels >=
+        _experiencesScrollController.position.maxScrollExtent * 0.8) {
+      // When user scrolls to 80% of the list, load more
+      if (_hasMoreExperiences && !_isLoadingMoreExperiences) {
+        _loadExperiencesPage(isInitialLoad: false);
+      }
+    }
+  }
+
   @override
   void dispose() {
     _categorySaveNotifier?.removeListener(_handleCategorySaveProgress);
     _categorySaveNotifier = null;
     _tabController.dispose();
     _searchController.dispose();
+    _experiencesScrollController.dispose();
     super.dispose();
   }
 
@@ -1620,6 +1648,11 @@ class _CollectionsScreenState extends State<CollectionsScreen>
           print(
               '[Collections] Found ${sharedPermissions.length} shared permissions');
           if (sharedPermissions.isNotEmpty) {
+            // Prefetch all unique owner names in one batch
+            final uniqueOwnerIds =
+                sharedPermissions.map((p) => p.ownerUserId).toSet();
+            await _prefetchOwnerDisplayNames(uniqueOwnerIds);
+
             final categoryPermissions = sharedPermissions
                 .where((perm) => perm.itemType == ShareableItemType.category)
                 .toList();
@@ -1639,12 +1672,16 @@ class _CollectionsScreenState extends State<CollectionsScreen>
               print(
                   '[Collections] Resolved ${sharedCategoryData.length} shared categories');
             }
-            if (experiencePermissions.isNotEmpty) {
-              print('[Collections] Resolving shared experiences...');
+            // OPTIMIZATION: Skip direct experience resolution if we have many
+            // The broad fetch in _combineSharedExperiences will get them via sharedWithUserIds
+            if (experiencePermissions.isNotEmpty && experiencePermissions.length < 100) {
+              print('[Collections] Resolving ${experiencePermissions.length} shared experiences (small set)...');
               sharedExperienceData =
                   await _resolveSharedExperiences(experiencePermissions);
               print(
                   '[Collections] Resolved ${sharedExperienceData.length} shared experiences');
+            } else if (experiencePermissions.isNotEmpty) {
+              print('[Collections] Skipping direct experience resolution (${experiencePermissions.length} items) - will use broad fetch instead');
             }
           }
         } catch (e) {
@@ -1839,6 +1876,9 @@ class _CollectionsScreenState extends State<CollectionsScreen>
           _selectedCategory = null;
           _selectedColorCategory = null;
           _contentLoaded = false;
+          // Reset pagination state
+          _lastExperienceDoc = null;
+          _hasMoreExperiences = true;
         });
         if (_useManualCategoryOrder && _manualCategoryOrder.isNotEmpty) {
           unawaited(_persistManualCategoryOrder());
@@ -1850,25 +1890,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         // Apply persisted sorts immediately to combined lists so shared items are included
         _applyCategorySortInMemory();
         _applyColorCategorySortInMemory();
-        final expSortSw = Stopwatch()..start();
-        _applyExperienceSort(_experienceSortType, applyToFiltered: false)
-            .whenComplete(() async {
-          if (_perfLogs) {
-            print(
-                '[Perf][Collections] Initial experience sort took ${expSortSw.elapsedMilliseconds}ms');
-          }
-          // Ensure filtered list reflects current filters and is sorted on first load
-          if (_hasActiveFilters) {
-            _applyFiltersAndUpdateLists();
-          } else {
-            // No filters: mirror sorted main list into filtered list
-            setState(() {
-              _filteredExperiences = List.from(_experiences);
-            });
-            await _applyExperienceSort(_experienceSortType,
-                applyToFiltered: true);
-          }
-        });
+        // Note: Experience sorting is now handled by pagination (_loadExperiencesPage)
+        // which uses server-side ordering. Skip the old sort logic here.
         if (_perfLogs) {
           totalSw.stop();
           print(
@@ -2028,46 +2051,77 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     if (permissions.isEmpty) return [];
 
     print(
-        '[Collections] Resolving ${permissions.length} shared categories in parallel...');
+        '[Collections] Resolving ${permissions.length} shared categories (batched by owner)...');
     final sw = Stopwatch()..start();
 
-    // Fetch all categories and owner names in parallel
-    final futures = permissions.map((permission) async {
-      final ownerId = permission.ownerUserId;
+    // Group permissions by owner
+    final Map<String, List<SharePermission>> byOwner = {};
+    final Set<String> uniqueOwnerIds = {};
+    for (final perm in permissions) {
+      byOwner.putIfAbsent(perm.ownerUserId, () => []).add(perm);
+      uniqueOwnerIds.add(perm.ownerUserId);
+    }
 
-      // Fetch user category, color category, and owner name in parallel
+    // Prefetch all owner names in parallel
+    await Future.wait(
+        uniqueOwnerIds.map((ownerId) => _getOwnerDisplayName(ownerId)));
+
+    // Process each owner's categories in batched queries
+    final List<_SharedCategoryData> allResults = [];
+    final fetchSw = Stopwatch()..start();
+
+    for (final entry in byOwner.entries) {
+      final ownerId = entry.key;
+      final ownerPerms = entry.value;
+      final categoryIds = ownerPerms.map((p) => p.itemId).toList();
+
+      // Batch fetch both user and color categories for this owner
       final results = await Future.wait([
-        _experienceService.getUserCategoryByOwner(ownerId, permission.itemId),
-        _experienceService.getColorCategoryByOwner(ownerId, permission.itemId),
-        _getOwnerDisplayName(ownerId),
+        _experienceService.getUserCategoriesByOwnerAndIds(ownerId, categoryIds),
+        _experienceService.getColorCategoriesByOwnerAndIds(ownerId, categoryIds),
       ]);
 
-      final userCategory = results[0] as UserCategory?;
-      final colorCategory = results[1] as ColorCategory?;
-      final ownerName = results[2] as String;
+      final List<UserCategory> userCategories =
+          results[0] as List<UserCategory>;
+      final List<ColorCategory> colorCategories =
+          results[1] as List<ColorCategory>;
 
-      if (userCategory == null && colorCategory == null) {
-        print(
-            '[Collections] No category found for ${permission.itemId}, skipping');
-        return null;
+      // Build lookup maps
+      final Map<String, UserCategory> userCatById = {
+        for (final cat in userCategories) cat.id: cat
+      };
+      final Map<String, ColorCategory> colorCatById = {
+        for (final cat in colorCategories) cat.id: cat
+      };
+
+      final ownerName = _shareOwnerNames[ownerId] ?? 'Someone';
+
+      // Match permissions to fetched categories
+      for (final perm in ownerPerms) {
+        final userCat = userCatById[perm.itemId];
+        final colorCat = colorCatById[perm.itemId];
+
+        if (userCat == null && colorCat == null) {
+          print(
+              '[Collections] No category found for ${perm.itemId} from owner $ownerId');
+          continue;
+        }
+
+        allResults.add(_SharedCategoryData(
+          userCategory: userCat,
+          colorCategory: colorCat,
+          permission: perm,
+          ownerDisplayName: ownerName,
+        ));
       }
+    }
 
-      return _SharedCategoryData(
-        userCategory: userCategory,
-        colorCategory: colorCategory,
-        permission: permission,
-        ownerDisplayName: ownerName,
-      );
-    }).toList();
-
-    final results =
-        (await Future.wait(futures)).whereType<_SharedCategoryData>().toList();
-
+    fetchSw.stop();
     sw.stop();
     print(
-        '[Collections] Resolved ${results.length} shared categories in ${sw.elapsedMilliseconds}ms');
+        '[Collections] Resolved ${allResults.length} shared categories in ${sw.elapsedMilliseconds}ms (fetch: ${fetchSw.elapsedMilliseconds}ms)');
 
-    return results;
+    return allResults;
   }
 
   Future<List<_SharedExperienceData>> _resolveSharedExperiences(
@@ -2075,38 +2129,56 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     if (permissions.isEmpty) return [];
 
     print(
-        '[Collections] Resolving ${permissions.length} shared experiences in parallel...');
+        '[Collections] Resolving ${permissions.length} shared experiences (batched)...');
     final sw = Stopwatch()..start();
 
-    // Fetch all experiences and owner names in parallel
-    final futures = permissions.map((permission) async {
-      // Fetch experience and owner name in parallel
-      final results = await Future.wait([
-        _experienceService.getExperience(permission.itemId),
-        _getOwnerDisplayName(permission.ownerUserId),
-      ]);
+    // Collect unique experience IDs and owner IDs
+    final List<String> experienceIds =
+        permissions.map((p) => p.itemId).toList();
+    final Set<String> uniqueOwnerIds =
+        permissions.map((p) => p.ownerUserId).toSet();
 
-      final experience = results[0] as Experience?;
-      final ownerName = results[1] as String;
+    // Batch fetch all experiences and owner names
+    final fetchSw = Stopwatch()..start();
+    final fetchResults = await Future.wait([
+      _experienceService.getExperiencesByIds(experienceIds),
+      Future.wait(
+          uniqueOwnerIds.map((ownerId) => _getOwnerDisplayName(ownerId))),
+    ]);
+    fetchSw.stop();
 
+    final List<Experience> experiences =
+        fetchResults[0] as List<Experience>;
+    print(
+        '[Collections] Batched fetch: ${experiences.length} experiences in ${fetchSw.elapsedMilliseconds}ms (${experienceIds.length} requested)');
+
+    // Build experience map for fast lookup
+    final Map<String, Experience> experienceById = {
+      for (final exp in experiences) exp.id: exp
+    };
+
+    // Build results by matching permissions to fetched experiences
+    final List<_SharedExperienceData> results = [];
+    for (final permission in permissions) {
+      final experience = experienceById[permission.itemId];
       if (experience == null) {
-        return null;
+        print(
+            '[Collections] WARNING: Experience ${permission.itemId} not found');
+        continue;
       }
 
-      return _SharedExperienceData(
+      final ownerName = _shareOwnerNames[permission.ownerUserId] ?? 'Someone';
+
+      results.add(_SharedExperienceData(
         experience: experience,
         permission: permission,
         ownerDisplayName: ownerName,
-      );
-    }).toList();
-
-    final results = (await Future.wait(futures))
-        .whereType<_SharedExperienceData>()
-        .toList();
+      ));
+    }
 
     sw.stop();
     print(
-        '[Collections] Resolved ${results.length} shared experiences in ${sw.elapsedMilliseconds}ms');
+        '[Collections] Resolved ${results.length} shared experiences in ${sw.elapsedMilliseconds}ms total');
 
     return results;
   }
@@ -2125,30 +2197,79 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       return combined;
     }
 
-    final List<MapEntry<_SharedCategoryData, List<Experience>>> fetchResults =
-        await Future.wait(
-      categoriesToProcess.map(
-        (categoryData) async {
-          print(
-              '[Collections] DEBUG: Fetching experiences for ${categoryData.isColorCategory ? "color" : "user"} category ${categoryData.categoryId} from owner ${categoryData.permission.ownerUserId}');
-          final List<Experience> experiences =
+    final String? userId = _authService.currentUser?.uid;
+    if (userId == null) return combined;
+
+    // OPTIMIZED: Broad fetch all experiences shared with current user
+    print(
+        '[Collections] Broad-fetching all shared experiences for user $userId...');
+    final broadSw = Stopwatch()..start();
+    final List<Experience> allSharedExperiences = [];
+    DocumentSnapshot<Object?>? lastDoc;
+    int pageCount = 0;
+
+    // Paginate internally to load all shared experiences (no UI pagination)
+    while (true) {
+      final (pageExps, last) = await _experienceService.getExperiencesSharedWith(
+        userId,
+        limit: 500,
+        startAfter: lastDoc,
+      );
+      allSharedExperiences.addAll(pageExps);
+      pageCount++;
+      if (pageExps.length < 500 || last == null) {
+        break; // No more pages
+      }
+      lastDoc = last;
+    }
+    broadSw.stop();
+    print(
+        '[Collections] Broad fetch complete: ${allSharedExperiences.length} shared experiences in ${broadSw.elapsedMilliseconds}ms ($pageCount pages)');
+
+    // Build lookup map for fast filtering
+    final Map<String, Experience> allSharedById = {
+      for (final exp in allSharedExperiences) exp.id: exp
+    };
+
+    // Process each category and filter from the broad fetch
+    for (final categoryData in categoriesToProcess) {
+      final categoryId = categoryData.categoryId;
+      final isColorCategory = categoryData.isColorCategory;
+
+      // Filter experiences that match this category
+      final List<Experience> categoryExperiences = allSharedExperiences.where((exp) {
+        if (isColorCategory) {
+          return exp.colorCategoryId == categoryId;
+        } else {
+          return exp.categoryId == categoryId ||
+              exp.otherCategories.contains(categoryId);
+        }
+      }).toList();
+
+      print(
+          '[Collections] Filtered ${categoryExperiences.length} experiences for ${isColorCategory ? "color" : "user"} category $categoryId from broad fetch');
+
+      // If broad fetch returned nothing but we expect experiences, fall back to per-category query
+      if (categoryExperiences.isEmpty && allSharedExperiences.length < 200) {
+        print(
+            '[Collections] Broad fetch incomplete or empty, trying fallback per-category query for $categoryId');
+        try {
+          final fallbackExps =
               await _experienceService.getExperiencesForOwnerCategory(
             ownerUserId: categoryData.permission.ownerUserId,
-            categoryId: categoryData.categoryId,
-            isColorCategory: categoryData.isColorCategory,
+            categoryId: categoryId,
+            isColorCategory: isColorCategory,
+            limitPerQuery: 500,
           );
+          categoryExperiences.addAll(fallbackExps);
           print(
-              '[Collections] DEBUG: Fetched ${experiences.length} experiences from this category');
-          return MapEntry(categoryData, experiences);
-        },
-      ),
-    );
+              '[Collections] Fallback fetched ${fallbackExps.length} experiences');
+        } catch (e) {
+          print('[Collections] Fallback fetch failed: $e');
+        }
+      }
 
-    for (final MapEntry<_SharedCategoryData, List<Experience>> entry
-        in fetchResults) {
-      final _SharedCategoryData categoryData = entry.key;
-      final List<Experience> experiences = entry.value;
-      if (experiences.isEmpty) {
+      if (categoryExperiences.isEmpty) {
         continue;
       }
 
@@ -2157,7 +2278,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       final String ownerId = categoryData.permission.ownerUserId;
       _shareOwnerNames[ownerId] = categoryData.ownerDisplayName;
 
-      for (final Experience experience in experiences) {
+      for (final Experience experience in categoryExperiences) {
         final _SharedExperienceData? existing = combined[experience.id];
         if (existing != null) {
           final bool upgradeToEdit =
@@ -2206,6 +2327,38 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     final name = profile?.displayName ?? profile?.username ?? 'Someone';
     _shareOwnerNames[userId] = name;
     return name;
+  }
+
+  /// Batch prefetch owner display names for a list of user IDs
+  Future<void> _prefetchOwnerDisplayNames(Set<String> userIds) async {
+    // Filter out already-cached IDs
+    final uncachedIds =
+        userIds.where((id) => !_shareOwnerNames.containsKey(id)).toList();
+    if (uncachedIds.isEmpty) return;
+
+    print(
+        '[Collections] Prefetching ${uncachedIds.length} owner display names...');
+    final sw = Stopwatch()..start();
+
+    try {
+      final profiles =
+          await _experienceService.getUserProfilesByIds(uncachedIds);
+      final Map<String, UserProfile> profileById = {
+        for (final p in profiles) p.id: p
+      };
+
+      for (final userId in uncachedIds) {
+        final profile = profileById[userId];
+        final name = profile?.displayName ?? profile?.username ?? 'Someone';
+        _shareOwnerNames[userId] = name;
+      }
+
+      sw.stop();
+      print(
+          '[Collections] Prefetched ${profiles.length} owner names in ${sw.elapsedMilliseconds}ms');
+    } catch (e) {
+      print('[Collections] Error prefetching owner names: $e');
+    }
   }
 
   Future<void> _showAddCategoryModal() async {
@@ -2893,6 +3046,14 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   // ADDED: Optional parameter to apply sort to the filtered list
   Future<void> _applyExperienceSort(ExperienceSortType sortType,
       {bool applyToFiltered = false}) async {
+    // If sort type changed and not just applying to filtered, reset pagination and reload
+    final bool sortChanged = sortType != _experienceSortType && !applyToFiltered;
+    
+    // If not changed, and we're not applying to filtered, just return (avoid redundant work)
+    if (!sortChanged && !applyToFiltered) {
+      return;
+    }
+    
     setState(() {
       _experienceSortType = sortType;
       // Only show loading indicator if sorting the main list by distance
@@ -2909,7 +3070,27 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         // Ensure unknown city key exists
         _cityExpansionExperiences.putIfAbsent('', () => false);
       }
+      
+      // Reset pagination when sort changes
+      if (sortChanged) {
+        _lastExperienceDoc = null;
+        _hasMoreExperiences = true;
+        _experiences = [];
+        _filteredExperiences = [];
+      }
     });
+    
+    // If sort changed, reload with new ordering
+    if (sortChanged) {
+      // Persist the new sort preference
+      unawaited(_saveExperienceSort(sortType));
+      
+      final userId = _authService.currentUser?.uid;
+      if (userId != null) {
+        await _loadExperiencesPage(isInitialLoad: true);
+      }
+      return;
+    }
 
     // Determine which list to sort
     List<Experience> listToSort =
@@ -4992,15 +5173,32 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       }
 
       return ListView.builder(
+        key: ValueKey('experiences_${_filteredExperiences.length}_${_filteredExperiences.hashCode}'),
+        controller: _experiencesScrollController,
         padding: const EdgeInsets.only(bottom: _bottomListPadding),
         itemCount: (expRegionStructured != null
                 ? expRegionStructured.length
                 : _filteredExperiences.length) +
-            1, // +1 for header
+            1 + // +1 for header
+            (_isLoadingMoreExperiences ? 1 : 0), // +1 for loading indicator
         itemBuilder: (context, index) {
           if (index == 0) {
             return countHeader;
           }
+          
+          // Check if this is the loading indicator at the end
+          final int dataCount = (expRegionStructured != null
+              ? expRegionStructured.length
+              : _filteredExperiences.length) + 1;
+          if (index == dataCount && _isLoadingMoreExperiences) {
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: 16.0),
+              child: Center(
+                child: CircularProgressIndicator(color: Colors.black54),
+              ),
+            );
+          }
+          
           if (expRegionStructured != null) {
             final entry = expRegionStructured[index - 1];
             if (entry.containsKey('header')) {
@@ -8459,78 +8657,66 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     if (userId == null) return;
 
     try {
-      // Get shared category data (reusing existing logic)
+      // Get shared category permissions
       final List<SharePermission> categoryPermissions =
           await _sharingService.getSharedItemsForUser(userId);
 
-      final List<_SharedCategoryData> sharedCategoryData = [];
+      final categoryPermsOnly = categoryPermissions
+          .where((p) => p.itemType == ShareableItemType.category)
+          .toList();
 
-      for (final permission in categoryPermissions) {
-        if (permission.itemType != ShareableItemType.category) continue;
+      if (categoryPermsOnly.isEmpty) return;
 
-        final categoryId = permission.itemId;
-        final ownerUserId = permission.ownerUserId;
+      // Use optimized batch resolution
+      final List<_SharedCategoryData> sharedCategoryData =
+          await _resolveSharedCategories(categoryPermsOnly);
 
-        // Try to load as user category
-        final userCategory = await _experienceService.getUserCategoryByOwner(
-          ownerUserId,
-          categoryId,
+      // OPTIMIZED: Broad fetch all shared experiences
+      print(
+          '[Collections] (Refresh) Broad-fetching all shared experiences for user $userId...');
+      final broadSw = Stopwatch()..start();
+      final List<Experience> allSharedExperiences = [];
+      DocumentSnapshot<Object?>? lastDoc;
+      int pageCount = 0;
+
+      while (true) {
+        final (pageExps, last) =
+            await _experienceService.getExperiencesSharedWith(
+          userId,
+          limit: 500,
+          startAfter: lastDoc,
         );
-
-        if (userCategory != null) {
-          final ownerName = await _getOwnerDisplayName(ownerUserId);
-          sharedCategoryData.add(_SharedCategoryData(
-            userCategory: userCategory,
-            colorCategory: null,
-            permission: permission,
-            ownerDisplayName: ownerName,
-          ));
-          continue;
-        }
-
-        // Try to load as color category
-        final colorCategory = await _experienceService.getColorCategoryByOwner(
-          ownerUserId,
-          categoryId,
-        );
-
-        if (colorCategory != null) {
-          final ownerName = await _getOwnerDisplayName(ownerUserId);
-          sharedCategoryData.add(_SharedCategoryData(
-            userCategory: null,
-            colorCategory: colorCategory,
-            permission: permission,
-            ownerDisplayName: ownerName,
-          ));
-        }
+        allSharedExperiences.addAll(pageExps);
+        pageCount++;
+        if (pageExps.length < 500 || last == null) break;
+        lastDoc = last;
       }
-
-      // Fetch experiences from all shared categories
-      final futures = sharedCategoryData.map((categoryData) async {
-        final experiences =
-            await _experienceService.getExperiencesForOwnerCategory(
-          ownerUserId: categoryData.permission.ownerUserId,
-          categoryId: categoryData.categoryId,
-          isColorCategory: categoryData.isColorCategory,
-        );
-        return MapEntry(categoryData, experiences);
-      }).toList();
-
-      final fetchResults = await Future.wait(futures);
+      broadSw.stop();
+      print(
+          '[Collections] (Refresh) Broad fetch: ${allSharedExperiences.length} experiences in ${broadSw.elapsedMilliseconds}ms ($pageCount pages)');
 
       // Update shared experiences and permissions
       final Map<String, SharePermission> newExperiencePermissions = {};
       final List<Experience> newSharedExperiences = [];
       final Set<String> seenIds = {};
 
-      for (final entry in fetchResults) {
-        final categoryData = entry.key;
-        final experiences = entry.value;
+      // Process each category and filter from broad fetch
+      for (final categoryData in sharedCategoryData) {
+        final categoryId = categoryData.categoryId;
+        final isColorCategory = categoryData.isColorCategory;
 
-        for (final experience in experiences) {
+        final categoryExperiences = allSharedExperiences.where((exp) {
+          if (isColorCategory) {
+            return exp.colorCategoryId == categoryId;
+          } else {
+            return exp.categoryId == categoryId ||
+                exp.otherCategories.contains(categoryId);
+          }
+        }).toList();
+
+        for (final experience in categoryExperiences) {
           if (!seenIds.add(experience.id)) continue;
 
-          // Create synthetic permission for this experience
           final syntheticPermission = SharePermission(
             id: 'category_${categoryData.permission.id}_${experience.id}',
             itemId: experience.id,
@@ -8550,10 +8736,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       // Update state if mounted
       if (mounted) {
         setState(() {
-          // Update shared experience permissions
           _sharedExperiencePermissions.addAll(newExperiencePermissions);
 
-          // Update shared experiences list (merge with existing, avoiding duplicates)
           final Map<String, Experience> experienceMap = {
             for (final exp in _sharedExperiences) exp.id: exp,
           };
@@ -8569,66 +8753,201 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     }
   }
 
-  Future<void> _loadExperiences(String userId) async {
-    _isExperiencesLoading = true;
+  /// Fetch a paginated set of experiences based on current sort type
+  Future<void> _loadExperiencesPage({bool isInitialLoad = false}) async {
+    if (_isLoadingMoreExperiences && !isInitialLoad) return;
+    if (!_hasMoreExperiences && !isInitialLoad) return;
+
+    final userId = _authService.currentUser?.uid;
+    if (userId == null) return;
+
+    setState(() {
+      if (isInitialLoad) {
+        _isLoading = true;
+      } else {
+        _isLoadingMoreExperiences = true;
+      }
+    });
+
     try {
       final Set<String> currentCategoryIds = _currentCategoryIdSet();
       final Set<String> currentColorCategoryIds = _currentColorCategoryIdSet();
 
-      // Refresh shared experiences from shared categories to include newly added experiences
-      await _refreshSharedExperiencesFromCategories();
+      // Determine sort parameters based on current sort type
+      String orderByField;
+      bool descending;
+      bool requiresClientSort = false;
 
-      try {
-        final cached = await _experienceService.getExperiencesByUser(userId);
-        final combinedCached = _combineExperiencesWithShared(cached);
-        final filteredCached = _filterExperiencesWithAssignments(
-          combinedCached,
-          currentCategoryIds,
-          currentColorCategoryIds,
-        );
-        if (mounted) {
-          final bool hadFilters = _hasActiveFilters;
-          setState(() {
-            _experiences = filteredCached;
-            if (!hadFilters) {
-              _filteredExperiences = List.from(_experiences);
-            }
-          });
-          await _applyExperienceSort(_experienceSortType);
-          if (hadFilters) {
-            _applyFiltersAndUpdateLists();
-          } else {
-            await _applyExperienceSort(_experienceSortType,
-                applyToFiltered: true);
-          }
-        }
-      } catch (_) {
-        // Ignore cache errors; proceed to server fetch
+      switch (_experienceSortType) {
+        case ExperienceSortType.mostRecent:
+          orderByField = 'updatedAt';
+          descending = true;
+          break;
+        case ExperienceSortType.alphabetical:
+          orderByField = 'name';
+          descending = false;
+          break;
+        case ExperienceSortType.city:
+          orderByField = 'location.city';
+          descending = false;
+          break;
+        case ExperienceSortType.distanceFromMe:
+          // Distance requires client-side sorting; load more docs
+          orderByField = 'updatedAt';
+          descending = true;
+          requiresClientSort = true;
+          break;
       }
 
-      final fresh = await _experienceService.getExperiencesByUser(userId);
-      final combinedFresh = _combineExperiencesWithShared(fresh);
-      final filteredFresh = _filterExperiencesWithAssignments(
-        combinedFresh,
-        currentCategoryIds,
-        currentColorCategoryIds,
+      final int pageLimit = requiresClientSort ? 500 : _experiencesPageSize;
+
+      List<Experience> ownedExperiences = [];
+      
+      // Only fetch owned experiences on initial load
+      if (isInitialLoad) {
+        ownedExperiences = await _experienceService.getExperiencesByUser(
+          userId,
+          limit: 500, // Load all owned (usually smaller set)
+        );
+      }
+
+      // Fetch paginated shared experiences with server-side sorting
+      final (sharedExperiences, lastDoc) =
+          await _experienceService.getExperiencesSharedWith(
+        userId,
+        limit: pageLimit,
+        startAfter: isInitialLoad ? null : _lastExperienceDoc,
+        orderByField: orderByField,
+        descending: descending,
       );
+
+      print(
+          '[Collections] Loaded ${sharedExperiences.length} shared experiences (page ${isInitialLoad ? 'initial' : 'more'})');
+
       if (mounted) {
-        final bool hadFilters = _hasActiveFilters;
         setState(() {
-          _experiences = filteredFresh;
-          if (!hadFilters) {
+          if (isInitialLoad) {
+            // First load: combine owned + first page of shared
+            final combinedExperiences = _combineExperiencesWithShared(ownedExperiences);
+            
+            // Add shared experiences to combined list
+            final Map<String, Experience> experienceMap = {
+              for (final exp in combinedExperiences) exp.id: exp
+            };
+            for (final exp in sharedExperiences) {
+              experienceMap[exp.id] = exp;
+            }
+            final allExperiences = experienceMap.values.toList();
+
+            final filteredExperiences = _filterExperiencesWithAssignments(
+              allExperiences,
+              currentCategoryIds,
+              currentColorCategoryIds,
+            );
+            
+            _experiences = filteredExperiences;
             _filteredExperiences = List.from(_experiences);
+            _lastExperienceDoc = lastDoc;
+            _hasMoreExperiences = sharedExperiences.length >= pageLimit;
+            _isLoading = false;
+          } else {
+            // Append next page of shared experiences
+            final Map<String, Experience> existing = {
+              for (final exp in _experiences) exp.id: exp
+            };
+            for (final exp in sharedExperiences) {
+              existing[exp.id] = exp;
+            }
+            
+            final allExperiences = existing.values.toList();
+            final filteredExperiences = _filterExperiencesWithAssignments(
+              allExperiences,
+              currentCategoryIds,
+              currentColorCategoryIds,
+            );
+            
+            _experiences = filteredExperiences;
+            _filteredExperiences = List.from(_experiences);
+            _lastExperienceDoc = lastDoc;
+            _hasMoreExperiences = sharedExperiences.length >= pageLimit;
+            _isLoadingMoreExperiences = false;
           }
         });
-        await _applyExperienceSort(_experienceSortType);
-        if (hadFilters) {
-          _applyFiltersAndUpdateLists();
-        } else {
-          await _applyExperienceSort(_experienceSortType,
-              applyToFiltered: true);
+
+        // Sort the combined list (owned + shared) by the selected sort type
+        // This ensures owned and shared experiences are interleaved correctly
+        if (!requiresClientSort) {
+          // For server-sortable types, apply the same sort client-side to merge owned+shared correctly
+          _experiences.sort((a, b) {
+            if (_experienceSortType == ExperienceSortType.alphabetical) {
+              return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+            } else if (_experienceSortType == ExperienceSortType.city) {
+              final ca = (a.location.city ?? '').trim().toLowerCase();
+              final cb = (b.location.city ?? '').trim().toLowerCase();
+              if (ca.isEmpty && cb.isEmpty) return 0;
+              if (ca.isEmpty) return 1;
+              if (cb.isEmpty) return -1;
+              final cmp = ca.compareTo(cb);
+              if (cmp != 0) return cmp;
+              return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+            } else {
+              // Most Recent (default)
+              return b.updatedAt.compareTo(a.updatedAt);
+            }
+          });
+          _filteredExperiences = List.from(_experiences);
+        } else if (requiresClientSort && isInitialLoad) {
+          // For distance sort, show data first, then calculate distances in background
+          _filteredExperiences = List.from(_experiences);
+          print('[Collections] Distance sort: Showing ${_experiences.length} experiences, calculating distances in background...');
+          // Calculate distances asynchronously without blocking
+          Future.microtask(() async {
+            if (mounted && _experienceSortType == ExperienceSortType.distanceFromMe) {
+              print('[Collections] Starting distance calculation for ${_experiences.length} experiences...');
+              try {
+                // Sort the main list
+                await _sortExperiencesByDistance(_experiences);
+                if (mounted) {
+                  setState(() {
+                    // Create new list instances to force ListView rebuild
+                    _experiences = List.from(_experiences);
+                    _filteredExperiences = List.from(_experiences);
+                    print('[Collections] Distance sort complete: ${_experiences.length} experiences sorted');
+                  });
+                  print('[Collections] UI updated with distance-sorted experiences');
+                }
+              } catch (e) {
+                print('[Collections] Distance sort failed: $e');
+              }
+            }
+          });
         }
+
+        // Apply filters if active
+        if (_hasActiveFilters) {
+          _applyFiltersAndUpdateLists();
+        }
+        
+        print(
+            '[Collections] Pagination: ${_experiences.length} total, hasMore=$_hasMoreExperiences');
       }
+    } catch (e) {
+      print('[Collections] Error loading experiences page: $e');
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _isLoadingMoreExperiences = false;
+          _hasMoreExperiences = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _loadExperiences(String userId) async {
+    _isExperiencesLoading = true;
+    try {
+      // Use new paginated fetch for initial load
+      await _loadExperiencesPage(isInitialLoad: true);
 
       if (_tabController.index == 2 && !_contentLoaded && !_isContentLoading) {
         await _loadGroupedContent();
