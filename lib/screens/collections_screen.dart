@@ -8075,6 +8075,26 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                       ],
                     ),
                   ),
+                if (isNetworkUrl && !isInstagramUrl && !isYelpUrl && !isMapsUrl)
+                  Container(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        IconButton(
+                          icon: Icon(
+                            Icons.open_in_new,
+                            color: Colors.blue.shade700,
+                            size: 28,
+                          ),
+                          tooltip: 'Open Link',
+                          constraints: const BoxConstraints(),
+                          padding: EdgeInsets.zero,
+                          onPressed: () => _launchUrl(mediaPath),
+                        ),
+                      ],
+                    ),
+                  ),
               ],
             ),
           ),
