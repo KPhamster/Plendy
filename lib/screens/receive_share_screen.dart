@@ -16,6 +16,8 @@ import '../providers/receive_share_provider.dart';
 import '../models/experience.dart';
 import '../models/user_category.dart';
 import '../models/color_category.dart';
+import '../models/share_permission.dart';
+import '../models/enums/share_enums.dart';
 import '../models/shared_media_item.dart';
 import '../services/experience_service.dart';
 import '../services/category_ordering_service.dart';
@@ -474,6 +476,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   List<ColorCategory> _userColorCategories =
       []; // Cache the loaded ColorCategories
   // --- END ADDED ---
+
+  Map<String, SharePermission> _editableCategoryPermissions = {};
 
   // --- ADDED: Stable future for the FutureBuilder ---
   Future<List<dynamic>>? _combinedCategoriesFuture;
@@ -1143,22 +1147,88 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     });
   }
 
+  List<UserCategory> _filterEditableUserCategories(
+      List<UserCategory> categories) {
+    if (categories.isEmpty) {
+      return categories;
+    }
+    final String? currentUserId = _authService.currentUser?.uid;
+    return categories.where((category) {
+      if (currentUserId != null && category.ownerUserId == currentUserId) {
+        return true;
+      }
+      final SharePermission? permission =
+          _editableCategoryPermissions[category.id];
+      return permission?.accessLevel == ShareAccessLevel.edit;
+    }).toList();
+  }
+
+  List<ColorCategory> _filterEditableColorCategories(
+      List<ColorCategory> categories) {
+    if (categories.isEmpty) {
+      return categories;
+    }
+    final String? currentUserId = _authService.currentUser?.uid;
+    return categories.where((category) {
+      if (currentUserId != null && category.ownerUserId == currentUserId) {
+        return true;
+      }
+      final SharePermission? permission =
+          _editableCategoryPermissions[category.id];
+      return permission?.accessLevel == ShareAccessLevel.edit;
+    }).toList();
+  }
+
   Future<List<UserCategory>> _fetchOrderedUserCategories() async {
-    final UserCategoryFetchResult result =
-        await _experienceService.getUserCategoriesWithMeta(
+    final resultFuture = _experienceService.getUserCategoriesWithMeta(
       includeSharedEditable: true,
     );
-    return _categoryOrderingService.orderUserCategories(
-      result.categories,
-      sharedPermissions: result.sharedPermissions,
-    );
+    final permissionsFuture =
+        _experienceService.getEditableCategoryPermissionsMap();
+
+    final UserCategoryFetchResult result = await resultFuture;
+    Map<String, SharePermission> editablePermissions = {};
+    try {
+      editablePermissions = await permissionsFuture;
+    } catch (e) {
+      print(
+          'ReceiveShareScreen: Failed to load editable category permissions: $e');
+    }
+
+    _editableCategoryPermissions = {
+      ...editablePermissions,
+      ...result.sharedPermissions,
+    };
+
+    final orderedCategories = await _categoryOrderingService
+        .orderUserCategories(result.categories,
+            sharedPermissions: result.sharedPermissions);
+    return _filterEditableUserCategories(orderedCategories);
   }
 
   Future<List<ColorCategory>> _fetchOrderedColorCategories() async {
-    final colorCategories = await _experienceService.getUserColorCategories(
+    final colorCategoriesFuture = _experienceService.getUserColorCategories(
       includeSharedEditable: true,
     );
-    return _categoryOrderingService.orderColorCategories(colorCategories);
+    Map<String, SharePermission> editablePermissions = {};
+    bool permissionsLoaded = true;
+    try {
+      editablePermissions =
+          await _experienceService.getEditableCategoryPermissionsMap();
+    } catch (e) {
+      permissionsLoaded = false;
+      print(
+          'ReceiveShareScreen: Failed to refresh editable category permissions for color categories: $e');
+    }
+
+    if (permissionsLoaded) {
+      _editableCategoryPermissions = {...editablePermissions};
+    }
+
+    final colorCategories = await colorCategoriesFuture;
+    final orderedColorCategories =
+        await _categoryOrderingService.orderColorCategories(colorCategories);
+    return _filterEditableColorCategories(orderedColorCategories);
   }
 
   Future<void> _loadUserCategories() async {
