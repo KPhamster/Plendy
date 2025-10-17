@@ -528,6 +528,23 @@ class _MapScreenState extends State<MapScreen> {
     _mapController = controller;
   }
 
+  void _showMarkerInfoWindow(MarkerId markerId) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      if (_mapController != null) {
+        _mapController!.showMarkerInfoWindow(markerId);
+      } else {
+        _mapControllerCompleter.future.then((controller) {
+          if (mounted) {
+            controller.showMarkerInfoWindow(markerId);
+          }
+        });
+      }
+    });
+  }
+
   // Renamed helper to be more specific
   LatLngBounds? _calculateBoundsFromMarkers(Map<String, Marker> markers) {
     if (markers.isEmpty) return null;
@@ -963,7 +980,6 @@ class _MapScreenState extends State<MapScreen> {
         position: position,
         infoWindow: InfoWindow(
           title: '${category.icon} ${experience.name}',
-          snippet: experience.location.getPlaceName(),
         ),
         icon: categoryIconBitmap,
         // MODIFIED: Experience marker onTap shows location details panel
@@ -998,7 +1014,6 @@ class _MapScreenState extends State<MapScreen> {
             position: position,
             infoWindow: InfoWindow(
               title: '${category.icon} ${experience.name}',
-              snippet: experience.location.getPlaceName(),
             ),
             icon: selectedIcon, // Use the new enlarged icon
             zIndex: 1.0,
@@ -1030,6 +1045,7 @@ class _MapScreenState extends State<MapScreen> {
             _searchResults = [];
             _showSearchResults = false;
           });
+          _showMarkerInfoWindow(tappedMarkerId);
         },
       );
       tempMarkers[experience.id] = marker;
@@ -1140,8 +1156,6 @@ class _MapScreenState extends State<MapScreen> {
         infoWindow: InfoWindow(
           title:
               finalLocationDetails.getPlaceName(), 
-          snippet:
-              '${finalLocationDetails.address ?? 'Unknown Address'}\nTap for Directions',
           onTap: () {
             print(
                 "🗺️ MAP SCREEN: InfoWindow tapped for ${_tappedLocationDetails?.displayName}");
@@ -1168,6 +1182,7 @@ class _MapScreenState extends State<MapScreen> {
           _isLoading = false; 
         });
         print("🗺️ MAP SCREEN: (_handleLocationSelected) Updated state with new tapped location and map initial location: ${finalLocationDetails.getPlaceName()}");
+        _showMarkerInfoWindow(tappedMarkerId);
       }
 
     } catch (e) {
@@ -1529,7 +1544,6 @@ class _MapScreenState extends State<MapScreen> {
         position: targetLatLng,
         infoWindow: InfoWindow(
           title: '${category.icon} ${experience.name}',
-          snippet: experience.location.getPlaceName(),
         ),
         icon: selectedIcon, // Use the new enlarged icon
         zIndex: 1.0,
@@ -1568,6 +1582,7 @@ class _MapScreenState extends State<MapScreen> {
           _isSearching = false;
           _showSearchResults = false;
         });
+        _showMarkerInfoWindow(tappedMarkerId);
       }
 
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1626,7 +1641,6 @@ class _MapScreenState extends State<MapScreen> {
         position: targetLatLng, 
         infoWindow: InfoWindow(
           title: location.getPlaceName(),
-          snippet: '${location.address ?? 'Unknown Address'}\nTap for Directions',
           onTap: () {
             if (_tappedLocationDetails != null) {
               _openDirectionsForLocation(_tappedLocationDetails!);
@@ -1658,6 +1672,7 @@ class _MapScreenState extends State<MapScreen> {
           _showSearchResults = false; 
         });
         print('🗺️ MAP SCREEN: (_selectSearchResult) After setState, _tappedLocationDetails is: ${_tappedLocationDetails?.getPlaceName()} and _mapWidgetInitialLocation is: ${_mapWidgetInitialLocation?.getPlaceName()}');
+        _showMarkerInfoWindow(tappedMarkerId);
       }
 
     } catch (e) {
@@ -2241,6 +2256,17 @@ class _MapScreenState extends State<MapScreen> {
                             ],
                           ),
                           SizedBox(height: 8),
+                          if (_tappedExperience != null) ...[
+                            if (_tappedExperience!.otherCategories.isNotEmpty) ...[
+                              _buildOtherCategoriesWidget(),
+                              const SizedBox(height: 12),
+                            ],
+                            Align(
+                              alignment: Alignment.centerLeft,
+                              child: _buildColorCategoryWidget(),
+                            ),
+                            const SizedBox(height: 12),
+                          ],
                           if (_tappedLocationDetails!.address != null &&
                               _tappedLocationDetails!.address!.isNotEmpty) ...[
                             Text(
@@ -2279,21 +2305,62 @@ class _MapScreenState extends State<MapScreen> {
                             SizedBox(height: 8), // Added SizedBox after rating like in location_picker_screen
                           ],
 
-                          // ADDED: Business Status row below star rating
-                          _buildBusinessStatusWidget(),
-
-                          const SizedBox(height: 12), // Spacer before the new row
-
-                          // ADDED: Row for Other Categories and Color Category
-                          if (_tappedExperience != null)
-                            Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Expanded(child: _buildOtherCategoriesWidget()),
-                                const SizedBox(width: 8),
-                                _buildColorCategoryWidget(),
+                          // ADDED: Business Status row below star rating with play button
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              Expanded(child: _buildBusinessStatusWidget()),
+                              if (_tappedExperience != null) ...[
+                                const SizedBox(width: 12),
+                                  Stack(
+                                    clipBehavior: Clip.none,
+                                    children: [
+                                      Container(
+                                        width: 48,
+                                        height: 48,
+                                        decoration: BoxDecoration(
+                                          color: Theme.of(context).primaryColor,
+                                          shape: BoxShape.circle,
+                                        ),
+                                        child: const Icon(
+                                          Icons.play_arrow,
+                                          color: Colors.white,
+                                          size: 24,
+                                        ),
+                                      ),
+                                      Positioned(
+                                        bottom: -2,
+                                        right: -2,
+                                        child: Container(
+                                          width: 22,
+                                          height: 22,
+                                          decoration: BoxDecoration(
+                                            color: Colors.white,
+                                            shape: BoxShape.circle,
+                                            border: Border.all(
+                                              color: Theme.of(context).primaryColor,
+                                              width: 2,
+                                            ),
+                                          ),
+                                          child: Center(
+                                            child: Text(
+                                              (_tappedExperience?.sharedMediaItemIds?.length ?? 0).toString(),
+                                              style: TextStyle(
+                                                color: Theme.of(context).primaryColor,
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                               ],
-                            ),
+                            ],
+                          ),
+
+                          const SizedBox(height: 12),
                         ],
                       ),
                     Positioned(
