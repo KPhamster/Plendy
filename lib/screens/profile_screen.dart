@@ -209,9 +209,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
               child: ElevatedButton(
                 onPressed: () async {
                   await authService.signOut();
-                  if (!mounted) return;
-                  // Return to root and let auth StreamBuilder render AuthScreen
-                  Navigator.of(context, rootNavigator: true).popUntil((route) => route.isFirst);
+                  // The StreamBuilder in main.dart will automatically show AuthScreen
+                  // when it detects the user is logged out
                 },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Theme.of(context).primaryColor,

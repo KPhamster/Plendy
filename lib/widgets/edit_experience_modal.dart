@@ -17,6 +17,9 @@ import 'package:plendy/services/experience_service.dart';
 import 'package:plendy/services/category_ordering_service.dart';
 import 'package:collection/collection.dart'; // ADDED: Import for firstWhereOrNull
 import 'package:plendy/screens/location_picker_screen.dart'; // ADDED: Import for LocationPickerScreen
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:plendy/models/share_permission.dart';
+import 'package:plendy/models/enums/share_enums.dart';
 
 class EditExperienceModal extends StatefulWidget {
   final Experience experience;
@@ -48,6 +51,8 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
   final ExperienceService _experienceService = ExperienceService();
   final CategoryOrderingService _categoryOrderingService =
       CategoryOrderingService();
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+  Map<String, SharePermission> _editableCategoryPermissions = {};
   List<UserCategory> _currentUserCategories = [];
   List<ColorCategory> _currentColorCategories = [];
   bool _isLoadingCategories = true; // Loading indicator for categories
@@ -137,20 +142,55 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
     }
   }
 
+  List<UserCategory> _filterEditableUserCategories(
+      List<UserCategory> categories) {
+    if (categories.isEmpty) {
+      return categories;
+    }
+    final String? currentUserId = _auth.currentUser?.uid;
+    return categories.where((category) {
+      if (currentUserId != null && category.ownerUserId == currentUserId) {
+        return true;
+      }
+      final SharePermission? permission =
+          _editableCategoryPermissions[category.id];
+      return permission?.accessLevel == ShareAccessLevel.edit;
+    }).toList();
+  }
+
+  List<ColorCategory> _filterEditableColorCategories(
+      List<ColorCategory> categories) {
+    if (categories.isEmpty) {
+      return categories;
+    }
+    final String? currentUserId = _auth.currentUser?.uid;
+    return categories.where((category) {
+      if (currentUserId != null && category.ownerUserId == currentUserId) {
+        return true;
+      }
+      final SharePermission? permission =
+          _editableCategoryPermissions[category.id];
+      return permission?.accessLevel == ShareAccessLevel.edit;
+    }).toList();
+  }
+
   Future<void> _applyCollectionsOrderingToCurrentLists() async {
     final orderedCategories = await _categoryOrderingService
         .orderUserCategories(_currentUserCategories);
     final orderedColorCategories = await _categoryOrderingService
         .orderColorCategories(_currentColorCategories);
+    final filteredCategories = _filterEditableUserCategories(orderedCategories);
+    final filteredColorCategories =
+        _filterEditableColorCategories(orderedColorCategories);
     if (!mounted) {
       return;
     }
     setState(() {
-      _currentUserCategories = orderedCategories;
-      _currentColorCategories = orderedColorCategories;
+      _currentUserCategories = filteredCategories;
+      _currentColorCategories = filteredColorCategories;
     });
-    _userCategoriesNotifier.value = orderedCategories;
-    _colorCategoriesNotifier.value = orderedColorCategories;
+    _userCategoriesNotifier.value = filteredCategories;
+    _colorCategoriesNotifier.value = filteredColorCategories;
   }
 
   String? _sharedOwnerLabel(String? ownerName) {
@@ -165,27 +205,51 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
   Future<void> _loadAllCategories() async {
     setState(() => _isLoadingCategories = true);
     try {
-      final UserCategoryFetchResult categoryResult =
-          await _experienceService.getUserCategoriesWithMeta(
+      final categoryResultFuture =
+          _experienceService.getUserCategoriesWithMeta(
         includeSharedEditable: true,
       );
+      final colorCategoriesFuture =
+          _experienceService.getUserColorCategories(
+        includeSharedEditable: true,
+      );
+      final permissionsFuture =
+          _experienceService.getEditableCategoryPermissionsMap();
+
+      final UserCategoryFetchResult categoryResult =
+          await categoryResultFuture;
+      Map<String, SharePermission> editablePermissions = {};
+      try {
+        editablePermissions = await permissionsFuture;
+      } catch (e) {
+        print(
+            "EditExperienceModal: Failed to load editable category permissions: $e");
+      }
+      _editableCategoryPermissions = {
+        ...editablePermissions,
+        ...categoryResult.sharedPermissions,
+      };
+
       final orderedCategories = await _categoryOrderingService
           .orderUserCategories(categoryResult.categories,
               sharedPermissions: categoryResult.sharedPermissions);
-      final colorCategories = await _experienceService.getUserColorCategories(
-        includeSharedEditable: true,
-      );
+      final filteredCategories =
+          _filterEditableUserCategories(orderedCategories);
+
+      final colorCategories = await colorCategoriesFuture;
       final orderedColorCategories =
           await _categoryOrderingService.orderColorCategories(colorCategories);
+      final filteredColorCategories =
+          _filterEditableColorCategories(orderedColorCategories);
       if (mounted) {
         setState(() {
-          _currentUserCategories = orderedCategories;
-          _currentColorCategories = orderedColorCategories;
+          _currentUserCategories = filteredCategories;
+          _currentColorCategories = filteredColorCategories;
           _isLoadingCategories = false;
         });
         // --- ADDED: Update ValueNotifiers ---
-        _userCategoriesNotifier.value = orderedCategories;
-        _colorCategoriesNotifier.value = orderedColorCategories;
+        _userCategoriesNotifier.value = filteredCategories;
+        _colorCategoriesNotifier.value = filteredColorCategories;
         // --- END ADDED ---
       }
     } catch (e) {
@@ -277,20 +341,37 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
     // Simplified version for targeted refresh
     setState(() => _isLoadingCategories = true);
     try {
-      final UserCategoryFetchResult categoryResult =
-          await _experienceService.getUserCategoriesWithMeta(
+      final categoryResultFuture =
+          _experienceService.getUserCategoriesWithMeta(
         includeSharedEditable: true,
       );
+      final permissionsFuture =
+          _experienceService.getEditableCategoryPermissionsMap();
+      final UserCategoryFetchResult categoryResult =
+          await categoryResultFuture;
+      Map<String, SharePermission> editablePermissions = {};
+      try {
+        editablePermissions = await permissionsFuture;
+      } catch (e) {
+        print(
+            "EditExperienceModal: Failed to load editable category permissions during refresh: $e");
+      }
+      _editableCategoryPermissions = {
+        ...editablePermissions,
+        ...categoryResult.sharedPermissions,
+      };
       final orderedCategories = await _categoryOrderingService
           .orderUserCategories(categoryResult.categories,
               sharedPermissions: categoryResult.sharedPermissions);
+      final filteredCategories =
+          _filterEditableUserCategories(orderedCategories);
       if (mounted) {
         setState(() {
-          _currentUserCategories = orderedCategories;
+          _currentUserCategories = filteredCategories;
           _isLoadingCategories = false;
         });
         // --- ADDED: Update ValueNotifier ---
-        _userCategoriesNotifier.value = orderedCategories;
+        _userCategoriesNotifier.value = filteredCategories;
         // --- END ADDED ---
       }
     } catch (e) {
@@ -308,18 +389,34 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
     // Simplified version for targeted refresh
     setState(() => _isLoadingCategories = true);
     try {
-      final categories = await _experienceService.getUserColorCategories(
+      final categoriesFuture = _experienceService.getUserColorCategories(
         includeSharedEditable: true,
       );
+      Map<String, SharePermission> editablePermissions = {};
+      bool permissionsLoaded = true;
+      try {
+        editablePermissions =
+            await _experienceService.getEditableCategoryPermissionsMap();
+      } catch (e) {
+        permissionsLoaded = false;
+        print(
+            "EditExperienceModal: Failed to refresh editable permissions for color categories: $e");
+      }
+      if (permissionsLoaded) {
+        _editableCategoryPermissions = editablePermissions;
+      }
+      final categories = await categoriesFuture;
       final orderedCategories =
           await _categoryOrderingService.orderColorCategories(categories);
+      final filteredCategories =
+          _filterEditableColorCategories(orderedCategories);
       if (mounted) {
         setState(() {
-          _currentColorCategories = orderedCategories;
+          _currentColorCategories = filteredCategories;
           _isLoadingCategories = false;
         });
         // --- ADDED: Update ValueNotifier ---
-        _colorCategoriesNotifier.value = orderedCategories;
+        _colorCategoriesNotifier.value = filteredCategories;
         // --- END ADDED ---
       }
     } catch (e) {
@@ -1655,9 +1752,10 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                     ElevatedButton(
                       onPressed: _saveAndClose,
                       style: ElevatedButton.styleFrom(
-                          // backgroundColor: Theme.of(context).primaryColor, // Optional styling
-                          // foregroundColor: Colors.white,
-                          ),
+                        backgroundColor:
+                            Theme.of(context).colorScheme.primary,
+                        foregroundColor: Colors.white,
+                      ),
                       child: const Text('Save Changes'),
                     ),
                   ],

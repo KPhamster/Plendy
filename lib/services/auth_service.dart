@@ -191,7 +191,8 @@ class AuthService extends ChangeNotifier {
 
   // Sign Out
   Future<void> signOut() async {
-    // Clean up notification state service listeners before signing out
+    // Clean up notification state service listeners BEFORE signing out
+    // to prevent permission-denied errors from active Firestore listeners
     final notificationService = NotificationStateService();
     notificationService.cleanup();
     
@@ -201,6 +202,7 @@ class AuthService extends ChangeNotifier {
     // if (currentUser != null && token != null) {
     //   await _deleteTokenFromFirestore(currentUser!.uid, token);
     // }
+    
     await _auth.signOut();
     await _googleSignIn.signOut();
     _currentUser = null;

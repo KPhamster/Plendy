@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_typeahead/flutter_typeahead.dart';
 import '../models/experience.dart';
@@ -4628,7 +4628,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     // ADDED isDesktopWeb parameter
     final category =
         _categories.firstWhereOrNull((cat) => cat.id == experience.categoryId);
-    final categoryIcon = category?.icon ?? '❓';
+    final categoryIcon = category?.icon ?? 'Γ¥ô';
     final colorCategory = _colorCategories
         .firstWhereOrNull((cc) => cc.id == experience.colorCategoryId);
     final color = colorCategory != null
@@ -5869,7 +5869,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                             ...associatedExperiences.map((exp) {
                               final category = _categories.firstWhereOrNull(
                                   (cat) => cat.id == exp.categoryId);
-                              final categoryIcon = category?.icon ?? '❓';
+                              final categoryIcon = category?.icon ?? 'Γ¥ô';
                               final colorCategory =
                                   _colorCategories.firstWhereOrNull(
                                       (cc) => cc.id == exp.colorCategoryId);
@@ -6055,7 +6055,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                   children: associatedExperiences
                       .map((exp) => Padding(
                             padding: const EdgeInsets.only(bottom: 4.0),
-                            child: Text('• ${exp.name}',
+                            child: Text('ΓÇó ${exp.name}',
                                 style: Theme.of(context).textTheme.bodySmall),
                           ))
                       .toList(),
@@ -8246,7 +8246,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                       ...associatedExperiences.map((exp) {
                         final category = _categories.firstWhereOrNull(
                             (cat) => cat.id == exp.categoryId);
-                        final categoryIcon = category?.icon ?? '❓';
+                        final categoryIcon = category?.icon ?? 'Γ¥ô';
                         final colorCategory = _colorCategories.firstWhereOrNull(
                             (cc) => cc.id == exp.colorCategoryId);
                         final color = colorCategory != null
@@ -8417,7 +8417,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                       final exp = group.associatedExperiences[index];
                       final category = _categories
                           .firstWhereOrNull((cat) => cat.id == exp.categoryId);
-                      final categoryIcon = category?.icon ?? '❓';
+                      final categoryIcon = category?.icon ?? 'Γ¥ô';
                       final colorCategory = _colorCategories.firstWhereOrNull(
                           (cc) => cc.id == exp.colorCategoryId);
                       final color = colorCategory != null
