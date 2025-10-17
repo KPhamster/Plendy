@@ -295,8 +295,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   // --- END ADDED ---
   // ADDED: State variable to hold grouped list of content items
   List<GroupedContentItem> _groupedContentItems = [];
-  // ADDED: State map for content preview expansion
-  final Map<String, bool> _contentExpansionStates = {};
+  // Track the currently expanded content preview (only one at a time)
+  String? _expandedContentMediaPath;
   // ADDED: City header expansion states
   final Map<String, bool> _cityExpansionExperiences = {};
   final Map<String, bool> _cityExpansionContent = {};
@@ -5673,327 +5673,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
             );
           }
           final group = _filteredGroupedContentItems[index - 1];
-          final mediaItem = group.mediaItem;
-          final mediaPath = mediaItem.path;
-          final associatedExperiences = group.associatedExperiences;
-          final isExpanded = _contentExpansionStates[mediaPath] ?? false;
-          final bool isInstagramUrl =
-              mediaPath.toLowerCase().contains('instagram.com');
-          final bool isTikTokUrl =
-              mediaPath.toLowerCase().contains('tiktok.com') ||
-                  mediaPath.toLowerCase().contains('vm.tiktok.com');
-          final bool isFacebookUrl =
-              mediaPath.toLowerCase().contains('facebook.com') ||
-                  mediaPath.toLowerCase().contains('fb.com') ||
-                  mediaPath.toLowerCase().contains('fb.watch');
-          final bool isYouTubeUrl =
-              mediaPath.toLowerCase().contains('youtube.com') ||
-                  mediaPath.toLowerCase().contains('youtu.be') ||
-                  mediaPath.toLowerCase().contains('youtube.com/shorts');
-          bool isNetworkUrl =
-              mediaPath.startsWith('http') || mediaPath.startsWith('https');
-
-          Widget mediaWidget;
-          if (isTikTokUrl) {
-            mediaWidget = TikTokPreviewWidget(
-              url: mediaPath,
-              launchUrlCallback: _launchUrl,
-            );
-          } else if (isInstagramUrl) {
-            mediaWidget = instagram_widget.InstagramWebView(
-              url: mediaPath,
-              height: 640.0, // Height for InstagramWebView
-              launchUrlCallback: _launchUrl,
-              onWebViewCreated: (_) {},
-              onPageFinished: (_) {},
-            );
-            // Ensure no Center/ConstrainedBox here for mobile web list view
-          } else if (isFacebookUrl) {
-            mediaWidget = FacebookPreviewWidget(
-              url: mediaPath,
-              height: 500.0, // Height for FacebookPreviewWidget
-              launchUrlCallback: _launchUrl,
-              onWebViewCreated: (_) {},
-              onPageFinished: (_) {},
-            );
-          } else if (isYouTubeUrl) {
-            mediaWidget = YouTubePreviewWidget(
-              url: mediaPath,
-              launchUrlCallback: _launchUrl,
-            );
-          } else if (isNetworkUrl) {
-            // Check if it's an image URL
-            if (mediaPath.toLowerCase().endsWith('.jpg') ||
-                mediaPath.toLowerCase().endsWith('.jpeg') ||
-                mediaPath.toLowerCase().endsWith('.png') ||
-                mediaPath.toLowerCase().endsWith('.gif') ||
-                mediaPath.toLowerCase().endsWith('.webp')) {
-              mediaWidget = Image.network(
-                mediaPath,
-                fit: BoxFit.cover,
-                loadingBuilder: (context, child, loadingProgress) {
-                  if (loadingProgress == null) return child;
-                  return const Center(child: CircularProgressIndicator());
-                },
-                errorBuilder: (context, error, stackTrace) {
-                  return Container(
-                    color: Colors.grey[200],
-                    height: 200,
-                    child: Center(
-                        child: Icon(Icons.broken_image_outlined,
-                            color: Colors.grey[600], size: 40)),
-                  );
-                },
-              );
-            } else {
-              final lower = mediaPath.toLowerCase();
-              final bool isMapsUrl = lower.contains('google.com/maps') ||
-                  lower.contains('maps.app.goo.gl') ||
-                  lower.contains('goo.gl/maps') ||
-                  lower.contains('g.co/kgs/') ||
-                  lower.contains('share.google/');
-              // Yelp: use the same WebView preview style as Experience page content tab
-              if (lower.contains('yelp.com/biz') ||
-                  lower.contains('yelp.to/')) {
-                mediaWidget = WebUrlPreviewWidget(
-                  url: mediaPath,
-                  launchUrlCallback: _launchUrl,
-                  showControls: false,
-                  height: isExpanded ? 1000.0 : 600.0,
-                );
-              } else if (isMapsUrl) {
-                // Seed Maps preview with associated experience details so it doesn't rely on URL parsing
-                if (!_mapsPreviewFutures.containsKey(mediaPath) &&
-                    associatedExperiences.isNotEmpty) {
-                  final exp = associatedExperiences.first;
-                  _mapsPreviewFutures[mediaPath] = Future.value({
-                    'location': exp.location,
-                    'placeName': exp.name,
-                    'mapsUrl': mediaPath,
-                    'website': exp.location.website,
-                  });
-                }
-                // Use our MapsPreviewWidget (photo, address, directions)
-                mediaWidget = MapsPreviewWidget(
-                  mapsUrl: mediaPath,
-                  mapsPreviewFutures: _mapsPreviewFutures,
-                  getLocationFromMapsUrl: _getLocationFromMapsUrl,
-                  launchUrlCallback: _launchUrl,
-                  mapsService: GoogleMapsService(),
-                );
-              } else {
-                // Use generic URL preview for other network URLs
-                mediaWidget = GenericUrlPreviewWidget(
-                  url: mediaPath,
-                  launchUrlCallback: _launchUrl,
-                );
-              }
-            }
-          } else {
-            mediaWidget = Container(
-              color: Colors.grey[300],
-              height: 150,
-              child: Center(
-                  child: Icon(Icons.description,
-                      color: Colors.grey[700], size: 40)),
-            );
-          }
-
-          final contentItem = Padding(
-            key: ValueKey(mediaPath),
-            padding: const EdgeInsets.only(bottom: 24.0),
-            child: Column(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 8.0),
-                  child: Center(
-                    child: CircleAvatar(
-                      radius: 14,
-                      backgroundColor:
-                          Theme.of(context).primaryColor.withOpacity(0.8),
-                      child: Text(
-                        '${index}',
-                        style: TextStyle(
-                          fontSize: 14.0,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-                Container(
-                  margin: EdgeInsets.zero,
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(4.0),
-                    boxShadow: [
-                      // Top shadow
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.1),
-                        blurRadius: 4.0,
-                        offset:
-                            const Offset(0, -2), // Negative Y for top shadow
-                      ),
-                      // Bottom shadow (matching other cards)
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.1),
-                        blurRadius: 4.0,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
-                  ),
-                  clipBehavior: Clip.antiAlias,
-                  child: Column(
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 12.0, vertical: 8.0),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            if (associatedExperiences.length > 1)
-                              Padding(
-                                padding: const EdgeInsets.only(bottom: 6.0),
-                                child: Text(
-                                  'Linked Experiences (${associatedExperiences.length}):',
-                                  style: Theme.of(context)
-                                      .textTheme
-                                      .labelLarge
-                                      ?.copyWith(
-                                        fontWeight: FontWeight.bold,
-                                        color: Colors.black87,
-                                      ),
-                                ),
-                              ),
-                            ...associatedExperiences.map((exp) {
-                              final category = _categories.firstWhereOrNull(
-                                  (cat) => cat.id == exp.categoryId);
-                              final categoryIcon = category?.icon ?? 'Γ¥ô';
-                              final colorCategory =
-                                  _colorCategories.firstWhereOrNull(
-                                      (cc) => cc.id == exp.colorCategoryId);
-                              final color = colorCategory != null
-                                  ? _parseColor(colorCategory.colorHex)
-                                  : Theme.of(context).disabledColor;
-
-                              return InkWell(
-                                onTap: () {
-                                  _openExperience(exp);
-                                },
-                                child: Padding(
-                                  padding:
-                                      const EdgeInsets.symmetric(vertical: 4.0),
-                                  child: Row(
-                                    children: [
-                                      Text(categoryIcon,
-                                          style: const TextStyle(fontSize: 16)),
-                                      const SizedBox(width: 6),
-                                      if (colorCategory != null)
-                                        Padding(
-                                          padding:
-                                              const EdgeInsets.only(right: 6.0),
-                                          child: Icon(Icons.circle,
-                                              color: color, size: 10),
-                                        ),
-                                      Expanded(
-                                        child: Text(
-                                          exp.name,
-                                          style: Theme.of(context)
-                                              .textTheme
-                                              .bodyMedium,
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                      ),
-                                      const Icon(Icons.chevron_right,
-                                          color: Colors.grey, size: 18),
-                                    ],
-                                  ),
-                                ),
-                              );
-                            }),
-                            if (associatedExperiences.isEmpty)
-                              const Text('No linked experiences.',
-                                  style:
-                                      TextStyle(fontStyle: FontStyle.italic)),
-                          ],
-                        ),
-                      ),
-                      GestureDetector(
-                        onTap: () {
-                          setState(() {
-                            _contentExpansionStates[mediaPath] = !isExpanded;
-                          });
-                        },
-                        child: mediaWidget,
-                      ),
-                      if (isInstagramUrl)
-                        Container(
-                          color: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 8),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              IconButton(
-                                icon: const FaIcon(FontAwesomeIcons.instagram),
-                                color: const Color(0xFFE4405F),
-                                iconSize: 32,
-                                tooltip: 'Open in Instagram',
-                                constraints: const BoxConstraints(),
-                                padding: EdgeInsets.zero,
-                                onPressed: () => _launchUrl(mediaPath),
-                              ),
-                            ],
-                          ),
-                        ),
-                      if (mediaPath.toLowerCase().contains('yelp.com/biz') ||
-                          mediaPath.toLowerCase().contains('yelp.to/'))
-                        Container(
-                          padding: const EdgeInsets.symmetric(vertical: 8),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              IconButton(
-                                icon: const FaIcon(FontAwesomeIcons.yelp),
-                                color: const Color(0xFFD32323),
-                                iconSize: 32,
-                                tooltip: 'Open in Yelp',
-                                constraints: const BoxConstraints(),
-                                padding: EdgeInsets.zero,
-                                onPressed: () => _launchUrl(mediaPath),
-                              ),
-                            ],
-                          ),
-                        ),
-                      if (mediaPath.toLowerCase().contains('google.com/maps') ||
-                          mediaPath.toLowerCase().contains('maps.app.goo.gl') ||
-                          mediaPath.toLowerCase().contains('goo.gl/maps') ||
-                          mediaPath.toLowerCase().contains('g.co/kgs/') ||
-                          mediaPath.toLowerCase().contains('share.google/'))
-                        Container(
-                          padding: const EdgeInsets.symmetric(vertical: 8),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              IconButton(
-                                icon: const FaIcon(FontAwesomeIcons.google),
-                                color: const Color(0xFF4285F4),
-                                iconSize: 32,
-                                tooltip: 'Open in Google Maps',
-                                constraints: const BoxConstraints(),
-                                padding: EdgeInsets.zero,
-                                onPressed: () => _launchUrl(mediaPath),
-                              ),
-                            ],
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          );
-          return contentItem;
+          return _buildContentListItem(group, index);
         },
       );
     }
@@ -8062,88 +7742,120 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   }
 
   // ADDED: Reusable Content List Item builder (mobile) to keep grouped and flat views consistent
+  void _toggleContentPreview(String mediaPath) {
+    setState(() {
+      if (_expandedContentMediaPath == mediaPath) {
+        _expandedContentMediaPath = null;
+      } else {
+        _expandedContentMediaPath = mediaPath;
+      }
+    });
+  }
+
+  Widget _buildContentPreviewToggleButton({
+    required String mediaPath,
+    required bool isExpanded,
+  }) {
+    return Tooltip(
+      message: isExpanded ? 'Hide preview' : 'Show preview',
+      child: GestureDetector(
+        onTap: () => _toggleContentPreview(mediaPath),
+        child: CircleAvatar(
+          radius: 18,
+          backgroundColor: Theme.of(context).primaryColor,
+          child: Icon(
+            isExpanded ? Icons.stop : Icons.play_arrow,
+            size: 20,
+            color: Colors.white,
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildContentListItem(GroupedContentItem group, int index) {
     final mediaItem = group.mediaItem;
-    final mediaPath = mediaItem.path;
+    final String mediaPath = mediaItem.path;
     final associatedExperiences = group.associatedExperiences;
-    final isExpanded = _contentExpansionStates[mediaPath] ?? false;
-    final bool isInstagramUrl =
-        mediaPath.toLowerCase().contains('instagram.com');
-    final bool isTikTokUrl = mediaPath.toLowerCase().contains('tiktok.com') ||
-        mediaPath.toLowerCase().contains('vm.tiktok.com');
-    final bool isFacebookUrl =
-        mediaPath.toLowerCase().contains('facebook.com') ||
-            mediaPath.toLowerCase().contains('fb.com') ||
-            mediaPath.toLowerCase().contains('fb.watch');
-    final bool isYouTubeUrl = mediaPath.toLowerCase().contains('youtube.com') ||
-        mediaPath.toLowerCase().contains('youtu.be') ||
-        mediaPath.toLowerCase().contains('youtube.com/shorts');
-    bool isNetworkUrl =
-        mediaPath.startsWith('http') || mediaPath.startsWith('https');
+    final bool isExpanded = _expandedContentMediaPath == mediaPath;
 
-    Widget mediaWidget;
-    if (isTikTokUrl) {
-      mediaWidget = TikTokPreviewWidget(
-        url: mediaPath,
-        launchUrlCallback: _launchUrl,
-      );
-    } else if (isInstagramUrl) {
-      mediaWidget = instagram_widget.InstagramWebView(
-        url: mediaPath,
-        height: 640.0,
-        launchUrlCallback: _launchUrl,
-        onWebViewCreated: (_) {},
-        onPageFinished: (_) {},
-      );
-    } else if (isFacebookUrl) {
-      mediaWidget = FacebookPreviewWidget(
-        url: mediaPath,
-        height: 500.0,
-        launchUrlCallback: _launchUrl,
-        onWebViewCreated: (_) {},
-        onPageFinished: (_) {},
-      );
-    } else if (isYouTubeUrl) {
-      mediaWidget = YouTubePreviewWidget(
-        url: mediaPath,
-        launchUrlCallback: _launchUrl,
-      );
-    } else if (isNetworkUrl) {
-      if (mediaPath.toLowerCase().endsWith('.jpg') ||
-          mediaPath.toLowerCase().endsWith('.jpeg') ||
-          mediaPath.toLowerCase().endsWith('.png') ||
-          mediaPath.toLowerCase().endsWith('.gif') ||
-          mediaPath.toLowerCase().endsWith('.webp')) {
-        mediaWidget = Image.network(
-          mediaPath,
-          fit: BoxFit.cover,
-          loadingBuilder: (context, child, loadingProgress) {
-            if (loadingProgress == null) return child;
-            return const Center(child: CircularProgressIndicator());
-          },
-          errorBuilder: (context, error, stackTrace) {
-            return Container(
-              color: Colors.grey[200],
-              height: 200,
-              child: Center(
-                  child: Icon(Icons.broken_image_outlined,
-                      color: Colors.grey[600], size: 40)),
-            );
-          },
+    final String lowerPath = mediaPath.toLowerCase();
+    final bool isInstagramUrl = lowerPath.contains('instagram.com');
+    final bool isTikTokUrl =
+        lowerPath.contains('tiktok.com') || lowerPath.contains('vm.tiktok.com');
+    final bool isFacebookUrl = lowerPath.contains('facebook.com') ||
+        lowerPath.contains('fb.com') ||
+        lowerPath.contains('fb.watch');
+    final bool isYouTubeUrl = lowerPath.contains('youtube.com') ||
+        lowerPath.contains('youtu.be') ||
+        lowerPath.contains('youtube.com/shorts');
+    final bool isNetworkUrl =
+        mediaPath.startsWith('http') || mediaPath.startsWith('https');
+    final bool isYelpUrl =
+        lowerPath.contains('yelp.com/biz') || lowerPath.contains('yelp.to/');
+    final bool isMapsUrl = lowerPath.contains('google.com/maps') ||
+        lowerPath.contains('maps.app.goo.gl') ||
+        lowerPath.contains('goo.gl/maps') ||
+        lowerPath.contains('g.co/kgs/') ||
+        lowerPath.contains('share.google/');
+
+    Widget? mediaWidget;
+    if (isExpanded) {
+      if (isTikTokUrl) {
+        mediaWidget = TikTokPreviewWidget(
+          url: mediaPath,
+          launchUrlCallback: _launchUrl,
         );
-      } else {
-        final lower = mediaPath.toLowerCase();
-        final bool isMapsUrl = lower.contains('google.com/maps') ||
-            lower.contains('maps.app.goo.gl') ||
-            lower.contains('goo.gl/maps') ||
-            lower.contains('g.co/kgs/') ||
-            lower.contains('share.google/');
-        if (lower.contains('yelp.com/biz') || lower.contains('yelp.to/')) {
+      } else if (isInstagramUrl) {
+        mediaWidget = instagram_widget.InstagramWebView(
+          url: mediaPath,
+          height: 640.0,
+          launchUrlCallback: _launchUrl,
+          onWebViewCreated: (_) {},
+          onPageFinished: (_) {},
+        );
+      } else if (isFacebookUrl) {
+        mediaWidget = FacebookPreviewWidget(
+          url: mediaPath,
+          height: 500.0,
+          launchUrlCallback: _launchUrl,
+          onWebViewCreated: (_) {},
+          onPageFinished: (_) {},
+        );
+      } else if (isYouTubeUrl) {
+        mediaWidget = YouTubePreviewWidget(
+          url: mediaPath,
+          launchUrlCallback: _launchUrl,
+        );
+      } else if (isNetworkUrl) {
+        if (lowerPath.endsWith('.jpg') ||
+            lowerPath.endsWith('.jpeg') ||
+            lowerPath.endsWith('.png') ||
+            lowerPath.endsWith('.gif') ||
+            lowerPath.endsWith('.webp')) {
+          mediaWidget = Image.network(
+            mediaPath,
+            fit: BoxFit.cover,
+            loadingBuilder: (context, child, loadingProgress) {
+              if (loadingProgress == null) return child;
+              return const Center(child: CircularProgressIndicator());
+            },
+            errorBuilder: (context, error, stackTrace) {
+              return Container(
+                color: Colors.grey[200],
+                height: 200,
+                child: Center(
+                    child: Icon(Icons.broken_image_outlined,
+                        color: Colors.grey[600], size: 40)),
+              );
+            },
+          );
+        } else if (isYelpUrl) {
           mediaWidget = WebUrlPreviewWidget(
             url: mediaPath,
             launchUrlCallback: _launchUrl,
             showControls: false,
-            height: isExpanded ? 1000.0 : 600.0,
+            height: 1000.0,
           );
         } else if (isMapsUrl) {
           if (!_mapsPreviewFutures.containsKey(mediaPath) &&
@@ -8169,17 +7881,17 @@ class _CollectionsScreenState extends State<CollectionsScreen>
             launchUrlCallback: _launchUrl,
           );
         }
+      } else {
+        mediaWidget = Container(
+          color: Colors.grey[300],
+          height: 150,
+          child: Center(
+              child: Icon(Icons.description, color: Colors.grey[700], size: 40)),
+        );
       }
-    } else {
-      mediaWidget = Container(
-        color: Colors.grey[300],
-        height: 150,
-        child: Center(
-            child: Icon(Icons.description, color: Colors.grey[700], size: 40)),
-      );
     }
 
-    final contentItem = Padding(
+    return Padding(
       key: ValueKey(mediaPath),
       padding: const EdgeInsets.only(bottom: 24.0),
       child: Column(
@@ -8226,79 +7938,88 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                 Padding(
                   padding: const EdgeInsets.symmetric(
                       horizontal: 12.0, vertical: 8.0),
-                  child: Column(
+                  child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      if (associatedExperiences.length > 1)
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 6.0),
-                          child: Text(
-                            'Linked Experiences (${associatedExperiences.length}):',
-                            style: Theme.of(context)
-                                .textTheme
-                                .labelLarge
-                                ?.copyWith(
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.black87,
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            if (associatedExperiences.length > 1)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 6.0),
+                                child: Text(
+                                  'Linked Experiences (${associatedExperiences.length}):',
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .labelLarge
+                                      ?.copyWith(
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.black87,
+                                      ),
                                 ),
-                          ),
-                        ),
-                      ...associatedExperiences.map((exp) {
-                        final category = _categories.firstWhereOrNull(
-                            (cat) => cat.id == exp.categoryId);
-                        final categoryIcon = category?.icon ?? 'Γ¥ô';
-                        final colorCategory = _colorCategories.firstWhereOrNull(
-                            (cc) => cc.id == exp.colorCategoryId);
-                        final color = colorCategory != null
-                            ? _parseColor(colorCategory.colorHex)
-                            : Theme.of(context).disabledColor;
+                              ),
+                            ...associatedExperiences.map((exp) {
+                              final category = _categories.firstWhereOrNull(
+                                  (cat) => cat.id == exp.categoryId);
+                              final categoryIcon = category?.icon ?? '?';
+                              final colorCategory = _colorCategories
+                                  .firstWhereOrNull(
+                                      (cc) => cc.id == exp.colorCategoryId);
+                              final color = colorCategory != null
+                                  ? _parseColor(colorCategory.colorHex)
+                                  : Theme.of(context).disabledColor;
 
-                        return InkWell(
-                          onTap: () {
-                            _openExperience(exp);
-                          },
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 4.0),
-                            child: Row(
-                              children: [
-                                Text(categoryIcon,
-                                    style: const TextStyle(fontSize: 16)),
-                                const SizedBox(width: 6),
-                                if (colorCategory != null)
-                                  Padding(
-                                    padding: const EdgeInsets.only(right: 6.0),
-                                    child: Icon(Icons.circle,
-                                        color: color, size: 10),
-                                  ),
-                                Expanded(
-                                  child: Text(
-                                    exp.name,
-                                    style:
-                                        Theme.of(context).textTheme.bodyMedium,
-                                    overflow: TextOverflow.ellipsis,
+                              return InkWell(
+                                onTap: () {
+                                  _openExperience(exp);
+                                },
+                                child: Padding(
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 4.0),
+                                  child: Row(
+                                    children: [
+                                      Text(categoryIcon,
+                                          style: const TextStyle(fontSize: 16)),
+                                      const SizedBox(width: 6),
+                                      if (colorCategory != null)
+                                        Padding(
+                                          padding:
+                                              const EdgeInsets.only(right: 6.0),
+                                          child: Icon(Icons.circle,
+                                              color: color, size: 10),
+                                        ),
+                                      Expanded(
+                                        child: Text(
+                                          exp.name,
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .bodyMedium,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                      const Icon(Icons.chevron_right,
+                                          color: Colors.grey, size: 18),
+                                    ],
                                   ),
                                 ),
-                                const Icon(Icons.chevron_right,
-                                    color: Colors.grey, size: 18),
-                              ],
-                            ),
-                          ),
-                        );
-                      }),
-                      if (associatedExperiences.isEmpty)
-                        const Text('No linked experiences.',
-                            style: TextStyle(fontStyle: FontStyle.italic)),
+                              );
+                            }),
+                            if (associatedExperiences.isEmpty)
+                              const Text('No linked experiences.',
+                                  style: TextStyle(fontStyle: FontStyle.italic)),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      _buildContentPreviewToggleButton(
+                        mediaPath: mediaPath,
+                        isExpanded: isExpanded,
+                      ),
                     ],
                   ),
                 ),
-                GestureDetector(
-                  onTap: () {
-                    setState(() {
-                      _contentExpansionStates[mediaPath] = !isExpanded;
-                    });
-                  },
-                  child: mediaWidget,
-                ),
+                if (isExpanded && mediaWidget != null) mediaWidget!,
                 if (isInstagramUrl)
                   Container(
                     color: Colors.white,
@@ -8318,8 +8039,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                       ],
                     ),
                   ),
-                if (mediaPath.toLowerCase().contains('yelp.com/biz') ||
-                    mediaPath.toLowerCase().contains('yelp.to/'))
+                if (isYelpUrl)
                   Container(
                     padding: const EdgeInsets.symmetric(vertical: 8),
                     child: Row(
@@ -8337,11 +8057,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                       ],
                     ),
                   ),
-                if (mediaPath.toLowerCase().contains('google.com/maps') ||
-                    mediaPath.toLowerCase().contains('maps.app.goo.gl') ||
-                    mediaPath.toLowerCase().contains('goo.gl/maps') ||
-                    mediaPath.toLowerCase().contains('g.co/kgs/') ||
-                    mediaPath.toLowerCase().contains('share.google/'))
+                if (isMapsUrl)
                   Container(
                     padding: const EdgeInsets.symmetric(vertical: 8),
                     child: Row(
@@ -8365,7 +8081,6 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         ],
       ),
     );
-    return contentItem;
   }
 
   // ADDED: Dialog to show media details (associated experiences)
