@@ -4,10 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:plendy/models/user_category.dart';
 import 'package:plendy/models/share_permission.dart';
 import 'package:plendy/services/experience_service.dart';
+import 'package:plendy/services/sharing_service.dart';
 import 'package:plendy/services/auth_service.dart';
 import 'package:plendy/widgets/add_category_modal.dart';
 import 'package:plendy/models/category_sort_type.dart';
 import 'package:plendy/services/category_ordering_service.dart';
+import 'package:plendy/models/enums/share_enums.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class EditCategoriesModal extends StatefulWidget {
@@ -19,6 +21,7 @@ class EditCategoriesModal extends StatefulWidget {
 
 class _EditCategoriesModalState extends State<EditCategoriesModal> {
   final ExperienceService _experienceService = ExperienceService();
+  final SharingService _sharingService = SharingService();
   final CategoryOrderingService _categoryOrderingService =
       CategoryOrderingService();
   final AuthService _authService = AuthService();
@@ -27,6 +30,8 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
   List<UserCategory> _fetchedCategories = []; // Holds original fetched order
   Map<String, SharePermission> _sharedCategoryPermissions =
       {}; // Track permissions for shared categories
+  final Map<String, String> _shareOwnerNames = {};
+  final Set<String> _ownedSharedCategoryIds = {};
   bool _isLoading = false;
   bool _CategoriesChanged =
       false; // Track if *any* change to order/content occurred
@@ -64,13 +69,77 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
               sharedPermissions: result.sharedPermissions);
       final sharedCount = result.sharedPermissions.length;
       final ownedCount = orderedCategories.length - sharedCount;
+      final Map<String, SharePermission> sharedPermissionMap =
+          Map<String, SharePermission>.from(result.sharedPermissions);
+
+      final Map<String, String> ownerNames = {};
+      final Set<String> ownerIdsToFetch = {};
+      for (final category in orderedCategories) {
+        final String? sharedOwnerName = category.sharedOwnerDisplayName;
+        if (sharedOwnerName != null && sharedOwnerName.isNotEmpty) {
+          ownerNames[category.ownerUserId] = sharedOwnerName;
+        }
+      }
+      for (final permission in sharedPermissionMap.values) {
+        if (permission.ownerUserId.isEmpty) {
+          continue;
+        }
+        if (!ownerNames.containsKey(permission.ownerUserId)) {
+          ownerIdsToFetch.add(permission.ownerUserId);
+        }
+      }
+
+      if (ownerIdsToFetch.isNotEmpty) {
+        try {
+          final profiles = await _experienceService
+              .getUserProfilesByIds(ownerIdsToFetch.toList());
+          for (final profile in profiles) {
+            final displayName =
+                profile.displayName ?? profile.username ?? 'Someone';
+            ownerNames[profile.id] = displayName;
+          }
+        } catch (e) {
+          print("_loadCategories - Error prefetching owner display names: $e");
+        }
+      }
+
+      final Set<String> ownedSharedCategoryIds = {};
+      try {
+        final ownedPermissions =
+            await _sharingService.getOwnedSharePermissions(userId);
+        for (final permission in ownedPermissions) {
+          if (permission.itemType != ShareableItemType.category) {
+            continue;
+          }
+          if (permission.ownerUserId != userId) {
+            continue;
+          }
+          final bool matchesOwnedCategory = orderedCategories.any(
+            (category) =>
+                category.id == permission.itemId &&
+                category.ownerUserId == userId,
+          );
+          if (matchesOwnedCategory) {
+            ownedSharedCategoryIds.add(permission.itemId);
+          }
+        }
+      } catch (e) {
+        print("_loadCategories - Error loading owned share permissions: $e");
+      }
 
       if (mounted) {
         setState(() {
           _fetchedCategories = List<UserCategory>.from(orderedCategories);
           _Categories = List<UserCategory>.from(orderedCategories);
-          _sharedCategoryPermissions =
-              Map<String, SharePermission>.from(result.sharedPermissions);
+          _sharedCategoryPermissions
+            ..clear()
+            ..addAll(sharedPermissionMap);
+          _shareOwnerNames
+            ..clear()
+            ..addAll(ownerNames);
+          _ownedSharedCategoryIds
+            ..clear()
+            ..addAll(ownedSharedCategoryIds);
           _isLoading = false;
           print(
               "_loadCategories END - Set state with ${_Categories.length} total Categories (owned: $ownedCount, shared: $sharedCount).");
@@ -91,6 +160,8 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
           _Categories = [];
           _fetchedCategories = [];
           _sharedCategoryPermissions = {};
+          _shareOwnerNames.clear();
+          _ownedSharedCategoryIds.clear();
           print(
               "_loadCategories END - Set state with empty Categories after error."); // Log Error State Set
         });
@@ -425,10 +496,28 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
                                   .containsKey(category.id);
                               final bool isOwned = category.ownerUserId ==
                                   _authService.currentUser?.uid;
+                              final SharePermission? permission =
+                                  _sharedCategoryPermissions[category.id];
                               final bool canEdit = isOwned ||
-                                  isShared; // If shared with edit permission
+                                  (permission?.accessLevel ==
+                                      ShareAccessLevel
+                                          .edit); // Only edit permission shared items
                               final bool canDelete =
                                   isOwned; // Only owner can delete
+                              final bool isOwnerShared =
+                                  _ownedSharedCategoryIds.contains(category.id);
+
+                              String? shareLabel;
+                              if (permission != null) {
+                                final ownerName =
+                                    _shareOwnerNames[permission.ownerUserId] ??
+                                        category.sharedOwnerDisplayName ??
+                                        'Someone';
+                                shareLabel =
+                                    _buildSharedByLabel(permission, ownerName);
+                              } else if (isOwnerShared) {
+                                shareLabel = 'Shared';
+                              }
 
                               // IMPORTANT: Each item MUST have a unique Key
                               return ListTile(
@@ -438,18 +527,17 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
                                   children: [
                                     Text(category.icon,
                                         style: const TextStyle(fontSize: 24)),
-                                    if (isShared) const SizedBox(width: 4),
-                                    if (isShared)
-                                      Icon(Icons.people,
-                                          size: 16, color: Colors.blue[600]),
                                   ],
                                 ),
                                 title: Text(category.name),
-                                subtitle: isShared
-                                    ? Text('Shared with you',
-                                        style: TextStyle(
-                                            fontSize: 12,
-                                            color: Colors.blue[600]))
+                                subtitle: shareLabel != null
+                                    ? Text(
+                                        shareLabel,
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodySmall
+                                            ?.copyWith(color: Colors.grey[600]),
+                                      )
                                     : null,
                                 trailing: Row(
                                   mainAxisSize: MainAxisSize.min,
@@ -536,6 +624,8 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
                   onPressed: _isLoading ? null : _addNewCategory,
                   style: ElevatedButton.styleFrom(
                     padding: const EdgeInsets.symmetric(vertical: 12),
+                    backgroundColor: Theme.of(context).primaryColor,
+                    foregroundColor: Colors.white,
                   ),
                 ),
               ),
@@ -586,8 +676,7 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
             "Attempting to persist manual category order (${manualOrder.length} items).");
         await _persistManualCategoryOrderPrefs(manualOrder);
         await _persistUseManualCategoryOrder(manualOrder.isNotEmpty);
-        final bool orderSaved =
-            await _saveCategoryOrder(showErrors: true);
+        final bool orderSaved = await _saveCategoryOrder(showErrors: true);
         changesSuccessfullySaved = orderSaved;
       } catch (e) {
         print("Error saving category order: $e");
@@ -606,5 +695,15 @@ class _EditCategoriesModalState extends State<EditCategoriesModal> {
       }
     }
     return changesSuccessfullySaved && hadChanges;
+  }
+
+  String _buildSharedByLabel(
+      SharePermission permission, String ownerDisplayName) {
+    final ShareAccessLevel accessLevel = permission.accessLevel;
+    final String accessText =
+        accessLevel == ShareAccessLevel.edit ? 'edit access' : 'view access';
+    final String ownerName =
+        ownerDisplayName.isNotEmpty ? ownerDisplayName : 'Someone';
+    return 'Shared by $ownerName ($accessText)';
   }
 }

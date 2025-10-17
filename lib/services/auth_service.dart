@@ -6,6 +6,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'dart:async'; // For Timer
+import 'notification_state_service.dart';
 
 class AuthService extends ChangeNotifier {
   final FirebaseAuth _auth = FirebaseAuth.instance;
@@ -190,6 +191,10 @@ class AuthService extends ChangeNotifier {
 
   // Sign Out
   Future<void> signOut() async {
+    // Clean up notification state service listeners before signing out
+    final notificationService = NotificationStateService();
+    notificationService.cleanup();
+    
     // Optional: Before signing out, you might want to delete the current device's FCM token 
     // from the user's list if you have a way to identify it specifically.
     // String? token = await _firebaseMessaging.getToken();
