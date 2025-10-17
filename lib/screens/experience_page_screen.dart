@@ -151,8 +151,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   bool _isStatusBarLight = true; // Start with light icons
   final double _headerHeight = 320.0; // Match the header height
 
-  // --- ADDED: Expansion state for media tab items ---
-  final Map<String, bool> _mediaTabExpansionStates = {};
+  // --- ADDED: Track which media preview is expanded in the Content tab ---
+  String? _expandedMediaPath;
   // --- END ADDED ---
   // --- ADDED: Maps preview futures cache for content tab ---
   final Map<String, Future<Map<String, dynamic>?>> _mapsPreviewFutures = {};
@@ -249,6 +249,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     // If preview media were provided, use them and skip fetching
     if (widget.initialMediaItems != null) {
       _mediaItems = List<SharedMediaItem>.from(widget.initialMediaItems!);
+      _expandedMediaPath =
+          _mediaItems.isNotEmpty ? _mediaItems.first.path : null;
       _isLoadingMedia = false;
       // Also kick off loading of other experience data based on provided media
       _loadOtherExperienceData();
@@ -1856,6 +1858,34 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     }
   }
 
+  void _toggleMediaPreview(String mediaPath) {
+    setState(() {
+      if (_expandedMediaPath == mediaPath) {
+        _expandedMediaPath = null;
+      } else {
+        _expandedMediaPath = mediaPath;
+      }
+    });
+  }
+
+  Widget _buildMediaPreviewToggleButton({
+    required String mediaPath,
+    required bool isExpanded,
+  }) {
+    return Tooltip(
+      message: isExpanded ? 'Hide preview' : 'Show preview',
+      child: CircleAvatar(
+        radius: 18,
+        backgroundColor: Colors.white,
+        child: Icon(
+          isExpanded ? Icons.stop : Icons.play_arrow,
+          size: 20,
+          color: Theme.of(context).primaryColor,
+        ),
+      ),
+    );
+  }
+
   // Builds the Media Tab, now including a fullscreen button
   Widget _buildMediaTab(
       BuildContext context, List<SharedMediaItem> mediaItems) {
@@ -1931,7 +1961,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
               final item = mediaItems[index];
               final url = item.path;
 
-              Widget mediaWidget;
+              Widget? mediaWidget;
               final isTikTokUrl = url.toLowerCase().contains('tiktok.com') || url.toLowerCase().contains('vm.tiktok.com');
               final isInstagramUrl = url.toLowerCase().contains('instagram.com');
               final isFacebookUrl = url.toLowerCase().contains('facebook.com') || url.toLowerCase().contains('fb.com') || url.toLowerCase().contains('fb.watch');
@@ -1944,138 +1974,130 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                   url.toLowerCase().contains('goo.gl/maps') ||
                   url.toLowerCase().contains('g.co/kgs/') ||
                   url.toLowerCase().contains('share.google/');
-              final bool isGenericUrl = !isTikTokUrl && !isInstagramUrl && !isFacebookUrl && !isYouTubeUrl && !isYelpUrl && !isMapsUrl;
+              final bool isNetworkUrl =
+                  url.startsWith('http') || url.startsWith('https');
+              final bool isGenericUrl =
+                  !isTikTokUrl &&
+                  !isInstagramUrl &&
+                  !isFacebookUrl &&
+                  !isYouTubeUrl &&
+                  !isYelpUrl &&
+                  !isMapsUrl;
+              final bool isExpanded = _expandedMediaPath == url;
 
-              if (isTikTokUrl) {
-                final key = GlobalKey<TikTokPreviewWidgetState>();
-                _tiktokControllerKeys[url] = key;
-                mediaWidget = TikTokPreviewWidget(
-                  key: key,
-                  url: url,
-                  launchUrlCallback: _launchUrl,
-                  showControls: false,
-                  onWebViewCreated: (controller) {
-                    _webViewControllers[url] = controller;
-                  },
-                );
-              } else if (isInstagramUrl) {
-                final key = GlobalKey<instagram_widget.InstagramWebViewState>();
-                _instagramControllerKeys[url] = key;
-                mediaWidget = instagram_widget.InstagramWebView(
-                  key: key,
-                  url: url,
-                  // --- UPDATED: Use expansion state for height ---
-                  height: (_mediaTabExpansionStates[url] ?? false)
-                      ? 1200.0 // Expanded height (adjust if needed)
-                      : 840.0, // Collapsed height
-                  // --- END UPDATE ---
-                  launchUrlCallback: _launchUrl,
-                  onWebViewCreated: (controller) {
-                    _webViewControllers[url] = controller;
-                  },
-                  onPageFinished: (url) {},
-                );
-              } else if (isFacebookUrl) {
-                mediaWidget = FacebookPreviewWidget(
-                  url: url,
-                  height: (_mediaTabExpansionStates[url] ?? false)
-                      ? 800.0 // Expanded height
-                      : 500.0, // Collapsed height
-                  launchUrlCallback: _launchUrl,
-                  onWebViewCreated: (controller) {
-                     _webViewControllers[url] = controller;
-                  },
-                  onPageFinished: (url) {},
-                  showControls: false,
-                );
-              } else if (isYouTubeUrl) {
-                final key = GlobalKey<YouTubePreviewWidgetState>();
-                _youtubeControllerKeys[url] = key;
-                mediaWidget = YouTubePreviewWidget(
-                  key: key,
-                  url: url,
-                  launchUrlCallback: _launchUrl,
-                  showControls: false,
-                  height: (_mediaTabExpansionStates[url] ?? false)
-                      ? 600.0 // Expanded height for YouTube
-                      : null, // Let widget auto-calculate based on video type
-                  onWebViewCreated: (controller) {
-                    _webViewControllers[url] = controller;
-                  },
-                );
-              } else {
-                // Check if it's a network URL
-                final bool isNetworkUrl = url.startsWith('http') || url.startsWith('https');
-                
-                if (isNetworkUrl) {
-                  // Check if it's an image URL
-                  if (url.toLowerCase().endsWith('.jpg') ||
-                      url.toLowerCase().endsWith('.jpeg') ||
-                      url.toLowerCase().endsWith('.png') ||
-                      url.toLowerCase().endsWith('.gif') ||
-                      url.toLowerCase().endsWith('.webp')) {
+              if (isExpanded) {
+                if (isTikTokUrl) {
+                  final key = GlobalKey<TikTokPreviewWidgetState>();
+                  _tiktokControllerKeys[url] = key;
+                  mediaWidget = TikTokPreviewWidget(
+                    key: key,
+                    url: url,
+                    launchUrlCallback: _launchUrl,
+                    showControls: false,
+                    onWebViewCreated: (controller) {
+                      _webViewControllers[url] = controller;
+                    },
+                  );
+                } else if (isInstagramUrl) {
+                  final key =
+                      GlobalKey<instagram_widget.InstagramWebViewState>();
+                  _instagramControllerKeys[url] = key;
+                  mediaWidget = instagram_widget.InstagramWebView(
+                    key: key,
+                    url: url,
+                    height: 640.0,
+                    launchUrlCallback: _launchUrl,
+                    onWebViewCreated: (controller) {
+                      _webViewControllers[url] = controller;
+                    },
+                    onPageFinished: (_) {},
+                  );
+                } else if (isFacebookUrl) {
+                  mediaWidget = FacebookPreviewWidget(
+                    url: url,
+                    height: 500.0,
+                    launchUrlCallback: _launchUrl,
+                    onWebViewCreated: (controller) {
+                      _webViewControllers[url] = controller;
+                    },
+                    onPageFinished: (_) {},
+                    showControls: false,
+                  );
+                } else if (isYouTubeUrl) {
+                  final key = GlobalKey<YouTubePreviewWidgetState>();
+                  _youtubeControllerKeys[url] = key;
+                  mediaWidget = YouTubePreviewWidget(
+                    key: key,
+                    url: url,
+                    launchUrlCallback: _launchUrl,
+                    showControls: false,
+                    onWebViewCreated: (controller) {
+                      _webViewControllers[url] = controller;
+                    },
+                  );
+                } else if (isNetworkUrl) {
+                  final lowerUrl = url.toLowerCase();
+                  if (lowerUrl.endsWith('.jpg') ||
+                      lowerUrl.endsWith('.jpeg') ||
+                      lowerUrl.endsWith('.png') ||
+                      lowerUrl.endsWith('.gif') ||
+                      lowerUrl.endsWith('.webp')) {
                     mediaWidget = Image.network(
                       url,
                       fit: BoxFit.cover,
-                      errorBuilder: (context, error, stackTrace) =>
-                          Container(height: 200, color: Colors.grey[200], child: Center(child: Icon(Icons.broken_image)))
+                      loadingBuilder: (context, child, loadingProgress) {
+                        if (loadingProgress == null) return child;
+                        return const Center(child: CircularProgressIndicator());
+                      },
+                      errorBuilder: (context, error, stackTrace) {
+                        return Container(
+                          color: Colors.grey[200],
+                          height: 200,
+                          child: Center(
+                              child: Icon(Icons.broken_image_outlined,
+                                  color: Colors.grey[600], size: 40)),
+                        );
+                      },
+                    );
+                  } else if (isYelpUrl) {
+                    mediaWidget = WebUrlPreviewWidget(
+                      url: url,
+                      launchUrlCallback: _launchUrl,
+                      showControls: false,
+                      height: 1000.0,
+                    );
+                  } else if (isMapsUrl) {
+                    if (!_mapsPreviewFutures.containsKey(url)) {
+                      _mapsPreviewFutures[url] = Future.value({
+                        'location': _currentExperience.location,
+                        'placeName': _currentExperience.name,
+                        'mapsUrl': url,
+                        'website': _currentExperience.location.website,
+                      });
+                    }
+                    mediaWidget = MapsPreviewWidget(
+                      mapsUrl: url,
+                      mapsPreviewFutures: _mapsPreviewFutures,
+                      getLocationFromMapsUrl: (u) async => null,
+                      launchUrlCallback: _launchUrl,
+                      mapsService: _googleMapsService,
                     );
                   } else {
-                    final lower = url.toLowerCase();
-                    final bool isMapsUrl = lower.contains('google.com/maps') ||
-                        lower.contains('maps.app.goo.gl') ||
-                        lower.contains('goo.gl/maps') ||
-                        lower.contains('g.co/kgs/') ||
-                        lower.contains('share.google/');
-                    // Yelp: render using the same WebView preview as Google Knowledge Graph preview
-                    if (lower.contains('yelp.com/biz') || lower.contains('yelp.to/')) {
-                      // Render Yelp with WebView but hide internal controls; reuse our bottom row controls for uniform UX
-                      mediaWidget = WebUrlPreviewWidget(
-                        url: url,
-                        launchUrlCallback: _launchUrl,
-                        showControls: false,
-                        onWebViewCreated: (controller) {
-                          _webViewControllers[url] = controller;
-                        },
-                        height: (_mediaTabExpansionStates[url] ?? false)
-                            ? 1000.0
-                            : 600.0,
-                      );
-                    } else if (isMapsUrl) {
-                      // Seed Maps preview with the current experience location so details are shown immediately
-                      if (!_mapsPreviewFutures.containsKey(url)) {
-                        _mapsPreviewFutures[url] = Future.value({
-                          'location': _currentExperience.location,
-                          'placeName': _currentExperience.name,
-                          'mapsUrl': url,
-                          'website': _currentExperience.location.website,
-                        });
-                      }
-                      mediaWidget = MapsPreviewWidget(
-                        mapsUrl: url,
-                        mapsPreviewFutures: _mapsPreviewFutures,
-                        getLocationFromMapsUrl: (u) async => null, // Already seeded
-                        launchUrlCallback: _launchUrl,
-                        mapsService: _googleMapsService,
-                      );
-                    } else {
-                      // Use generic URL preview for other network URLs
-                      mediaWidget = GenericUrlPreviewWidget(
-                        url: url,
-                        launchUrlCallback: _launchUrl,
-                      );
-                    }
+                    mediaWidget = GenericUrlPreviewWidget(
+                      url: url,
+                      launchUrlCallback: _launchUrl,
+                    );
                   }
                 } else {
-                  // Fallback for non-network URLs
                   mediaWidget = Container(
-                    height: 200, 
-                    color: Colors.grey[200], 
+                    height: 150,
+                    color: Colors.grey[200],
                     child: Center(
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Icon(Icons.description, color: Colors.grey[600], size: 40),
+                          Icon(Icons.description,
+                              color: Colors.grey[600], size: 40),
                           const SizedBox(height: 8),
                           Text(
                             'Content Preview',
@@ -2086,6 +2108,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                     ),
                   );
                 }
+              } else {
+                mediaWidget = null;
               }
 
               // Keep the Column for layout *within* the list item
@@ -2102,7 +2126,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                             Theme.of(context).primaryColor.withOpacity(0.8),
                         child: Text(
                           '${index + 1}',
-                          style: TextStyle(
+                          style: const TextStyle(
                             fontSize: 14.0,
                             fontWeight: FontWeight.bold,
                             color: Colors.white,
@@ -2110,11 +2134,57 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                         ),
                       ),
                     ),
-                    Card(
+                    Container(
                       margin: EdgeInsets.zero,
-                      elevation: 2.0,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(4.0),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.1),
+                            blurRadius: 4.0,
+                            offset: const Offset(0, -2),
+                          ),
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.1),
+                            blurRadius: 4.0,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
                       clipBehavior: Clip.antiAlias,
-                      child: mediaWidget,
+                      child: Column(
+                        children: [
+                          GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onTap: () => _toggleMediaPreview(url),
+                            child: Container(
+                              color: Theme.of(context).primaryColor,
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 12.0, vertical: 8.0),
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      url,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                  _buildMediaPreviewToggleButton(
+                                    mediaPath: url,
+                                    isExpanded: isExpanded,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                          if (isExpanded && mediaWidget != null) mediaWidget!,
+                        ],
+                      ),
                     ),
                     // --- ADDED: 'Also linked to' section --- START ---
                     Builder(
@@ -2353,27 +2423,6 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                                         : 'Open URL',
                               onPressed: () => _launchUrl(url),
                             ),
-                          // Expand/Collapse Button (show for Instagram, TikTok, Facebook, Yelp)
-                          if (!isGenericUrl && !isYouTubeUrl)
-                            IconButton(
-                                icon: Icon(
-                                    (_mediaTabExpansionStates[url] ?? false)
-                                        ? Icons.fullscreen_exit
-                                        : Icons.fullscreen),
-                                iconSize: 24,
-                                color: Colors.blue,
-                                tooltip: (_mediaTabExpansionStates[url] ?? false)
-                                    ? 'Collapse'
-                                    : 'Expand',
-                                onPressed: () {
-                                  setState(() {
-                                    _mediaTabExpansionStates[url] =
-                                        !(_mediaTabExpansionStates[url] ?? false);
-                                  });
-                                },
-                              )
-                          else if (isYouTubeUrl)
-                            const SizedBox(width: 48.0), // Placeholder to keep alignment
                           // Delete button
                           IconButton(
                               icon: const Icon(Icons.delete_outline),
@@ -2710,6 +2759,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
         if (mounted) {
           setState(() {
             _mediaItems = items;
+            _expandedMediaPath =
+                _mediaItems.isNotEmpty ? _mediaItems.first.path : null;
             print("Fetched ${_mediaItems.length} media items for experience.");
           });
           // --- ADDED: Trigger loading of other experience data --- START ---
@@ -2719,7 +2770,12 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
         }
       } else {
         print("No media item IDs associated with this experience.");
-        if (mounted) setState(() => _mediaItems = []); // Ensure list is empty
+        if (mounted) {
+          setState(() {
+            _mediaItems = [];
+            _expandedMediaPath = null;
+          });
+        }
       }
     } catch (e) {
       print("Error fetching media items: $e");
