@@ -30,6 +30,7 @@ import 'receive_share/widgets/generic_url_preview_widget.dart';
 import 'receive_share/widgets/web_url_preview_widget.dart';
 import 'receive_share/widgets/maps_preview_widget.dart';
 import '../models/shared_media_item.dart'; // ADDED Import
+import '../widgets/shared_media_preview_modal.dart';
 import '../models/share_permission.dart'; // ADDED Import for SharePermission
 import '../models/enums/share_enums.dart'; // ADDED Import for ShareableItemType and ShareAccessLevel
 import '../models/category_sort_type.dart';
@@ -184,6 +185,9 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   bool _isSelectingExperiences = false;
   final Set<String> _selectedExperienceIds = <String>{};
 
+  // Cache resolved shared media to avoid refetching when previewing content
+  final Map<String, List<SharedMediaItem>> _experienceMediaCache = {};
+
   // Pagination state for Experiences tab
   static const int _experiencesPageSize = 100;
   DocumentSnapshot<Object?>? _lastExperienceDoc;
@@ -248,6 +252,78 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     if (result == true && mounted) {
       _loadData();
     }
+  }
+
+  Future<void> _openExperienceContentPreview(Experience experience) async {
+    if (experience.sharedMediaItemIds.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content:
+                Text('No saved content available yet for this experience.'),
+          ),
+        );
+      }
+      return;
+    }
+
+    final cachedItems = _experienceMediaCache[experience.id];
+    late final List<SharedMediaItem> resolvedItems;
+
+    if (cachedItems == null) {
+      try {
+        final fetched = await _experienceService
+            .getSharedMediaItems(experience.sharedMediaItemIds);
+        fetched.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+        resolvedItems = fetched;
+        _experienceMediaCache[experience.id] = fetched;
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Could not load content preview: $e')),
+          );
+        }
+        return;
+      }
+    } else {
+      resolvedItems = cachedItems;
+    }
+
+    if (resolvedItems.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content:
+                Text('No saved content available yet for this experience.'),
+          ),
+        );
+      }
+      return;
+    }
+
+    if (!mounted) return;
+
+    final UserCategory? category = _categories.firstWhereOrNull(
+      (cat) => cat.id == experience.categoryId,
+    );
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      useRootNavigator: true,
+      builder: (modalContext) {
+        final SharedMediaItem initialMedia = resolvedItems.first;
+        return SharedMediaPreviewModal(
+          experience: experience,
+          mediaItem: initialMedia,
+          mediaItems: resolvedItems,
+          onLaunchUrl: _launchUrl,
+          category: category,
+          userColorCategories: _colorCategories,
+        );
+      },
+    );
   }
 
   int _compareCategoriesForSort(
@@ -4553,30 +4629,57 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                       ],
                     ),
                   ),
-                  if (contentCount > 0)
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: Theme.of(context).primaryColor,
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
+                  if (contentCount > 0) ...[
+                    const SizedBox(width: 12),
+                    GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () => _openExperienceContentPreview(experience),
+                      child: Stack(
+                        clipBehavior: Clip.none,
                         children: [
-                          const Icon(Icons.photo_library_outlined,
-                              size: 12, color: Colors.white),
-                          const SizedBox(width: 4),
-                          Text(
-                            '$contentCount',
-                            style: const TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w700,
-                                color: Colors.white),
+                          Container(
+                            width: 28,
+                            height: 28,
+                            decoration: BoxDecoration(
+                              color: Theme.of(context).primaryColor,
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(
+                              Icons.play_arrow,
+                              color: Colors.white,
+                              size: 16,
+                            ),
+                          ),
+                          Positioned(
+                            bottom: -1,
+                            right: -1,
+                            child: Container(
+                              width: 12,
+                              height: 12,
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: Theme.of(context).primaryColor,
+                                  width: 1.5,
+                                ),
+                              ),
+                              child: Center(
+                                child: Text(
+                                  contentCount.toString(),
+                                  style: TextStyle(
+                                    color: Theme.of(context).primaryColor,
+                                    fontSize: 8,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                            ),
                           ),
                         ],
                       ),
                     ),
+                  ],
                 ],
               ),
             ),
