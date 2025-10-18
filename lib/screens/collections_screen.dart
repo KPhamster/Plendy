@@ -7799,6 +7799,83 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         lowerPath.contains('g.co/kgs/') ||
         lowerPath.contains('share.google/');
 
+    Widget _buildActionAvatar({
+      required Widget icon,
+      required String tooltip,
+      required VoidCallback onTap,
+      Color? backgroundColor,
+    }) {
+      return Tooltip(
+        message: tooltip,
+        child: GestureDetector(
+          onTap: onTap,
+          child: CircleAvatar(
+            radius: 18,
+            backgroundColor: backgroundColor ?? Colors.white,
+            child: icon,
+          ),
+        ),
+      );
+    }
+
+    Widget? actionButton;
+    if (isInstagramUrl) {
+      actionButton = _buildActionAvatar(
+        icon: const FaIcon(
+          FontAwesomeIcons.instagram,
+          color: Colors.white,
+          size: 20,
+        ),
+        tooltip: 'Open in Instagram',
+        onTap: () => _launchUrl(mediaPath),
+        backgroundColor: const Color(0xFFE4405F),
+      );
+    } else if (isTikTokUrl) {
+      actionButton = _buildActionAvatar(
+        icon: const FaIcon(
+          FontAwesomeIcons.tiktok,
+          color: Colors.white,
+          size: 20,
+        ),
+        tooltip: 'Open in TikTok',
+        onTap: () => _launchUrl(mediaPath),
+        backgroundColor: Colors.black,
+      );
+    } else if (isYelpUrl) {
+      actionButton = _buildActionAvatar(
+        icon: const FaIcon(
+          FontAwesomeIcons.yelp,
+          color: Colors.white,
+          size: 20,
+        ),
+        tooltip: 'Open in Yelp',
+        onTap: () => _launchUrl(mediaPath),
+        backgroundColor: const Color(0xFFD32323),
+      );
+    } else if (isMapsUrl) {
+      actionButton = _buildActionAvatar(
+        icon: const FaIcon(
+          FontAwesomeIcons.google,
+          color: Colors.white,
+          size: 20,
+        ),
+        tooltip: 'Open in Google Maps',
+        onTap: () => _launchUrl(mediaPath),
+        backgroundColor: const Color(0xFF4285F4),
+      );
+    } else if (isNetworkUrl) {
+      actionButton = _buildActionAvatar(
+        icon: const Icon(
+          Icons.open_in_new,
+          color: Colors.white,
+          size: 20,
+        ),
+        tooltip: 'Open Link',
+        onTap: () => _launchUrl(mediaPath),
+        backgroundColor: Colors.blue.shade700,
+      );
+    }
+
     Widget? mediaWidget;
     if (isExpanded) {
       if (isTikTokUrl) {
@@ -7935,6 +8012,26 @@ class _CollectionsScreenState extends State<CollectionsScreen>
             clipBehavior: Clip.antiAlias,
             child: Column(
               children: [
+                Container(
+                  width: double.infinity,
+                  color: Theme.of(context).primaryColor,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12.0,
+                    vertical: 8.0,
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          mediaPath,
+                          style: const TextStyle(color: Colors.white),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
                 Padding(
                   padding: const EdgeInsets.symmetric(
                       horizontal: 12.0, vertical: 8.0),
@@ -8012,89 +8109,23 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                         ),
                       ),
                       const SizedBox(width: 12),
-                      _buildContentPreviewToggleButton(
-                        mediaPath: mediaPath,
-                        isExpanded: isExpanded,
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          if (actionButton != null) actionButton,
+                          if (actionButton != null)
+                            const SizedBox(width: 8.0),
+                          _buildContentPreviewToggleButton(
+                            mediaPath: mediaPath,
+                            isExpanded: isExpanded,
+                          ),
+                        ],
                       ),
                     ],
                   ),
                 ),
                 if (isExpanded && mediaWidget != null) mediaWidget!,
-                if (isInstagramUrl)
-                  Container(
-                    color: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        IconButton(
-                          icon: const FaIcon(FontAwesomeIcons.instagram),
-                          color: const Color(0xFFE4405F),
-                          iconSize: 32,
-                          tooltip: 'Open in Instagram',
-                          constraints: const BoxConstraints(),
-                          padding: EdgeInsets.zero,
-                          onPressed: () => _launchUrl(mediaPath),
-                        ),
-                      ],
-                    ),
-                  ),
-                if (isYelpUrl)
-                  Container(
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        IconButton(
-                          icon: const FaIcon(FontAwesomeIcons.yelp),
-                          color: const Color(0xFFD32323),
-                          iconSize: 32,
-                          tooltip: 'Open in Yelp',
-                          constraints: const BoxConstraints(),
-                          padding: EdgeInsets.zero,
-                          onPressed: () => _launchUrl(mediaPath),
-                        ),
-                      ],
-                    ),
-                  ),
-                if (isMapsUrl)
-                  Container(
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        IconButton(
-                          icon: const FaIcon(FontAwesomeIcons.google),
-                          color: const Color(0xFF4285F4),
-                          iconSize: 32,
-                          tooltip: 'Open in Google Maps',
-                          constraints: const BoxConstraints(),
-                          padding: EdgeInsets.zero,
-                          onPressed: () => _launchUrl(mediaPath),
-                        ),
-                      ],
-                    ),
-                  ),
-                if (isNetworkUrl && !isInstagramUrl && !isYelpUrl && !isMapsUrl)
-                  Container(
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        IconButton(
-                          icon: Icon(
-                            Icons.open_in_new,
-                            color: Colors.blue.shade700,
-                            size: 28,
-                          ),
-                          tooltip: 'Open Link',
-                          constraints: const BoxConstraints(),
-                          padding: EdgeInsets.zero,
-                          onPressed: () => _launchUrl(mediaPath),
-                        ),
-                      ],
-                    ),
-                  ),
               ],
             ),
           ),
