@@ -2378,12 +2378,7 @@ class _MapScreenState extends State<MapScreen> {
                             ),
                           ),
                         ),
-                      GestureDetector(
-                        onTap: _tappedExperience != null
-                            ? () => _navigateToExperience(_tappedExperience!, _tappedExperienceCategory!)
-                            : null,
-                        behavior: HitTestBehavior.translucent,
-                        child: Column(
+                      Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         mainAxisSize: MainAxisSize.min, 
                         children: [
@@ -2422,6 +2417,24 @@ class _MapScreenState extends State<MapScreen> {
                           ),
                           SizedBox(height: 8),
                           if (_tappedExperience != null) ...[
+                            TextButton.icon(
+                              onPressed: _tappedExperienceCategory != null
+                                  ? () {
+                                      print("🗺️ MAP SCREEN: 'View experience' button tapped. Navigating to experience page.");
+                                      _navigateToExperience(
+                                          _tappedExperience!, _tappedExperienceCategory!);
+                                    }
+                                  : null,
+                              icon: const Icon(Icons.open_in_new),
+                              label: const Text('View experience'),
+                              style: TextButton.styleFrom(
+                                padding: EdgeInsets.zero,
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                minimumSize: const Size(0, 32),
+                                alignment: Alignment.centerLeft,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
                             if (_tappedExperience!.otherCategories.isNotEmpty) ...[
                               _buildOtherCategoriesWidget(),
                               const SizedBox(height: 12),
@@ -2533,7 +2546,6 @@ class _MapScreenState extends State<MapScreen> {
 
                           const SizedBox(height: 12),
                         ],
-                        ),
                       ),
                     Positioned(
                       top: -8,
