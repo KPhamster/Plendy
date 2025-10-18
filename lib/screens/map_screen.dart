@@ -636,6 +636,8 @@ class _MapScreenState extends State<MapScreen> {
           mediaItem: resolvedItems.first,
           mediaItems: resolvedItems,
           onLaunchUrl: _launchExternalUrl,
+          category: _tappedExperienceCategory,
+          userColorCategories: _colorCategories,
         );
       },
     );

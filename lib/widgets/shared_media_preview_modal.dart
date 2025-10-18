@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../models/experience.dart';
+import '../models/user_category.dart';
+import '../models/color_category.dart';
 import '../models/shared_media_item.dart';
 // Use the same preview widgets as Experience Page content tab
 import '../screens/receive_share/widgets/instagram_preview_widget.dart'
@@ -14,12 +16,15 @@ import '../screens/receive_share/widgets/web_url_preview_widget.dart';
 import '../screens/receive_share/widgets/maps_preview_widget.dart';
 import '../services/google_maps_service.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import '../screens/experience_page_screen.dart';
 
 class SharedMediaPreviewModal extends StatefulWidget {
   final Experience experience;
   final SharedMediaItem mediaItem;
   final List<SharedMediaItem> mediaItems;
   final Future<void> Function(String url) onLaunchUrl;
+  final UserCategory? category;
+  final List<ColorCategory> userColorCategories;
 
   const SharedMediaPreviewModal({
     super.key,
@@ -27,6 +32,8 @@ class SharedMediaPreviewModal extends StatefulWidget {
     required this.mediaItem,
     required this.mediaItems,
     required this.onLaunchUrl,
+    this.category,
+    this.userColorCategories = const <ColorCategory>[],
   });
 
   @override
@@ -624,19 +631,57 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
     }
 
     return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
       children: [
+        const Expanded(child: SizedBox()),
         IconButton(
           tooltip: tooltip,
           iconSize: iconSize,
           onPressed: isLaunchable ? () => widget.onLaunchUrl(url) : null,
           icon: Icon(iconData, color: iconColor),
         ),
+        Expanded(
+          child: Align(
+            alignment: Alignment.centerRight,
+            child: IconButton(
+              tooltip: 'View experience details',
+              iconSize: 28,
+              icon: Icon(Icons.arrow_forward_rounded,
+                  color: Theme.of(context).primaryColor),
+              onPressed: () {
+                final navigator = Navigator.of(context, rootNavigator: true);
+                navigator.pop();
+                navigator.push(
+                  MaterialPageRoute(
+                    builder: (_) => ExperiencePageScreen(
+                      experience: widget.experience,
+                      category: widget.category ?? _buildFallbackCategory(),
+                      userColorCategories: widget.userColorCategories,
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
       ],
     );
   }
 
   // Removed unused _copyToClipboard helper
+
+  UserCategory _buildFallbackCategory() {
+    final experience = widget.experience;
+    final String categoryId = experience.categoryId ?? 'experience';
+    final String ownerId = experience.createdBy ?? 'unknown-owner';
+    final String icon = experience.categoryIconDenorm ?? '📍';
+    const String name = 'Saved Place';
+    return UserCategory(
+      id: categoryId,
+      name: name,
+      icon: icon,
+      ownerUserId: ownerId,
+    );
+  }
 
   _MediaType _classifyUrl(String url) {
     final lower = url.toLowerCase();
