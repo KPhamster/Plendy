@@ -2335,6 +2335,7 @@ class _MapScreenState extends State<MapScreen> {
                     allowSelection: true,
                     onLocationSelected: _handleLocationSelected,
                     showControls: true,
+                    mapToolbarEnabled: _tappedExperience == null,
                     additionalMarkers: allMarkers,
                     onMapControllerCreated: _onMapWidgetCreated,
                   ),

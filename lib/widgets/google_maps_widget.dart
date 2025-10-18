@@ -14,6 +14,7 @@ class GoogleMapsWidget extends StatefulWidget {
   final bool allowSelection;
   final Function(Location)? onLocationSelected;
   final bool showControls;
+  final bool mapToolbarEnabled;
   final Map<String, Marker>? additionalMarkers;
   final Function(GoogleMapController)? onMapControllerCreated;
 
@@ -24,6 +25,7 @@ class GoogleMapsWidget extends StatefulWidget {
     this.showUserLocation = true,
     this.allowSelection = true, // Default to true
     this.showControls = true,
+    this.mapToolbarEnabled = true,
     this.onLocationSelected,
     this.additionalMarkers,
     this.onMapControllerCreated,
@@ -216,7 +218,7 @@ class _GoogleMapsWidgetState extends State<GoogleMapsWidget> {
               widget.showUserLocation && widget.showControls,
           zoomControlsEnabled: widget.showControls,
           compassEnabled: widget.showControls,
-          mapToolbarEnabled: widget.showControls,
+          mapToolbarEnabled: widget.mapToolbarEnabled,
           // Use the internal markers map now
           markers: Set<Marker>.of(_markers.values),
           onMapCreated: _onMapCreated,
