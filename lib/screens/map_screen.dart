@@ -691,19 +691,24 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   void _showMarkerInfoWindow(MarkerId markerId) {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) {
-        return;
-      }
+    // Try immediately after the current frame, then retry once after a short delay.
+    // This mitigates a first-tap race where the selected marker may not be ready yet.
+    Future<void> _showNow() async {
+      if (!mounted) return;
       if (_mapController != null) {
         _mapController!.showMarkerInfoWindow(markerId);
       } else {
-        _mapControllerCompleter.future.then((controller) {
-          if (mounted) {
-            controller.showMarkerInfoWindow(markerId);
-          }
-        });
+        final controller = await _mapControllerCompleter.future;
+        if (!mounted) return;
+        controller.showMarkerInfoWindow(markerId);
       }
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await _showNow();
+      // Retry shortly after to ensure the marker is present on the map (fixes first-tap case)
+      await Future.delayed(const Duration(milliseconds: 150));
+      await _showNow();
     });
   }
 
