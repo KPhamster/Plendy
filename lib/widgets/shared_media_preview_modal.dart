@@ -198,7 +198,7 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
                         if (multipleItems) ...[
                           const SizedBox(height: 24),
                           Text(
-                            'Other recent links',
+                            'Saved links',
                             style: theme.textTheme.titleSmall
                                 ?.copyWith(fontWeight: FontWeight.w600),
                           ),
@@ -208,7 +208,7 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
                             runSpacing: 8,
                             children: widget.mediaItems
                                 .take(6)
-                                .map((item) => _buildMediaChip(item))
+                                .map((item) => _buildMediaChip(context, item))
                                 .toList(),
                           ),
                         ],
@@ -361,15 +361,23 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
   }
 
   // Removed custom YouTube thumbnail helper; using YouTubePreviewWidget instead for parity
-
-
-  Widget _buildMediaChip(SharedMediaItem item) {
+  Widget _buildMediaChip(BuildContext context, SharedMediaItem item) {
+    final theme = Theme.of(context);
     final isActive = item.id == _activeItem.id;
     final label = _formatChipTimestamp(item.createdAt);
+    final defaultTextColor =
+        theme.textTheme.bodyMedium?.color ?? theme.colorScheme.onSurface;
 
     return ChoiceChip(
       selected: isActive,
-      label: Text(label),
+      selectedColor: theme.primaryColor,
+      checkmarkColor: Colors.white,
+      label: Text(
+        label,
+        style: TextStyle(
+          color: isActive ? Colors.white : defaultTextColor,
+        ),
+      ),
       onSelected: (selected) {
         if (!selected) return;
         final int targetIndex = widget.mediaItems.indexWhere((it) => it.id == item.id);
@@ -425,13 +433,16 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
         Text(
           'Details',
           style: theme.textTheme.titleSmall
-              ?.copyWith(fontWeight: FontWeight.w600),
+              ?.copyWith(
+                fontWeight: FontWeight.w600,
+                color: theme.primaryColor,
+              ),
         ),
         const SizedBox(height: 8),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
           decoration: BoxDecoration(
-            color: theme.colorScheme.surfaceVariant.withOpacity(0.5),
+            color: theme.primaryColor,
             borderRadius: BorderRadius.circular(12),
           ),
           child: Column(
@@ -441,6 +452,9 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
                 icon: Icons.schedule,
                 label: 'Saved',
                 value: formattedDate,
+                iconColor: Colors.white,
+                labelColor: Colors.white,
+                valueColor: Colors.white,
               ),
               const SizedBox(height: 8),
               _buildMetadataRow(
@@ -448,6 +462,9 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
                 label: 'URL',
                 value: mediaItem.path,
                 isSelectable: true,
+                iconColor: Colors.white,
+                labelColor: Colors.white,
+                valueColor: Colors.white,
               ),
             ],
           ),
@@ -461,15 +478,25 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
     required String label,
     required String value,
     bool isSelectable = false,
+    Color? iconColor,
+    Color? labelColor,
+    Color? valueColor,
   }) {
+    final effectiveIconColor = iconColor ?? Colors.grey.shade600;
+    final effectiveLabelColor = labelColor ?? Colors.grey.shade600;
+    final effectiveValueColor = valueColor ?? Colors.black87;
+    final baseValueStyle = TextStyle(
+      fontSize: 13,
+      color: effectiveValueColor,
+    );
     final textWidget = isSelectable
         ? SelectableText(
             value,
-            style: const TextStyle(fontSize: 13),
+            style: baseValueStyle,
           )
         : Text(
             value,
-            style: const TextStyle(fontSize: 13),
+            style: baseValueStyle,
           );
 
     return Row(
@@ -477,7 +504,7 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
       children: [
         Padding(
           padding: const EdgeInsets.only(top: 1),
-          child: Icon(icon, size: 18, color: Colors.grey.shade600),
+          child: Icon(icon, size: 18, color: effectiveIconColor),
         ),
         const SizedBox(width: 8),
         Expanded(
@@ -487,7 +514,7 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
               Text(
                 label,
                 style: TextStyle(
-                  color: Colors.grey.shade600,
+                  color: effectiveLabelColor,
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
                 ),
