@@ -214,7 +214,6 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
                             spacing: 8,
                             runSpacing: 8,
                             children: widget.mediaItems
-                                .take(6)
                                 .map((item) => _buildMediaChip(context, item))
                                 .toList(),
                           ),
