@@ -36,6 +36,8 @@ class SharedMediaPreviewModal extends StatefulWidget {
 
 class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
   late SharedMediaItem _activeItem;
+  late PageController _pageController;
+  int _currentIndex = 0;
   // For Maps preview parity with ExperiencePageScreen
   final GoogleMapsService _mapsService = GoogleMapsService();
   final Map<String, Future<Map<String, dynamic>?>> _mapsPreviewFutures = {};
@@ -57,7 +59,17 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
   @override
   void initState() {
     super.initState();
-    _activeItem = widget.mediaItem;
+    // Initialize current index based on provided mediaItem
+    final initialIdx = widget.mediaItems.indexWhere((it) => it.id == widget.mediaItem.id);
+    _currentIndex = initialIdx >= 0 ? initialIdx : 0;
+    _activeItem = widget.mediaItems.isNotEmpty ? widget.mediaItems[_currentIndex] : widget.mediaItem;
+    _pageController = PageController(initialPage: _currentIndex);
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
   }
 
   String _formatFullTimestamp(DateTime timestamp) {
@@ -91,7 +103,7 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
     final multipleItems = widget.mediaItems.length > 1;
 
     return FractionallySizedBox(
-      heightFactor: 0.92,
+      heightFactor: 0.95,
       child: Material(
         color: Colors.transparent,
         child: Container(
@@ -134,14 +146,6 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
                               style: theme.textTheme.titleMedium
                                   ?.copyWith(fontWeight: FontWeight.w600),
                             ),
-                            const SizedBox(height: 4),
-                            Text(
-                              multipleItems
-                                  ? 'Showing newest of ${widget.mediaItems.length} saved items'
-                                  : 'Latest shared content',
-                              style: theme.textTheme.bodySmall
-                                  ?.copyWith(color: Colors.grey.shade600),
-                            ),
                           ],
                         ),
                       ),
@@ -161,7 +165,31 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        _buildPreview(context, media),
+                        // Preview (carousel when multiple items)
+                        if (multipleItems)
+                          SizedBox(
+                            height: 640.0,
+                            child: PageView.builder(
+                              controller: _pageController,
+                              itemCount: widget.mediaItems.length,
+                              onPageChanged: (index) {
+                                setState(() {
+                                  _currentIndex = index;
+                                  _activeItem = widget.mediaItems[index];
+                                });
+                              },
+                              itemBuilder: (context, index) {
+                                final item = widget.mediaItems[index];
+                                return _buildPreview(context, item);
+                              },
+                            ),
+                          )
+                        else
+                          _buildPreview(context, media),
+                        if (multipleItems) ...[
+                          const SizedBox(height: 8),
+                          _buildCarouselDots(),
+                        ],
                         const SizedBox(height: 12),
                         _buildActionButtons(context, media),
                         const SizedBox(height: 12),
@@ -344,10 +372,46 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
       label: Text(label),
       onSelected: (selected) {
         if (!selected) return;
-        setState(() {
-          _activeItem = item;
-        });
+        final int targetIndex = widget.mediaItems.indexWhere((it) => it.id == item.id);
+        if (targetIndex >= 0) {
+          // Animate the carousel to the selected item
+          _pageController.animateToPage(
+            targetIndex,
+            duration: const Duration(milliseconds: 250),
+            curve: Curves.easeInOut,
+          );
+          setState(() {
+            _currentIndex = targetIndex;
+            _activeItem = widget.mediaItems[targetIndex];
+          });
+        } else {
+          // Fallback: just switch active item
+          setState(() {
+            _activeItem = item;
+          });
+        }
       },
+    );
+  }
+
+  Widget _buildCarouselDots() {
+    final total = widget.mediaItems.length;
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: List.generate(total, (index) {
+        final bool isActive = index == _currentIndex;
+        return AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeInOut,
+          margin: const EdgeInsets.symmetric(horizontal: 4),
+          width: isActive ? 10 : 8,
+          height: isActive ? 10 : 8,
+          decoration: BoxDecoration(
+            color: isActive ? Theme.of(context).primaryColor : Colors.grey.shade400,
+            shape: BoxShape.circle,
+          ),
+        );
+      }),
     );
   }
 
