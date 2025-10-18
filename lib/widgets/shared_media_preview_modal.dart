@@ -3,6 +3,17 @@ import 'package:flutter/services.dart';
 
 import '../models/experience.dart';
 import '../models/shared_media_item.dart';
+// Use the same preview widgets as Experience Page content tab
+import '../screens/receive_share/widgets/instagram_preview_widget.dart'
+    as instagram_widget;
+import '../screens/receive_share/widgets/tiktok_preview_widget.dart';
+import '../screens/receive_share/widgets/facebook_preview_widget.dart';
+import '../screens/receive_share/widgets/youtube_preview_widget.dart';
+import '../screens/receive_share/widgets/generic_url_preview_widget.dart';
+import '../screens/receive_share/widgets/web_url_preview_widget.dart';
+import '../screens/receive_share/widgets/maps_preview_widget.dart';
+import '../services/google_maps_service.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 
 class SharedMediaPreviewModal extends StatefulWidget {
   final Experience experience;
@@ -25,6 +36,9 @@ class SharedMediaPreviewModal extends StatefulWidget {
 
 class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
   late SharedMediaItem _activeItem;
+  // For Maps preview parity with ExperiencePageScreen
+  final GoogleMapsService _mapsService = GoogleMapsService();
+  final Map<String, Future<Map<String, dynamic>?>> _mapsPreviewFutures = {};
   static const List<String> _monthAbbreviations = [
     'Jan',
     'Feb',
@@ -149,9 +163,10 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
                       children: [
                         _buildPreview(context, media),
                         const SizedBox(height: 12),
+                        _buildActionButtons(context, media),
+                        const SizedBox(height: 12),
                         _buildMetadataSection(theme, media),
                         const SizedBox(height: 16),
-                        _buildActionButtons(context, media),
                         if (multipleItems) ...[
                           const SizedBox(height: 24),
                           Text(
@@ -192,8 +207,81 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
     }
 
     final type = _classifyUrl(url);
-    if (type == _MediaType.image) {
+    // Use parity with ExperiencePageScreen content tab
+    if (type == _MediaType.tiktok) {
+      return TikTokPreviewWidget(
+        key: ValueKey(url),
+        url: url,
+        launchUrlCallback: widget.onLaunchUrl,
+        showControls: false,
+      );
+    }
+
+    if (type == _MediaType.instagram) {
+      return instagram_widget.InstagramWebView(
+        key: ValueKey(url),
+        url: url,
+        height: 640.0,
+        launchUrlCallback: widget.onLaunchUrl,
+        onWebViewCreated: (_) {},
+        onPageFinished: (_) {},
+      );
+    }
+
+    if (type == _MediaType.facebook) {
+      return FacebookPreviewWidget(
+        key: ValueKey(url),
+        url: url,
+        height: 500.0,
+        onWebViewCreated: (_) {},
+        onPageFinished: (_) {},
+        launchUrlCallback: widget.onLaunchUrl,
+        showControls: false,
+      );
+    }
+
+    if (type == _MediaType.youtube) {
+      return YouTubePreviewWidget(
+        key: ValueKey(url),
+        url: url,
+        launchUrlCallback: widget.onLaunchUrl,
+        showControls: false,
+        onWebViewCreated: (_) {},
+      );
+    }
+
+    if (type == _MediaType.maps) {
+      // Seed a resolved future using the known experience/location data
+      _mapsPreviewFutures[url] = Future.value({
+        'location': widget.experience.location,
+        'placeName': widget.experience.name,
+        'mapsUrl': url,
+        'website': widget.experience.location.website,
+      });
+      return MapsPreviewWidget(
+        key: ValueKey(url),
+        mapsUrl: url,
+        mapsPreviewFutures: _mapsPreviewFutures,
+        getLocationFromMapsUrl: (u) async => null,
+        launchUrlCallback: widget.onLaunchUrl,
+        mapsService: _mapsService,
+      );
+    }
+
+    if (type == _MediaType.yelp) {
+      return WebUrlPreviewWidget(
+        key: ValueKey(url),
+        url: url,
+        launchUrlCallback: widget.onLaunchUrl,
+        showControls: false,
+        height: 1000.0,
+      );
+    }
+
+    // Image preview for direct and likely image URLs
+    if (type == _MediaType.image || _isLikelyImageUrl(url)) {
       return ClipRRect(
+        key: ValueKey(url),
         borderRadius: BorderRadius.circular(16),
         child: AspectRatio(
           aspectRatio: 4 / 5,
@@ -221,15 +309,30 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
       );
     }
 
-    final icon = _iconForType(type);
-    final label = _labelForType(type);
-
-    return _buildLinkPreviewCard(
-      icon: icon,
-      label: label,
+    // Generic web URL fallback
+    return GenericUrlPreviewWidget(
+      key: ValueKey(url),
       url: url,
+      launchUrlCallback: widget.onLaunchUrl,
     );
   }
+
+  // Best-effort heuristic to detect image-like URLs without extensions
+  bool _isLikelyImageUrl(String url) {
+    final lower = url.toLowerCase();
+    return lower.contains('googleusercontent.com') ||
+        lower.contains('ggpht.com') ||
+        lower.contains('gstatic.com') ||
+        lower.contains('firebasestorage.googleapis.com') ||
+        lower.contains('cloudfront.net') ||
+        lower.contains('amazonaws.com') ||
+        lower.contains('imgur.com') ||
+        lower.contains('unsplash.com') ||
+        lower.contains('pbs.twimg.com') ||
+        lower.contains('staticflickr.com');
+  }
+
+  // Removed custom YouTube thumbnail helper; using YouTubePreviewWidget instead for parity
 
 
   Widget _buildMediaChip(SharedMediaItem item) {
@@ -369,96 +472,80 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
     );
   }
 
-  Widget _buildLinkPreviewCard({
-    required IconData icon,
-    required String label,
-    required String url,
-  }) {
-    final theme = Theme.of(context);
-    return Card(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(icon, color: theme.colorScheme.primary),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    label,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w600,
-                      fontSize: 16,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Container(
-              width: double.infinity,
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(12),
-                color: Colors.grey.shade100,
-              ),
-              child: SelectableText(
-                url,
-                style: const TextStyle(fontSize: 13),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                TextButton.icon(
-                  onPressed: () => widget.onLaunchUrl(url),
-                  icon: const Icon(Icons.open_in_new),
-                  label: const Text('Open'),
-                ),
-                const SizedBox(width: 8),
-                TextButton.icon(
-                  onPressed: () => _copyToClipboard(url),
-                  icon: const Icon(Icons.copy),
-                  label: const Text('Copy link'),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  // Removed unused _buildLinkPreviewCard (replaced by GenericUrlPreviewWidget)
 
   Widget _buildActionButtons(BuildContext context, SharedMediaItem mediaItem) {
     final url = mediaItem.path;
     final isLaunchable =
         url.toLowerCase().startsWith('http://') || url.toLowerCase().startsWith('https://');
 
+    // Choose icon and tooltip based on content type, mirroring ExperiencePageScreen
+    final type = _classifyUrl(url);
+    IconData iconData = Icons.open_in_new;
+    Color? iconColor;
+    double iconSize = 28;
+    String tooltip = 'Open link';
+
+    switch (type) {
+      case _MediaType.tiktok:
+        iconData = FontAwesomeIcons.tiktok;
+        iconColor = Colors.black;
+        tooltip = 'Open in TikTok';
+        iconSize = 30;
+        break;
+      case _MediaType.instagram:
+        iconData = FontAwesomeIcons.instagram;
+        iconColor = const Color(0xFFE1306C);
+        tooltip = 'Open in Instagram';
+        iconSize = 30;
+        break;
+      case _MediaType.facebook:
+        iconData = FontAwesomeIcons.facebook;
+        iconColor = const Color(0xFF1877F2);
+        tooltip = 'Open in Facebook';
+        iconSize = 30;
+        break;
+      case _MediaType.youtube:
+        iconData = FontAwesomeIcons.youtube;
+        iconColor = Colors.red;
+        tooltip = 'Open in YouTube';
+        iconSize = 30;
+        break;
+      case _MediaType.maps:
+        iconData = FontAwesomeIcons.google;
+        iconColor = const Color(0xFF4285F4);
+        tooltip = 'Open in Google Maps';
+        iconSize = 30;
+        break;
+      case _MediaType.yelp:
+        iconData = Icons.open_in_new;
+        iconColor = Theme.of(context).primaryColor;
+        tooltip = 'Open in browser';
+        iconSize = 28;
+        break;
+      case _MediaType.image:
+      case _MediaType.generic:
+        iconData = Icons.open_in_new;
+        iconColor = Theme.of(context).primaryColor;
+        tooltip = 'Open in browser';
+        iconSize = 28;
+        break;
+    }
+
     return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        Expanded(
-          child: FilledButton.icon(
-            onPressed: isLaunchable
-                ? () => widget.onLaunchUrl(url)
-                : null,
-            icon: const Icon(Icons.play_circle_filled),
-            label: const Text('Open in browser'),
-          ),
+        IconButton(
+          tooltip: tooltip,
+          iconSize: iconSize,
+          onPressed: isLaunchable ? () => widget.onLaunchUrl(url) : null,
+          icon: Icon(iconData, color: iconColor),
         ),
       ],
     );
   }
 
-  void _copyToClipboard(String url) {
-    Clipboard.setData(ClipboardData(text: url));
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Link copied to clipboard')),
-    );
-  }
+  // Removed unused _copyToClipboard helper
 
   _MediaType _classifyUrl(String url) {
     final lower = url.toLowerCase();
@@ -498,49 +585,11 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
     return _MediaType.generic;
   }
 
-  IconData _iconForType(_MediaType type) {
-    switch (type) {
-      case _MediaType.tiktok:
-        return Icons.music_note;
-      case _MediaType.instagram:
-        return Icons.camera_alt_outlined;
-      case _MediaType.facebook:
-        return Icons.facebook;
-      case _MediaType.youtube:
-        return Icons.ondemand_video;
-      case _MediaType.yelp:
-        return Icons.reviews;
-      case _MediaType.maps:
-        return Icons.map_outlined;
-      case _MediaType.image:
-        return Icons.image;
-      case _MediaType.generic:
-      default:
-        return Icons.link;
-    }
-  }
+  // Removed unused _extractYouTubeId (using YouTubePreviewWidget)
 
-  String _labelForType(_MediaType type) {
-    switch (type) {
-      case _MediaType.tiktok:
-        return 'TikTok link';
-      case _MediaType.instagram:
-        return 'Instagram link';
-      case _MediaType.facebook:
-        return 'Facebook link';
-      case _MediaType.youtube:
-        return 'YouTube link';
-      case _MediaType.yelp:
-        return 'Yelp link';
-      case _MediaType.maps:
-        return 'Maps link';
-      case _MediaType.image:
-        return 'Image preview';
-      case _MediaType.generic:
-      default:
-        return 'Shared link';
-    }
-  }
+  // Removed unused _iconForType helper
+
+  // Removed unused _labelForType helper
 }
 
 enum _MediaType { tiktok, instagram, facebook, youtube, yelp, maps, image, generic }
