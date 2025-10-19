@@ -348,71 +348,85 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     // Rebuilds show suffix icons immediately based on controller text
     return StatefulBuilder(
       builder: (context, setInnerState) {
+        final instructionStyle = Theme.of(context)
+            .textTheme
+            .bodySmall
+            ?.copyWith(color: Colors.grey[700]);
         return Container(
           color: Colors.white,
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-            child: TextField(
-              controller: _sharedUrlController,
-              focusNode: _sharedUrlFocusNode,
-              autofocus: widget.requireUrlFirst && !_didDeferredInit,
-              keyboardType: TextInputType.url,
-              decoration: InputDecoration(
-                labelText: 'Shared URL',
-                hintText: 'https://... or paste content with a URL',
-                border: const OutlineInputBorder(),
-                prefixIcon: const Icon(Icons.link),
-                suffixIconConstraints: const BoxConstraints.tightFor(
-                  width: 120,
-                  height: 48,
-                ),
-                suffixIcon: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    if (_sharedUrlController.text.isNotEmpty)
-                      InkWell(
-                        onTap: () {
-                          _sharedUrlController.clear();
-                          setInnerState(() {});
-                        },
-                        borderRadius: BorderRadius.circular(16),
-                        child: const Padding(
-                          padding: EdgeInsets.all(4.0),
-                          child: Icon(Icons.clear, size: 22),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextField(
+                  controller: _sharedUrlController,
+                  focusNode: _sharedUrlFocusNode,
+                  autofocus: widget.requireUrlFirst && !_didDeferredInit,
+                  keyboardType: TextInputType.url,
+                  decoration: InputDecoration(
+                    labelText: 'Shared URL',
+                    hintText: 'https://... or paste content with a URL',
+                    border: const OutlineInputBorder(),
+                    prefixIcon: const Icon(Icons.link),
+                    suffixIconConstraints: const BoxConstraints.tightFor(
+                      width: 120,
+                      height: 48,
+                    ),
+                    suffixIcon: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        if (_sharedUrlController.text.isNotEmpty)
+                          InkWell(
+                            onTap: () {
+                              _sharedUrlController.clear();
+                              setInnerState(() {});
+                            },
+                            borderRadius: BorderRadius.circular(16),
+                            child: const Padding(
+                              padding: EdgeInsets.all(4.0),
+                              child: Icon(Icons.clear, size: 22),
+                            ),
+                          ),
+                        if (_sharedUrlController.text.isNotEmpty)
+                          const SizedBox(width: 4),
+                        InkWell(
+                          onTap: () async {
+                            await _pasteSharedUrlFromClipboard();
+                            setInnerState(() {});
+                          },
+                          borderRadius: BorderRadius.circular(16),
+                          child: Padding(
+                            padding: const EdgeInsets.all(4.0),
+                            child: Icon(Icons.content_paste,
+                                size: 22, color: Colors.blue[700]),
+                          ),
                         ),
-                      ),
-                    if (_sharedUrlController.text.isNotEmpty)
-                      const SizedBox(width: 4),
-                    InkWell(
-                      onTap: () async {
-                        await _pasteSharedUrlFromClipboard();
-                        setInnerState(() {});
-                      },
-                      borderRadius: BorderRadius.circular(16),
-                      child: Padding(
-                        padding: const EdgeInsets.all(4.0),
-                        child: Icon(Icons.content_paste,
-                            size: 22, color: Colors.blue[700]),
-                      ),
+                        const SizedBox(width: 4),
+                        InkWell(
+                          onTap: _handleSharedUrlSubmit,
+                          borderRadius: BorderRadius.circular(16),
+                          child: const Padding(
+                            padding: EdgeInsets.fromLTRB(4, 4, 8, 4),
+                            child: Icon(Icons.arrow_circle_right,
+                                size: 22, color: Colors.blue),
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(width: 4),
-                    InkWell(
-                      onTap: _handleSharedUrlSubmit,
-                      borderRadius: BorderRadius.circular(16),
-                      child: const Padding(
-                        padding: EdgeInsets.fromLTRB(4, 4, 8, 4),
-                        child: Icon(Icons.arrow_circle_right,
-                            size: 22, color: Colors.blue),
-                      ),
-                    ),
-                  ],
+                  ),
+                  onSubmitted: (_) => _handleSharedUrlSubmit(),
+                  onChanged: (_) {
+                    setInnerState(() {});
+                  },
                 ),
-              ),
-              onSubmitted: (_) => _handleSharedUrlSubmit(),
-              onChanged: (_) {
-                setInnerState(() {});
-              },
+                const SizedBox(height: 8),
+                Text(
+                  'Paste any link you want to save to Plendy—from Instagram, TikTok, YouTube, Facebook, or any webpage!',
+                  style: instructionStyle,
+                ),
+              ],
             ),
           ),
         );
@@ -3414,27 +3428,20 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   @override
   Widget build(BuildContext context) {
     return _wrapWithWillPopScope(Scaffold(
+      backgroundColor: Colors.white,
       appBar: AppBar(
         backgroundColor: Colors.white,
         foregroundColor: Colors.black,
         elevation: 0,
         scrolledUnderElevation: 0,
         surfaceTintColor: Colors.white,
-        title: _isSpecialUrl(_currentSharedFiles.isNotEmpty
-                ? _extractFirstUrl(_currentSharedFiles.first.path) ?? ''
-                : '')
-            ? const Text('Save Shared Content')
-            : const Text('Save Shared Content'),
+        title: const Text('Save Content'),
         leading: IconButton(
           icon: Icon(Platform.isIOS ? Icons.arrow_back_ios : Icons.arrow_back),
           onPressed: () {
             _sharingService.markShareFlowAsInactive();
             if (mounted) {
-              Navigator.pushAndRemoveUntil(
-                context,
-                MaterialPageRoute(builder: (context) => const MainScreen()),
-                (Route<dynamic> route) => false,
-              );
+              Navigator.of(context).pop();
             }
           },
         ),
