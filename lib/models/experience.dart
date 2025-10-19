@@ -22,6 +22,7 @@ class Location extends Equatable {
   final String? photoUrl; // URL to the place's photo
   // ADDED: Google Places photo resource name (e.g., places/PLACE_ID/photos/PHOTO_REFERENCE)
   final String? photoResourceName;
+  final DateTime? photoResourceLastSyncedAt;
   final String? website; // Add website field
   final double? rating; // ADDED: Google Maps rating for the place
   final int? userRatingCount; // ADDED: Number of ratings
@@ -44,6 +45,7 @@ class Location extends Equatable {
     this.displayName,
     this.photoUrl,
     this.photoResourceName,
+    this.photoResourceLastSyncedAt,
     this.website, // Add to constructor
     this.rating, // ADDED
     this.userRatingCount, // ADDED
@@ -68,6 +70,7 @@ class Location extends Equatable {
         displayName,
         photoUrl,
         photoResourceName,
+        photoResourceLastSyncedAt,
         website,
         rating, // ADDED
         userRatingCount, // ADDED
@@ -92,6 +95,8 @@ class Location extends Equatable {
       placeId: map['placeId'],
       photoUrl: map['photoUrl'],
       photoResourceName: map['photoResourceName'],
+      photoResourceLastSyncedAt:
+          _parseNullableTimestamp(map['photoResourceLastSyncedAt']),
       website: map['website'], // Add from map
       rating: (map['rating'] as num?)?.toDouble(), // ADDED
       userRatingCount: map['userRatingCount'] as int?, // ADDED
@@ -133,9 +138,14 @@ class Location extends Equatable {
     if (placeId != null) map['placeId'] = placeId;
     if (photoUrl != null) map['photoUrl'] = photoUrl;
     if (photoResourceName != null) map['photoResourceName'] = photoResourceName;
+    if (photoResourceLastSyncedAt != null) {
+      map['photoResourceLastSyncedAt'] =
+          Timestamp.fromDate(photoResourceLastSyncedAt!);
+    }
     if (website != null) map['website'] = website; // Add to map
     if (rating != null) map['rating'] = rating; // ADDED
-    if (userRatingCount != null) map['userRatingCount'] = userRatingCount; // ADDED
+    if (userRatingCount != null)
+      map['userRatingCount'] = userRatingCount; // ADDED
 
     return map;
   }
@@ -168,6 +178,78 @@ class Location extends Equatable {
     }
 
     return parts.isNotEmpty ? parts.join(', ') : null;
+  }
+
+  Location copyWith({
+    String? placeId,
+    double? latitude,
+    double? longitude,
+    String? address,
+    String? city,
+    String? state,
+    String? country,
+    String? zipCode,
+    String? administrativeAreaLevel2,
+    String? administrativeAreaLevel3,
+    String? administrativeAreaLevel4,
+    String? administrativeAreaLevel5,
+    String? administrativeAreaLevel6,
+    String? administrativeAreaLevel7,
+    String? displayName,
+    String? photoUrl,
+    String? photoResourceName,
+    DateTime? photoResourceLastSyncedAt,
+    String? website,
+    double? rating,
+    int? userRatingCount,
+  }) {
+    return Location(
+      placeId: placeId ?? this.placeId,
+      latitude: latitude ?? this.latitude,
+      longitude: longitude ?? this.longitude,
+      address: address ?? this.address,
+      city: city ?? this.city,
+      state: state ?? this.state,
+      country: country ?? this.country,
+      zipCode: zipCode ?? this.zipCode,
+      administrativeAreaLevel2:
+          administrativeAreaLevel2 ?? this.administrativeAreaLevel2,
+      administrativeAreaLevel3:
+          administrativeAreaLevel3 ?? this.administrativeAreaLevel3,
+      administrativeAreaLevel4:
+          administrativeAreaLevel4 ?? this.administrativeAreaLevel4,
+      administrativeAreaLevel5:
+          administrativeAreaLevel5 ?? this.administrativeAreaLevel5,
+      administrativeAreaLevel6:
+          administrativeAreaLevel6 ?? this.administrativeAreaLevel6,
+      administrativeAreaLevel7:
+          administrativeAreaLevel7 ?? this.administrativeAreaLevel7,
+      displayName: displayName ?? this.displayName,
+      photoUrl: photoUrl ?? this.photoUrl,
+      photoResourceName: photoResourceName ?? this.photoResourceName,
+      photoResourceLastSyncedAt:
+          photoResourceLastSyncedAt ?? this.photoResourceLastSyncedAt,
+      website: website ?? this.website,
+      rating: rating ?? this.rating,
+      userRatingCount: userRatingCount ?? this.userRatingCount,
+    );
+  }
+
+  static DateTime? _parseNullableTimestamp(dynamic value) {
+    if (value == null) return null;
+    if (value is Timestamp) {
+      return value.toDate();
+    }
+    if (value is DateTime) {
+      return value;
+    }
+    if (value is String) {
+      return DateTime.tryParse(value);
+    }
+    if (value is int) {
+      return DateTime.fromMillisecondsSinceEpoch(value);
+    }
+    return null;
   }
 }
 
@@ -217,8 +299,10 @@ class Experience {
   // --- END ADDED ---
 
   // --- DENORMALIZED for fast map rendering ---
-  final String? categoryIconDenorm; // Emoji/icon denormalized from owner category
-  final String? colorHexDenorm; // Hex color denormalized from owner color category
+  final String?
+      categoryIconDenorm; // Emoji/icon denormalized from owner category
+  final String?
+      colorHexDenorm; // Hex color denormalized from owner color category
   // --- END DENORMALIZED ---
 
   // Owner
@@ -380,7 +464,8 @@ class Experience {
       name: name ?? this.name,
       description: description ?? this.description,
       location: location ?? this.location,
-      categoryId: clearCategoryId ? null : (categoryId ?? this.categoryId), // NEW
+      categoryId:
+          clearCategoryId ? null : (categoryId ?? this.categoryId), // NEW
       yelpUrl: yelpUrl ?? this.yelpUrl,
       yelpRating: yelpRating ?? this.yelpRating,
       yelpReviewCount: yelpReviewCount ?? this.yelpReviewCount,
