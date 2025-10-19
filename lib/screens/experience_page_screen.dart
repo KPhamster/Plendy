@@ -59,8 +59,10 @@ class ExperiencePageScreen extends StatefulWidget {
   final List<ColorCategory> userColorCategories;
   final List<SharedMediaItem>? initialMediaItems; // Optional media for previews
   final bool readOnlyPreview; // Hide actions when true
-  final String? shareBannerFromUserId; // If provided, show overlay text in header
-  final Future<void> Function()? onSaveExperience; // Callback handled by SharePreviewScreen
+  final String?
+      shareBannerFromUserId; // If provided, show overlay text in header
+  final Future<void> Function()?
+      onSaveExperience; // Callback handled by SharePreviewScreen
   // ADDED: Share preview metadata for dynamic messaging
   final String? sharePreviewType; // 'my_copy' | 'separate_copy'
   final String? shareAccessMode; // 'view' | 'edit'
@@ -97,7 +99,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   Map<String, dynamic>? _placeDetailsData;
   String? _headerPhotoUrl; // ADDED: State variable for header photo
   String? _shareBannerDisplayName; // Resolved sharer display name
-  
+
   // ADDED: Helper to build DecorationImage using photo resource name with caching
   DecorationImage? _buildHeaderDecorationImage(Experience experience) {
     final String? resourceName = experience.location.photoResourceName;
@@ -159,9 +161,12 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   // --- END ADDED ---
   // --- ADDED: Webview controllers for refresh ---
   final Map<String, WebViewController> _webViewControllers = {};
-  final Map<String, GlobalKey<TikTokPreviewWidgetState>> _tiktokControllerKeys = {};
-  final Map<String, GlobalKey<instagram_widget.InstagramWebViewState>> _instagramControllerKeys = {};
-  final Map<String, GlobalKey<YouTubePreviewWidgetState>> _youtubeControllerKeys = {};
+  final Map<String, GlobalKey<TikTokPreviewWidgetState>> _tiktokControllerKeys =
+      {};
+  final Map<String, GlobalKey<instagram_widget.InstagramWebViewState>>
+      _instagramControllerKeys = {};
+  final Map<String, GlobalKey<YouTubePreviewWidgetState>>
+      _youtubeControllerKeys = {};
   // --- END ADDED ---
 
   // --- ADDED: State for other experiences linked to media --- START ---
@@ -170,6 +175,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   Map<String, UserCategory> _fetchedCategoriesForMedia =
       {}; // Separate cache for media tab categories
   // --- ADDED: State for other experiences linked to media --- END ---
+
+  static const Duration _photoRefreshInterval = Duration(days: 30);
 
   // REMOVED: Instagram Credentials
   // String? _instagramAppId;
@@ -203,26 +210,42 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       // Fallback to widget.category if no categoryId
       return widget.category;
     }
-    
+
     // Try to find the category from loaded user categories
     final category = _userCategories.firstWhereOrNull(
       (cat) => cat.id == _currentExperience.categoryId,
     );
-    
+
     // Return found category or fallback to widget.category
     return category ?? widget.category;
   }
 
   bool _isLocationUnset(Experience experience) {
     final String? address = experience.location.address;
-    if (address != null && address.trim().toLowerCase() == 'no location specified') {
+    if (address != null &&
+        address.trim().toLowerCase() == 'no location specified') {
       return true;
     }
     final String? displayName = experience.location.displayName;
-    if (displayName != null && displayName.trim().toLowerCase() == 'no location specified') {
+    if (displayName != null &&
+        displayName.trim().toLowerCase() == 'no location specified') {
       return true;
     }
     return false;
+  }
+
+  bool _isPhotoRefreshDue(Location location) {
+    final String? resourceName = location.photoResourceName;
+    if (resourceName == null || resourceName.isEmpty) {
+      return true;
+    }
+    final DateTime? lastSyncedAt = location.photoResourceLastSyncedAt;
+    if (lastSyncedAt == null) {
+      return true;
+    }
+    final DateTime nowUtc = DateTime.now().toUtc();
+    final DateTime lastSyncUtc = lastSyncedAt.toUtc();
+    return nowUtc.isAfter(lastSyncUtc.add(_photoRefreshInterval));
   }
 
   @override
@@ -259,7 +282,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     }
 
     // If this is a share preview with a fromUserId, resolve their display name
-    if (widget.shareBannerFromUserId != null && widget.shareBannerFromUserId!.isNotEmpty) {
+    if (widget.shareBannerFromUserId != null &&
+        widget.shareBannerFromUserId!.isNotEmpty) {
       _resolveSharerDisplayName(widget.shareBannerFromUserId!);
     }
   }
@@ -302,6 +326,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   // Method to fetch place details
   Future<void> _fetchPlaceDetails() async {
     final placeId = _currentExperience.location.placeId;
+    final Location originalLocation = _currentExperience.location;
     if (placeId == null || placeId.isEmpty) {
       if (mounted) {
         setState(() {
@@ -323,7 +348,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
 
       if (mounted) {
         if (fetchedDetailsMap != null) {
-          String? newConstructedPhotoUrl; // legacy immediate use (not persisted)
+          String?
+              newConstructedPhotoUrl; // legacy immediate use (not persisted)
           String? newPhotoResourceName; // ADDED: persistable resource name
 
           // Try to get photo resource name from fetchedDetailsMap
@@ -332,77 +358,87 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
               (fetchedDetailsMap['photos'] as List).isNotEmpty) {
             final photosList = fetchedDetailsMap['photos'] as List;
             final firstPhotoData = photosList.first as Map<String, dynamic>?;
-            final String? photoResourceName = firstPhotoData?['name'] as String?;
+            final String? photoResourceName =
+                firstPhotoData?['name'] as String?;
 
             if (photoResourceName != null && photoResourceName.isNotEmpty) {
               newPhotoResourceName = photoResourceName; // store for persistence
               // Optionally build a transient URL for immediate UI use
-              newConstructedPhotoUrl = GoogleMapsService
-                  .buildPlacePhotoUrlFromResourceName(photoResourceName,
-                      maxWidthPx: 800, maxHeightPx: 600);
+              newConstructedPhotoUrl =
+                  GoogleMapsService.buildPlacePhotoUrlFromResourceName(
+                      photoResourceName,
+                      maxWidthPx: 800,
+                      maxHeightPx: 600);
               if (newConstructedPhotoUrl != null) {
-                print("ExperiencePageScreen: Constructed transient photo URL: $newConstructedPhotoUrl");
+                print(
+                    "ExperiencePageScreen: Constructed transient photo URL: $newConstructedPhotoUrl");
               }
             } else {
-              print("ExperiencePageScreen: No photo resource name found in fetched details.");
+              print(
+                  "ExperiencePageScreen: No photo resource name found in fetched details.");
             }
           } else {
-            print("ExperiencePageScreen: No 'photos' array or empty in fetched details.");
+            print(
+                "ExperiencePageScreen: No 'photos' array or empty in fetched details.");
           }
+
+          final bool isPhotoRefreshDue = _isPhotoRefreshDue(originalLocation);
+          final String? resolvedPhotoResourceName =
+              (newPhotoResourceName != null && newPhotoResourceName.isNotEmpty)
+                  ? newPhotoResourceName
+                  : originalLocation.photoResourceName;
+          final bool resourceNameChanged =
+              resolvedPhotoResourceName != originalLocation.photoResourceName;
+          final bool shouldPersistLocationUpdate =
+              resourceNameChanged || isPhotoRefreshDue;
+          final DateTime? nextSyncedAt =
+              shouldPersistLocationUpdate ? DateTime.now().toUtc() : null;
+          final Location? updatedLocation = shouldPersistLocationUpdate
+              ? originalLocation.copyWith(
+                  photoResourceName: resolvedPhotoResourceName,
+                  photoResourceLastSyncedAt: nextSyncedAt,
+                )
+              : null;
+          final Experience? updatedExperience = updatedLocation != null
+              ? _currentExperience.copyWith(location: updatedLocation)
+              : null;
 
           setState(() {
             _placeDetailsData = fetchedDetailsMap; // Store the raw details map
 
-            String? finalPhotoUrlToSet = newConstructedPhotoUrl; // transient only
-
-            if (kIsWeb) { // Apply only for web (desktop and mobile)
-              _headerPhotoUrl = finalPhotoUrlToSet; // retained for legacy; not used in build
-
-              final originalLocation = _currentExperience.location;
-              final updatedLocation = Location(
-                placeId: originalLocation.placeId,
-                latitude: originalLocation.latitude,
-                longitude: originalLocation.longitude,
-                address: originalLocation.address,
-                city: originalLocation.city,
-                state: originalLocation.state,
-                country: originalLocation.country,
-                zipCode: originalLocation.zipCode,
-                displayName: originalLocation.displayName,
-                // Do NOT persist constructed URL. Persist resource name instead.
-                photoUrl: originalLocation.photoUrl, 
-                photoResourceName: newPhotoResourceName ?? originalLocation.photoResourceName,
-                website: originalLocation.website,
-                rating: originalLocation.rating,
-                userRatingCount: originalLocation.userRatingCount,
-              );
-              final newExperienceData = _currentExperience.copyWith(location: updatedLocation);
-              final bool resourceNameChanged =
-                  _currentExperience.location.photoResourceName != newExperienceData.location.photoResourceName;
-              _currentExperience = newExperienceData;
-              
-              if (finalPhotoUrlToSet != null) {
-                print("ExperiencePageScreen: Updated transient _headerPhotoUrl (Web Specific) to: $finalPhotoUrlToSet");
+            if (kIsWeb) {
+              _headerPhotoUrl = newConstructedPhotoUrl;
+              if (newConstructedPhotoUrl != null) {
+                print(
+                    "ExperiencePageScreen: Updated transient _headerPhotoUrl (Web Specific) to: $newConstructedPhotoUrl");
               }
-              if (resourceNameChanged) {
-                _experienceService.updateExperience(_currentExperience).then((_) {
-                  print("ExperiencePageScreen: Saved updated experience with new photoResourceName to Firestore.");
-                  _didDataChange = true; // Signal that data changed for pop result
-                }).catchError((e) {
-                  print("ExperiencePageScreen: Error saving updated experience to Firestore: $e");
-                });
-              }
-            } else {
-              // For non-web (mobile), DO NOT update _currentExperience.location.photoUrl.
-              // It should retain its original value from Firestore to keep behavior identical.
-              if (finalPhotoUrlToSet != null) {
-                print("ExperiencePageScreen: Photo URL constructed ($finalPhotoUrlToSet) for non-web, but NOT updating experience's photoUrl to preserve original mobile behavior.");
-              } else {
-                print("ExperiencePageScreen: No new photo URL constructed, and not on web platform. Mobile behavior preserved.");
-              }
+            }
+            if (updatedExperience != null) {
+              _currentExperience = updatedExperience;
+              _didDataChange = true; // Signal that data changed for pop result
             }
             _isLoadingDetails = false;
           });
+
+          if (!kIsWeb) {
+            if (newConstructedPhotoUrl != null) {
+              print(
+                  "ExperiencePageScreen: Photo URL constructed ($newConstructedPhotoUrl) for non-web platform.");
+            } else {
+              print(
+                  "ExperiencePageScreen: No new photo URL constructed for non-web platform.");
+            }
+          }
+
+          if (updatedExperience != null) {
+            _experienceService.updateExperience(updatedExperience).then((_) {
+              print(
+                  "ExperiencePageScreen: Saved updated experience with refreshed photo metadata to Firestore.");
+            }).catchError((e) {
+              print(
+                  "ExperiencePageScreen: Error saving updated experience to Firestore: $e");
+            });
+          }
         } else {
           setState(() {
             _isLoadingDetails = false;
@@ -412,7 +448,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
         }
       }
     } catch (e) {
-      print('ExperiencePageScreen: Error in _fetchPlaceDetails for placeId $placeId: $e');
+      print(
+          'ExperiencePageScreen: Error in _fetchPlaceDetails for placeId $placeId: $e');
       if (mounted) {
         setState(() {
           _isLoadingDetails = false;
@@ -670,25 +707,28 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
           ),
 
           // --- ADDED: Top-center share banner text when in preview ---
-          if (widget.readOnlyPreview && _shareBannerDisplayName != null && _shareBannerDisplayName!.isNotEmpty)
+          if (widget.readOnlyPreview &&
+              _shareBannerDisplayName != null &&
+              _shareBannerDisplayName!.isNotEmpty)
             Positioned(
               top: MediaQuery.of(context).padding.top + 8.0,
               left: 64.0,
               right: 64.0,
               child: Center(
                 child: Text(
-                  _computeSharePreviewCategoryLabel() ?? '${_shareBannerDisplayName} wants you to check out this experience! Save it to create your own copy of the experience.',
+                  _computeSharePreviewCategoryLabel() ??
+                      '${_shareBannerDisplayName} wants you to check out this experience! Save it to create your own copy of the experience.',
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        color: Colors.white,
-                        shadows: [
-                          Shadow(
-                            offset: const Offset(1.0, 1.0),
-                            blurRadius: 2.0,
-                            color: Colors.black.withOpacity(0.5),
-                          ),
-                        ],
+                    color: Colors.white,
+                    shadows: [
+                      Shadow(
+                        offset: const Offset(1.0, 1.0),
+                        blurRadius: 2.0,
+                        color: Colors.black.withOpacity(0.5),
                       ),
+                    ],
+                  ),
                   softWrap: true,
                   maxLines: 3,
                   overflow: TextOverflow.ellipsis,
@@ -907,8 +947,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     }
 
     // Calculate tab counts using fetched media items
-    final mediaCount =
-        _isLoadingMedia ? '...' : _mediaItems.length.toString();
+    final mediaCount = _isLoadingMedia ? '...' : _mediaItems.length.toString();
     final reviewCount = _isLoadingReviews ? '...' : _reviews.length.toString();
     final commentCount = _isLoadingComments ? '...' : _commentCount.toString();
 
@@ -974,20 +1013,20 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                         labelColor: Theme.of(context).primaryColor,
                         unselectedLabelColor: Colors.grey[600],
                         indicatorColor: Theme.of(context).primaryColor,
-                      tabs: [
-                        Tab(
-                          icon: Icon(Icons.photo_library_outlined),
-                          text: 'Content ($mediaCount)',
-                        ),
-                        Tab(
-                          icon: Icon(Icons.star_border_outlined),
-                          text: 'Reviews ($reviewCount)',
-                        ),
-                        Tab(
-                          icon: Icon(Icons.comment_outlined),
-                          text: 'Comments ($commentCount)',
-                        ),
-                      ],
+                        tabs: [
+                          Tab(
+                            icon: Icon(Icons.photo_library_outlined),
+                            text: 'Content ($mediaCount)',
+                          ),
+                          Tab(
+                            icon: Icon(Icons.star_border_outlined),
+                            text: 'Reviews ($reviewCount)',
+                          ),
+                          Tab(
+                            icon: Icon(Icons.comment_outlined),
+                            text: 'Comments ($commentCount)',
+                          ),
+                        ],
                       ),
                     ),
                   ),
@@ -1208,8 +1247,12 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
-                            _computeSharePreviewCategoryLabel() ?? _getCurrentCategory().name,
-                            style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                            _computeSharePreviewCategoryLabel() ??
+                                _getCurrentCategory().name,
+                            style: Theme.of(context)
+                                .textTheme
+                                .titleSmall
+                                ?.copyWith(
                                   color: Colors.black87,
                                 ),
                             softWrap: true,
@@ -1242,8 +1285,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                         ),
                       );
                     },
-                    tooltip:
-                        'View Location on App Map', // Updated tooltip
+                    tooltip: 'View Location on App Map', // Updated tooltip
                     backgroundColor: Colors.white,
                     shape: StadiumBorder(
                         side: BorderSide(color: Colors.grey.shade300)),
@@ -1560,8 +1602,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                 children: <TextSpan>[
                   TextSpan(
                     text: text,
-                    style:
-                        TextStyle(color: color, fontWeight: FontWeight.bold),
+                    style: TextStyle(color: color, fontWeight: FontWeight.bold),
                   ),
                 ],
               ),
@@ -1597,7 +1638,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     // Adjust to match Google's Monday-first format in weekdayDescriptions
     // Google API returns: [Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday]
     // So we need: Mon(1)→0, Tue(2)→1, ..., Sat(6)→5, Sun(7)→6
-    int googleWeekdayIndex = (currentWeekday - 1); // Mon=0, Tue=1, ..., Sat=5, Sun=6
+    int googleWeekdayIndex =
+        (currentWeekday - 1); // Mon=0, Tue=1, ..., Sat=5, Sun=6
 
     // --- ADDED: Debug Prints ---
     print('--- DEBUG: Day Highlighting ---');
@@ -1738,22 +1780,22 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
             labelColor: Theme.of(context).primaryColor,
             unselectedLabelColor: Colors.grey[600],
             indicatorColor: Theme.of(context).primaryColor,
-          tabs: [
-            Tab(
-              // Use an Instagram icon or keep the generic one
-              icon: Icon(Icons
-                  .photo_library_outlined), // Or Icons.camera_alt_outlined etc.
-              text: 'Media ($mediaCount)', // Updated count
-            ),
-            Tab(
-              icon: Icon(Icons.star_border_outlined),
-              text: 'Reviews ($reviewCount)',
-            ),
-            Tab(
-              icon: Icon(Icons.comment_outlined),
-              text: 'Comments ($commentCount)',
-            ),
-          ],
+            tabs: [
+              Tab(
+                // Use an Instagram icon or keep the generic one
+                icon: Icon(Icons
+                    .photo_library_outlined), // Or Icons.camera_alt_outlined etc.
+                text: 'Media ($mediaCount)', // Updated count
+              ),
+              Tab(
+                icon: Icon(Icons.star_border_outlined),
+                text: 'Reviews ($reviewCount)',
+              ),
+              Tab(
+                icon: Icon(Icons.comment_outlined),
+                text: 'Comments ($commentCount)',
+              ),
+            ],
           ),
         ),
         SizedBox(
@@ -1780,9 +1822,11 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
         final primary = Theme.of(context).primaryColor;
         return AlertDialog(
           backgroundColor: Colors.white,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           title: const Text('Confirm Deletion'),
-          content: const Text('Are you sure you want to remove this media item?'),
+          content:
+              const Text('Are you sure you want to remove this media item?'),
           actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
           actions: <Widget>[
             OutlinedButton(
@@ -1791,7 +1835,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                 foregroundColor: primary,
                 side: BorderSide(color: primary),
                 shape: const StadiumBorder(),
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
               ),
               onPressed: () => Navigator.of(context).pop(false),
               child: const Text('Cancel'),
@@ -1801,7 +1846,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                 backgroundColor: primary,
                 foregroundColor: Colors.white,
                 shape: const StadiumBorder(),
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
               ),
               onPressed: () => Navigator.of(context).pop(true),
               child: const Text('Delete'),
@@ -1907,465 +1953,494 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     return Container(
       color: Colors.white,
       child: Column(
-      children: [
-        // --- MOVED Fullscreen Button to the top ---
-        Padding(
-          padding: const EdgeInsets.only(top: 8.0, right: 16.0, left: 16.0),
-          child: Align(
-            alignment: Alignment.centerRight,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                TextButton.icon(
-                  icon: const Icon(Icons.filter_list, size: 20.0, color: Colors.black),
-                  label: const Text('Filter', style: TextStyle(color: Colors.black)),
-                  style: TextButton.styleFrom(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    textStyle: const TextStyle(fontSize: 13),
+        children: [
+          // --- MOVED Fullscreen Button to the top ---
+          Padding(
+            padding: const EdgeInsets.only(top: 8.0, right: 16.0, left: 16.0),
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton.icon(
+                    icon: const Icon(Icons.filter_list,
+                        size: 20.0, color: Colors.black),
+                    label: const Text('Filter',
+                        style: TextStyle(color: Colors.black)),
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 8),
+                      textStyle: const TextStyle(fontSize: 13),
+                    ),
+                    onPressed: () {
+                      // TODO: Implement Filter functionality
+                    },
                   ),
-                  onPressed: () {
-                    // TODO: Implement Filter functionality
-                  },
-                ),
-                const SizedBox(width: 8),
-                TextButton.icon(
-                  icon: const Icon(Icons.sort, size: 20.0, color: Colors.black),
-                  label: const Text('Sort', style: TextStyle(color: Colors.black)),
-                  style: TextButton.styleFrom(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    textStyle: const TextStyle(fontSize: 13),
+                  const SizedBox(width: 8),
+                  TextButton.icon(
+                    icon:
+                        const Icon(Icons.sort, size: 20.0, color: Colors.black),
+                    label: const Text('Sort',
+                        style: TextStyle(color: Colors.black)),
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 8),
+                      textStyle: const TextStyle(fontSize: 13),
+                    ),
+                    onPressed: () {
+                      // TODO: Implement Sort functionality
+                    },
                   ),
-                  onPressed: () {
-                    // TODO: Implement Sort functionality
-                  },
-                ),
-              ],
+                ],
+              ),
             ),
           ),
-        ),
-        // --- END MOVED Button ---
+          // --- END MOVED Button ---
 
-        // IMPORTANT: Use ListView directly here, wrapped in Expanded
-        Expanded(
-          child: ListView.builder(
-            padding: const EdgeInsets.only(
-                left: 16.0,
-                right: 16.0,
-                top: 8.0,
-                bottom: 16.0), // Adjust padding
-            itemCount: mediaItems.length,
-            itemBuilder: (context, index) {
-              // MODIFIED: Get SharedMediaItem and its path
-              final item = mediaItems[index];
-              final url = item.path;
+          // IMPORTANT: Use ListView directly here, wrapped in Expanded
+          Expanded(
+            child: ListView.builder(
+              padding: const EdgeInsets.only(
+                  left: 16.0,
+                  right: 16.0,
+                  top: 8.0,
+                  bottom: 16.0), // Adjust padding
+              itemCount: mediaItems.length,
+              itemBuilder: (context, index) {
+                // MODIFIED: Get SharedMediaItem and its path
+                final item = mediaItems[index];
+                final url = item.path;
 
-              Widget? mediaWidget;
-              final isTikTokUrl = url.toLowerCase().contains('tiktok.com') || url.toLowerCase().contains('vm.tiktok.com');
-              final isInstagramUrl = url.toLowerCase().contains('instagram.com');
-              final isFacebookUrl = url.toLowerCase().contains('facebook.com') || url.toLowerCase().contains('fb.com') || url.toLowerCase().contains('fb.watch');
-              final isYouTubeUrl = url.toLowerCase().contains('youtube.com') || 
-                                   url.toLowerCase().contains('youtu.be') || 
-                                   url.toLowerCase().contains('youtube.com/shorts');
-              final isYelpUrl = url.toLowerCase().contains('yelp.com/biz') || url.toLowerCase().contains('yelp.to/');
-              final bool isMapsUrl = url.toLowerCase().contains('google.com/maps') ||
-                  url.toLowerCase().contains('maps.app.goo.gl') ||
-                  url.toLowerCase().contains('goo.gl/maps') ||
-                  url.toLowerCase().contains('g.co/kgs/') ||
-                  url.toLowerCase().contains('share.google/');
-              final bool isNetworkUrl =
-                  url.startsWith('http') || url.startsWith('https');
-              final bool isGenericUrl =
-                  !isTikTokUrl &&
-                  !isInstagramUrl &&
-                  !isFacebookUrl &&
-                  !isYouTubeUrl &&
-                  !isYelpUrl &&
-                  !isMapsUrl;
-              final bool isExpanded = _expandedMediaPath == url;
+                Widget? mediaWidget;
+                final isTikTokUrl = url.toLowerCase().contains('tiktok.com') ||
+                    url.toLowerCase().contains('vm.tiktok.com');
+                final isInstagramUrl =
+                    url.toLowerCase().contains('instagram.com');
+                final isFacebookUrl =
+                    url.toLowerCase().contains('facebook.com') ||
+                        url.toLowerCase().contains('fb.com') ||
+                        url.toLowerCase().contains('fb.watch');
+                final isYouTubeUrl =
+                    url.toLowerCase().contains('youtube.com') ||
+                        url.toLowerCase().contains('youtu.be') ||
+                        url.toLowerCase().contains('youtube.com/shorts');
+                final isYelpUrl = url.toLowerCase().contains('yelp.com/biz') ||
+                    url.toLowerCase().contains('yelp.to/');
+                final bool isMapsUrl =
+                    url.toLowerCase().contains('google.com/maps') ||
+                        url.toLowerCase().contains('maps.app.goo.gl') ||
+                        url.toLowerCase().contains('goo.gl/maps') ||
+                        url.toLowerCase().contains('g.co/kgs/') ||
+                        url.toLowerCase().contains('share.google/');
+                final bool isNetworkUrl =
+                    url.startsWith('http') || url.startsWith('https');
+                final bool isGenericUrl = !isTikTokUrl &&
+                    !isInstagramUrl &&
+                    !isFacebookUrl &&
+                    !isYouTubeUrl &&
+                    !isYelpUrl &&
+                    !isMapsUrl;
+                final bool isExpanded = _expandedMediaPath == url;
 
-              if (isExpanded) {
-                if (isTikTokUrl) {
-                  final key = GlobalKey<TikTokPreviewWidgetState>();
-                  _tiktokControllerKeys[url] = key;
-                  mediaWidget = TikTokPreviewWidget(
-                    key: key,
-                    url: url,
-                    launchUrlCallback: _launchUrl,
-                    showControls: false,
-                    onWebViewCreated: (controller) {
-                      _webViewControllers[url] = controller;
-                    },
-                  );
-                } else if (isInstagramUrl) {
-                  final key =
-                      GlobalKey<instagram_widget.InstagramWebViewState>();
-                  _instagramControllerKeys[url] = key;
-                  mediaWidget = instagram_widget.InstagramWebView(
-                    key: key,
-                    url: url,
-                    height: 640.0,
-                    launchUrlCallback: _launchUrl,
-                    onWebViewCreated: (controller) {
-                      _webViewControllers[url] = controller;
-                    },
-                    onPageFinished: (_) {},
-                  );
-                } else if (isFacebookUrl) {
-                  mediaWidget = FacebookPreviewWidget(
-                    url: url,
-                    height: 500.0,
-                    launchUrlCallback: _launchUrl,
-                    onWebViewCreated: (controller) {
-                      _webViewControllers[url] = controller;
-                    },
-                    onPageFinished: (_) {},
-                    showControls: false,
-                  );
-                } else if (isYouTubeUrl) {
-                  final key = GlobalKey<YouTubePreviewWidgetState>();
-                  _youtubeControllerKeys[url] = key;
-                  mediaWidget = YouTubePreviewWidget(
-                    key: key,
-                    url: url,
-                    launchUrlCallback: _launchUrl,
-                    showControls: false,
-                    onWebViewCreated: (controller) {
-                      _webViewControllers[url] = controller;
-                    },
-                  );
-                } else if (isNetworkUrl) {
-                  final lowerUrl = url.toLowerCase();
-                  if (lowerUrl.endsWith('.jpg') ||
-                      lowerUrl.endsWith('.jpeg') ||
-                      lowerUrl.endsWith('.png') ||
-                      lowerUrl.endsWith('.gif') ||
-                      lowerUrl.endsWith('.webp')) {
-                    mediaWidget = Image.network(
-                      url,
-                      fit: BoxFit.cover,
-                      loadingBuilder: (context, child, loadingProgress) {
-                        if (loadingProgress == null) return child;
-                        return const Center(child: CircularProgressIndicator());
-                      },
-                      errorBuilder: (context, error, stackTrace) {
-                        return Container(
-                          color: Colors.grey[200],
-                          height: 200,
-                          child: Center(
-                              child: Icon(Icons.broken_image_outlined,
-                                  color: Colors.grey[600], size: 40)),
-                        );
-                      },
-                    );
-                  } else if (isYelpUrl) {
-                    mediaWidget = WebUrlPreviewWidget(
+                if (isExpanded) {
+                  if (isTikTokUrl) {
+                    final key = GlobalKey<TikTokPreviewWidgetState>();
+                    _tiktokControllerKeys[url] = key;
+                    mediaWidget = TikTokPreviewWidget(
+                      key: key,
                       url: url,
                       launchUrlCallback: _launchUrl,
                       showControls: false,
-                      height: 1000.0,
+                      onWebViewCreated: (controller) {
+                        _webViewControllers[url] = controller;
+                      },
                     );
-                  } else if (isMapsUrl) {
-                    if (!_mapsPreviewFutures.containsKey(url)) {
-                      _mapsPreviewFutures[url] = Future.value({
-                        'location': _currentExperience.location,
-                        'placeName': _currentExperience.name,
-                        'mapsUrl': url,
-                        'website': _currentExperience.location.website,
-                      });
-                    }
-                    mediaWidget = MapsPreviewWidget(
-                      mapsUrl: url,
-                      mapsPreviewFutures: _mapsPreviewFutures,
-                      getLocationFromMapsUrl: (u) async => null,
+                  } else if (isInstagramUrl) {
+                    final key =
+                        GlobalKey<instagram_widget.InstagramWebViewState>();
+                    _instagramControllerKeys[url] = key;
+                    mediaWidget = instagram_widget.InstagramWebView(
+                      key: key,
+                      url: url,
+                      height: 640.0,
                       launchUrlCallback: _launchUrl,
-                      mapsService: _googleMapsService,
+                      onWebViewCreated: (controller) {
+                        _webViewControllers[url] = controller;
+                      },
+                      onPageFinished: (_) {},
                     );
-                  } else {
-                    mediaWidget = GenericUrlPreviewWidget(
+                  } else if (isFacebookUrl) {
+                    mediaWidget = FacebookPreviewWidget(
+                      url: url,
+                      height: 500.0,
+                      launchUrlCallback: _launchUrl,
+                      onWebViewCreated: (controller) {
+                        _webViewControllers[url] = controller;
+                      },
+                      onPageFinished: (_) {},
+                      showControls: false,
+                    );
+                  } else if (isYouTubeUrl) {
+                    final key = GlobalKey<YouTubePreviewWidgetState>();
+                    _youtubeControllerKeys[url] = key;
+                    mediaWidget = YouTubePreviewWidget(
+                      key: key,
                       url: url,
                       launchUrlCallback: _launchUrl,
+                      showControls: false,
+                      onWebViewCreated: (controller) {
+                        _webViewControllers[url] = controller;
+                      },
+                    );
+                  } else if (isNetworkUrl) {
+                    final lowerUrl = url.toLowerCase();
+                    if (lowerUrl.endsWith('.jpg') ||
+                        lowerUrl.endsWith('.jpeg') ||
+                        lowerUrl.endsWith('.png') ||
+                        lowerUrl.endsWith('.gif') ||
+                        lowerUrl.endsWith('.webp')) {
+                      mediaWidget = Image.network(
+                        url,
+                        fit: BoxFit.cover,
+                        loadingBuilder: (context, child, loadingProgress) {
+                          if (loadingProgress == null) return child;
+                          return const Center(
+                              child: CircularProgressIndicator());
+                        },
+                        errorBuilder: (context, error, stackTrace) {
+                          return Container(
+                            color: Colors.grey[200],
+                            height: 200,
+                            child: Center(
+                                child: Icon(Icons.broken_image_outlined,
+                                    color: Colors.grey[600], size: 40)),
+                          );
+                        },
+                      );
+                    } else if (isYelpUrl) {
+                      mediaWidget = WebUrlPreviewWidget(
+                        url: url,
+                        launchUrlCallback: _launchUrl,
+                        showControls: false,
+                        height: 1000.0,
+                      );
+                    } else if (isMapsUrl) {
+                      if (!_mapsPreviewFutures.containsKey(url)) {
+                        _mapsPreviewFutures[url] = Future.value({
+                          'location': _currentExperience.location,
+                          'placeName': _currentExperience.name,
+                          'mapsUrl': url,
+                          'website': _currentExperience.location.website,
+                        });
+                      }
+                      mediaWidget = MapsPreviewWidget(
+                        mapsUrl: url,
+                        mapsPreviewFutures: _mapsPreviewFutures,
+                        getLocationFromMapsUrl: (u) async => null,
+                        launchUrlCallback: _launchUrl,
+                        mapsService: _googleMapsService,
+                      );
+                    } else {
+                      mediaWidget = GenericUrlPreviewWidget(
+                        url: url,
+                        launchUrlCallback: _launchUrl,
+                      );
+                    }
+                  } else {
+                    mediaWidget = Container(
+                      height: 150,
+                      color: Colors.grey[200],
+                      child: Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.description,
+                                color: Colors.grey[600], size: 40),
+                            const SizedBox(height: 8),
+                            Text(
+                              'Content Preview',
+                              style: TextStyle(color: Colors.grey[600]),
+                            ),
+                          ],
+                        ),
+                      ),
                     );
                   }
                 } else {
-                  mediaWidget = Container(
-                    height: 150,
-                    color: Colors.grey[200],
-                    child: Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.description,
-                              color: Colors.grey[600], size: 40),
-                          const SizedBox(height: 8),
-                          Text(
-                            'Content Preview',
-                            style: TextStyle(color: Colors.grey[600]),
-                          ),
-                        ],
-                      ),
-                    ),
-                  );
+                  mediaWidget = null;
                 }
-              } else {
-                mediaWidget = null;
-              }
 
-              // Keep the Column for layout *within* the list item
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 24.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 8.0, top: 4.0),
-                      child: CircleAvatar(
-                        radius: 14,
-                        backgroundColor:
-                            Theme.of(context).primaryColor.withOpacity(0.8),
-                        child: Text(
-                          '${index + 1}',
-                          style: const TextStyle(
-                            fontSize: 14.0,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white,
+                // Keep the Column for layout *within* the list item
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 24.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8.0, top: 4.0),
+                        child: CircleAvatar(
+                          radius: 14,
+                          backgroundColor:
+                              Theme.of(context).primaryColor.withOpacity(0.8),
+                          child: Text(
+                            '${index + 1}',
+                            style: const TextStyle(
+                              fontSize: 14.0,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                    Container(
-                      margin: EdgeInsets.zero,
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(4.0),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.1),
-                            blurRadius: 4.0,
-                            offset: const Offset(0, -2),
-                          ),
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.1),
-                            blurRadius: 4.0,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      clipBehavior: Clip.antiAlias,
-                      child: Column(
-                        children: [
-                          GestureDetector(
-                            behavior: HitTestBehavior.opaque,
-                            onTap: () => _toggleMediaPreview(url),
-                            child: Container(
-                              color: Theme.of(context).primaryColor,
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 12.0, vertical: 8.0),
-                              child: Row(
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      url,
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                      ),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                  _buildMediaPreviewToggleButton(
-                                    mediaPath: url,
-                                    isExpanded: isExpanded,
-                                  ),
-                                ],
-                              ),
+                      Container(
+                        margin: EdgeInsets.zero,
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(4.0),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.1),
+                              blurRadius: 4.0,
+                              offset: const Offset(0, -2),
                             ),
-                          ),
-                          if (isExpanded && mediaWidget != null) mediaWidget!,
-                        ],
-                      ),
-                    ),
-                    // --- ADDED: 'Also linked to' section --- START ---
-                    Builder(
-                      builder: (context) {
-                        final otherExperiences =
-                            _otherAssociatedExperiences[url] ?? [];
-                        final bool shouldShowSection =
-                            !_isLoadingOtherExperiences &&
-                                otherExperiences.isNotEmpty;
-
-                        if (!shouldShowSection) {
-                          return const SizedBox
-                              .shrink(); // Don't show if not applicable
-                        }
-
-                        return Padding(
-                          padding:
-                              const EdgeInsets.only(top: 12.0, bottom: 4.0),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Padding(
-                                padding: const EdgeInsets.only(
-                                    bottom: 6.0, left: 4.0), // Indent slightly
-                                child: Text(
-                                  otherExperiences.length == 1
-                                      ? 'Also linked to:'
-                                      : 'Also linked to (${otherExperiences.length}):',
-                                  style: Theme.of(context)
-                                      .textTheme
-                                      .labelLarge
-                                      ?.copyWith(
-                                        fontWeight: FontWeight.bold,
-                                        color: Colors.black87,
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.1),
+                              blurRadius: 4.0,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        clipBehavior: Clip.antiAlias,
+                        child: Column(
+                          children: [
+                            GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onTap: () => _toggleMediaPreview(url),
+                              child: Container(
+                                color: Theme.of(context).primaryColor,
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 12.0, vertical: 8.0),
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        url,
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                        ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
                                       ),
+                                    ),
+                                    _buildMediaPreviewToggleButton(
+                                      mediaPath: url,
+                                      isExpanded: isExpanded,
+                                    ),
+                                  ],
                                 ),
                               ),
-                              // List the other experiences
-                              ...otherExperiences.map((exp) {
-                                // final categoryName = exp.category; // OLD
-                                // Use the specific category cache for media tab, now keyed by ID
-                                final UserCategory? categoryForMediaItem = 
-                                  _fetchedCategoriesForMedia[exp.categoryId]; // NEW: Lookup by ID
-                                
-                                final categoryIcon = categoryForMediaItem?.icon ?? '❓';
-                                final categoryName = categoryForMediaItem?.name ?? 'Uncategorized';
+                            ),
+                            if (isExpanded && mediaWidget != null) mediaWidget!,
+                          ],
+                        ),
+                      ),
+                      // --- ADDED: 'Also linked to' section --- START ---
+                      Builder(
+                        builder: (context) {
+                          final otherExperiences =
+                              _otherAssociatedExperiences[url] ?? [];
+                          final bool shouldShowSection =
+                              !_isLoadingOtherExperiences &&
+                                  otherExperiences.isNotEmpty;
 
-                                final address = exp.location.address;
-                                final bool hasAddress =
-                                    address != null && address.isNotEmpty;
+                          if (!shouldShowSection) {
+                            return const SizedBox
+                                .shrink(); // Don't show if not applicable
+                          }
 
-                                return Padding(
+                          return Padding(
+                            padding:
+                                const EdgeInsets.only(top: 12.0, bottom: 4.0),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Padding(
                                   padding: const EdgeInsets.only(
-                                      bottom: 4.0,
+                                      bottom: 6.0,
                                       left: 4.0), // Indent slightly
-                                  child: InkWell(
-                                    onTap: () async {
-                                      print(
-                                          'Tapped on other experience ${exp.name} from exp page tab');
-                                      // final category = // OLD
-                                      //     _fetchedCategoriesForMedia[
-                                      //             categoryName] ??
-                                      //         UserCategory(
-                                      //             id: '',
-                                      //             name: categoryName,
-                                      //             icon: '❓',
-                                      //             ownerUserId: '');
-                                      final UserCategory categoryForNavigation = 
-                                        _fetchedCategoriesForMedia[exp.categoryId] ?? // NEW: Lookup by ID
-                                        UserCategory(
-                                            id: exp.categoryId ?? '', // Use the ID if available for fallback
-                                            name: 'Uncategorized',
-                                            icon: '❓',
-                                            ownerUserId: ''
-                                        );
+                                  child: Text(
+                                    otherExperiences.length == 1
+                                        ? 'Also linked to:'
+                                        : 'Also linked to (${otherExperiences.length}):',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .labelLarge
+                                        ?.copyWith(
+                                          fontWeight: FontWeight.bold,
+                                          color: Colors.black87,
+                                        ),
+                                  ),
+                                ),
+                                // List the other experiences
+                                ...otherExperiences.map((exp) {
+                                  // final categoryName = exp.category; // OLD
+                                  // Use the specific category cache for media tab, now keyed by ID
+                                  final UserCategory? categoryForMediaItem =
+                                      _fetchedCategoriesForMedia[
+                                          exp.categoryId]; // NEW: Lookup by ID
 
-                                      final result = await Navigator.push<bool>(
-                                        context,
-                                        MaterialPageRoute(
-                                          builder: (context) =>
-                                              ExperiencePageScreen(
-                                            experience: exp,
-                                            category: categoryForNavigation,
-                                            userColorCategories:
-                                                widget.userColorCategories,
+                                  final categoryIcon =
+                                      categoryForMediaItem?.icon ?? '❓';
+                                  final categoryName =
+                                      categoryForMediaItem?.name ??
+                                          'Uncategorized';
+
+                                  final address = exp.location.address;
+                                  final bool hasAddress =
+                                      address != null && address.isNotEmpty;
+
+                                  return Padding(
+                                    padding: const EdgeInsets.only(
+                                        bottom: 4.0,
+                                        left: 4.0), // Indent slightly
+                                    child: InkWell(
+                                      onTap: () async {
+                                        print(
+                                            'Tapped on other experience ${exp.name} from exp page tab');
+                                        // final category = // OLD
+                                        //     _fetchedCategoriesForMedia[
+                                        //             categoryName] ??
+                                        //         UserCategory(
+                                        //             id: '',
+                                        //             name: categoryName,
+                                        //             icon: '❓',
+                                        //             ownerUserId: '');
+                                        final UserCategory
+                                            categoryForNavigation =
+                                            _fetchedCategoriesForMedia[exp
+                                                    .categoryId] ?? // NEW: Lookup by ID
+                                                UserCategory(
+                                                    id: exp.categoryId ??
+                                                        '', // Use the ID if available for fallback
+                                                    name: 'Uncategorized',
+                                                    icon: '❓',
+                                                    ownerUserId: '');
+
+                                        final result =
+                                            await Navigator.push<bool>(
+                                          context,
+                                          MaterialPageRoute(
+                                            builder: (context) =>
+                                                ExperiencePageScreen(
+                                              experience: exp,
+                                              category: categoryForNavigation,
+                                              userColorCategories:
+                                                  widget.userColorCategories,
+                                            ),
                                           ),
-                                        ),
-                                      );
-                                      // If navigation might cause changes relevant here, refresh
-                                      if (result == true && mounted) {
-                                        // Decide what needs refreshing - maybe just the other experience data?
-                                        _loadOtherExperienceData();
-                                        // Or maybe the whole page?
-                                        // _refreshExperienceData();
-                                      }
-                                    },
-                                    child: Row(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Padding(
-                                          padding: const EdgeInsets.only(
-                                              right: 8.0, top: 2.0),
-                                          child: Text(categoryIcon,
-                                              style: TextStyle(fontSize: 14)),
-                                        ),
-                                        Expanded(
-                                          child: Column(
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.start,
-                                            children: [
-                                              Text(
-                                                exp.name,
-                                                style: Theme.of(context)
-                                                    .textTheme
-                                                    .titleSmall
-                                                    ?.copyWith(
-                                                        fontWeight:
-                                                            FontWeight.w500),
-                                                overflow: TextOverflow.ellipsis,
-                                                maxLines: 1,
-                                              ),
-                                              if (hasAddress)
+                                        );
+                                        // If navigation might cause changes relevant here, refresh
+                                        if (result == true && mounted) {
+                                          // Decide what needs refreshing - maybe just the other experience data?
+                                          _loadOtherExperienceData();
+                                          // Or maybe the whole page?
+                                          // _refreshExperienceData();
+                                        }
+                                      },
+                                      child: Row(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Padding(
+                                            padding: const EdgeInsets.only(
+                                                right: 8.0, top: 2.0),
+                                            child: Text(categoryIcon,
+                                                style: TextStyle(fontSize: 14)),
+                                          ),
+                                          Expanded(
+                                            child: Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: [
                                                 Text(
-                                                  address,
+                                                  exp.name,
                                                   style: Theme.of(context)
                                                       .textTheme
-                                                      .bodySmall
+                                                      .titleSmall
                                                       ?.copyWith(
-                                                          color:
-                                                              Colors.black54),
+                                                          fontWeight:
+                                                              FontWeight.w500),
                                                   overflow:
                                                       TextOverflow.ellipsis,
                                                   maxLines: 1,
                                                 ),
-                                            ],
+                                                if (hasAddress)
+                                                  Text(
+                                                    address,
+                                                    style: Theme.of(context)
+                                                        .textTheme
+                                                        .bodySmall
+                                                        ?.copyWith(
+                                                            color:
+                                                                Colors.black54),
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                    maxLines: 1,
+                                                  ),
+                                              ],
+                                            ),
                                           ),
-                                        ),
-                                      ],
+                                        ],
+                                      ),
                                     ),
-                                  ),
-                                );
-                              }),
-                            ],
-                          ),
-                        );
-                      },
-                    ),
-                    // --- ADDED: 'Also linked to' section --- END ---
-
-                    const SizedBox(height: 8),
-                    SizedBox(
-                      height: 48,
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                        children: [
-                          // Refresh Button
-                          if (!isGenericUrl)
-                            IconButton(
-                              icon: const Icon(Icons.refresh),
-                              iconSize: 24,
-                              color: Colors.blue,
-                              tooltip: 'Refresh Preview',
-                              onPressed: () {
-                                if (isTikTokUrl) {
-                                  _tiktokControllerKeys[url]?.currentState?.refreshWebView();
-                                } else if (isInstagramUrl) {
-                                  _instagramControllerKeys[url]?.currentState?.refresh();
-                                } else if (isYouTubeUrl) {
-                                  _youtubeControllerKeys[url]?.currentState?.refreshWebView();
-                                } else if (_webViewControllers.containsKey(url)) {
-                                  _webViewControllers[url]!.reload();
-                                } else {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(content: Text('Cannot refresh this item.'))
                                   );
-                                }
-                              },
+                                }),
+                              ],
                             ),
-                          // Share Button
-                          IconButton(
+                          );
+                        },
+                      ),
+                      // --- ADDED: 'Also linked to' section --- END ---
+
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        height: 48,
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                          children: [
+                            // Refresh Button
+                            if (!isGenericUrl)
+                              IconButton(
+                                icon: const Icon(Icons.refresh),
+                                iconSize: 24,
+                                color: Colors.blue,
+                                tooltip: 'Refresh Preview',
+                                onPressed: () {
+                                  if (isTikTokUrl) {
+                                    _tiktokControllerKeys[url]
+                                        ?.currentState
+                                        ?.refreshWebView();
+                                  } else if (isInstagramUrl) {
+                                    _instagramControllerKeys[url]
+                                        ?.currentState
+                                        ?.refresh();
+                                  } else if (isYouTubeUrl) {
+                                    _youtubeControllerKeys[url]
+                                        ?.currentState
+                                        ?.refreshWebView();
+                                  } else if (_webViewControllers
+                                      .containsKey(url)) {
+                                    _webViewControllers[url]!.reload();
+                                  } else {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(
+                                            content: Text(
+                                                'Cannot refresh this item.')));
+                                  }
+                                },
+                              ),
+                            // Share Button
+                            IconButton(
                               icon: const Icon(Icons.share_outlined),
                               iconSize: 24,
                               color:
@@ -2383,64 +2458,65 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                                 );
                               },
                             ),
-                          // Open in App button
-                          IconButton(
+                            // Open in App button
+                            IconButton(
                               icon: Icon(
-                                isInstagramUrl 
-                                  ? FontAwesomeIcons.instagram 
-                                  : isFacebookUrl 
-                                    ? FontAwesomeIcons.facebook
-                                    : isTikTokUrl
-                                      ? FontAwesomeIcons.tiktok
-                                      : isYouTubeUrl
-                                        ? FontAwesomeIcons.youtube
-                                        : isMapsUrl
-                                          ? FontAwesomeIcons.google
-                                          : Icons.open_in_new,
+                                isInstagramUrl
+                                    ? FontAwesomeIcons.instagram
+                                    : isFacebookUrl
+                                        ? FontAwesomeIcons.facebook
+                                        : isTikTokUrl
+                                            ? FontAwesomeIcons.tiktok
+                                            : isYouTubeUrl
+                                                ? FontAwesomeIcons.youtube
+                                                : isMapsUrl
+                                                    ? FontAwesomeIcons.google
+                                                    : Icons.open_in_new,
                               ),
-                              color: isInstagramUrl 
-                                ? const Color(0xFFE1306C) 
-                                : isFacebookUrl 
-                                  ? const Color(0xFF1877F2)
-                                  : isTikTokUrl
-                                    ? Colors.black
-                                    : isYouTubeUrl
-                                      ? Colors.red
-                                      : isMapsUrl
-                                        ? const Color(0xFF4285F4)
-                                        : Theme.of(context).primaryColor,
+                              color: isInstagramUrl
+                                  ? const Color(0xFFE1306C)
+                                  : isFacebookUrl
+                                      ? const Color(0xFF1877F2)
+                                      : isTikTokUrl
+                                          ? Colors.black
+                                          : isYouTubeUrl
+                                              ? Colors.red
+                                              : isMapsUrl
+                                                  ? const Color(0xFF4285F4)
+                                                  : Theme.of(context)
+                                                      .primaryColor,
                               iconSize: 32,
-                              tooltip: isInstagramUrl 
-                                ? 'Open in Instagram'
-                                : isFacebookUrl
-                                  ? 'Open in Facebook'
-                                  : isTikTokUrl
-                                    ? 'Open in TikTok'
-                                    : isYouTubeUrl
-                                      ? 'Open in YouTube'
-                                      : isMapsUrl
-                                        ? 'Open in Google Maps'
-                                        : 'Open URL',
+                              tooltip: isInstagramUrl
+                                  ? 'Open in Instagram'
+                                  : isFacebookUrl
+                                      ? 'Open in Facebook'
+                                      : isTikTokUrl
+                                          ? 'Open in TikTok'
+                                          : isYouTubeUrl
+                                              ? 'Open in YouTube'
+                                              : isMapsUrl
+                                                  ? 'Open in Google Maps'
+                                                  : 'Open URL',
                               onPressed: () => _launchUrl(url),
                             ),
-                          // Delete button
-                          IconButton(
+                            // Delete button
+                            IconButton(
                               icon: const Icon(Icons.delete_outline),
                               iconSize: 24,
                               color: Colors.red[700],
                               tooltip: 'Delete Media',
                               onPressed: () => _deleteMediaPath(url),
-                          ),
-                        ],
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                  ],
-                ),
-              );
-            },
+                    ],
+                  ),
+                );
+              },
+            ),
           ),
-        ),
-      ],
+        ],
       ),
     );
   }
@@ -2463,17 +2539,18 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     return Container(
       color: Colors.white,
       child: ListView.builder(
-      itemCount: _reviews.length,
-      itemBuilder: (context, index) {
-        final review = _reviews[index];
-        // TODO: Create a proper ReviewListItem widget
-        return ListTile(
-          leading: CircleAvatar(child: Text(review.rating.toStringAsFixed(1))),
-          title: Text(review.content),
-          subtitle: Text(
-              'By: ${review.userName ?? review.userId} - ${review.createdAt.toLocal()}'),
-        );
-      },
+        itemCount: _reviews.length,
+        itemBuilder: (context, index) {
+          final review = _reviews[index];
+          // TODO: Create a proper ReviewListItem widget
+          return ListTile(
+            leading:
+                CircleAvatar(child: Text(review.rating.toStringAsFixed(1))),
+            title: Text(review.content),
+            subtitle: Text(
+                'By: ${review.userName ?? review.userId} - ${review.createdAt.toLocal()}'),
+          );
+        },
       ),
     );
   }
@@ -2496,16 +2573,16 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     return Container(
       color: Colors.white,
       child: ListView.builder(
-      itemCount: _comments.length,
-      itemBuilder: (context, index) {
-        final comment = _comments[index];
-        // TODO: Create a proper CommentListItem widget
-        return ListTile(
-          title: Text(comment.content),
-          subtitle: Text(
-              'By: ${comment.userName ?? comment.userId} - ${comment.createdAt.toLocal()}'),
-        );
-      },
+        itemCount: _comments.length,
+        itemBuilder: (context, index) {
+          final comment = _comments[index];
+          // TODO: Create a proper CommentListItem widget
+          return ListTile(
+            title: Text(comment.content),
+            subtitle: Text(
+                'By: ${comment.userName ?? comment.userId} - ${comment.createdAt.toLocal()}'),
+          );
+        },
       ),
     );
   }
@@ -2700,7 +2777,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       final userProfile = await _experienceService.getUserProfileById(userId);
       if (!mounted) return;
       setState(() {
-        _shareBannerDisplayName = userProfile?.displayName ?? userProfile?.username ?? 'Someone';
+        _shareBannerDisplayName =
+            userProfile?.displayName ?? userProfile?.username ?? 'Someone';
       });
     } catch (e) {
       if (!mounted) return;
@@ -2812,7 +2890,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     final Map<String, List<Experience>> otherExperiencesMap = {};
     final Set<String> otherExperienceIds = {};
     // final Set<String> requiredCategoryNames = {}; // OLD: Was Set of names
-    final Set<String?> requiredCategoryIds = {}; // NEW: Set of category IDs (nullable)
+    final Set<String?> requiredCategoryIds =
+        {}; // NEW: Set of category IDs (nullable)
 
     print(
         "[ExpPage - _loadOtherExperienceData] Comparing against current Experience ID: ${_currentExperience.id}");
@@ -2850,7 +2929,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
           // if (exp.category.isNotEmpty) { // OLD
           //   requiredCategoryNames.add(exp.category); // OLD
           // }
-          if (exp.categoryId != null && exp.categoryId!.isNotEmpty) { // NEW
+          if (exp.categoryId != null && exp.categoryId!.isNotEmpty) {
+            // NEW
             requiredCategoryIds.add(exp.categoryId); // NEW
           }
         }
@@ -2871,16 +2951,20 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     }
 
     // Check if all requiredCategoryIds are covered by the existing lookup map
-    bool allRequiredCategoriesFound = requiredCategoryIds.every((id) => id == null || categoryLookupMapById.containsKey(id));
+    bool allRequiredCategoriesFound = requiredCategoryIds
+        .every((id) => id == null || categoryLookupMapById.containsKey(id));
 
-    if (!allRequiredCategoriesFound && requiredCategoryIds.whereNotNull().isNotEmpty) {
-        print(
-            "[ExpPage - _loadOtherExperienceData] Not all required categories found in local cache. Fetching all categories again to ensure completeness.");
+    if (!allRequiredCategoriesFound &&
+        requiredCategoryIds.whereNotNull().isNotEmpty) {
+      print(
+          "[ExpPage - _loadOtherExperienceData] Not all required categories found in local cache. Fetching all categories again to ensure completeness.");
       try {
         final allUserCategories = await _experienceService.getUserCategories(
           includeSharedEditable: true,
         );
-        categoryLookupMapById = {for (var cat in allUserCategories) cat.id: cat}; // Rebuild map with all categories by ID
+        categoryLookupMapById = {
+          for (var cat in allUserCategories) cat.id: cat
+        }; // Rebuild map with all categories by ID
         print(
             "[ExpPage - _loadOtherExperienceData] Fetched ${categoryLookupMapById.length} categories and mapped by ID.");
       } catch (e) {
@@ -2911,14 +2995,15 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     if (mounted) {
       setState(() {
         _otherAssociatedExperiences = otherExperiencesMap;
-        _fetchedCategoriesForMedia = categoryLookupMapById; // Store the category lookup by ID
+        _fetchedCategoriesForMedia =
+            categoryLookupMapById; // Store the category lookup by ID
         _isLoadingOtherExperiences = false;
         print(
             "[ExpPage - _loadOtherExperienceData] Set state: isLoading=false");
       });
     }
   }
-  // --- ADDED: Method to load data about other experiences linked to the media items --- END --- 
+  // --- ADDED: Method to load data about other experiences linked to the media items --- END ---
 
   // --- ADDED: Helper Widget for Other Categories Row --- START ---
   Widget _buildOtherCategoriesRow(BuildContext context, Experience experience) {
@@ -2993,7 +3078,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     if (userId == null) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('You must be signed in to remove experiences.')),
+          const SnackBar(
+              content: Text('You must be signed in to remove experiences.')),
         );
       }
       return;
@@ -3025,14 +3111,16 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
 
     try {
       // Remove current user's ID from editorUserIds
-      final List<String> updatedEditors = List<String>.from(_currentExperience.editorUserIds)
-        ..removeWhere((id) => id == userId);
+      final List<String> updatedEditors =
+          List<String>.from(_currentExperience.editorUserIds)
+            ..removeWhere((id) => id == userId);
 
       if (updatedEditors.isEmpty) {
         // No editors remain; delete the experience
         await _experienceService.deleteExperience(_currentExperience.id);
       } else {
-        final Experience updated = _currentExperience.copyWith(editorUserIds: updatedEditors);
+        final Experience updated =
+            _currentExperience.copyWith(editorUserIds: updatedEditors);
         await _experienceService.updateExperience(updated);
       }
 
@@ -3104,7 +3192,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       );
     }
   }
-  
+
   void _showShareUrlOptions(String url) {
     showModalBottomSheet(
       context: context,
@@ -3120,7 +3208,9 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('Share link', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+                const Text('Share link',
+                    style:
+                        TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
                 const SizedBox(height: 8),
                 Container(
                   padding: const EdgeInsets.all(12),
@@ -3140,7 +3230,9 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                       },
                       icon: const Icon(Icons.ios_share),
                       label: const Text('Share'),
-                      style: ElevatedButton.styleFrom(backgroundColor: Theme.of(context).primaryColor, foregroundColor: Colors.white),
+                      style: ElevatedButton.styleFrom(
+                          backgroundColor: Theme.of(context).primaryColor,
+                          foregroundColor: Colors.white),
                     ),
                     const SizedBox(width: 12),
                     OutlinedButton.icon(
@@ -3148,7 +3240,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                         await Clipboard.setData(ClipboardData(text: url));
                         if (context.mounted) {
                           Navigator.of(ctx).pop();
-                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Link copied')));
+                          ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('Link copied')));
                         }
                       },
                       icon: const Icon(Icons.copy),
@@ -3169,14 +3262,16 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
 // --- ADDED: Share bottom sheet content with radio options and persistence ---
 class _ShareBottomSheetContent extends StatefulWidget {
   final VoidCallback onDirectShare;
-  final Future<void> Function({required String shareMode, required bool giveEditAccess}) onCreateLink;
+  final Future<void> Function(
+      {required String shareMode, required bool giveEditAccess}) onCreateLink;
 
   const _ShareBottomSheetContent({
     required this.onDirectShare,
     required this.onCreateLink,
   });
   @override
-  State<_ShareBottomSheetContent> createState() => _ShareBottomSheetContentState();
+  State<_ShareBottomSheetContent> createState() =>
+      _ShareBottomSheetContentState();
 }
 
 class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
@@ -3203,7 +3298,8 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
   Future<void> _persistChoice() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(AppConstants.lastShareModeKey, _shareMode);
-    await prefs.setBool(AppConstants.lastShareGiveEditAccessKey, _giveEditAccess);
+    await prefs.setBool(
+        AppConstants.lastShareGiveEditAccessKey, _giveEditAccess);
   }
 
   @override
@@ -3227,7 +3323,7 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
                   onPressed: () => Navigator.of(context).pop(),
                 ),
               ],
-            ),            
+            ),
             const SizedBox(height: 8),
             ListTile(
               leading: const Icon(Icons.send_outlined),
@@ -3246,7 +3342,8 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
                   : const Icon(Icons.link_outlined),
-              title: Text(_creating ? 'Creating link...' : 'Get shareable link'),
+              title:
+                  Text(_creating ? 'Creating link...' : 'Get shareable link'),
               onTap: _creating
                   ? null
                   : () async {
@@ -3255,7 +3352,8 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
                         await _persistChoice();
                         await widget.onCreateLink(
                           shareMode: _shareMode,
-                          giveEditAccess: _shareMode == 'my_copy' ? _giveEditAccess : false,
+                          giveEditAccess:
+                              _shareMode == 'my_copy' ? _giveEditAccess : false,
                         );
                       } finally {
                         if (mounted) setState(() => _creating = false);
@@ -3279,8 +3377,7 @@ class _SliverAppBarDelegate extends SliverPersistentHeaderDelegate {
   double get minExtent =>
       kToolbarHeight; // Use a fixed height to avoid layout overflows
   @override
-  double get maxExtent =>
-      kToolbarHeight; // Match minExtent exactly
+  double get maxExtent => kToolbarHeight; // Match minExtent exactly
 
   @override
   Widget build(
@@ -3301,6 +3398,5 @@ class _SliverAppBarDelegate extends SliverPersistentHeaderDelegate {
     // Rebuild if the child widget instance changes
     return _child != oldDelegate._child;
   }
-  }
-  // --- End Helper Class ---
-
+}
+// --- End Helper Class ---
