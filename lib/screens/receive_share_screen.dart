@@ -344,7 +344,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   bool _urlGateOpen = true;
   bool _didDeferredInit = false;
 
-  Widget _buildSharedUrlBar() {
+  Widget _buildSharedUrlBar({required bool showInstructions}) {
     // Rebuilds show suffix icons immediately based on controller text
     return StatefulBuilder(
       builder: (context, setInnerState) {
@@ -421,11 +421,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                     setInnerState(() {});
                   },
                 ),
-                const SizedBox(height: 8),
-                Text(
-                  'Paste any link you want to save to Plendy—from Instagram, TikTok, YouTube, Facebook, or any webpage!',
-                  style: instructionStyle,
-                ),
+                if (showInstructions) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    'Paste any link you want to save to Plendy—from Instagram, TikTok, YouTube, Facebook, or any webpage!',
+                    style: instructionStyle,
+                  ),
+                ],
               ],
             ),
           ),
@@ -3475,7 +3477,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                         return Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            _buildSharedUrlBar(),
+                            _buildSharedUrlBar(showInstructions: true),
                           ],
                         );
                       }
@@ -3502,7 +3504,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                       // Proceed with the main UI build
                       return Column(
                         children: [
-                          _buildSharedUrlBar(),
+                          _buildSharedUrlBar(
+                              showInstructions: _currentSharedFiles.isEmpty),
                           const SizedBox(height: 8),
                           // Gate the rest of content when required
                           Expanded(
