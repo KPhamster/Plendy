@@ -596,6 +596,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       return; // Prevent opening if not allowed or categories loading
     }
 
+    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
     final result = await showModalBottomSheet<Experience?>(
       context: context,
       isScrollControlled: true, // Important for keyboard handling
@@ -604,12 +605,13 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
         // Optional: Rounded corners
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
-      builder: (context) {
+      builder: (sheetContext) {
         // Pass the current experience and loaded categories
         return EditExperienceModal(
           experience: _currentExperience,
           userCategories: _userCategories,
           userColorCategories: widget.userColorCategories, // ADD THIS LINE
+          scaffoldMessenger: messenger,
         );
       },
     );

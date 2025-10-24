@@ -480,6 +480,7 @@ Future<void> _handleSaveExperience(
       editorUserIds: const <String>[],
     );
 
+    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
     final Experience? result = await showModalBottomSheet<Experience>(
       context: context,
       isScrollControlled: true,
@@ -491,6 +492,8 @@ Future<void> _handleSaveExperience(
           experience: baseForModal,
           userCategories: const <UserCategory>[],
           userColorCategories: const <ColorCategory>[],
+          requireCategorySelection: true,
+          scaffoldMessenger: messenger,
           enableDuplicatePrompt: true,
         );
       },

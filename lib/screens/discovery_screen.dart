@@ -4,7 +4,10 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../models/color_category.dart';
+import '../models/experience.dart';
 import '../models/public_experience.dart';
+import '../models/user_category.dart';
 import '../services/experience_service.dart';
 import '../services/google_maps_service.dart';
 import 'receive_share/widgets/facebook_preview_widget.dart';
@@ -14,6 +17,7 @@ import 'receive_share/widgets/tiktok_preview_widget.dart';
 import 'receive_share/widgets/youtube_preview_widget.dart';
 import 'receive_share/widgets/instagram_preview_widget.dart'
     as instagram_widget;
+import '../widgets/edit_experience_modal.dart';
 
 class DiscoveryScreen extends StatefulWidget {
   const DiscoveryScreen({super.key});
@@ -327,11 +331,8 @@ class _DiscoveryScreenState extends State<DiscoveryScreen>
     return Stack(
       fit: StackFit.expand,
       children: [
-        Container(
-          color: Colors.black,
-          alignment: Alignment.center,
-          child: preview,
-        ),
+        const ColoredBox(color: Colors.black),
+        preview,
         Container(
           decoration: const BoxDecoration(
             gradient: LinearGradient(
@@ -354,7 +355,7 @@ class _DiscoveryScreenState extends State<DiscoveryScreen>
         Positioned(
           right: 16,
           bottom: 32,
-          child: _buildActionButtons(),
+          child: _buildActionButtons(item),
         ),
       ],
     );
@@ -400,7 +401,7 @@ class _DiscoveryScreenState extends State<DiscoveryScreen>
     );
   }
 
-  Widget _buildActionButtons() {
+  Widget _buildActionButtons(_DiscoveryFeedItem item) {
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.center,
@@ -408,21 +409,31 @@ class _DiscoveryScreenState extends State<DiscoveryScreen>
         _buildActionButton(
           icon: Icons.bookmark_border,
           label: 'Bookmark',
+          onPressed: () => _handleBookmarkTapped(item),
         ),
         const SizedBox(height: 16),
         _buildActionButton(
           icon: Icons.place_outlined,
           label: 'Location',
+          onPressed: () {
+            // TODO: Implement location action.
+          },
         ),
         const SizedBox(height: 16),
         _buildActionButton(
           icon: Icons.ios_share,
           label: 'Share',
+          onPressed: () {
+            // TODO: Implement share action.
+          },
         ),
         const SizedBox(height: 16),
         _buildActionButton(
           icon: Icons.more_vert,
           label: 'More',
+          onPressed: () {
+            // TODO: Implement more action.
+          },
         ),
       ],
     );
@@ -431,6 +442,7 @@ class _DiscoveryScreenState extends State<DiscoveryScreen>
   Widget _buildActionButton({
     required IconData icon,
     required String label,
+    VoidCallback? onPressed,
   }) {
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -441,9 +453,7 @@ class _DiscoveryScreenState extends State<DiscoveryScreen>
             borderRadius: BorderRadius.circular(24),
           ),
           child: IconButton(
-            onPressed: () {
-              // TODO: wire up discovery actions (bookmark, location, share, more).
-            },
+            onPressed: onPressed,
             icon: Icon(icon, color: Colors.white),
             iconSize: 28,
             splashRadius: 28,
@@ -458,6 +468,90 @@ class _DiscoveryScreenState extends State<DiscoveryScreen>
           ),
         ),
       ],
+    );
+  }
+
+  Future<void> _handleBookmarkTapped(_DiscoveryFeedItem item) async {
+    final publicExperience = item.experience;
+    final Experience draft = _buildExperienceDraft(publicExperience);
+
+    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+    final Experience? editedExperience = await showModalBottomSheet<Experience>(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) {
+        return EditExperienceModal(
+          experience: draft,
+          userCategories: const <UserCategory>[],
+          userColorCategories: const <ColorCategory>[],
+          requireCategorySelection: true,
+          scaffoldMessenger: messenger,
+          enableDuplicatePrompt: true,
+        );
+      },
+    );
+
+    if (editedExperience == null) {
+      return;
+    }
+
+    try {
+      if (editedExperience.id.isNotEmpty) {
+        await _experienceService.updateExperience(editedExperience);
+      } else {
+        await _experienceService.createExperience(editedExperience);
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Experience saved.')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to save experience: $e')),
+      );
+    }
+  }
+
+  Experience _buildExperienceDraft(PublicExperience publicExperience) {
+    final now = DateTime.now();
+    final List<String> mediaPaths = publicExperience.allMediaPaths
+        .where((path) => path.isNotEmpty)
+        .toList();
+
+    return Experience(
+      id: '',
+      name: publicExperience.name,
+      description: '',
+      location: publicExperience.location,
+      categoryId: null,
+      yelpUrl: publicExperience.yelpUrl,
+      googleUrl: null,
+      plendyRating: 0,
+      plendyReviewCount: 0,
+      imageUrls: mediaPaths,
+      reelIds: const <String>[],
+      followerIds: const <String>[],
+      rating: 0,
+      createdAt: now,
+      updatedAt: now,
+      website: publicExperience.website,
+      phoneNumber: null,
+      openingHours: null,
+      tags: null,
+      priceRange: null,
+      sharedMediaItemIds: const <String>[],
+      sharedMediaType: null,
+      additionalNotes: null,
+      editorUserIds: const <String>[],
+      colorCategoryId: null,
+      otherCategories: const <String>[],
+      categoryIconDenorm: null,
+      colorHexDenorm: null,
+      createdBy: null,
     );
   }
 
@@ -477,16 +571,16 @@ class _DiscoveryScreenState extends State<DiscoveryScreen>
 
     switch (type) {
       case _MediaType.tiktok:
-        return TikTokPreviewWidget(
-          key: ValueKey('tiktok_$url'),
-          url: url,
-          launchUrlCallback: _launchUrl,
-          showControls: false,
+        return SizedBox.expand(
+          child: TikTokPreviewWidget(
+            key: ValueKey('tiktok_$url'),
+            url: url,
+            launchUrlCallback: _launchUrl,
+            showControls: false,
+          ),
         );
       case _MediaType.instagram:
-        return SizedBox(
-          width: mediaSize.width,
-          height: mediaSize.height,
+        return SizedBox.expand(
           child: instagram_widget.InstagramWebView(
             key: ValueKey('instagram_$url'),
             url: url,
@@ -497,13 +591,11 @@ class _DiscoveryScreenState extends State<DiscoveryScreen>
           ),
         );
       case _MediaType.facebook:
-        return SizedBox(
-          width: mediaSize.width,
-          height: mediaSize.height * 0.85,
+        return SizedBox.expand(
           child: FacebookPreviewWidget(
             key: ValueKey('facebook_$url'),
             url: url,
-            height: mediaSize.height * 0.85,
+            height: mediaSize.height,
             onWebViewCreated: (_) {},
             onPageFinished: (_) {},
             launchUrlCallback: _launchUrl,
@@ -511,16 +603,14 @@ class _DiscoveryScreenState extends State<DiscoveryScreen>
           ),
         );
       case _MediaType.youtube:
-        return SizedBox(
-          width: mediaSize.width,
-          height: mediaSize.height * 0.85,
+        return SizedBox.expand(
           child: YouTubePreviewWidget(
             key: ValueKey('youtube_$url'),
             url: url,
             launchUrlCallback: _launchUrl,
             showControls: false,
             onWebViewCreated: (_) {},
-            height: mediaSize.height * 0.85,
+            height: mediaSize.height,
           ),
         );
       case _MediaType.maps:
@@ -530,9 +620,7 @@ class _DiscoveryScreenState extends State<DiscoveryScreen>
           'mapsUrl': url,
           'website': item.experience.website,
         });
-        return SizedBox(
-          width: mediaSize.width,
-          height: mediaSize.height * 0.75,
+        return SizedBox.expand(
           child: MapsPreviewWidget(
             key: ValueKey('maps_$url'),
             mapsUrl: url,
@@ -553,39 +641,38 @@ class _DiscoveryScreenState extends State<DiscoveryScreen>
           ),
         );
       case _MediaType.image:
-        return ClipRRect(
-          borderRadius: BorderRadius.circular(16),
-          child: AspectRatio(
-            aspectRatio: 4 / 5,
-            child: Image.network(
-              url,
-              fit: BoxFit.cover,
-              loadingBuilder: (context, child, progress) {
-                if (progress == null) return child;
-                return Container(
-                  color: Colors.grey.shade900,
-                  alignment: Alignment.center,
-                  child: const CircularProgressIndicator(),
-                );
-              },
-              errorBuilder: (context, error, stackTrace) {
-                return _buildFallbackPreview(
-                  icon: Icons.broken_image_outlined,
-                  label: 'Image failed to load',
-                  description: 'Try opening this image in your browser.',
-                );
-              },
-            ),
+        return SizedBox.expand(
+          child: Image.network(
+            url,
+            fit: BoxFit.cover,
+            loadingBuilder: (context, child, progress) {
+              if (progress == null) return child;
+              return Container(
+                color: Colors.grey.shade900,
+                alignment: Alignment.center,
+                child: const CircularProgressIndicator(),
+              );
+            },
+            errorBuilder: (context, error, stackTrace) {
+              return _buildFallbackPreview(
+                icon: Icons.broken_image_outlined,
+                label: 'Image failed to load',
+                description: 'Try opening this image in your browser.',
+              );
+            },
           ),
         );
       case _MediaType.generic:
       case _MediaType.yelp:
-        return SizedBox(
-          width: mediaSize.width * 0.9,
-          child: GenericUrlPreviewWidget(
-            key: ValueKey('generic_$url'),
-            url: url,
-            launchUrlCallback: _launchUrl,
+        return SizedBox.expand(
+          child: Container(
+            color: Colors.black,
+            alignment: Alignment.center,
+            child: GenericUrlPreviewWidget(
+              key: ValueKey('generic_$url'),
+              url: url,
+              launchUrlCallback: _launchUrl,
+            ),
           ),
         );
     }

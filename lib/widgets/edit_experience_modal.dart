@@ -25,6 +25,8 @@ class EditExperienceModal extends StatefulWidget {
   final Experience experience;
   final List<UserCategory> userCategories;
   final List<ColorCategory> userColorCategories;
+  final bool requireCategorySelection;
+  final ScaffoldMessengerState? scaffoldMessenger;
   final bool
       enableDuplicatePrompt; // When true, check duplicate on open and allow switching to existing
 
@@ -33,6 +35,8 @@ class EditExperienceModal extends StatefulWidget {
     required this.experience,
     required this.userCategories,
     required this.userColorCategories,
+    this.requireCategorySelection = false,
+    this.scaffoldMessenger,
     this.enableDuplicatePrompt = false,
   });
 
@@ -66,6 +70,30 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
   static const String _addColorCategoryValue = '__add_new_color_category__';
   static const String _editColorCategoriesValue = '__edit_color_categories__';
   // --- END ADDED ---
+
+  final GlobalKey<ScaffoldMessengerState> _localMessengerKey =
+      GlobalKey<ScaffoldMessengerState>();
+
+  bool get _requiresCategorySelection => widget.requireCategorySelection;
+  bool get _hasPrimaryCategory =>
+      _cardData.selectedCategoryId?.isNotEmpty ?? false;
+  bool get _hasColorCategory =>
+      _cardData.selectedColorCategoryId?.isNotEmpty ?? false;
+  bool get _isSaveEnabled =>
+      !_requiresCategorySelection || (_hasPrimaryCategory && _hasColorCategory);
+
+  String _buildCategoryWarningMessage() {
+    if (_hasPrimaryCategory && _hasColorCategory) {
+      return '';
+    }
+    if (!_hasPrimaryCategory && !_hasColorCategory) {
+      return 'Select both a primary category and a color category before saving.';
+    }
+    if (!_hasPrimaryCategory) {
+      return 'Select a primary category before saving.';
+    }
+    return 'Select a color category before saving.';
+  }
 
   @override
   void initState() {
@@ -596,12 +624,12 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                                 ),
                               );
                               if (newCategory != null && mounted) {
-                                print(
-                                    "Edit Modal: New user category added: ${newCategory.name} (${newCategory.icon})");
-                                setState(() {
-                                  _cardData.selectedCategoryId = newCategory.id;
-                                });
-                                await _loadUserCategories();
+              print(
+                  "Edit Modal: New user category added: ${newCategory.name} (${newCategory.icon})");
+              setState(() {
+                _cardData.selectedCategoryId = newCategory.id;
+              });
+              await _loadUserCategories();
                                 // Refresh the dialog
                                 stfSetState(() {});
                                 ScaffoldMessenger.of(context).showSnackBar(
@@ -1195,6 +1223,12 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
   // --- END ADDED ---
 
   void _saveAndClose() {
+    if (_requiresCategorySelection &&
+        (!_hasPrimaryCategory || !_hasColorCategory)) {
+      _showSaveDisabledMessage();
+      return;
+    }
+
     if (_formKey.currentState!.validate()) {
       // Construct the updated Experience object
       final Location locationToSave = (_cardData.locationEnabled.value &&
@@ -1242,30 +1276,74 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
     }
   }
 
+  void _handleSavePressed() {
+    if (_isSaveEnabled) {
+      _saveAndClose();
+    } else {
+      _showSaveDisabledMessage();
+    }
+  }
+
+  void _showSaveDisabledMessage() {
+    if (!mounted) {
+      return;
+    }
+    final String message = _buildCategoryWarningMessage();
+    final ScaffoldMessengerState? messenger =
+        _localMessengerKey.currentState ??
+            widget.scaffoldMessenger ??
+            ScaffoldMessenger.maybeOf(context);
+    if (messenger == null) {
+      return;
+    }
+    messenger.hideCurrentSnackBar();
+    final mediaQuery = MediaQuery.maybeOf(context);
+    final double bottomInset = mediaQuery?.viewInsets.bottom ?? 0.0;
+    final double bottomMargin =
+        bottomInset > 0 ? bottomInset + 16.0 : 16.0; // keep visible inside sheet
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(message),
+        behavior: SnackBarBehavior.floating,
+        margin: EdgeInsets.only(
+          left: 16,
+          right: 16,
+          bottom: bottomMargin,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final bool isSaveEnabled = _isSaveEnabled;
     // Make modal content scrollable and handle keyboard padding
-    return Material(
-      color: Colors.white,
-      child: Padding(
-        padding: EdgeInsets.only(
-            bottom: MediaQuery.of(context).viewInsets.bottom,
-            left: 16,
-            right: 16,
-            top: 16),
-        child: SingleChildScrollView(
-          child: Form(
-            key: _formKey,
-            child: Column(
-              mainAxisSize: MainAxisSize.min, // Fit content vertically
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Modal Title
-                Text(
-                  'Edit Experience',
-                  style: Theme.of(context).textTheme.headlineSmall,
-                ),
-                const SizedBox(height: 20),
+    return ScaffoldMessenger(
+      key: _localMessengerKey,
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        body: Material(
+          color: Colors.white,
+          child: Padding(
+            padding: EdgeInsets.only(
+                bottom: MediaQuery.of(context).viewInsets.bottom,
+                left: 16,
+                right: 16,
+                top: 16),
+            child: SingleChildScrollView(
+              child: Form(
+                key: _formKey,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min, // Fit content vertically
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Modal Title
+                    Text(
+                      'Edit Experience',
+                      style: Theme.of(context).textTheme.headlineSmall,
+                    ),
+                    const SizedBox(height: 20),
 
                 // --- Form Fields (Similar to ExperienceCardForm) ---
 
@@ -1750,23 +1828,30 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                     ),
                     const SizedBox(width: 8),
                     ElevatedButton(
-                      onPressed: _saveAndClose,
+                      onPressed: _handleSavePressed,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor:
-                            Theme.of(context).colorScheme.primary,
-                        foregroundColor: Colors.white,
+                        backgroundColor: isSaveEnabled
+                            ? theme.colorScheme.primary
+                            : theme.colorScheme.onSurface
+                                .withValues(alpha: 0.12),
+                        foregroundColor: isSaveEnabled
+                            ? Colors.white
+                            : theme.colorScheme.onSurface
+                                .withValues(alpha: 0.38),
                       ),
                       child: const Text('Save Changes'),
                     ),
                   ],
                 ),
                 const SizedBox(height: 16), // Bottom padding
-              ],
+                ],
+              ),
             ),
           ),
         ),
       ),
-    );
+    ),
+  );
   }
 
   // --- ADDED: Helper method to launch Generic URLs (if not already present) ---
