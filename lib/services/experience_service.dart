@@ -25,6 +25,18 @@ class UserCategoryFetchResult {
   final Map<String, SharePermission> sharedPermissions;
 }
 
+class PublicExperiencePage {
+  const PublicExperiencePage({
+    required this.experiences,
+    this.lastDocument,
+    required this.hasMore,
+  });
+
+  final List<PublicExperience> experiences;
+  final DocumentSnapshot<Object?>? lastDocument;
+  final bool hasMore;
+}
+
 /// Service for managing Experience-related operations
 class ExperienceService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -73,13 +85,15 @@ class ExperienceService {
 
     // Split into chunks
     for (int i = 0; i < uniqueIds.length; i += chunkSize) {
-      final end =
-          (i + chunkSize) > uniqueIds.length ? uniqueIds.length : (i + chunkSize);
+      final end = (i + chunkSize) > uniqueIds.length
+          ? uniqueIds.length
+          : (i + chunkSize);
       final chunk = uniqueIds.sublist(i, end);
 
       try {
-        final snapshot =
-            await _usersCollection.where(FieldPath.documentId, whereIn: chunk).get();
+        final snapshot = await _usersCollection
+            .where(FieldPath.documentId, whereIn: chunk)
+            .get();
         for (final doc in snapshot.docs) {
           final data = doc.data() as Map<String, dynamic>?;
           if (data != null) {
@@ -252,8 +266,9 @@ class ExperienceService {
 
     // Split into chunks
     for (int i = 0; i < uniqueIds.length; i += chunkSize) {
-      final end =
-          (i + chunkSize) > uniqueIds.length ? uniqueIds.length : (i + chunkSize);
+      final end = (i + chunkSize) > uniqueIds.length
+          ? uniqueIds.length
+          : (i + chunkSize);
       final chunk = uniqueIds.sublist(i, end);
 
       try {
@@ -282,8 +297,9 @@ class ExperienceService {
 
     // Split into chunks
     for (int i = 0; i < uniqueIds.length; i += chunkSize) {
-      final end =
-          (i + chunkSize) > uniqueIds.length ? uniqueIds.length : (i + chunkSize);
+      final end = (i + chunkSize) > uniqueIds.length
+          ? uniqueIds.length
+          : (i + chunkSize);
       final chunk = uniqueIds.sublist(i, end);
 
       try {
@@ -613,6 +629,40 @@ class ExperienceService {
   }
 
   // ======= Public Experience Operations =======
+  Future<PublicExperiencePage> fetchPublicExperiencesPage({
+    DocumentSnapshot<Object?>? startAfter,
+    int limit = 50,
+  }) async {
+    try {
+      Query query = _publicExperiencesCollection
+          .orderBy(FieldPath.documentId)
+          .limit(limit);
+
+      if (startAfter != null) {
+        query = query.startAfterDocument(startAfter);
+      }
+
+      final snapshot = await query.get();
+      final experiences = snapshot.docs
+          .map((doc) => PublicExperience.fromFirestore(doc))
+          .toList();
+
+      final DocumentSnapshot<Object?>? lastDoc =
+          snapshot.docs.isNotEmpty ? snapshot.docs.last : null;
+      final hasMore = snapshot.docs.length == limit;
+
+      return PublicExperiencePage(
+        experiences: experiences,
+        lastDocument: lastDoc,
+        hasMore: hasMore,
+      );
+    } catch (e, stackTrace) {
+      debugPrint(
+          'fetchPublicExperiencesPage: Error fetching public experiences: $e');
+      debugPrint(stackTrace.toString());
+      rethrow;
+    }
+  }
 
   /// Finds a single PublicExperience document by its Google Place ID.
   /// Returns null if no matching document is found.
@@ -1896,13 +1946,11 @@ class ExperienceService {
       print("getUserExperiences: No user authenticated, returning empty list.");
       return []; // Or throw Exception('User not authenticated');
     }
-    print(
-        "getUserExperiences: Fetching experiences for user ID: $userId");
+    print("getUserExperiences: Fetching experiences for user ID: $userId");
 
     final Map<String, Experience> experiencesById = {};
 
-    Future<void> addExperiencesFromQuery(
-        Query query, String label) async {
+    Future<void> addExperiencesFromQuery(Query query, String label) async {
       try {
         final snapshot = await query.get();
         print(
@@ -1917,12 +1965,10 @@ class ExperienceService {
           }
         }
       } on FirebaseException catch (e) {
-        print(
-            'getUserExperiences: Firebase error during $label query: $e');
+        print('getUserExperiences: Firebase error during $label query: $e');
         // Continue with other queries even if this one fails
       } catch (e) {
-        print(
-            'getUserExperiences: Unexpected error during $label query: $e');
+        print('getUserExperiences: Unexpected error during $label query: $e');
       }
     }
 

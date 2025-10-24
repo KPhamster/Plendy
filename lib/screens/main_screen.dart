@@ -5,6 +5,7 @@ import '../services/sharing_service.dart';
 import '../services/notification_state_service.dart';
 import '../widgets/notification_dot.dart';
 import 'collections_screen.dart';
+import 'discovery_screen.dart';
 import 'profile_screen.dart';
 import 'package:provider/provider.dart';
 
@@ -26,7 +27,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     _screens = const [
-      _DiscoveryPlaceholderScreen(),
+      DiscoveryScreen(),
       CollectionsScreen(),
       ProfileScreen(),
     ];
@@ -47,37 +48,48 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         // This prevents resetting the intent when returning with new share data
         Future.delayed(Duration(milliseconds: 100), () async {
           try {
-            final pending = await ShareHandlerPlatform.instance.getInitialSharedMedia();
-            final pendingFiles = pending != null ? _convertSharedMedia(pending) : <SharedMediaFile>[];
-            print("MAIN SCREEN: Checking pending files. Found: ${pendingFiles.length}");
+            final pending =
+                await ShareHandlerPlatform.instance.getInitialSharedMedia();
+            final pendingFiles = pending != null
+                ? _convertSharedMedia(pending)
+                : <SharedMediaFile>[];
+            print(
+                "MAIN SCREEN: Checking pending files. Found: ${pendingFiles.length}");
             if (pendingFiles.isEmpty) {
-              print("MAIN SCREEN: No pending share files, safe to call shareNavigationComplete");
+              print(
+                  "MAIN SCREEN: No pending share files, safe to call shareNavigationComplete");
               _sharingService.shareNavigationComplete();
             } else {
-              print("MAIN SCREEN: Found pending share files (${pendingFiles.length}), checking if Yelp URL");
+              print(
+                  "MAIN SCREEN: Found pending share files (${pendingFiles.length}), checking if Yelp URL");
               // Check if this is a Yelp URL - if so, don't reset anything
               bool isYelpUrl = false;
               for (final file in pendingFiles) {
-                if (file.type == SharedMediaType.text || file.type == SharedMediaType.url) {
+                if (file.type == SharedMediaType.text ||
+                    file.type == SharedMediaType.url) {
                   String content = file.path.toLowerCase();
-                  if (content.contains('yelp.com/biz') || content.contains('yelp.to/')) {
+                  if (content.contains('yelp.com/biz') ||
+                      content.contains('yelp.to/')) {
                     isYelpUrl = true;
                     break;
                   }
                 }
               }
-              
+
               if (isYelpUrl && _sharingService.isShareFlowActive) {
-                print("MAIN SCREEN: Yelp URL with active share flow - preserving everything");
+                print(
+                    "MAIN SCREEN: Yelp URL with active share flow - preserving everything");
                 // Don't reset anything, let the active flow handle it
                 _sharingService.setNavigatingAwayFromShare(false);
               } else {
-                print("MAIN SCREEN: Non-Yelp files or no active flow - standard preservation");
+                print(
+                    "MAIN SCREEN: Non-Yelp files or no active flow - standard preservation");
                 _sharingService.setNavigatingAwayFromShare(false);
               }
             }
           } catch (e) {
-            print("MAIN SCREEN: Error checking pending files: $e, calling shareNavigationComplete anyway");
+            print(
+                "MAIN SCREEN: Error checking pending files: $e, calling shareNavigationComplete anyway");
             _sharingService.shareNavigationComplete();
           }
         });
@@ -119,10 +131,12 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         // CRUCIAL CHECK: Only proceed if a share flow isn't already active.
-        if (!_sharingService.isShareFlowActive) { // Check the lock here
+        if (!_sharingService.isShareFlowActive) {
+          // Check the lock here
           _sharingService.showReceiveShareScreen(context, sharedFiles);
         } else {
-          print("MAIN SCREEN: _handleSharedFiles: Share flow already active, not showing new screen.");
+          print(
+              "MAIN SCREEN: _handleSharedFiles: Share flow already active, not showing new screen.");
           // Optionally, update the existing screen if it can handle new data mid-flow,
           // or simply rely on the user to complete the current share first.
         }
@@ -166,17 +180,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
           );
         },
       ),
-    );
-  }
-}
-
-class _DiscoveryPlaceholderScreen extends StatelessWidget {
-  const _DiscoveryPlaceholderScreen();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Center(
-      child: Text('Discovery tab coming soon'),
     );
   }
 }
