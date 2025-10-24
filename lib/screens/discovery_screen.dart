@@ -41,6 +41,9 @@ class _DiscoveryScreenState extends State<DiscoveryScreen>
   bool _isError = false;
   bool _isPreparingMore = false;
   String? _errorMessage;
+  int _currentPage = 0;
+  double _dragDistance = 0;
+  static const double _dragThreshold = 40;
 
   @override
   bool get wantKeepAlive => true;
@@ -174,6 +177,10 @@ class _DiscoveryScreenState extends State<DiscoveryScreen>
   }
 
   void _handlePageChanged(int index) {
+    setState(() {
+      _currentPage = index;
+    });
+
     if (_feedItems.length - index <= 2) {
       _prepareMoreItems();
     }
@@ -205,6 +212,8 @@ class _DiscoveryScreenState extends State<DiscoveryScreen>
       _usedMediaKeys.clear();
       _lastDocument = null;
       _hasMore = true;
+      _currentPage = 0;
+      _dragDistance = 0;
     });
 
     await _initializeFeed();
@@ -271,15 +280,44 @@ class _DiscoveryScreenState extends State<DiscoveryScreen>
       );
     }
 
-    return PageView.builder(
-      controller: _pageController,
-      scrollDirection: Axis.vertical,
-      itemCount: _feedItems.length,
-      onPageChanged: _handlePageChanged,
-      itemBuilder: (context, index) {
-        final item = _feedItems[index];
-        return _buildFeedPage(item);
+    return GestureDetector(
+      onVerticalDragStart: (_) {
+        _dragDistance = 0;
       },
+      onVerticalDragUpdate: (details) {
+        _dragDistance += details.primaryDelta ?? 0;
+      },
+      onVerticalDragEnd: (details) {
+        final velocity = details.primaryVelocity ?? 0;
+        if (velocity < -300 || _dragDistance <= -_dragThreshold) {
+          _maybeAnimateToPage(_currentPage + 1);
+        } else if (velocity > 300 || _dragDistance >= _dragThreshold) {
+          _maybeAnimateToPage(_currentPage - 1);
+        }
+        _dragDistance = 0;
+      },
+      child: PageView.builder(
+        controller: _pageController,
+        physics: const NeverScrollableScrollPhysics(),
+        scrollDirection: Axis.vertical,
+        itemCount: _feedItems.length,
+        onPageChanged: _handlePageChanged,
+        itemBuilder: (context, index) {
+          final item = _feedItems[index];
+          return _buildFeedPage(item);
+        },
+      ),
+    );
+  }
+
+  void _maybeAnimateToPage(int targetPage) {
+    if (targetPage < 0 || targetPage >= _feedItems.length) {
+      return;
+    }
+    _pageController.animateToPage(
+      targetPage,
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOut,
     );
   }
 
