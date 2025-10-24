@@ -25,7 +25,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
-    _screens = [
+    _screens = const [
+      _DiscoveryPlaceholderScreen(),
       CollectionsScreen(),
       ProfileScreen(),
     ];
@@ -141,6 +142,10 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
           return BottomNavigationBar(
             items: <BottomNavigationBarItem>[
               const BottomNavigationBarItem(
+                icon: Icon(Icons.explore_outlined),
+                label: 'Discovery',
+              ),
+              const BottomNavigationBarItem(
                 icon: Icon(Icons.collections_bookmark_outlined),
                 label: 'Collection',
               ),
@@ -161,6 +166,17 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
           );
         },
       ),
+    );
+  }
+}
+
+class _DiscoveryPlaceholderScreen extends StatelessWidget {
+  const _DiscoveryPlaceholderScreen();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Center(
+      child: Text('Discovery tab coming soon'),
     );
   }
 }
