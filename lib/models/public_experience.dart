@@ -84,6 +84,45 @@ class PublicExperience {
     );
   }
 
+  /// Builds a lightweight [Experience] instance for read-only previews.
+  Experience toExperienceDraft() {
+    final now = DateTime.now();
+    final List<String> mediaPaths =
+        allMediaPaths.where((path) => path.isNotEmpty).toList();
+
+    return Experience(
+      id: '',
+      name: name,
+      description: '',
+      location: location,
+      categoryId: null,
+      yelpUrl: yelpUrl,
+      googleUrl: null,
+      plendyRating: 0,
+      plendyReviewCount: 0,
+      imageUrls: mediaPaths,
+      reelIds: const <String>[],
+      followerIds: const <String>[],
+      rating: 0,
+      createdAt: now,
+      updatedAt: now,
+      website: website,
+      phoneNumber: null,
+      openingHours: null,
+      tags: null,
+      priceRange: null,
+      sharedMediaItemIds: const <String>[],
+      sharedMediaType: null,
+      additionalNotes: null,
+      editorUserIds: const <String>[],
+      colorCategoryId: null,
+      otherCategories: const <String>[],
+      categoryIconDenorm: null,
+      colorHexDenorm: null,
+      createdBy: null,
+    );
+  }
+
   // Optional: toString for debugging
   @override
   String toString() {

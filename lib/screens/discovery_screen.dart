@@ -426,6 +426,7 @@ class _DiscoveryScreenState extends State<DiscoveryScreen>
               MaterialPageRoute(
                 builder: (_) => MapScreen(
                   initialExperienceLocation: locationForMap,
+                  initialPublicExperience: item.experience,
                 ),
               ),
             );
@@ -529,42 +530,7 @@ class _DiscoveryScreenState extends State<DiscoveryScreen>
   }
 
   Experience _buildExperienceDraft(PublicExperience publicExperience) {
-    final now = DateTime.now();
-    final List<String> mediaPaths = publicExperience.allMediaPaths
-        .where((path) => path.isNotEmpty)
-        .toList();
-
-    return Experience(
-      id: '',
-      name: publicExperience.name,
-      description: '',
-      location: publicExperience.location,
-      categoryId: null,
-      yelpUrl: publicExperience.yelpUrl,
-      googleUrl: null,
-      plendyRating: 0,
-      plendyReviewCount: 0,
-      imageUrls: mediaPaths,
-      reelIds: const <String>[],
-      followerIds: const <String>[],
-      rating: 0,
-      createdAt: now,
-      updatedAt: now,
-      website: publicExperience.website,
-      phoneNumber: null,
-      openingHours: null,
-      tags: null,
-      priceRange: null,
-      sharedMediaItemIds: const <String>[],
-      sharedMediaType: null,
-      additionalNotes: null,
-      editorUserIds: const <String>[],
-      colorCategoryId: null,
-      otherCategories: const <String>[],
-      categoryIconDenorm: null,
-      colorHexDenorm: null,
-      createdBy: null,
-    );
+    return publicExperience.toExperienceDraft();
   }
 
   Widget _buildPreviewForItem(_DiscoveryFeedItem item) {
