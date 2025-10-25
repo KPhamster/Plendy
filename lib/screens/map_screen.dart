@@ -20,6 +20,7 @@ import '../models/experience.dart'; // Import Experience model (includes Locatio
 import '../models/user_category.dart'; // Import UserCategory model
 import '../models/color_category.dart'; // Import ColorCategory model
 import 'experience_page_screen.dart'; // Import ExperiencePageScreen for navigation
+import '../models/public_experience.dart';
 
 // Helper function to parse hex color string
 Color _parseColor(String hexColor) {
@@ -41,8 +42,10 @@ Color _parseColor(String hexColor) {
 
 class MapScreen extends StatefulWidget {
   final Location? initialExperienceLocation; // ADDED: To receive a specific location
+  final PublicExperience?
+      initialPublicExperience; // ADDED: Optional public experience context
 
-  const MapScreen({super.key, this.initialExperienceLocation}); // UPDATED: Constructor
+  const MapScreen({super.key, this.initialExperienceLocation, this.initialPublicExperience}); // UPDATED: Constructor
 
   @override
   State<MapScreen> createState() => _MapScreenState();
@@ -79,6 +82,21 @@ class _MapScreenState extends State<MapScreen> {
   UserCategory? _tappedExperienceCategory; // ADDED: Track associated category
   String? _tappedLocationBusinessStatus; // ADDED: Track business status for tapped location
   bool? _tappedLocationOpenNow; // ADDED: Track open-now status
+  Experience?
+      _publicReadOnlyExperience; // ADDED: Cached public experience for discovery launches
+  Experience?
+      _publicExperienceDraft; // ADDED: Precomputed draft from initial public experience
+  List<String>?
+      _publicMediaPaths; // ADDED: Public media URLs for read-only experience page
+  static const UserCategory _publicReadOnlyCategory = UserCategory(
+    id: 'public_readonly_category',
+    name: 'Discovery',
+    icon: '*',
+    ownerUserId: 'public',
+  );
+
+  bool get _canOpenSelectedExperience =>
+      _tappedExperience != null || _publicReadOnlyExperience != null;
 
   // ADDED: State for search functionality
   final TextEditingController _searchController = TextEditingController();
@@ -120,6 +138,11 @@ class _MapScreenState extends State<MapScreen> {
   @override
   void initState() {
     super.initState();
+
+    if (widget.initialPublicExperience != null) {
+      _publicExperienceDraft =
+          widget.initialPublicExperience!.toExperienceDraft();
+    }
 
     if (widget.initialExperienceLocation != null) {
       // If a specific location is passed, use it for the map's initial center
@@ -241,6 +264,9 @@ class _MapScreenState extends State<MapScreen> {
         setState(() {
           _isLoading = false;
         });
+        if (_tappedLocationDetails != null) {
+          _maybeAttachSavedOrPublicExperience(_tappedLocationDetails!);
+        }
       }
     }
   }
@@ -381,6 +407,9 @@ class _MapScreenState extends State<MapScreen> {
 
       await _generateMarkersFromExperiences(_experiences);
       print("🗺️ MAP SCREEN: [BG] Shared experiences merged and markers updated.");
+      if (_tappedLocationDetails != null) {
+        _maybeAttachSavedOrPublicExperience(_tappedLocationDetails!);
+      }
 
       // Continue paging in background until exhausted
       if (_sharedHasMore && mounted) {
@@ -510,6 +539,8 @@ class _MapScreenState extends State<MapScreen> {
       _tappedExperienceCategory = null; // ADDED: Clear associated category
       _tappedLocationBusinessStatus = null; // ADDED: Clear business status
       _tappedLocationOpenNow = null; // ADDED: Clear open-now status
+      _publicReadOnlyExperience =
+          null; // ADDED: Clear any public fallback experience
     });
     final result = await Navigator.push<bool>(
       context,
@@ -525,6 +556,246 @@ class _MapScreenState extends State<MapScreen> {
     if (result == true) {
       await _loadDataAndGenerateMarkers();
     }
+  }
+
+  Future<void> _handleTappedLocationNavigation() async {
+    if (_tappedExperience != null && _tappedExperienceCategory != null) {
+      await _navigateToExperience(
+        _tappedExperience!,
+        _tappedExperienceCategory!,
+      );
+      return;
+    }
+    if (_publicReadOnlyExperience != null) {
+      final Experience publicExperience = _publicReadOnlyExperience!;
+      setState(() {
+        _tappedLocationMarker = null;
+        _tappedLocationDetails = null;
+        _tappedLocationBusinessStatus = null;
+        _tappedLocationOpenNow = null;
+        _publicReadOnlyExperience = null;
+      });
+      final dynamic result = await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => ExperiencePageScreen(
+            experience: publicExperience,
+            category: _publicReadOnlyCategory,
+            userColorCategories: const <ColorCategory>[],
+            readOnlyPreview: true,
+          ),
+        ),
+      );
+      // Handle focus payload from read-only back
+      if (mounted && result is Map<String, dynamic>) {
+        try {
+          final String? focusId = result['focusExperienceId'] as String?;
+          if (focusId != null && focusId.isNotEmpty) {
+            // Prefer the local publicExperience we navigated with
+            await _focusExperienceOnMap(publicExperience);
+            return;
+          }
+          // Fallback: if lat/lng provided, animate and set tapped location
+          final double? lat = (result['latitude'] as num?)?.toDouble();
+          final double? lng = (result['longitude'] as num?)?.toDouble();
+          if (lat != null && lng != null) {
+            final Location loc = Location(
+              latitude: lat,
+              longitude: lng,
+              displayName: result['focusExperienceName'] as String?,
+              placeId: result['placeId'] as String?,
+            );
+            await _selectLocationOnMap(
+              loc,
+              fetchPlaceDetails: false,
+              updateLoadingState: false,
+              animateCamera: true,
+              markerId: 'selected_experience_location',
+            );
+          }
+        } catch (_) {
+          // Ignore result parsing errors and simply return
+        }
+      }
+    }
+  }
+
+  // --- ADDED: Helper to focus and select a given experience on the map ---
+  Future<void> _focusExperienceOnMap(Experience experience) async {
+    try {
+      // Animate to experience location
+      final LatLng target = LatLng(
+        experience.location.latitude,
+        experience.location.longitude,
+      );
+      _mapController ??= await _mapControllerCompleter.future;
+      await _mapController!.animateCamera(
+        CameraUpdate.newLatLngZoom(target, 16.0),
+      );
+
+      // Build selected marker similar to onTap logic
+      Color markerBackgroundColor = Colors.grey;
+      try {
+        if (experience.colorCategoryId != null) {
+          final colorCat =
+              _colorCategories.firstWhere((cc) => cc.id == experience.colorCategoryId);
+          markerBackgroundColor = _parseColor(colorCat.colorHex);
+        }
+      } catch (_) {}
+
+      final String iconText = (experience.categoryIconDenorm != null &&
+              experience.categoryIconDenorm!.isNotEmpty)
+          ? experience.categoryIconDenorm!
+          : '*';
+      final BitmapDescriptor selectedIcon = await _bitmapDescriptorFromText(
+        iconText,
+        backgroundColor: markerBackgroundColor,
+        size: 100,
+        backgroundOpacity: 1.0,
+      );
+
+      final tappedMarkerId = MarkerId('selected_experience_location');
+      final Marker tappedMarker = Marker(
+        markerId: tappedMarkerId,
+        position: target,
+        infoWindow: InfoWindow(
+          title: '${_resolveCategoryForExperience(experience).icon} ${experience.name}',
+        ),
+        icon: selectedIcon,
+        zIndex: 1.0,
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _mapWidgetInitialLocation = experience.location;
+        _tappedLocationDetails = experience.location;
+        _tappedLocationMarker = tappedMarker;
+        _tappedExperience = experience;
+        _tappedExperienceCategory = _resolveCategoryForExperience(experience);
+      });
+      _showMarkerInfoWindow(tappedMarkerId);
+      unawaited(_prefetchExperienceMedia(experience));
+    } catch (_) {
+      // Best-effort focus; ignore errors
+    }
+  }
+
+  void _maybeAttachSavedOrPublicExperience(Location location) {
+    final Experience? saved = _findMatchingExperience(location);
+    if (saved != null) {
+      final UserCategory category = _resolveCategoryForExperience(saved);
+      final bool requiresUpdate = _tappedExperience?.id != saved.id ||
+          _tappedExperienceCategory?.id != category.id ||
+          _publicReadOnlyExperience != null;
+      if (requiresUpdate && mounted) {
+        setState(() {
+          _tappedExperience = saved;
+          _tappedExperienceCategory = category;
+          _publicReadOnlyExperience = null;
+        });
+      }
+      return;
+    }
+
+    if (_publicExperienceDraft != null &&
+        _doesLocationMatchInitialPublic(location)) {
+      final bool requiresUpdate = _publicReadOnlyExperience == null;
+      if (requiresUpdate && mounted) {
+        setState(() {
+          _tappedExperience = null;
+          _tappedExperienceCategory = null;
+          _publicReadOnlyExperience = _publicExperienceDraft;
+        });
+      }
+    } else if (_publicReadOnlyExperience != null && mounted) {
+      setState(() {
+        _publicReadOnlyExperience = null;
+      });
+    }
+  }
+
+  Experience? _findMatchingExperience(Location location) {
+    if (_experiences.isEmpty) {
+      return null;
+    }
+    final String? placeId = location.placeId;
+    if (placeId != null && placeId.isNotEmpty) {
+      try {
+        return _experiences.firstWhere(
+          (exp) =>
+              exp.location.placeId != null &&
+              exp.location.placeId!.isNotEmpty &&
+              exp.location.placeId == placeId,
+        );
+      } catch (_) {
+        // No match by place ID, fall through to coordinate comparison.
+      }
+    }
+
+    for (final experience in _experiences) {
+      if (_areCoordinatesClose(
+        experience.location.latitude,
+        experience.location.longitude,
+        location.latitude,
+        location.longitude,
+      )) {
+        return experience;
+      }
+    }
+    return null;
+  }
+
+  bool _doesLocationMatchInitialPublic(Location location) {
+    final Location? publicLocation =
+        widget.initialPublicExperience?.location;
+    if (publicLocation == null) {
+      return false;
+    }
+    if (location.placeId != null &&
+        location.placeId!.isNotEmpty &&
+        publicLocation.placeId != null &&
+        publicLocation.placeId!.isNotEmpty &&
+        location.placeId == publicLocation.placeId) {
+      return true;
+    }
+    return _areCoordinatesClose(
+      location.latitude,
+      location.longitude,
+      publicLocation.latitude,
+      publicLocation.longitude,
+    );
+  }
+
+  bool _areCoordinatesClose(
+    double lat1,
+    double lng1,
+    double lat2,
+    double lng2, {
+    double tolerance = 0.0005,
+  }) {
+    return (lat1 - lat2).abs() <= tolerance &&
+        (lng1 - lng2).abs() <= tolerance;
+  }
+
+  UserCategory _resolveCategoryForExperience(Experience experience) {
+    final String? categoryId = experience.categoryId;
+    if (categoryId != null) {
+      try {
+        return _categories.firstWhere((cat) => cat.id == categoryId);
+      } catch (_) {
+        // Fall through to placeholder if category was not preloaded.
+      }
+    }
+    final String fallbackIcon = (experience.categoryIconDenorm != null &&
+            experience.categoryIconDenorm!.isNotEmpty)
+        ? experience.categoryIconDenorm!
+        : '*';
+    return UserCategory(
+      id: categoryId ?? 'uncategorized',
+      name: categoryId != null ? 'Shared Category' : 'Uncategorized',
+      icon: fallbackIcon,
+      ownerUserId: experience.createdBy ?? '',
+    );
   }
 
   int _getMediaCountForExperience(Experience experience) {
@@ -1113,7 +1384,7 @@ class _MapScreenState extends State<MapScreen> {
       // Prefer denormalized icon when available
       final String iconText = (experience.categoryIconDenorm != null && experience.categoryIconDenorm!.isNotEmpty)
           ? experience.categoryIconDenorm!
-          : category.icon;
+        : '*';
       final String cacheKey = '${iconText}_${markerBackgroundColor.value}';
 
       BitmapDescriptor categoryIconBitmap =
@@ -1339,6 +1610,7 @@ class _MapScreenState extends State<MapScreen> {
       }
     });
 
+    _maybeAttachSavedOrPublicExperience(finalLocationDetails);
     _showMarkerInfoWindow(markerIdObj);
   }
 
@@ -1723,7 +1995,7 @@ class _MapScreenState extends State<MapScreen> {
 
       final String selectedIconText = (experience.categoryIconDenorm != null && experience.categoryIconDenorm!.isNotEmpty)
           ? experience.categoryIconDenorm!
-          : category.icon;
+        : '*';
       final selectedIcon = await _bitmapDescriptorFromText(
         selectedIconText,
         backgroundColor: markerBackgroundColor,
@@ -1868,6 +2140,7 @@ class _MapScreenState extends State<MapScreen> {
           _showSearchResults = false; 
         });
         print('🗺️ MAP SCREEN: (_selectSearchResult) After setState, _tappedLocationDetails is: ${_tappedLocationDetails?.getPlaceName()} and _mapWidgetInitialLocation is: ${_mapWidgetInitialLocation?.getPlaceName()}');
+        _maybeAttachSavedOrPublicExperience(location);
         _showMarkerInfoWindow(tappedMarkerId);
       }
 
@@ -2042,6 +2315,13 @@ class _MapScreenState extends State<MapScreen> {
         ? _getMediaCountForExperience(_tappedExperience!)
         : 0;
     final bool canPreviewContent = tappedExperienceMediaCount > 0;
+    final bool hasPublicFallback = _publicReadOnlyExperience != null;
+    final bool showExperiencePrompt = _canOpenSelectedExperience;
+    final String selectedTitle = _tappedExperience != null
+        ? '${_tappedExperienceCategory?.icon ?? '*'} ${_tappedExperience!.name}'
+        : hasPublicFallback
+            ? '${_publicReadOnlyCategory.icon} ${_publicReadOnlyExperience!.name}'
+            : _tappedLocationDetails?.getPlaceName() ?? 'Selected Location';
 
     // Combine experience markers and the tapped marker (if it exists)
     final Map<String, Marker> allMarkers = Map.from(_markers);
@@ -2367,7 +2647,7 @@ class _MapScreenState extends State<MapScreen> {
                     allowSelection: true,
                     onLocationSelected: _handleLocationSelected,
                     showControls: true,
-                    mapToolbarEnabled: _tappedExperience == null,
+                    mapToolbarEnabled: !_canOpenSelectedExperience,
                     additionalMarkers: allMarkers,
                     onMapControllerCreated: _onMapWidgetCreated,
                   ),
@@ -2395,7 +2675,7 @@ class _MapScreenState extends State<MapScreen> {
                     clipBehavior: Clip.none, 
                     children: [
                       // ADDED: Positioned "Tap to view" text at the very top
-                      if (_tappedExperience != null)
+                      if (showExperiencePrompt)
                         Positioned(
                           top: -12, // Move it further up, closer to the edge
                           left: 0,
@@ -2412,8 +2692,8 @@ class _MapScreenState extends State<MapScreen> {
                           ),
                         ),
                       GestureDetector(
-                        onTap: _tappedExperience != null
-                            ? () => _navigateToExperience(_tappedExperience!, _tappedExperienceCategory!)
+                        onTap: showExperiencePrompt
+                            ? _handleTappedLocationNavigation
                             : null,
                         behavior: HitTestBehavior.translucent,
                         child: Column(
@@ -2421,10 +2701,10 @@ class _MapScreenState extends State<MapScreen> {
                         mainAxisSize: MainAxisSize.min, 
                         children: [
                           // ADDED: Add space at the top for the positioned text
-                          if (_tappedExperience != null)
+                          if (showExperiencePrompt)
                             SizedBox(height: 12),
                           // Only show "Selected Location" for non-experience locations
-                          if (_tappedExperience == null) ...[
+                          if (!showExperiencePrompt) ...[
                             Text(
                               'Selected Location',
                               style: TextStyle(
@@ -2440,9 +2720,7 @@ class _MapScreenState extends State<MapScreen> {
                             children: [
                               Expanded(
                                 child: Text(
-                                  _tappedExperience != null
-                                      ? '${_tappedExperienceCategory!.icon} ${_tappedExperience!.name}'
-                                      : _tappedLocationDetails!.getPlaceName(),
+                                  selectedTitle,
                                   style: const TextStyle(
                                     fontWeight: FontWeight.w500,
                                     fontSize: 16,
