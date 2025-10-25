@@ -18,6 +18,7 @@ import 'receive_share/widgets/youtube_preview_widget.dart';
 import 'receive_share/widgets/instagram_preview_widget.dart'
     as instagram_widget;
 import '../widgets/edit_experience_modal.dart';
+import 'map_screen.dart';
 
 class DiscoveryScreen extends StatefulWidget {
   const DiscoveryScreen({super.key});
@@ -416,7 +417,18 @@ class _DiscoveryScreenState extends State<DiscoveryScreen>
           icon: Icons.place_outlined,
           label: 'Location',
           onPressed: () {
-            // TODO: Implement location action.
+            final location = item.experience.location;
+            final locationForMap = (location.displayName != null &&
+                    location.displayName!.trim().isNotEmpty)
+                ? location
+                : location.copyWith(displayName: item.experience.name);
+            Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => MapScreen(
+                  initialExperienceLocation: locationForMap,
+                ),
+              ),
+            );
           },
         ),
         const SizedBox(height: 16),
