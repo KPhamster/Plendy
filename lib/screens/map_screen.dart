@@ -139,6 +139,14 @@ class _MapScreenState extends State<MapScreen> {
               "🗺️ MAP SCREEN: Animating to provided initial experience location: $target");
           _mapController!
               .animateCamera(CameraUpdate.newLatLngZoom(target, 15.0));
+          unawaited(_selectLocationOnMap(
+            widget.initialExperienceLocation!,
+            animateCamera: false,
+            updateLoadingState: false,
+            markerId: 'initial_selected_location',
+          ).catchError((e, __) {
+            print("🗺️ MAP SCREEN: Failed to preselect initial location: $e");
+          }));
         }
       });
     } else {
@@ -1233,6 +1241,107 @@ class _MapScreenState extends State<MapScreen> {
   }
   // --- END REFACTORED Marker generation ---
 
+  Future<void> _selectLocationOnMap(
+    Location locationDetails, {
+    bool fetchPlaceDetails = true,
+    bool updateLoadingState = true,
+    bool animateCamera = true,
+    String markerId = 'selected_location',
+  }) async {
+    print(
+        "🗺️ MAP SCREEN: _selectLocationOnMap invoked for ${locationDetails.displayName ?? locationDetails.address}");
+    Location finalLocationDetails = locationDetails;
+
+    if (fetchPlaceDetails &&
+        locationDetails.placeId != null &&
+        locationDetails.placeId!.isNotEmpty) {
+      print(
+          "🗺️ MAP SCREEN: Fetching detailed place info for ${locationDetails.placeId}");
+      try {
+        finalLocationDetails =
+            await _mapsService.getPlaceDetails(locationDetails.placeId!);
+        print(
+            "🗺️ MAP SCREEN: Detailed place info fetched: ${finalLocationDetails.displayName}");
+      } catch (e) {
+        print(
+            "🗺️ MAP SCREEN: Failed to fetch detailed place info: $e. Using provided data.");
+      }
+    } else {
+      print("🗺️ MAP SCREEN: No placeId available; using provided location.");
+    }
+
+    String? businessStatus;
+    bool? openNow;
+    try {
+      if (finalLocationDetails.placeId != null &&
+          finalLocationDetails.placeId!.isNotEmpty) {
+        final detailsMap = await _mapsService
+            .fetchPlaceDetailsData(finalLocationDetails.placeId!);
+        businessStatus = detailsMap?['businessStatus'] as String?;
+        openNow =
+            (detailsMap?['currentOpeningHours']?['openNow']) as bool?;
+      }
+    } catch (e) {
+      print("🗺️ MAP SCREEN: Failed to fetch business status: $e");
+      businessStatus = null;
+      openNow = null;
+    }
+
+    final LatLng targetLatLng =
+        LatLng(finalLocationDetails.latitude, finalLocationDetails.longitude);
+
+    GoogleMapController currentMapController;
+    if (_mapController != null) {
+      currentMapController = _mapController!;
+    } else {
+      print("🗺️ MAP SCREEN: Awaiting map controller before selecting location.");
+      currentMapController = await _mapControllerCompleter.future;
+      print("🗺️ MAP SCREEN: Map controller ready for selection.");
+      _mapController = currentMapController;
+    }
+
+    if (animateCamera) {
+      currentMapController.animateCamera(
+        CameraUpdate.newLatLng(targetLatLng),
+      );
+    }
+
+    final markerIdObj = MarkerId(markerId);
+    final tappedMarker = Marker(
+      markerId: markerIdObj,
+      position: targetLatLng,
+      infoWindow: InfoWindow(
+        title: finalLocationDetails.getPlaceName(),
+        onTap: () {
+          print(
+              "🗺️ MAP SCREEN: InfoWindow tapped for ${finalLocationDetails.getPlaceName()}");
+          if (_tappedLocationDetails != null) {
+            _openDirectionsForLocation(_tappedLocationDetails!);
+          }
+        },
+      ),
+      icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueViolet),
+      zIndex: 1.0,
+    );
+
+    if (!mounted) return;
+
+    setState(() {
+      _mapWidgetInitialLocation = finalLocationDetails;
+      _tappedLocationDetails = finalLocationDetails;
+      _tappedLocationMarker = tappedMarker;
+      _tappedExperience = null;
+      _tappedExperienceCategory = null;
+      _tappedLocationBusinessStatus = businessStatus;
+      _tappedLocationOpenNow = openNow;
+      if (updateLoadingState) {
+        _isLoading = false;
+      }
+    });
+
+    _showMarkerInfoWindow(markerIdObj);
+  }
+
   // --- ADDED: Handle location selection from GoogleMapsWidget ---
   Future<void> _handleLocationSelected(Location locationDetails) async {
     FocusScope.of(context).unfocus(); // ADDED: Unfocus search bar
@@ -1270,91 +1379,7 @@ class _MapScreenState extends State<MapScreen> {
     
 
     try {
-      // MODIFIED: Fetch full details if placeId is available
-      Location finalLocationDetails = locationDetails;
-      if (locationDetails.placeId != null && locationDetails.placeId!.isNotEmpty) {
-        print("🗺️ MAP SCREEN: (_handleLocationSelected) Map tap has Place ID: ${locationDetails.placeId}. Fetching details...");
-        try {
-          finalLocationDetails = await _mapsService.getPlaceDetails(locationDetails.placeId!);
-          print("🗺️ MAP SCREEN: (_handleLocationSelected) Fetched details for map tap: ${finalLocationDetails.displayName}, Rating: ${finalLocationDetails.rating}");
-        } catch (e) {
-          print("🗺️ MAP SCREEN: (_handleLocationSelected) Error fetching details for map tap location: $e. Using initial details.");
-          // finalLocationDetails remains locationDetails (original)
-        }
-      } else {
-        print("🗺️ MAP SCREEN: (_handleLocationSelected) Map tap location has no Place ID. Using basic info.");
-      }
-
-      print(
-          "🗺️ MAP SCREEN: Selected location details: Name='${finalLocationDetails.displayName}', Address='${finalLocationDetails.address}', PlaceID='${finalLocationDetails.placeId}'");
-      // Fetch business/open-now status using Places API v1 details
-      String? businessStatus;
-      bool? openNow;
-      try {
-        if (finalLocationDetails.placeId != null && finalLocationDetails.placeId!.isNotEmpty) {
-          final detailsMap = await _mapsService.fetchPlaceDetailsData(finalLocationDetails.placeId!);
-          businessStatus = detailsMap?['businessStatus'] as String?;
-          openNow = (detailsMap?['currentOpeningHours']?['openNow']) as bool?;
-        }
-      } catch (e) {
-        businessStatus = null;
-        openNow = null;
-      }
-      
-      final LatLng targetLatLng = LatLng(finalLocationDetails.latitude, finalLocationDetails.longitude);
-
-      // Animate camera to the tapped location
-      // Ensure map controller is available before animating
-      GoogleMapController currentMapController;
-      if (_mapController != null) {
-          currentMapController = _mapController!;
-      } else {
-          print("🗺️ MAP SCREEN: (_handleLocationSelected) Awaiting map controller for animation...");
-          currentMapController = await _mapControllerCompleter.future;
-          print("🗺️ MAP SCREEN: (_handleLocationSelected) Map controller obtained for animation.");
-      }
-      currentMapController.animateCamera(
-        CameraUpdate.newLatLng(targetLatLng),
-      );
-
-
-      // Create a new marker for the selected location
-      final tappedMarkerId = MarkerId('selected_location'); 
-      final tappedMarker = Marker(
-        markerId: tappedMarkerId,
-        position: targetLatLng, 
-        infoWindow: InfoWindow(
-          title:
-              finalLocationDetails.getPlaceName(), 
-          onTap: () {
-            print(
-                "🗺️ MAP SCREEN: InfoWindow tapped for ${_tappedLocationDetails?.displayName}");
-            if (_tappedLocationDetails != null) {
-              _openDirectionsForLocation(_tappedLocationDetails!);
-            }
-          },
-        ),
-        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueViolet),
-        zIndex:
-            1.0, 
-      );
-
-      // Update state to show the new marker and set initial location for map widget
-      if (mounted) {
-        setState(() {
-          _mapWidgetInitialLocation = finalLocationDetails; // Update map widget's initial location
-          _tappedLocationDetails = finalLocationDetails;
-          _tappedLocationMarker = tappedMarker;
-          _tappedExperience = null; // ADDED: Clear associated experience for map-tapped locations
-          _tappedExperienceCategory = null; // ADDED: Clear associated category for map-tapped locations
-          _tappedLocationBusinessStatus = businessStatus; // ADDED: Set business status
-          _tappedLocationOpenNow = openNow; // ADDED: Set open-now status
-          _isLoading = false; 
-        });
-        print("🗺️ MAP SCREEN: (_handleLocationSelected) Updated state with new tapped location and map initial location: ${finalLocationDetails.getPlaceName()}");
-        _showMarkerInfoWindow(tappedMarkerId);
-      }
-
+      await _selectLocationOnMap(locationDetails);
     } catch (e) {
       print("🗺️ MAP SCREEN: Error handling location selection: $e");
       if (mounted) {
