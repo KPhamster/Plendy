@@ -738,33 +738,27 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
               ),
             ),
 
-          // --- MODIFIED: Positioned Back Button (always shown, behavior varies by readOnlyPreview) ---
-          Positioned(
-            // Position accounting for status bar height + padding
-            top: MediaQuery.of(context).padding.top + 8.0,
-            left: 8.0,
-            child: Container(
-              // Copied from SliverAppBar leading
-              margin:
-                  const EdgeInsets.all(0), // No margin needed when positioned
-              decoration: BoxDecoration(
-                color: Colors.black
-                    .withOpacity(0.4), // Slightly darker for visibility?
-                shape: BoxShape.circle,
-              ),
-              child: BackButton(
-                color: Colors.white,
-                onPressed: () {
-                  if (widget.readOnlyPreview) {
-                    final payload = _buildMapFocusPayload();
-                    Navigator.of(context).pop(payload);
-                  } else {
-                    Navigator.of(context).pop(_didDataChange);
-                  }
-                },
+          // --- ADDED: Positioned Back Button ---
+          if (!widget.readOnlyPreview)
+            Positioned(
+              // Position accounting for status bar height + padding
+              top: MediaQuery.of(context).padding.top + 8.0,
+              left: 8.0,
+              child: Container(
+                // Copied from SliverAppBar leading
+                margin:
+                    const EdgeInsets.all(0), // No margin needed when positioned
+                decoration: BoxDecoration(
+                  color: Colors.black
+                      .withOpacity(0.4), // Slightly darker for visibility?
+                  shape: BoxShape.circle,
+                ),
+                child: BackButton(
+                  color: Colors.white,
+                  onPressed: () => Navigator.of(context).pop(_didDataChange),
+                ),
               ),
             ),
-          ),
           // --- END: Positioned Back Button ---
 
           // --- ADDED: Positioned Overflow Menu (3-dot) ---
@@ -962,11 +956,6 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     // Wrap main Scaffold with WillPopScope
     return WillPopScope(
       onWillPop: () async {
-        if (widget.readOnlyPreview) {
-          final payload = _buildMapFocusPayload();
-          Navigator.of(context).pop(payload);
-          return false;
-        }
         Navigator.of(context).pop(_didDataChange);
         return false;
       },
@@ -1061,18 +1050,6 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
         ),
       ),
     );
-  }
-
-  // --- ADDED: Build focus payload for MapScreen re-selection on back ---
-  Map<String, dynamic> _buildMapFocusPayload() {
-    final Location loc = _currentExperience.location;
-    return {
-      'focusExperienceId': _currentExperience.id,
-      'focusExperienceName': _currentExperience.name,
-      'latitude': loc.latitude,
-      'longitude': loc.longitude,
-      'placeId': loc.placeId,
-    };
   }
 
   // New method to handle loading/error states for details section
@@ -2524,15 +2501,14 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                                                   : 'Open URL',
                               onPressed: () => _launchUrl(url),
                             ),
-                            // Delete button (hidden in read-only preview)
-                            if (!widget.readOnlyPreview)
-                              IconButton(
-                                icon: const Icon(Icons.delete_outline),
-                                iconSize: 24,
-                                color: Colors.red[700],
-                                tooltip: 'Delete Media',
-                                onPressed: () => _deleteMediaPath(url),
-                              ),
+                            // Delete button
+                            IconButton(
+                              icon: const Icon(Icons.delete_outline),
+                              iconSize: 24,
+                              color: Colors.red[700],
+                              tooltip: 'Delete Media',
+                              onPressed: () => _deleteMediaPath(url),
+                            ),
                           ],
                         ),
                       ),
@@ -2874,41 +2850,6 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
         }
       } else {
         print("No media item IDs associated with this experience.");
-        // --- ADDED: Read-only fallback using imageUrls for public previews --- START ---
-        if (widget.readOnlyPreview) {
-          final List<String> urls = List<String>.from(_currentExperience.imageUrls);
-          if (urls.isNotEmpty) {
-            final String experienceIdForPreview = _currentExperience.id.isNotEmpty
-                ? _currentExperience.id
-                : 'preview_${_currentExperience.hashCode}';
-            final List<SharedMediaItem> fallbackItems = urls
-                .where((u) => u.isNotEmpty)
-                .map(
-                  (u) => SharedMediaItem(
-                    id: 'preview_${experienceIdForPreview}_${u.hashCode}',
-                    path: u,
-                    createdAt: DateTime.now(),
-                    ownerUserId: 'public',
-                    experienceIds: <String>[experienceIdForPreview],
-                    isTiktokPhoto: null,
-                  ),
-                )
-                .toList();
-            if (mounted) {
-              setState(() {
-                _mediaItems = fallbackItems;
-                _expandedMediaPath =
-                    _mediaItems.isNotEmpty ? _mediaItems.first.path : null;
-              });
-              print(
-                  "ExperiencePageScreen: Built ${_mediaItems.length} fallback media items from imageUrls for read-only preview.");
-              // Populate any dependent UI like 'Also linked to' section
-              _loadOtherExperienceData();
-            }
-            return;
-          }
-        }
-        // --- ADDED: Read-only fallback using imageUrls for public previews --- END ---
         if (mounted) {
           setState(() {
             _mediaItems = [];

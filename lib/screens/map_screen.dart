@@ -405,8 +405,9 @@ class _MapScreenState extends State<MapScreen> {
         });
       }
 
+      // IMPORTANT: Regenerate markers after merging to pick up newly fetched category/color data
       await _generateMarkersFromExperiences(_experiences);
-      print("🗺️ MAP SCREEN: [BG] Shared experiences merged and markers updated.");
+      print("🗺️ MAP SCREEN: [BG] Shared experiences merged and markers updated with fresh category/color data.");
       if (_tappedLocationDetails != null) {
         _maybeAttachSavedOrPublicExperience(_tappedLocationDetails!);
       }
@@ -646,7 +647,7 @@ class _MapScreenState extends State<MapScreen> {
       final String iconText = (experience.categoryIconDenorm != null &&
               experience.categoryIconDenorm!.isNotEmpty)
           ? experience.categoryIconDenorm!
-          : '*';
+          : _resolveCategoryForExperience(experience).icon;
       final BitmapDescriptor selectedIcon = await _bitmapDescriptorFromText(
         iconText,
         backgroundColor: markerBackgroundColor,
@@ -1381,10 +1382,10 @@ class _MapScreenState extends State<MapScreen> {
       }
 
       // Generate a unique cache key including the color and the *icon*
-      // Prefer denormalized icon when available
+      // Prefer denormalized icon when available, fallback to category icon
       final String iconText = (experience.categoryIconDenorm != null && experience.categoryIconDenorm!.isNotEmpty)
           ? experience.categoryIconDenorm!
-        : '*';
+        : category.icon;
       final String cacheKey = '${iconText}_${markerBackgroundColor.value}';
 
       BitmapDescriptor categoryIconBitmap =
