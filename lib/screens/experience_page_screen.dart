@@ -66,6 +66,7 @@ class ExperiencePageScreen extends StatefulWidget {
   // ADDED: Share preview metadata for dynamic messaging
   final String? sharePreviewType; // 'my_copy' | 'separate_copy'
   final String? shareAccessMode; // 'view' | 'edit'
+  final bool focusMapOnPop; // When read-only from map, return focus payload
 
   const ExperiencePageScreen({
     super.key,
@@ -78,6 +79,7 @@ class ExperiencePageScreen extends StatefulWidget {
     this.onSaveExperience,
     this.sharePreviewType,
     this.shareAccessMode,
+    this.focusMapOnPop = false,
   });
 
   @override
@@ -286,6 +288,35 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
         widget.shareBannerFromUserId!.isNotEmpty) {
       _resolveSharerDisplayName(widget.shareBannerFromUserId!);
     }
+  }
+
+  Future<bool> _handleBackNavigation() async {
+    if (widget.readOnlyPreview) {
+      if (widget.focusMapOnPop) {
+        Navigator.of(context).pop(_buildMapFocusPayload());
+      } else {
+        Navigator.of(context).pop();
+      }
+    } else {
+      Navigator.of(context).pop(_didDataChange);
+    }
+    return false;
+  }
+
+  Map<String, dynamic> _buildMapFocusPayload() {
+    final Location location = widget.experience.location;
+    final String fallbackId = widget.experience.id.isNotEmpty
+        ? widget.experience.id
+        : ((location.placeId != null && location.placeId!.isNotEmpty)
+            ? location.placeId!
+            : widget.experience.name);
+    return {
+      'focusExperienceId': fallbackId,
+      'focusExperienceName': widget.experience.name,
+      'latitude': location.latitude,
+      'longitude': location.longitude,
+      'placeId': location.placeId,
+    };
   }
 
   // --- ADDED: Scroll Listener ---
@@ -739,26 +770,27 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
             ),
 
           // --- ADDED: Positioned Back Button ---
-          if (!widget.readOnlyPreview)
-            Positioned(
-              // Position accounting for status bar height + padding
-              top: MediaQuery.of(context).padding.top + 8.0,
-              left: 8.0,
-              child: Container(
-                // Copied from SliverAppBar leading
-                margin:
-                    const EdgeInsets.all(0), // No margin needed when positioned
-                decoration: BoxDecoration(
-                  color: Colors.black
-                      .withOpacity(0.4), // Slightly darker for visibility?
-                  shape: BoxShape.circle,
-                ),
-                child: BackButton(
-                  color: Colors.white,
-                  onPressed: () => Navigator.of(context).pop(_didDataChange),
-                ),
+          Positioned(
+            // Position accounting for status bar height + padding
+            top: MediaQuery.of(context).padding.top + 8.0,
+            left: 8.0,
+            child: Container(
+              // Copied from SliverAppBar leading
+              margin:
+                  const EdgeInsets.all(0), // No margin needed when positioned
+              decoration: BoxDecoration(
+                color:
+                    Colors.black.withOpacity(0.4), // Slightly darker for visibility
+                shape: BoxShape.circle,
+              ),
+              child: BackButton(
+                color: Colors.white,
+                onPressed: () {
+                  _handleBackNavigation();
+                },
               ),
             ),
+          ),
           // --- END: Positioned Back Button ---
 
           // --- ADDED: Positioned Overflow Menu (3-dot) ---
@@ -955,10 +987,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
 
     // Wrap main Scaffold with WillPopScope
     return WillPopScope(
-      onWillPop: () async {
-        Navigator.of(context).pop(_didDataChange);
-        return false;
-      },
+      onWillPop: _handleBackNavigation,
       child: Scaffold(
         backgroundColor: Colors.white,
         // No AppBar needed here anymore
