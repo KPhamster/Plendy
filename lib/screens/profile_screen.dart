@@ -47,6 +47,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
+  Future<void> _openEditProfile() async {
+    final result = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(builder: (context) => const EditProfileScreen()),
+    );
+    if (result == true) {
+      _refreshProfile();
+    }
+  }
+
   void _refreshProfile() {
     if (mounted) {
       setState(() {});
@@ -68,16 +78,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.edit),
-            onPressed: () async {
-              final result = await Navigator.push<bool>(
-                context,
-                MaterialPageRoute(
-                    builder: (context) => const EditProfileScreen()),
-              );
-              if (result == true) {
-                _refreshProfile();
-              }
-            },
+            onPressed: _openEditProfile,
           ),
         ],
       ),
@@ -90,46 +91,51 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Center(
-                    child: CircleAvatar(
-                      radius: 50,
-                      backgroundImage: user?.photoURL != null
-                          ? NetworkImage(user!.photoURL!)
-                          : null,
-                      child: user?.photoURL == null
-                          ? const Icon(Icons.person, size: 50)
-                          : null,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  if (user?.displayName?.isNotEmpty ?? false)
-                    Center(
-                      child: Text(
-                        user!.displayName!,
-                        style: const TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                        ),
-                        textAlign: TextAlign.center,
+                    child: GestureDetector(
+                      onTap: _openEditProfile,
+                      behavior: HitTestBehavior.translucent,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          CircleAvatar(
+                            radius: 50,
+                            backgroundImage: user?.photoURL != null
+                                ? NetworkImage(user!.photoURL!)
+                                : null,
+                            child: user?.photoURL == null
+                                ? const Icon(Icons.person, size: 50)
+                                : null,
+                          ),
+                          const SizedBox(height: 16),
+                          if (user?.displayName?.isNotEmpty ?? false)
+                            Text(
+                              user!.displayName!,
+                              style: const TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                          if (user?.displayName?.isNotEmpty ?? false)
+                            const SizedBox(height: 4),
+                          Text(
+                            '@${_username ?? '...'}',
+                            style: TextStyle(
+                              fontSize: (user?.displayName?.isNotEmpty ?? false)
+                                  ? 16
+                                  : 20,
+                              fontWeight:
+                                  (user?.displayName?.isNotEmpty ?? false)
+                                      ? FontWeight.normal
+                                      : FontWeight.bold,
+                              color: (user?.displayName?.isNotEmpty ?? false)
+                                  ? Colors.grey[600]
+                                  : Colors.black,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                        ],
                       ),
-                    ),
-                  if (user?.displayName?.isNotEmpty ?? false)
-                    const SizedBox(
-                        height: 4), // Small space if display name is shown
-                  Center(
-                    child: Text(
-                      '@${_username ?? '...'}',
-                      style: TextStyle(
-                        fontSize: (user?.displayName?.isNotEmpty ?? false)
-                            ? 16
-                            : 20, // Smaller if display name is above
-                        fontWeight: (user?.displayName?.isNotEmpty ?? false)
-                            ? FontWeight.normal
-                            : FontWeight.bold,
-                        color: (user?.displayName?.isNotEmpty ?? false)
-                            ? Colors.grey[600]
-                            : Colors.black, // Different color if subtitle
-                      ),
-                      textAlign: TextAlign.center,
                     ),
                   ),
                   const SizedBox(height: 8),
