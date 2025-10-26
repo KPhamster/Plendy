@@ -1401,6 +1401,76 @@ class ExperienceService {
     return null;
   }
 
+  Future<List<Experience>> findEditableExperiencesByPlaceId(
+      String? placeId) async {
+    final String? userId = _currentUserId;
+    if (userId == null || placeId == null || placeId.isEmpty) {
+      return [];
+    }
+
+    try {
+      final querySnapshot = await _experiencesCollection
+          .where('location.placeId', isEqualTo: placeId)
+          .limit(50)
+          .get();
+
+      final List<Experience> results = [];
+      for (final doc in querySnapshot.docs) {
+        final data = doc.data() as Map<String, dynamic>;
+        final String? createdBy = data['createdBy'] as String?;
+        final List<dynamic>? editors = data['editorUserIds'] as List<dynamic>?;
+        final bool isOwner = createdBy != null && createdBy == userId;
+        final bool hasEditAccess =
+            editors != null && editors.contains(userId);
+        if (isOwner || hasEditAccess) {
+          results.add(Experience.fromFirestore(doc));
+        }
+      }
+      return results;
+    } catch (e) {
+      debugPrint(
+          'findEditableExperiencesByPlaceId: Error fetching experiences for placeId $placeId: $e');
+    }
+    return [];
+  }
+
+  Future<List<Experience>> findAccessibleExperiencesByPlaceId(
+      String? placeId) async {
+    final String? userId = _currentUserId;
+    if (userId == null || placeId == null || placeId.isEmpty) {
+      return [];
+    }
+
+    try {
+      final querySnapshot = await _experiencesCollection
+          .where('location.placeId', isEqualTo: placeId)
+          .limit(50)
+          .get();
+
+      final List<Experience> results = [];
+      for (final doc in querySnapshot.docs) {
+        final data = doc.data() as Map<String, dynamic>;
+        final String? createdBy = data['createdBy'] as String?;
+        final List<dynamic>? editors = data['editorUserIds'] as List<dynamic>?;
+        final List<dynamic>? sharedWith =
+            data['sharedWithUserIds'] as List<dynamic>?;
+        final bool isOwner = createdBy != null && createdBy == userId;
+        final bool hasEditAccess =
+            editors != null && editors.contains(userId);
+        final bool hasViewAccess =
+            sharedWith != null && sharedWith.contains(userId);
+        if (isOwner || hasEditAccess || hasViewAccess) {
+          results.add(Experience.fromFirestore(doc));
+        }
+      }
+      return results;
+    } catch (e) {
+      debugPrint(
+          'findAccessibleExperiencesByPlaceId: Error fetching experiences for placeId $placeId: $e');
+    }
+    return [];
+  }
+
   /// Update an existing experience
   Future<void> updateExperience(Experience experience) async {
     // DEBUG: First, read the existing experience to check old category

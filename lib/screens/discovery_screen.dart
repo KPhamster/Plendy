@@ -8,6 +8,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../models/color_category.dart';
 import '../models/experience.dart';
 import '../models/public_experience.dart';
+import '../models/shared_media_item.dart';
 import '../models/user_category.dart';
 import '../services/experience_service.dart';
 import '../services/google_maps_service.dart';
@@ -360,6 +361,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
 
   Widget _buildFeedPage(_DiscoveryFeedItem item) {
     final preview = _buildPreviewForItem(item);
+    _maybeCheckIfMediaSaved(item);
 
     return Stack(
       fit: StackFit.expand,
@@ -451,10 +453,17 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
           sourceButton,
           const SizedBox(height: 16),
         ],
-        _buildActionButton(
-          icon: Icons.bookmark_border,
-          label: 'Save',
-          onPressed: () => _handleBookmarkTapped(item),
+        ValueListenableBuilder<bool?>(
+          valueListenable: item.isMediaAlreadySaved,
+          builder: (context, isSaved, _) {
+            final bool resolvedSaved = isSaved ?? false;
+            return _buildActionButton(
+              icon: resolvedSaved ? Icons.bookmark : Icons.bookmark_border,
+              label: resolvedSaved ? 'Saved' : 'Save',
+              onPressed:
+                  resolvedSaved ? null : () => _handleBookmarkTapped(item),
+            );
+          },
         ),
         const SizedBox(height: 16),
         _buildActionButton(
@@ -507,6 +516,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
         '_buildActionButton requires either an IconData or a Widget.');
     final Widget iconContent =
         iconWidget ?? Icon(icon, color: Colors.white, size: 28);
+    final bool isDisabled = onPressed == null;
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -520,6 +530,8 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
             icon: iconContent,
             iconSize: iconWidget == null ? 28 : 24,
             splashRadius: 28,
+            color: Colors.white,
+            disabledColor: Colors.white70,
           ),
         ),
         const SizedBox(height: 3),
@@ -607,6 +619,80 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
     } catch (e) {
       debugPrint('DiscoveryScreen: Failed to load user collections: $e');
     }
+  }
+
+  Future<void> _maybeCheckIfMediaSaved(_DiscoveryFeedItem item) async {
+    if (item.isMediaAlreadySaved.value != null) {
+      return;
+    }
+    final String? placeId = item.experience.location.placeId;
+    if (placeId == null || placeId.isEmpty) {
+      item.isMediaAlreadySaved.value = false;
+      return;
+    }
+    try {
+      final experiences =
+          await _experienceService.findAccessibleExperiencesByPlaceId(placeId);
+      if (experiences.isEmpty) {
+        item.isMediaAlreadySaved.value = false;
+        return;
+      }
+      final String normalizedUrl = _normalizeUrlForComparison(item.mediaUrl);
+      bool found = false;
+      for (final experience in experiences) {
+        if (_experienceContainsMediaUrl(experience, normalizedUrl)) {
+          found = true;
+          break;
+        }
+      }
+
+      if (!found) {
+        final Set<String> mediaItemIds = {
+          for (final experience in experiences)
+            ...experience.sharedMediaItemIds.where((id) => id.isNotEmpty)
+        };
+        if (mediaItemIds.isNotEmpty) {
+          final List<SharedMediaItem> mediaItems =
+              await _experienceService.getSharedMediaItems(
+            mediaItemIds.toList(),
+          );
+          for (final itemMeta in mediaItems) {
+            if (_normalizeUrlForComparison(itemMeta.path) ==
+                _normalizeUrlForComparison(normalizedUrl)) {
+              found = true;
+              break;
+            }
+          }
+        }
+      }
+      item.isMediaAlreadySaved.value = found;
+    } catch (e) {
+      debugPrint('DiscoveryScreen: Failed media check: $e');
+      item.isMediaAlreadySaved.value = false;
+    }
+  }
+
+  bool _experienceContainsMediaUrl(Experience experience, String url) {
+    if (url.isEmpty) return false;
+    final normalizedUrl = _normalizeUrlForComparison(url);
+    if (normalizedUrl.isEmpty) return false;
+    if (experience.imageUrls.any((entry) =>
+        _normalizeUrlForComparison(entry) == normalizedUrl)) {
+      return true;
+    }
+    // TODO: When shared media metadata includes direct URLs, compare here as well.
+    return false;
+  }
+
+  String _normalizeUrlForComparison(String? url) {
+    if (url == null) return '';
+    final trimmed = url.trim();
+    if (trimmed.isEmpty) return '';
+    final lower = trimmed.toLowerCase();
+    final withoutTrailingSlash = lower.endsWith('/')
+        ? lower.substring(0, lower.length - 1)
+        : lower;
+    return withoutTrailingSlash;
   }
 
   UserCategory _resolveCategoryForExperience(Experience experience) {
@@ -981,13 +1067,14 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
 }
 
 class _DiscoveryFeedItem {
-  const _DiscoveryFeedItem({
+  _DiscoveryFeedItem({
     required this.experience,
     required this.mediaUrl,
   });
 
   final PublicExperience experience;
   final String mediaUrl;
+  final ValueNotifier<bool?> isMediaAlreadySaved = ValueNotifier<bool?>(null);
 }
 
 enum _MediaType {
