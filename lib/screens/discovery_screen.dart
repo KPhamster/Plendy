@@ -2,6 +2,7 @@ import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../models/color_category.dart';
@@ -423,10 +424,16 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
   }
 
   Widget _buildActionButtons(_DiscoveryFeedItem item) {
+    final sourceButton = _buildSourceActionButton(item);
+
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
+        if (sourceButton != null) ...[
+          sourceButton,
+          const SizedBox(height: 16),
+        ],
         _buildActionButton(
           icon: Icons.bookmark_border,
           label: 'Bookmark',
@@ -473,22 +480,28 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
   }
 
   Widget _buildActionButton({
-    required IconData icon,
+    IconData? icon,
+    Widget? iconWidget,
     required String label,
+    Color? backgroundColor,
     VoidCallback? onPressed,
   }) {
+    assert(icon != null || iconWidget != null,
+        '_buildActionButton requires either an IconData or a Widget.');
+    final Widget iconContent =
+        iconWidget ?? Icon(icon, color: Colors.white, size: 28);
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         Container(
           decoration: BoxDecoration(
-            color: Colors.black45,
+            color: backgroundColor ?? Colors.black45,
             borderRadius: BorderRadius.circular(24),
           ),
           child: IconButton(
             onPressed: onPressed,
-            icon: Icon(icon, color: Colors.white),
-            iconSize: 28,
+            icon: iconContent,
+            iconSize: iconWidget == null ? 28 : 24,
             splashRadius: 28,
           ),
         ),
@@ -501,6 +514,18 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
           ),
         ),
       ],
+    );
+  }
+
+  Widget? _buildSourceActionButton(_DiscoveryFeedItem item) {
+    final config = _resolveSourceButtonConfig(item.mediaUrl);
+    if (config == null) return null;
+    return _buildActionButton(
+      icon: config.iconData,
+      iconWidget: config.iconWidget,
+      label: config.label,
+      backgroundColor: config.backgroundColor,
+      onPressed: () => _launchUrl(item.mediaUrl),
     );
   }
 
@@ -720,6 +745,84 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
     );
   }
 
+  _SourceButtonConfig? _resolveSourceButtonConfig(String url) {
+    if (!_isNetworkUrl(url)) return null;
+    final type = _classifyUrl(url);
+    switch (type) {
+      case _MediaType.instagram:
+        return _SourceButtonConfig(
+          label: 'Instagram',
+          backgroundColor: const Color(0xFFE4405F),
+          iconWidget: const FaIcon(
+            FontAwesomeIcons.instagram,
+            color: Colors.white,
+            size: 20,
+          ),
+        );
+      case _MediaType.tiktok:
+        return _SourceButtonConfig(
+          label: 'TikTok',
+          backgroundColor: Colors.black,
+          iconWidget: const FaIcon(
+            FontAwesomeIcons.tiktok,
+            color: Colors.white,
+            size: 20,
+          ),
+        );
+      case _MediaType.facebook:
+        return _SourceButtonConfig(
+          label: 'Facebook',
+          backgroundColor: const Color(0xFF1877F2),
+          iconWidget: const FaIcon(
+            FontAwesomeIcons.facebookF,
+            color: Colors.white,
+            size: 20,
+          ),
+        );
+      case _MediaType.youtube:
+        return _SourceButtonConfig(
+          label: 'YouTube',
+          backgroundColor: const Color(0xFFFF0000),
+          iconWidget: const FaIcon(
+            FontAwesomeIcons.youtube,
+            color: Colors.white,
+            size: 20,
+          ),
+        );
+      case _MediaType.maps:
+        return _SourceButtonConfig(
+          label: 'Maps',
+          backgroundColor: const Color(0xFF4285F4),
+          iconWidget: const FaIcon(
+            FontAwesomeIcons.google,
+            color: Colors.white,
+            size: 20,
+          ),
+        );
+      case _MediaType.yelp:
+        return _SourceButtonConfig(
+          label: 'Yelp',
+          backgroundColor: const Color(0xFFD32323),
+          iconWidget: const FaIcon(
+            FontAwesomeIcons.yelp,
+            color: Colors.white,
+            size: 20,
+          ),
+        );
+      case _MediaType.image:
+      case _MediaType.generic:
+        return _SourceButtonConfig(
+          label: 'Open Link',
+          backgroundColor: Colors.blue.shade700,
+          iconData: Icons.open_in_new,
+        );
+    }
+  }
+
+  bool _isNetworkUrl(String url) {
+    return url.startsWith('http://') || url.startsWith('https://');
+  }
+
   _MediaType _classifyUrl(String url) {
     final lower = url.toLowerCase();
     if (lower.endsWith('.jpg') ||
@@ -784,4 +887,18 @@ enum _MediaType {
   image,
   yelp,
   generic,
+}
+
+class _SourceButtonConfig {
+  const _SourceButtonConfig({
+    this.iconData,
+    this.iconWidget,
+    required this.label,
+    required this.backgroundColor,
+  }) : assert(iconData != null || iconWidget != null);
+
+  final IconData? iconData;
+  final Widget? iconWidget;
+  final String label;
+  final Color backgroundColor;
 }
