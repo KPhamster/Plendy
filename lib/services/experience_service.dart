@@ -1369,6 +1369,38 @@ class ExperienceService {
     return Experience.fromFirestore(doc);
   }
 
+  /// Finds an experience for the current user (owned or with edit access)
+  /// that matches the provided Google Place ID.
+  Future<Experience?> findEditableExperienceByPlaceId(String? placeId) async {
+    final String? userId = _currentUserId;
+    if (userId == null || placeId == null || placeId.isEmpty) {
+      return null;
+    }
+
+    try {
+      final querySnapshot = await _experiencesCollection
+          .where('location.placeId', isEqualTo: placeId)
+          .limit(25)
+          .get();
+
+      for (final doc in querySnapshot.docs) {
+        final data = doc.data() as Map<String, dynamic>;
+        final String? createdBy = data['createdBy'] as String?;
+        final List<dynamic>? editors = data['editorUserIds'] as List<dynamic>?;
+        final bool isOwner = createdBy != null && createdBy == userId;
+        final bool hasEditAccess =
+            editors != null && editors.contains(userId);
+        if (isOwner || hasEditAccess) {
+          return Experience.fromFirestore(doc);
+        }
+      }
+    } catch (e) {
+      debugPrint(
+          'findEditableExperienceByPlaceId: Error fetching experiences for placeId $placeId: $e');
+    }
+    return null;
+  }
+
   /// Update an existing experience
   Future<void> updateExperience(Experience experience) async {
     // DEBUG: First, read the existing experience to check old category

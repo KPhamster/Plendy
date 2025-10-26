@@ -19,6 +19,7 @@ import 'receive_share/widgets/youtube_preview_widget.dart';
 import 'receive_share/widgets/instagram_preview_widget.dart'
     as instagram_widget;
 import '../widgets/edit_experience_modal.dart';
+import 'experience_page_screen.dart';
 import 'map_screen.dart';
 
 class DiscoveryScreen extends StatefulWidget {
@@ -30,6 +31,13 @@ class DiscoveryScreen extends StatefulWidget {
 
 class DiscoveryScreenState extends State<DiscoveryScreen>
     with AutomaticKeepAliveClientMixin {
+  static const UserCategory _publicReadOnlyCategory = UserCategory(
+    id: 'public_readonly_category',
+    name: 'Discovery',
+    icon: '*',
+    ownerUserId: 'public',
+  );
+
   final ExperienceService _experienceService = ExperienceService();
   final GoogleMapsService _mapsService = GoogleMapsService();
   final Map<String, Future<Map<String, dynamic>?>> _mapsPreviewFutures = {};
@@ -39,6 +47,9 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
   final List<PublicExperience> _publicExperiences = [];
   final List<_DiscoveryFeedItem> _feedItems = [];
   final Set<String> _usedMediaKeys = {};
+  List<UserCategory> _userCategories = [];
+  List<ColorCategory> _userColorCategories = [];
+  Future<void>? _userCollectionsFuture;
 
   DocumentSnapshot<Object?>? _lastDocument;
   bool _hasMore = true;
@@ -396,30 +407,34 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
 
     final subtitle = details.join(', ');
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          experience.name,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 20,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        if (subtitle.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.only(top: 4.0),
-            child: Text(
-              subtitle,
-              style: const TextStyle(
-                color: Colors.white70,
-                fontSize: 14,
-              ),
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => _handleExperienceTap(experience),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            experience.name,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 20,
+              fontWeight: FontWeight.w600,
             ),
           ),
-      ],
+          if (subtitle.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 4.0),
+              child: Text(
+                subtitle,
+                style: const TextStyle(
+                  color: Colors.white70,
+                  fontSize: 14,
+                ),
+              ),
+            ),
+        ],
+      ),
     );
   }
 
@@ -514,6 +529,101 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
           ),
         ),
       ],
+    );
+  }
+
+  Future<void> _openReadOnlyExperience(PublicExperience publicExperience) async {
+    final Experience draft = _buildExperienceDraft(publicExperience);
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ExperiencePageScreen(
+          experience: draft,
+          category: _publicReadOnlyCategory,
+          userColorCategories: const <ColorCategory>[],
+          readOnlyPreview: true,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _handleExperienceTap(PublicExperience publicExperience) async {
+    Experience? editableExperience;
+    final String? placeId = publicExperience.location.placeId;
+    if (placeId != null && placeId.isNotEmpty) {
+      editableExperience =
+          await _experienceService.findEditableExperienceByPlaceId(placeId);
+    }
+
+    if (!mounted) return;
+
+    if (editableExperience != null) {
+      await _openEditableExperience(editableExperience);
+    } else {
+      await _openReadOnlyExperience(publicExperience);
+    }
+  }
+
+  Future<void> _openEditableExperience(Experience experience) async {
+    await _ensureUserCollectionsLoaded();
+    final UserCategory category = _resolveCategoryForExperience(experience);
+    final List<ColorCategory> colorCategories =
+        _userColorCategories.isEmpty
+            ? const <ColorCategory>[]
+            : _userColorCategories;
+
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ExperiencePageScreen(
+          experience: experience,
+          category: category,
+          userColorCategories: colorCategories,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _ensureUserCollectionsLoaded() {
+    if (_userCollectionsFuture != null) {
+      return _userCollectionsFuture!;
+    }
+    _userCollectionsFuture = _loadUserCollections().whenComplete(() {
+      _userCollectionsFuture = null;
+    });
+    return _userCollectionsFuture!;
+  }
+
+  Future<void> _loadUserCollections() async {
+    try {
+      final categories = await _experienceService.getUserCategories(
+        includeSharedEditable: true,
+      );
+      final colorCategories = await _experienceService.getUserColorCategories(
+        includeSharedEditable: true,
+      );
+      _userCategories = categories;
+      _userColorCategories = colorCategories;
+    } catch (e) {
+      debugPrint('DiscoveryScreen: Failed to load user collections: $e');
+    }
+  }
+
+  UserCategory _resolveCategoryForExperience(Experience experience) {
+    if (experience.categoryId != null) {
+      for (final category in _userCategories) {
+        if (category.id == experience.categoryId) {
+          return category;
+        }
+      }
+    }
+
+    final bool isUncategorized =
+        experience.categoryId == null || experience.categoryId!.isEmpty;
+
+    return UserCategory(
+      id: experience.categoryId ?? 'uncategorized',
+      name: isUncategorized ? 'Uncategorized' : 'Collection',
+      icon: '📍',
+      ownerUserId: experience.createdBy ?? 'system_default',
     );
   }
 
