@@ -436,7 +436,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
         ],
         _buildActionButton(
           icon: Icons.bookmark_border,
-          label: 'Bookmark',
+          label: 'Save',
           onPressed: () => _handleBookmarkTapped(item),
         ),
         const SizedBox(height: 16),
@@ -505,7 +505,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
             splashRadius: 28,
           ),
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: 3),
         Text(
           label,
           style: const TextStyle(
