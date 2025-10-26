@@ -584,6 +584,7 @@ class _MapScreenState extends State<MapScreen> {
             category: _publicReadOnlyCategory,
             userColorCategories: const <ColorCategory>[],
             readOnlyPreview: true,
+            focusMapOnPop: true,
           ),
         ),
       );
