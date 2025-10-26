@@ -24,10 +24,10 @@ class DiscoveryScreen extends StatefulWidget {
   const DiscoveryScreen({super.key});
 
   @override
-  State<DiscoveryScreen> createState() => _DiscoveryScreenState();
+  State<DiscoveryScreen> createState() => DiscoveryScreenState();
 }
 
-class _DiscoveryScreenState extends State<DiscoveryScreen>
+class DiscoveryScreenState extends State<DiscoveryScreen>
     with AutomaticKeepAliveClientMixin {
   final ExperienceService _experienceService = ExperienceService();
   final GoogleMapsService _mapsService = GoogleMapsService();
@@ -63,6 +63,26 @@ class _DiscoveryScreenState extends State<DiscoveryScreen>
   void dispose() {
     _pageController.dispose();
     super.dispose();
+  }
+
+  Future<void> refreshFeed() async {
+    if (!mounted) return;
+    setState(() {
+      _publicExperiences.clear();
+      _feedItems.clear();
+      _mapsPreviewFutures.clear();
+      _usedMediaKeys.clear();
+      _lastDocument = null;
+      _hasMore = true;
+      _isFetchingExperiences = false;
+      _isLoading = true;
+      _isError = false;
+      _isPreparingMore = false;
+      _errorMessage = null;
+      _currentPage = 0;
+      _dragDistance = 0;
+    });
+    await _initializeFeed();
   }
 
   Future<void> _initializeFeed() async {

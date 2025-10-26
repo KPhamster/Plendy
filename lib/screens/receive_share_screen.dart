@@ -4981,7 +4981,7 @@ class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
 
   @override
   Widget build(BuildContext context) {
-    final double height = _isExpanded ? 2800.0 : 840.0;
+    final double height = _isExpanded ? 2800.0 : 850.0;
 
     return Column(
       mainAxisSize: MainAxisSize.min,

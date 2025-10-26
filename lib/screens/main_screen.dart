@@ -19,6 +19,8 @@ class MainScreen extends StatefulWidget {
 class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   int _selectedIndex = 0;
   final SharingService _sharingService = SharingService();
+  final GlobalKey<DiscoveryScreenState> _discoveryKey =
+      GlobalKey<DiscoveryScreenState>();
 
   // Define the screens list
   late final List<Widget> _screens;
@@ -26,10 +28,10 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
-    _screens = const [
-      DiscoveryScreen(),
-      CollectionsScreen(),
-      ProfileScreen(),
+    _screens = [
+      DiscoveryScreen(key: _discoveryKey),
+      const CollectionsScreen(),
+      ProfileScreen(onRequestDiscoveryRefresh: _refreshDiscovery),
     ];
     WidgetsBinding.instance.addObserver(this);
     if (_sharingService.isNavigatingAwayFromShare) {
@@ -142,6 +144,13 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         }
       }
     });
+  }
+
+  Future<void> _refreshDiscovery() async {
+    final discoveryState = _discoveryKey.currentState;
+    if (discoveryState != null) {
+      await discoveryState.refreshFeed();
+    }
   }
 
   @override

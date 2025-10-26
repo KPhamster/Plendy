@@ -72,71 +72,81 @@ class _BrowserSignInScreenState extends State<BrowserSignInScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.white,
-      appBar: AppBar(
+    return WillPopScope(
+      onWillPop: () async {
+        Navigator.of(context).pop(true);
+        return false;
+      },
+      child: Scaffold(
         backgroundColor: Colors.white,
-        foregroundColor: Colors.black,
-        title: const Text('Browser Sign In'),
-      ),
-      body: Column(
-        children: [
-          const Padding(
-            padding: EdgeInsets.all(16.0),
-            child: Text(
-              'Plendy uses a web browser view to display content from Instagram, TikTok, and other sites. For the best experience, use the browser window below to sign into any accounts you wish to save to Plendy from. This ensures all content you save displays correctly. Plendy does not save any data from the web browser.',
-              textAlign: TextAlign.center,
-            ),
+        appBar: AppBar(
+          backgroundColor: Colors.white,
+          foregroundColor: Colors.black,
+          title: const Text('Browser Sign In'),
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back),
+            onPressed: () => Navigator.of(context).pop(true),
           ),
-          Padding(
-            padding: const EdgeInsets.all(8.0),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                ElevatedButton.icon(
-                  onPressed: () {
-                    const url = 'https://instagram.com';
-                    _urlController.text = url;
-                    _controller.loadRequest(Uri.parse(url));
-                  },
-                  icon: const Icon(FontAwesomeIcons.instagram),
-                  label: const Text('Instagram'),
-                ),
-                ElevatedButton.icon(
-                  onPressed: () {
-                    const url = 'https://tiktok.com';
-                    _urlController.text = url;
-                    _controller.loadRequest(Uri.parse(url));
-                  },
-                  icon: const Icon(FontAwesomeIcons.tiktok),
-                  label: const Text('TikTok'),
-                ),
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8.0),
-            child: TextField(
-              controller: _urlController,
-              keyboardType: TextInputType.url,
-              autocorrect: false,
-              enableSuggestions: false,
-              decoration: InputDecoration(
-                hintText: 'Enter URL',
-                suffixIcon: IconButton(
-                  icon: const Icon(Icons.arrow_forward),
-                  onPressed: _loadUrlFromTextField,
-                ),
+        ),
+        body: Column(
+          children: [
+            const Padding(
+              padding: EdgeInsets.all(16.0),
+              child: Text(
+                'Plendy uses a web browser view to display content from Instagram, TikTok, and other sites. For the best experience, use the browser window below to sign into any accounts you wish to save to Plendy from. This ensures all content you save displays correctly. Plendy does not save any data from the web browser.',
+                textAlign: TextAlign.center,
               ),
-              onSubmitted: (_) => _loadUrlFromTextField(),
             ),
-          ),
-          const SizedBox(height: 8),
-          Expanded(
-            child: WebViewWidget(controller: _controller),
-          ),
-        ],
+            Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  ElevatedButton.icon(
+                    onPressed: () {
+                      const url = 'https://instagram.com';
+                      _urlController.text = url;
+                      _controller.loadRequest(Uri.parse(url));
+                    },
+                    icon: const Icon(FontAwesomeIcons.instagram),
+                    label: const Text('Instagram'),
+                  ),
+                  ElevatedButton.icon(
+                    onPressed: () {
+                      const url = 'https://tiktok.com';
+                      _urlController.text = url;
+                      _controller.loadRequest(Uri.parse(url));
+                    },
+                    icon: const Icon(FontAwesomeIcons.tiktok),
+                    label: const Text('TikTok'),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8.0),
+              child: TextField(
+                controller: _urlController,
+                keyboardType: TextInputType.url,
+                autocorrect: false,
+                enableSuggestions: false,
+                decoration: InputDecoration(
+                  hintText: 'Enter URL',
+                  suffixIcon: IconButton(
+                    icon: const Icon(Icons.arrow_forward),
+                    onPressed: _loadUrlFromTextField,
+                  ),
+                ),
+                onSubmitted: (_) => _loadUrlFromTextField(),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Expanded(
+              child: WebViewWidget(controller: _controller),
+            ),
+          ],
+        ),
       ),
     );
   }
-} 
+}
