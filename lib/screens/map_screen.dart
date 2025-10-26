@@ -594,7 +594,10 @@ class _MapScreenState extends State<MapScreen> {
           final String? focusId = result['focusExperienceId'] as String?;
           if (focusId != null && focusId.isNotEmpty) {
             // Prefer the local publicExperience we navigated with
-            await _focusExperienceOnMap(publicExperience);
+            await _focusExperienceOnMap(
+              publicExperience,
+              usePurpleMarker: true,
+            );
             return;
           }
           // Fallback: if lat/lng provided, animate and set tapped location
@@ -623,7 +626,8 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   // --- ADDED: Helper to focus and select a given experience on the map ---
-  Future<void> _focusExperienceOnMap(Experience experience) async {
+  Future<void> _focusExperienceOnMap(Experience experience,
+      {bool usePurpleMarker = false}) async {
     try {
       // Animate to experience location
       final LatLng target = LatLng(
@@ -645,16 +649,22 @@ class _MapScreenState extends State<MapScreen> {
         }
       } catch (_) {}
 
-      final String iconText = (experience.categoryIconDenorm != null &&
-              experience.categoryIconDenorm!.isNotEmpty)
-          ? experience.categoryIconDenorm!
-          : _resolveCategoryForExperience(experience).icon;
-      final BitmapDescriptor selectedIcon = await _bitmapDescriptorFromText(
-        iconText,
-        backgroundColor: markerBackgroundColor,
-        size: 100,
-        backgroundOpacity: 1.0,
-      );
+      final BitmapDescriptor selectedIcon;
+      if (usePurpleMarker) {
+        selectedIcon =
+            BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueViolet);
+      } else {
+        final String iconText = (experience.categoryIconDenorm != null &&
+                experience.categoryIconDenorm!.isNotEmpty)
+            ? experience.categoryIconDenorm!
+            : _resolveCategoryForExperience(experience).icon;
+        selectedIcon = await _bitmapDescriptorFromText(
+          iconText,
+          backgroundColor: markerBackgroundColor,
+          size: 100,
+          backgroundOpacity: 1.0,
+        );
+      }
 
       final tappedMarkerId = MarkerId('selected_experience_location');
       final Marker tappedMarker = Marker(
