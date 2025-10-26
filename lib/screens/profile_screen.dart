@@ -12,7 +12,8 @@ import 'received_shares_screen.dart';
 import 'messages_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
-  const ProfileScreen({super.key});
+  final Future<void> Function()? onRequestDiscoveryRefresh;
+  const ProfileScreen({super.key, this.onRequestDiscoveryRefresh});
 
   @override
   _ProfileScreenState createState() => _ProfileScreenState();
@@ -184,14 +185,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             leading: const Icon(FontAwesomeIcons.instagram),
                             title:
                                 const Text('Sign in for improved experience'),
-                            onTap: () {
-                              Navigator.push(
+                            onTap: () async {
+                              final result = await Navigator.push<bool>(
                                 context,
                                 MaterialPageRoute(
                                   builder: (context) =>
                                       const BrowserSignInScreen(),
                                 ),
                               );
+                              if (result == true) {
+                                await widget.onRequestDiscoveryRefresh?.call();
+                              }
                             },
                           ),
                         ],
