@@ -366,16 +366,18 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
       children: [
         const ColoredBox(color: Colors.black),
         preview,
-        Container(
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.bottomCenter,
-              end: Alignment.topCenter,
-              colors: [
-                Colors.black87,
-                Colors.transparent,
-              ],
-              stops: [0.0, 0.6],
+        IgnorePointer(
+          child: Container(
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.bottomCenter,
+                end: Alignment.topCenter,
+                colors: [
+                  Colors.black87,
+                  Colors.transparent,
+                ],
+                stops: [0.0, 0.6],
+              ),
             ),
           ),
         ),
