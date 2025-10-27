@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart'; // Add Google Maps import
 import 'package:url_launcher/url_launcher.dart'; // ADDED: Import url_launcher
 import 'package:cloud_firestore/cloud_firestore.dart'; // ADDED: For pagination cursors
+import 'package:shared_preferences/shared_preferences.dart';
 import '../services/sharing_service.dart'; // RESTORED: Fallback path
 import '../models/enums/share_enums.dart'; // RESTORED: Fallback path
 import '../widgets/google_maps_widget.dart';
@@ -21,6 +22,7 @@ import '../models/user_category.dart'; // Import UserCategory model
 import '../models/color_category.dart'; // Import ColorCategory model
 import 'experience_page_screen.dart'; // Import ExperiencePageScreen for navigation
 import '../models/public_experience.dart';
+import '../config/app_constants.dart';
 
 // Helper function to parse hex color string
 Color _parseColor(String hexColor) {
@@ -74,6 +76,8 @@ class _MapScreenState extends State<MapScreen> {
   // ADDED: State for selected filters
   Set<String> _selectedCategoryIds = {}; // Empty set means no filter
   Set<String> _selectedColorCategoryIds = {}; // Empty set means no filter
+  bool get _hasActiveFilters =>
+      _selectedCategoryIds.isNotEmpty || _selectedColorCategoryIds.isNotEmpty;
 
   // ADDED: State for tapped location
   Marker? _tappedLocationMarker;
@@ -86,8 +90,8 @@ class _MapScreenState extends State<MapScreen> {
       _publicReadOnlyExperience; // ADDED: Cached public experience for discovery launches
   Experience?
       _publicExperienceDraft; // ADDED: Precomputed draft from initial public experience
-  List<String>?
-      _publicMediaPaths; // ADDED: Public media URLs for read-only experience page
+  List<SharedMediaItem>?
+      _publicPreviewMediaItems; // ADDED: Public media previews for read-only experience page
   static const UserCategory _publicReadOnlyCategory = UserCategory(
     id: 'public_readonly_category',
     name: 'Discovery',
@@ -142,6 +146,8 @@ class _MapScreenState extends State<MapScreen> {
     if (widget.initialPublicExperience != null) {
       _publicExperienceDraft =
           widget.initialPublicExperience!.toExperienceDraft();
+      _publicPreviewMediaItems =
+          widget.initialPublicExperience!.buildMediaItemsForPreview();
     }
 
     if (widget.initialExperienceLocation != null) {
@@ -181,7 +187,7 @@ class _MapScreenState extends State<MapScreen> {
       _focusOnUserLocation();
     }
 
-    _loadDataAndGenerateMarkers(); // Load all experiences and their markers
+    _initializeFiltersAndData(); // Load saved filters and experiences
     _searchController.addListener(_onSearchChanged);
   }
 
@@ -192,6 +198,34 @@ class _MapScreenState extends State<MapScreen> {
     _searchFocusNode.dispose();
     _debounce?.cancel();
     super.dispose();
+  }
+
+  void _initializeFiltersAndData() {
+    unawaited(() async {
+      await _loadSavedMapFilters();
+      if (mounted) {
+        await _loadDataAndGenerateMarkers();
+      }
+    }());
+  }
+
+  Future<void> _loadSavedMapFilters() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final savedCategoryIds =
+          prefs.getStringList(AppConstants.mapFilterCategoryIdsKey);
+      final savedColorIds =
+          prefs.getStringList(AppConstants.mapFilterColorIdsKey);
+      if (!mounted) return;
+      if (savedCategoryIds != null || savedColorIds != null) {
+        setState(() {
+          _selectedCategoryIds = savedCategoryIds?.toSet() ?? {};
+          _selectedColorCategoryIds = savedColorIds?.toSet() ?? {};
+        });
+      }
+    } catch (e) {
+      print("🗺️ MAP SCREEN: Failed to load saved filter selections: $e");
+    }
   }
 
   Future<void> _loadDataAndGenerateMarkers() async {
@@ -228,8 +262,8 @@ class _MapScreenState extends State<MapScreen> {
       print(
           "🗺️ MAP SCREEN: Loaded ${_experiences.length} owned experiences and ${_categories.length}/${_colorCategories.length} categories.");
 
-      // Render markers immediately for owned experiences
-      await _generateMarkersFromExperiences(_experiences);
+      // Render markers immediately, respecting any saved filters
+      await _generateMarkersFromExperiences(_filterExperiences(_experiences));
 
       // Kick off shared experiences loading in the background (no await)
       _loadSharedExperiencesInBackground(userId);
@@ -406,7 +440,7 @@ class _MapScreenState extends State<MapScreen> {
       }
 
       // IMPORTANT: Regenerate markers after merging to pick up newly fetched category/color data
-      await _generateMarkersFromExperiences(_experiences);
+      await _generateMarkersFromExperiences(_filterExperiences(_experiences));
       print("🗺️ MAP SCREEN: [BG] Shared experiences merged and markers updated with fresh category/color data.");
       if (_tappedLocationDetails != null) {
         _maybeAttachSavedOrPublicExperience(_tappedLocationDetails!);
@@ -584,6 +618,7 @@ class _MapScreenState extends State<MapScreen> {
             category: _publicReadOnlyCategory,
             userColorCategories: const <ColorCategory>[],
             readOnlyPreview: true,
+            initialMediaItems: _publicPreviewMediaItems,
             focusMapOnPop: true,
           ),
         ),
@@ -1041,6 +1076,43 @@ class _MapScreenState extends State<MapScreen> {
     return null; // Indicate invalid bounds
   }
 
+  List<Experience> _filterExperiences(List<Experience> source) {
+    if (!_hasActiveFilters) {
+      return source;
+    }
+    return source.where(_experienceMatchesActiveFilters).toList();
+  }
+
+  bool _experienceMatchesActiveFilters(Experience exp) {
+    final bool categoryMatch = _selectedCategoryIds.isEmpty ||
+        (exp.categoryId != null &&
+            _selectedCategoryIds.contains(exp.categoryId)) ||
+        (exp.otherCategories.any((catId) => _selectedCategoryIds.contains(catId)));
+
+    final bool colorMatch = _selectedColorCategoryIds.isEmpty ||
+        (exp.colorCategoryId != null &&
+            _selectedColorCategoryIds.contains(exp.colorCategoryId));
+
+    return categoryMatch && colorMatch;
+  }
+
+  Future<void> _persistFilterSelections(
+      Set<String> categoryIds, Set<String> colorCategoryIds) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList(
+        AppConstants.mapFilterCategoryIdsKey,
+        categoryIds.toList(),
+      );
+      await prefs.setStringList(
+        AppConstants.mapFilterColorIdsKey,
+        colorCategoryIds.toList(),
+      );
+    } catch (e) {
+      print("🗺️ MAP SCREEN: Failed to persist filter selections: $e");
+    }
+  }
+
   // --- ADDED: Filter Dialog ---
   Future<void> _showFilterDialog() async {
     // Prefetch owner display names for shared categories to show labels identically to Collections
@@ -1237,6 +1309,10 @@ class _MapScreenState extends State<MapScreen> {
                   _selectedColorCategoryIds =
                       tempSelectedColorCategoryIds; // Now empty
                 });
+                unawaited(_persistFilterSelections(
+                  _selectedCategoryIds,
+                  _selectedColorCategoryIds,
+                ));
 
                 Navigator.of(context).pop(); // Close the dialog
                 _applyFiltersAndUpdateMarkers(); // Apply filters (which are now empty) and update map
@@ -1256,6 +1332,10 @@ class _MapScreenState extends State<MapScreen> {
                   _selectedCategoryIds = tempSelectedCategoryIds;
                   _selectedColorCategoryIds = tempSelectedColorCategoryIds;
                 });
+                unawaited(_persistFilterSelections(
+                  _selectedCategoryIds,
+                  _selectedColorCategoryIds,
+                ));
                 Navigator.of(context).pop(); // Close the dialog
                 _applyFiltersAndUpdateMarkers(); // Apply filters and update map
               },
@@ -1276,31 +1356,7 @@ class _MapScreenState extends State<MapScreen> {
 
     try {
       // Filter experiences based on selected IDs
-      final filteredExperiences = _experiences.where((exp) {
-        // Find the category ID based on the experience's category name
-        // String? expCategoryId; // REMOVED: No longer need to look up by name
-        // try {
-        //   expCategoryId = 
-        //       _categories.firstWhere((cat) => cat.name == exp.category).id;
-        // } catch (e) {
-        //   // Handle case where category name doesn't match any known category
-        //   expCategoryId = null;
-        //   print(
-        //       "🗺️ MAP SCREEN: Warning - Could not find category ID for category name: ${exp.category}");
-        // }
-
-        // MODIFIED: Use exp.categoryId directly
-        final bool categoryMatch = _selectedCategoryIds.isEmpty ||
-            (exp.categoryId != null && // Check if categoryId exists
-                _selectedCategoryIds.contains(exp.categoryId)) || // Check if it's in the selected set
-            (exp.otherCategories.any((catId) => _selectedCategoryIds.contains(catId))); // Check if any other category matches
-
-        final bool colorMatch = _selectedColorCategoryIds.isEmpty ||
-            (exp.colorCategoryId != null &&
-                _selectedColorCategoryIds.contains(exp.colorCategoryId));
-
-        return categoryMatch && colorMatch;
-      }).toList();
+      final filteredExperiences = _filterExperiences(_experiences);
 
       print(
           "🗺️ MAP SCREEN: Filtered ${_experiences.length} experiences down to ${filteredExperiences.length}");
@@ -2399,7 +2455,26 @@ class _MapScreenState extends State<MapScreen> {
           Container(
             color: Colors.white,
             child: IconButton(
-              icon: const Icon(Icons.filter_list),
+              icon: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  const Icon(Icons.filter_list),
+                  if (_hasActiveFilters)
+                    Positioned(
+                      right: 4,
+                      bottom: 4,
+                      child: Container(
+                        width: 10,
+                        height: 10,
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).primaryColor,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white, width: 1.5),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
               tooltip: 'Filter Experiences',
               onPressed: () {
                 print("🗺️ MAP SCREEN: Filter button pressed!");

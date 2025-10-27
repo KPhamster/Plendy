@@ -1,5 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+
 import 'experience.dart'; // Import Location definition
+import 'shared_media_item.dart';
 
 class PublicExperience {
   final String id; // Document ID from Firestore
@@ -121,6 +123,31 @@ class PublicExperience {
       colorHexDenorm: null,
       createdBy: null,
     );
+  }
+
+  /// Builds lightweight [SharedMediaItem]s from [allMediaPaths] for previews.
+  List<SharedMediaItem> buildMediaItemsForPreview() {
+    if (allMediaPaths.isEmpty) {
+      return const <SharedMediaItem>[];
+    }
+
+    final String baseId =
+        id.isNotEmpty ? id : (placeID.isNotEmpty ? placeID : 'public_exp');
+
+    return allMediaPaths.asMap().entries
+        // Filter any empty or whitespace-only entries
+        .where((entry) => entry.value.trim().isNotEmpty)
+        .map((entry) {
+      final String trimmedPath = entry.value.trim();
+      final int index = entry.key;
+      return SharedMediaItem(
+        id: 'public_${baseId}_$index',
+        path: trimmedPath,
+        createdAt: DateTime.fromMillisecondsSinceEpoch(index),
+        ownerUserId: 'public_experience',
+        experienceIds: const <String>[],
+      );
+    }).toList();
   }
 
   // Optional: toString for debugging

@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:plendy/screens/receive_share_screen.dart'; // For ExperienceCardData
+import 'package:plendy/models/experience_card_data.dart';
 import 'package:plendy/models/experience.dart'; // For Location
 import 'package:plendy/config/app_constants.dart'; // ADDED: For unified keys
 // TODO: Adjust these import paths if they are incorrect for your project structure

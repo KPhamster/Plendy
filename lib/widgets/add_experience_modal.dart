@@ -2,8 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:plendy/models/experience.dart';
 import 'package:plendy/models/user_category.dart';
 import 'package:plendy/models/color_category.dart';
-import 'package:plendy/screens/receive_share_screen.dart'
-    show ExperienceCardData;
+import 'package:plendy/models/experience_card_data.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:plendy/services/google_maps_service.dart';
 import 'package:url_launcher/url_launcher.dart';

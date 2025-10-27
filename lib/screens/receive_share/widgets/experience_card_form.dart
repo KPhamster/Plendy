@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:plendy/screens/receive_share_screen.dart'; // For ExperienceCardData
+import 'package:plendy/models/experience_card_data.dart'; // For ExperienceCardData
 import 'package:plendy/models/experience.dart'
     show Location; // ONLY import Location
 import 'package:plendy/models/user_category.dart'; // RENAMED Import

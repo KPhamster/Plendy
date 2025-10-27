@@ -19,7 +19,7 @@ import 'receive_share/widgets/tiktok_preview_widget.dart';
 import 'receive_share/widgets/youtube_preview_widget.dart';
 import 'receive_share/widgets/instagram_preview_widget.dart'
     as instagram_widget;
-import '../widgets/edit_experience_modal.dart';
+import '../widgets/save_to_experiences_modal.dart';
 import 'experience_page_screen.dart';
 import 'map_screen.dart';
 
@@ -548,12 +548,15 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
 
   Future<void> _openReadOnlyExperience(PublicExperience publicExperience) async {
     final Experience draft = _buildExperienceDraft(publicExperience);
+    final List<SharedMediaItem> mediaItems =
+        publicExperience.buildMediaItemsForPreview();
     await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => ExperiencePageScreen(
           experience: draft,
           category: _publicReadOnlyCategory,
           userColorCategories: const <ColorCategory>[],
+          initialMediaItems: mediaItems,
           readOnlyPreview: true,
         ),
       ),
@@ -731,45 +734,27 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
     final publicExperience = item.experience;
     final Experience draft = _buildExperienceDraft(publicExperience);
 
-    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
-    final Experience? editedExperience = await showModalBottomSheet<Experience>(
+    final String? resultMessage = await showModalBottomSheet<String>(
       context: context,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
       builder: (ctx) {
-        return EditExperienceModal(
-          experience: draft,
-          userCategories: const <UserCategory>[],
-          userColorCategories: const <ColorCategory>[],
-          requireCategorySelection: true,
-          scaffoldMessenger: messenger,
-          enableDuplicatePrompt: true,
+        return SaveToExperiencesModal(
+          initialExperience: draft,
+          mediaUrl: item.mediaUrl,
         );
       },
     );
 
-    if (editedExperience == null) {
-      return;
-    }
+    if (resultMessage == null) return;
 
-    try {
-      if (editedExperience.id.isNotEmpty) {
-        await _experienceService.updateExperience(editedExperience);
-      } else {
-        await _experienceService.createExperience(editedExperience);
-      }
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Experience saved.')),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to save experience: $e')),
-      );
-    }
+    if (!mounted) return;
+    item.isMediaAlreadySaved.value = true;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(resultMessage)),
+    );
   }
 
   Experience _buildExperienceDraft(PublicExperience publicExperience) {

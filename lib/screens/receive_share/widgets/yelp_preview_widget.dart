@@ -6,7 +6,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
 
 import '../../../models/experience.dart';
-import '../../receive_share_screen.dart'; // Corrected path
+import 'package:plendy/models/experience_card_data.dart';
 import '../../../services/google_maps_service.dart';
 
 class YelpPreviewWidget extends StatefulWidget {
