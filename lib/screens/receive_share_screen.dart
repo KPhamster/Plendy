@@ -48,6 +48,7 @@ import '../models/public_experience.dart';
 import '../services/auth_service.dart';
 import 'package:collection/collection.dart';
 import 'package:plendy/config/app_constants.dart';
+import '../models/experience_card_data.dart';
 // Import ApiSecrets conditionally
 import '../config/api_secrets.dart'
     if (dart.library.io) '../config/api_secrets.dart'
@@ -195,96 +196,6 @@ class _ExperienceCardsSection extends StatelessWidget {
         ),
       ),
     );
-  }
-}
-
-// Enum to track the source of the shared content
-enum ShareType { none, yelp, maps, instagram, genericUrl, image, video, file }
-
-/// Data class to hold the state of each experience card
-class ExperienceCardData {
-  // Form controllers
-  final TextEditingController titleController = TextEditingController();
-  final TextEditingController yelpUrlController = TextEditingController();
-  final TextEditingController websiteController =
-      TextEditingController(); // Added
-  final TextEditingController searchController = TextEditingController();
-  final TextEditingController locationController = TextEditingController();
-  final TextEditingController notesController =
-      TextEditingController(); // Added
-
-  // Form key
-  final formKey = GlobalKey<FormState>();
-
-  // Focus nodes
-  final FocusNode titleFocusNode = FocusNode();
-
-  // Category selection
-  String? selectedCategoryId; // NEW: Stores the ID of the UserCategory
-
-  // Rating
-  double rating = 0.0; // Added (or use double? rating)
-
-  // Location selection
-  Location? selectedLocation;
-  Location? location;
-  bool isSelectingLocation = false;
-  ValueNotifier<bool> locationEnabled =
-      ValueNotifier(true); // NEW: Use ValueNotifier
-  List<Map<String, dynamic>> searchResults = [];
-
-  // State variable for card
-  bool isExpanded = true;
-
-  // Unique identifier for this card
-  final String id = DateTime.now().millisecondsSinceEpoch.toString();
-
-  // State for preview rebuilding
-  String?
-      placeIdForPreview; // Tracks the placeId currently shown in preview - RENAMED from currentPlaceIdForPreview
-
-  // Track the original source of the shared content
-  ShareType originalShareType = ShareType.none;
-
-  // --- ADDED ---
-  // ID of the existing experience if this card represents one
-  String? existingExperienceId;
-  // --- END ADDED ---
-
-  // --- ADDED ---
-  // Selected Color Category ID
-  String? selectedColorCategoryId;
-  // --- END ADDED ---
-
-  // --- ADDED for Other Categories ---
-  List<String> selectedOtherCategoryIds = [];
-  // --- END ADDED ---
-
-  // Constructor can set initial values if needed
-  // Set default category name
-  ExperienceCardData() {
-    // Initialize with "Restaurant" as the default category
-    // selectedCategoryId = 'Restaurant'; // REMOVED: Defaulting logic moved to provider
-    // selectedColorCategoryId will be null by default and should be set by the provider
-    // based on SharedPreferences or "Want to go" default logic.
-  }
-
-  // Dispose resources
-  void dispose() {
-    // Dispose all controllers
-    titleController.dispose();
-    yelpUrlController.dispose();
-    websiteController.dispose(); // Added
-    searchController.dispose();
-    locationController.dispose();
-    notesController.dispose(); // Added
-
-    // Dispose focus nodes
-    titleFocusNode.dispose();
-    // No need to explicitly handle selectedCategoryId in dispose,
-    // as it is just a simple String? type and not a controller/listener.
-
-    locationEnabled.dispose(); // NEW: Dispose the ValueNotifier
   }
 }
 

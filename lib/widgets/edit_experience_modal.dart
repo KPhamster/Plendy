@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:plendy/models/experience.dart';
 import 'package:plendy/models/user_category.dart';
-import 'package:plendy/screens/receive_share_screen.dart'
-    show ExperienceCardData; // Re-use data structure
+import 'package:plendy/models/experience_card_data.dart';
 // For field structure reference (or reuse fields)
 import 'package:font_awesome_flutter/font_awesome_flutter.dart'; // For icons
 import 'package:plendy/services/google_maps_service.dart'; // For location picker interaction

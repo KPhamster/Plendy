@@ -37,6 +37,7 @@ import '../widgets/edit_experience_modal.dart';
 // ADDED: Import for SystemUiOverlayStyle
 import 'package:flutter/services.dart';
 import '../models/shared_media_item.dart'; // ADDED Import
+import '../models/public_experience.dart';
 // --- ADDED: Import ColorCategory ---
 import '../models/color_category.dart';
 // --- END ADDED ---
@@ -132,6 +133,10 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   // ADDED: State for fetched media items
   bool _isLoadingMedia = true;
   List<SharedMediaItem> _mediaItems = [];
+  bool _showingPublicMedia = false;
+  bool _isLoadingPublicMedia = false;
+  bool _hasAttemptedPublicMediaFetch = false;
+  List<SharedMediaItem> _publicMediaItems = [];
 
   // Hours Expansion State
   bool _isHoursExpanded = false;
@@ -179,6 +184,11 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   // --- ADDED: State for other experiences linked to media --- END ---
 
   static const Duration _photoRefreshInterval = Duration(days: 30);
+
+  bool get _canShowPublicContentToggle {
+    final String? placeId = _currentExperience.location.placeId;
+    return !widget.readOnlyPreview && placeId != null && placeId.isNotEmpty;
+  }
 
   // REMOVED: Instagram Credentials
   // String? _instagramAppId;
@@ -980,8 +990,16 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       );
     }
 
-    // Calculate tab counts using fetched media items
-    final mediaCount = _isLoadingMedia ? '...' : _mediaItems.length.toString();
+    // Calculate tab counts using the currently selected content source
+    final bool isShowingPublicContent = _showingPublicMedia;
+    final bool isMediaTabLoading = isShowingPublicContent
+        ? _isLoadingPublicMedia
+        : _isLoadingMedia;
+    final List<SharedMediaItem> activeMediaItems = isShowingPublicContent
+        ? _publicMediaItems
+        : _mediaItems;
+    final mediaCount =
+        isMediaTabLoading ? '...' : activeMediaItems.length.toString();
     final reviewCount = _isLoadingReviews ? '...' : _reviews.length.toString();
     final commentCount = _isLoadingComments ? '...' : _commentCount.toString();
 
@@ -1070,7 +1088,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
               controller: _tabController,
               children: [
                 // Pass fetched media items to _buildMediaTab
-                _buildMediaTab(context, _mediaItems),
+                _buildMediaTab(context, activeMediaItems),
                 _buildReviewsTab(context),
                 _buildCommentsTab(context),
               ],
@@ -1784,14 +1802,18 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
 
   Widget _buildTabbedContentSection(BuildContext context) {
     // Calculate counts
+    final bool isPublicView = _showingPublicMedia;
+    final bool isMediaLoading =
+        isPublicView ? _isLoadingPublicMedia : _isLoadingMedia;
+    final List<SharedMediaItem> effectiveMediaItems =
+        isPublicView ? _publicMediaItems : _mediaItems;
+
     // Filter media paths for Instagram URLs to get the count
-    final instagramMediaItems = _mediaItems
+    final instagramMediaItems = effectiveMediaItems
         .where((item) => item.path.toLowerCase().contains('instagram.com'))
         .toList();
-    final mediaCount = _isLoadingMedia
-        ? '...'
-        : instagramMediaItems.length
-            .toString(); // Count fetched Instagram posts
+    final mediaCount =
+        isMediaLoading ? '...' : instagramMediaItems.length.toString();
     final reviewCount = _isLoadingReviews
         ? '...'
         : _reviews.length.toString(); // Show loading indicator or count
@@ -1835,7 +1857,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
             controller: _tabController,
             children: [
               // Pass fetched media items
-              _buildMediaTab(context, _mediaItems),
+              _buildMediaTab(context, effectiveMediaItems),
               _buildReviewsTab(context),
               _buildCommentsTab(context),
             ],
@@ -1966,8 +1988,12 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   // Builds the Media Tab, now including a fullscreen button
   Widget _buildMediaTab(
       BuildContext context, List<SharedMediaItem> mediaItems) {
+    final bool isPublicView = _showingPublicMedia;
+    final bool isActiveLoading =
+        isPublicView ? _isLoadingPublicMedia : _isLoadingMedia;
+
     // Use the passed mediaItems list directly
-    if (_isLoadingMedia) {
+    if (isActiveLoading) {
       return Container(
         color: Colors.white,
         child: const Center(child: CircularProgressIndicator()),
@@ -1975,8 +2001,11 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     } else if (mediaItems.isEmpty) {
       return Container(
         color: Colors.white,
-        child: const Center(
-            child: Text('No media items shared for this experience.')),
+        child: Center(
+          child: Text(isPublicView
+              ? 'No public content available yet for this place.'
+              : 'No media items shared for this experience.'),
+        ),
       );
     }
 
@@ -2022,6 +2051,30 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                       // TODO: Implement Sort functionality
                     },
                   ),
+                  if (_canShowPublicContentToggle) ...[
+                    const SizedBox(width: 8),
+                    TextButton.icon(
+                      icon: Icon(
+                        isPublicView ? Icons.bookmark_outline : Icons.public,
+                        size: 20.0,
+                        color: Colors.black,
+                      ),
+                      label: Text(
+                        isPublicView
+                            ? 'Show Saved Content'
+                            : 'Show Public Content',
+                        style: const TextStyle(color: Colors.black),
+                      ),
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 8),
+                        textStyle: const TextStyle(fontSize: 13),
+                      ),
+                      onPressed: (_isLoadingPublicMedia && !isPublicView)
+                          ? null
+                          : _toggleContentSource,
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -2530,14 +2583,14 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                                                   : 'Open URL',
                               onPressed: () => _launchUrl(url),
                             ),
-                            // Delete button
-                            IconButton(
-                              icon: const Icon(Icons.delete_outline),
-                              iconSize: 24,
-                              color: Colors.red[700],
-                              tooltip: 'Delete Media',
-                              onPressed: () => _deleteMediaPath(url),
-                            ),
+                            if (!widget.readOnlyPreview && !isPublicView)
+                              IconButton(
+                                icon: const Icon(Icons.delete_outline),
+                                iconSize: 24,
+                                color: Colors.red[700],
+                                tooltip: 'Delete Media',
+                                onPressed: () => _deleteMediaPath(url),
+                              ),
                           ],
                         ),
                       ),
@@ -2897,6 +2950,89 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       if (mounted) {
         setState(() {
           _isLoadingMedia = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _toggleContentSource() async {
+    if (_showingPublicMedia) {
+      setState(() {
+        _showingPublicMedia = false;
+        _expandedMediaPath =
+            _mediaItems.isNotEmpty ? _mediaItems.first.path : null;
+      });
+      return;
+    }
+
+    if (!_canShowPublicContentToggle) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('Public content is not available for this place.')),
+      );
+      return;
+    }
+
+    final String? placeId = _currentExperience.location.placeId;
+    if (placeId == null || placeId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Missing place information.')),
+      );
+      return;
+    }
+
+    // If we've already fetched public media once, just switch views.
+    if (_hasAttemptedPublicMediaFetch) {
+      setState(() {
+        _showingPublicMedia = true;
+        _expandedMediaPath = _publicMediaItems.isNotEmpty
+            ? _publicMediaItems.first.path
+            : null;
+      });
+      return;
+    }
+
+    setState(() {
+      _showingPublicMedia = true;
+      _isLoadingPublicMedia = true;
+      _expandedMediaPath = null;
+    });
+
+    bool fetchCompleted = false;
+    try {
+      final PublicExperience? publicExperience =
+          await _experienceService.findPublicExperienceByPlaceId(placeId);
+      if (!mounted) return;
+
+      final List<SharedMediaItem> items = List<SharedMediaItem>.from(
+          publicExperience?.buildMediaItemsForPreview() ??
+              const <SharedMediaItem>[]);
+      items.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
+      fetchCompleted = true;
+      setState(() {
+        _publicMediaItems = items;
+        if (_showingPublicMedia) {
+          _expandedMediaPath = _publicMediaItems.isNotEmpty
+              ? _publicMediaItems.first.path
+              : null;
+        }
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _showingPublicMedia = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Unable to load public content: $e')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingPublicMedia = false;
+          if (fetchCompleted) {
+            _hasAttemptedPublicMediaFetch = true;
+          }
         });
       }
     }
