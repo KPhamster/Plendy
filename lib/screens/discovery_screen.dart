@@ -43,6 +43,9 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
   final GoogleMapsService _mapsService = GoogleMapsService();
   final Map<String, Future<Map<String, dynamic>?>> _mapsPreviewFutures = {};
   final Map<String, Future<List<Experience>>> _linkedExperiencesFutures = {};
+  final Map<String, Future<List<Experience>>>
+      _accessibleExperiencesFutures = {};
+  final Map<String, Future<bool>> _savedMediaByUrlFutures = {};
   final PageController _pageController = PageController();
   final Random _random = Random();
 
@@ -188,6 +191,25 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
         if (_hasMore && attempts % 20 == 0) {
           await _fetchMoreExperiencesIfNeeded(force: true);
         }
+        continue;
+      }
+
+      final _FeedFilterResult filterResult =
+          await _evaluateFeedItemVisibility(experience, mediaUrl);
+
+      if (filterResult != _FeedFilterResult.include) {
+        if (filterResult == _FeedFilterResult.skipHasAccess) {
+          final String? placeId = experience.location.placeId;
+          if (placeId != null && placeId.isNotEmpty) {
+            _publicExperiences.removeWhere(
+              (candidate) => candidate.location.placeId == placeId,
+            );
+          } else {
+            _publicExperiences
+                .removeWhere((candidate) => candidate.id == experience.id);
+          }
+        }
+        _usedMediaKeys.add(key);
         continue;
       }
 
@@ -655,51 +677,98 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
     }
   }
 
+  Future<List<Experience>> _getAccessibleExperiencesForPlace(
+      String? placeId) {
+    if (placeId == null || placeId.isEmpty) {
+      return Future.value(const <Experience>[]);
+    }
+
+    return _accessibleExperiencesFutures.putIfAbsent(placeId, () async {
+      try {
+        return await _experienceService.findAccessibleExperiencesByPlaceId(
+          placeId,
+        );
+      } catch (e) {
+        debugPrint(
+            'DiscoveryScreen: Failed to fetch accessible experiences for $placeId: $e');
+        return <Experience>[];
+      }
+    });
+  }
+
+  Future<bool> _userHasViewOrEditAccessToPlace(String? placeId) async {
+    final experiences = await _getAccessibleExperiencesForPlace(placeId);
+    return experiences.isNotEmpty;
+  }
+
+  Future<bool> _hasUserSavedMediaByUrl(String mediaUrl) {
+    final String normalizedKey = _normalizeUrlForComparison(mediaUrl);
+    if (normalizedKey.isEmpty) {
+      return Future.value(false);
+    }
+
+    return _savedMediaByUrlFutures.putIfAbsent(normalizedKey, () async {
+      try {
+        final SharedMediaItem? mediaItem =
+            await _experienceService.findSharedMediaItemByPath(mediaUrl);
+        if (mediaItem == null || mediaItem.experienceIds.isEmpty) {
+          return false;
+        }
+
+        final List<Experience> experiences =
+            await _experienceService.getExperiencesByIds(
+          mediaItem.experienceIds,
+        );
+
+        if (experiences.isEmpty) {
+          return false;
+        }
+
+        for (final experience in experiences) {
+          if (_experienceContainsMediaUrl(experience, mediaUrl)) {
+            return true;
+          }
+        }
+
+        return false;
+      } catch (e) {
+        debugPrint('DiscoveryScreen: Failed to resolve saved media for $mediaUrl: $e');
+        return false;
+      }
+    });
+  }
+
+  Future<_FeedFilterResult> _evaluateFeedItemVisibility(
+    PublicExperience experience,
+    String mediaUrl,
+  ) async {
+    final bool hasAccess =
+        await _userHasViewOrEditAccessToPlace(experience.location.placeId);
+    if (hasAccess) {
+      return _FeedFilterResult.skipHasAccess;
+    }
+
+    final bool alreadySaved = await _hasUserSavedMediaByUrl(mediaUrl);
+    if (alreadySaved) {
+      return _FeedFilterResult.skipAlreadySaved;
+    }
+
+    return _FeedFilterResult.include;
+  }
+
+  void _markMediaAsSaved(String mediaUrl) {
+    final String normalizedKey = _normalizeUrlForComparison(mediaUrl);
+    if (normalizedKey.isEmpty) return;
+    _savedMediaByUrlFutures[normalizedKey] = Future.value(true);
+  }
+
   Future<void> _maybeCheckIfMediaSaved(_DiscoveryFeedItem item) async {
     if (item.isMediaAlreadySaved.value != null) {
       return;
     }
-    final String? placeId = item.experience.location.placeId;
-    if (placeId == null || placeId.isEmpty) {
-      item.isMediaAlreadySaved.value = false;
-      return;
-    }
     try {
-      final experiences =
-          await _experienceService.findAccessibleExperiencesByPlaceId(placeId);
-      if (experiences.isEmpty) {
-        item.isMediaAlreadySaved.value = false;
-        return;
-      }
-      final String normalizedUrl = _normalizeUrlForComparison(item.mediaUrl);
-      bool found = false;
-      for (final experience in experiences) {
-        if (_experienceContainsMediaUrl(experience, normalizedUrl)) {
-          found = true;
-          break;
-        }
-      }
-
-      if (!found) {
-        final Set<String> mediaItemIds = {
-          for (final experience in experiences)
-            ...experience.sharedMediaItemIds.where((id) => id.isNotEmpty)
-        };
-        if (mediaItemIds.isNotEmpty) {
-          final List<SharedMediaItem> mediaItems =
-              await _experienceService.getSharedMediaItems(
-            mediaItemIds.toList(),
-          );
-          for (final itemMeta in mediaItems) {
-            if (_normalizeUrlForComparison(itemMeta.path) ==
-                _normalizeUrlForComparison(normalizedUrl)) {
-              found = true;
-              break;
-            }
-          }
-        }
-      }
-      item.isMediaAlreadySaved.value = found;
+      final bool isSaved = await _hasUserSavedMediaByUrl(item.mediaUrl);
+      item.isMediaAlreadySaved.value = isSaved;
     } catch (e) {
       debugPrint('DiscoveryScreen: Failed media check: $e');
       item.isMediaAlreadySaved.value = false;
@@ -822,6 +891,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
     if (feedItem != null) {
       feedItem.isMediaAlreadySaved.value = true;
     }
+    _markMediaAsSaved(mediaUrl);
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(resultMessage)),
@@ -1299,6 +1369,12 @@ class _DiscoveryFeedItem {
   final PublicExperience experience;
   final String mediaUrl;
   final ValueNotifier<bool?> isMediaAlreadySaved = ValueNotifier<bool?>(null);
+}
+
+enum _FeedFilterResult {
+  include,
+  skipHasAccess,
+  skipAlreadySaved,
 }
 
 enum _MediaType {
