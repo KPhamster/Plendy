@@ -181,6 +181,14 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
         continue;
       }
 
+      // Skip Yelp, Google Maps, and generic URL previews
+      final mediaType = _classifyUrl(mediaUrl);
+      if (mediaType == _MediaType.yelp ||
+          mediaType == _MediaType.maps ||
+          mediaType == _MediaType.generic) {
+        continue;
+      }
+
       final totalCombos = _calculateTotalAvailableMediaPaths();
       if (totalCombos > 0 && _usedMediaKeys.length >= totalCombos) {
         _usedMediaKeys.clear();
