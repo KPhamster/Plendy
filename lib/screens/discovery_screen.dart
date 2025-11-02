@@ -42,6 +42,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
   final ExperienceService _experienceService = ExperienceService();
   final GoogleMapsService _mapsService = GoogleMapsService();
   final Map<String, Future<Map<String, dynamic>?>> _mapsPreviewFutures = {};
+  final Map<String, Future<List<Experience>>> _linkedExperiencesFutures = {};
   final PageController _pageController = PageController();
   final Random _random = Random();
 
@@ -387,7 +388,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
           left: 16,
           right: 96,
           bottom: 32,
-          child: _buildMetadata(item.experience),
+          child: _buildMetadata(item),
         ),
         Positioned(
           right: 16,
@@ -398,7 +399,8 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
     );
   }
 
-  Widget _buildMetadata(PublicExperience experience) {
+  Widget _buildMetadata(_DiscoveryFeedItem item) {
+    final PublicExperience experience = item.experience;
     final location = experience.location;
     final details = <String>[];
 
@@ -418,13 +420,42 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(
-            experience.name,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 20,
-              fontWeight: FontWeight.w600,
-            ),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Expanded(
+                child: Text(
+                  experience.name,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              FutureBuilder<List<Experience>>(
+                future: _getLinkedExperiencesForMedia(item.mediaUrl),
+                builder: (context, snapshot) {
+                  final experiences = snapshot.data;
+                  if (experiences == null || experiences.length <= 1) {
+                    return const SizedBox.shrink();
+                  }
+                  return TextButton(
+                    onPressed: () => _showLinkedExperiencesDialog(item),
+                    style: TextButton.styleFrom(
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      minimumSize: const Size(0, 0),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    child: const Text(
+                      'and more',
+                      style: TextStyle(fontSize: 13),
+                    ),
+                  );
+                },
+              ),
+            ],
           ),
           if (subtitle.isNotEmpty)
             Padding(
@@ -731,8 +762,48 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
   }
 
   Future<void> _handleBookmarkTapped(_DiscoveryFeedItem item) async {
-    final publicExperience = item.experience;
-    final Experience draft = _buildExperienceDraft(publicExperience);
+    final List<Experience> initialExperiences =
+        await _buildInitialExperiencesForSave(item);
+
+    await _openSaveExperiencesSheet(
+      initialExperiences: initialExperiences,
+      mediaUrl: item.mediaUrl,
+      feedItem: item,
+    );
+  }
+
+  Future<List<Experience>> _buildInitialExperiencesForSave(
+    _DiscoveryFeedItem item, {
+    List<Experience>? seedExperiences,
+  }) async {
+    final List<Experience> linkedExperiences =
+        List<Experience>.from(seedExperiences ??
+            await _getLinkedExperiencesForMedia(item.mediaUrl));
+
+    final List<Experience> dedupedExperiences =
+        _dedupeExperiencesById(linkedExperiences);
+
+    if (dedupedExperiences.isEmpty) {
+      return [_buildExperienceDraft(item.experience)];
+    }
+
+    final bool alreadyContainsPreview = dedupedExperiences.any(
+      (exp) => _experienceMatchesPublic(exp, item.experience),
+    );
+    if (alreadyContainsPreview) {
+      return dedupedExperiences;
+    }
+
+    final Experience draft = _buildExperienceDraft(item.experience);
+    return [...dedupedExperiences, draft];
+  }
+
+  Future<void> _openSaveExperiencesSheet({
+    required List<Experience> initialExperiences,
+    required String mediaUrl,
+    _DiscoveryFeedItem? feedItem,
+  }) async {
+    if (initialExperiences.isEmpty) return;
 
     final String? resultMessage = await showModalBottomSheet<String>(
       context: context,
@@ -740,25 +811,193 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
-      builder: (ctx) {
-        return SaveToExperiencesModal(
-          initialExperience: draft,
-          mediaUrl: item.mediaUrl,
-        );
-      },
+      builder: (_) => SaveToExperiencesModal(
+        initialExperiences: initialExperiences,
+        mediaUrl: mediaUrl,
+      ),
     );
 
-    if (resultMessage == null) return;
+    if (resultMessage == null || !mounted) return;
 
-    if (!mounted) return;
-    item.isMediaAlreadySaved.value = true;
+    if (feedItem != null) {
+      feedItem.isMediaAlreadySaved.value = true;
+    }
+
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(resultMessage)),
     );
   }
 
+  Future<List<Experience>> _getLinkedExperiencesForMedia(String mediaUrl) {
+    if (mediaUrl.isEmpty) {
+      return Future.value(const <Experience>[]);
+    }
+
+    return _linkedExperiencesFutures.putIfAbsent(mediaUrl, () async {
+      try {
+        final SharedMediaItem? mediaItem =
+            await _experienceService.findSharedMediaItemByPath(mediaUrl);
+        if (mediaItem == null || mediaItem.experienceIds.isEmpty) {
+          return const <Experience>[];
+        }
+
+        final experiences =
+            await _experienceService.getExperiencesByIds(mediaItem.experienceIds);
+        experiences.sort(
+          (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+        );
+        return experiences;
+      } catch (e) {
+        debugPrint('Failed to load linked experiences: $e');
+        return const <Experience>[];
+      }
+    });
+  }
+
+  Future<void> _showLinkedExperiencesDialog(_DiscoveryFeedItem item) async {
+    final mediaUrl = item.mediaUrl;
+    if (mediaUrl.isEmpty) return;
+
+    final experiences = await _getLinkedExperiencesForMedia(mediaUrl);
+    if (!mounted) return;
+
+    if (experiences.length <= 1) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No additional experiences linked yet.')),
+      );
+      return;
+    }
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        final theme = Theme.of(dialogContext);
+        return AlertDialog(
+          backgroundColor: Colors.white,
+          surfaceTintColor: Colors.white,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Text('Linked Experiences'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: ListView.separated(
+              shrinkWrap: true,
+              itemCount: experiences.length,
+              separatorBuilder: (_, __) => const Divider(height: 1),
+              itemBuilder: (_, index) {
+                final experience = experiences[index];
+                return ListTile(
+                  title: Text(experience.name),
+                  subtitle: Text(_formatExperienceSubtitle(experience)),
+                );
+              },
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Close'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                Navigator.of(dialogContext).pop();
+                final initialExperiences =
+                    await _buildInitialExperiencesForSave(
+                  item,
+                  seedExperiences: experiences,
+                );
+                if (!mounted) return;
+                Future.microtask(() {
+                  _openSaveExperiencesSheet(
+                    initialExperiences: initialExperiences,
+                    mediaUrl: mediaUrl,
+                    feedItem: item,
+                  );
+                });
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: theme.primaryColor,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Save All'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  String _formatExperienceSubtitle(Experience experience) {
+    final location = experience.location;
+    final parts = <String>[];
+    if ((location.city ?? '').trim().isNotEmpty) {
+      parts.add(location.city!.trim());
+    }
+    if ((location.state ?? '').trim().isNotEmpty) {
+      parts.add(location.state!.trim());
+    }
+    if (parts.isEmpty && (location.address ?? '').trim().isNotEmpty) {
+      parts.add(location.address!.trim());
+    }
+    return parts.isNotEmpty ? parts.join(', ') : 'Location details unavailable';
+  }
+
   Experience _buildExperienceDraft(PublicExperience publicExperience) {
     return publicExperience.toExperienceDraft();
+  }
+
+  List<Experience> _dedupeExperiencesById(List<Experience> experiences) {
+    final Set<String> seen = <String>{};
+    final List<Experience> deduped = [];
+    for (final exp in experiences) {
+      final String key = _experienceCacheKey(exp);
+      if (seen.add(key)) {
+        deduped.add(exp);
+      }
+    }
+    return deduped;
+  }
+
+  String _experienceCacheKey(Experience experience) {
+    if (experience.id.isNotEmpty) {
+      return experience.id;
+    }
+
+    final location = experience.location;
+    final buffer = StringBuffer()
+      ..write(experience.name.trim().toLowerCase())
+      ..write('|')
+      ..write(location.placeId?.trim().toLowerCase() ?? '')
+      ..write('|')
+      ..write((location.address ?? '').trim().toLowerCase());
+    return buffer.toString();
+  }
+
+  bool _experienceMatchesPublic(
+    Experience savedExperience,
+    PublicExperience publicExperience,
+  ) {
+    final String savedPlaceId = savedExperience.location.placeId?.trim() ?? '';
+    final String publicPlaceId = publicExperience.placeID.trim();
+    if (savedPlaceId.isNotEmpty && publicPlaceId.isNotEmpty) {
+      return savedPlaceId == publicPlaceId;
+    }
+
+    final String savedName = savedExperience.name.trim().toLowerCase();
+    final String publicName = publicExperience.name.trim().toLowerCase();
+    if (savedName.isEmpty || publicName.isEmpty) {
+      return false;
+    }
+
+    final String savedAddress =
+        (savedExperience.location.address ?? '').trim().toLowerCase();
+    final String publicAddress =
+        (publicExperience.location.address ?? '').trim().toLowerCase();
+
+    if (savedAddress.isNotEmpty && publicAddress.isNotEmpty) {
+      return savedName == publicName && savedAddress == publicAddress;
+    }
+
+    return savedName == publicName;
   }
 
   Widget _buildPreviewForItem(_DiscoveryFeedItem item) {
