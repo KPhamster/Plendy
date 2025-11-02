@@ -354,16 +354,29 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
         _dragDistance = 0;
       },
       onVerticalDragUpdate: (details) {
-        _dragDistance += details.primaryDelta ?? 0;
+        final delta = details.primaryDelta ?? 0;
+        _dragDistance += delta;
+        if (!_pageController.hasClients ||
+            !_pageController.position.hasPixels ||
+            !_pageController.position.haveDimensions) {
+          return;
+        }
+        final position = _pageController.position;
+        final double newOffset = (position.pixels - delta).clamp(
+          position.minScrollExtent,
+          position.maxScrollExtent,
+        );
+        _pageController.jumpTo(newOffset);
       },
       onVerticalDragEnd: (details) {
         final velocity = details.primaryVelocity ?? 0;
-        if (velocity < -300 || _dragDistance <= -_dragThreshold) {
-          _maybeAnimateToPage(_currentPage + 1);
-        } else if (velocity > 300 || _dragDistance >= _dragThreshold) {
-          _maybeAnimateToPage(_currentPage - 1);
-        }
-        _dragDistance = 0;
+        final int targetPage = _resolveTargetPageForDragEnd(velocity);
+        _maybeAnimateToPage(targetPage);
+        _resetDragTracking();
+      },
+      onVerticalDragCancel: () {
+        _maybeAnimateToPage(_currentPage);
+        _resetDragTracking();
       },
       child: PageView.builder(
         controller: _pageController,
@@ -383,11 +396,33 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
     if (targetPage < 0 || targetPage >= _feedItems.length) {
       return;
     }
+    if (!_pageController.hasClients ||
+        !_pageController.position.hasPixels ||
+        !_pageController.position.haveDimensions) {
+      return;
+    }
     _pageController.animateToPage(
       targetPage,
       duration: const Duration(milliseconds: 220),
       curve: Curves.easeOut,
     );
+  }
+
+  int _resolveTargetPageForDragEnd(double velocity) {
+    if (_feedItems.isEmpty) {
+      return 0;
+    }
+    if (velocity < -300 || _dragDistance <= -_dragThreshold) {
+      return min(_currentPage + 1, _feedItems.length - 1);
+    }
+    if (velocity > 300 || _dragDistance >= _dragThreshold) {
+      return max(_currentPage - 1, 0);
+    }
+    return _currentPage;
+  }
+
+  void _resetDragTracking() {
+    _dragDistance = 0;
   }
 
   Widget _buildFeedPage(_DiscoveryFeedItem item) {
