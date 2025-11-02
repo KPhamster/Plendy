@@ -17,11 +17,11 @@ import '../screens/receive_share/widgets/experience_card_form.dart';
 class SaveToExperiencesModal extends StatefulWidget {
   const SaveToExperiencesModal({
     super.key,
-    required this.initialExperience,
+    required this.initialExperiences,
     required this.mediaUrl,
-  });
+  }) : assert(initialExperiences.length > 0);
 
-  final Experience initialExperience;
+  final List<Experience> initialExperiences;
   final String mediaUrl;
 
   @override
@@ -60,7 +60,13 @@ class _SaveToExperiencesModalState extends State<SaveToExperiencesModal> {
         _loadUserCategories(),
         _loadUserColorCategories(),
       ]);
-      _addExperienceCard(fromExperience: widget.initialExperience);
+      if (widget.initialExperiences.isEmpty) {
+        _addExperienceCard();
+      } else {
+        for (final experience in widget.initialExperiences) {
+          _addExperienceCard(fromExperience: experience);
+        }
+      }
     } catch (e) {
       _showSnackBar('Unable to load categories: $e');
     } finally {
@@ -150,6 +156,9 @@ class _SaveToExperiencesModalState extends State<SaveToExperiencesModal> {
   }
 
   void _applyExperienceToCard(ExperienceCardData card, Experience experience) {
+    if (experience.id.isNotEmpty) {
+      card.existingExperienceId = experience.id;
+    }
     card.titleController.text = experience.name;
     card.notesController.text = experience.additionalNotes ?? '';
     card.websiteController.text = experience.website ?? '';
