@@ -1,4 +1,5 @@
 import 'dart:async'; // Import async
+import 'dart:math' as Math; // Import for mathematical functions
 import 'dart:typed_data'; // Import for ByteData
 import 'dart:ui' as ui; // Import for ui.Image, ui.Canvas etc.
 import 'package:flutter/material.dart';
@@ -123,6 +124,11 @@ class _MapScreenState extends State<MapScreen> {
   // ADDED: Fallback paging state when query path fails
   List<String>? _fallbackSharedIds;
   int _fallbackPageOffset = 0;
+  // ADDED: State for public experiences (globe toggle)
+  List<PublicExperience> _nearbyPublicExperiences = [];
+  final Map<String, Marker> _publicExperienceMarkers = {};
+  bool _isGlobeLoading = false;
+  LatLng? _lastGlobeMapCenter;
 
   // ADDED: Resolve and cache display name for owners of shared items
   Future<String> _getOwnerDisplayName(String userId) async {
@@ -233,6 +239,13 @@ class _MapScreenState extends State<MapScreen> {
     print("🗺️ MAP SCREEN: Starting data load...");
     setState(() {
       _isLoading = true;
+      // ADDED: Invalidate public experience data when saved experiences refresh
+      // This ensures public markers don't show stale experiences that user may have just saved
+      if (_isGlobalToggleActive) {
+        _nearbyPublicExperiences = [];
+        _publicExperienceMarkers.clear();
+        print("🗺️ MAP SCREEN: Cleared public experiences due to data reload (will refetch after)");
+      }
     });
 
     try {
@@ -301,6 +314,17 @@ class _MapScreenState extends State<MapScreen> {
         });
         if (_tappedLocationDetails != null) {
           _maybeAttachSavedOrPublicExperience(_tappedLocationDetails!);
+        }
+        // ADDED: Refetch public experiences if globe is active (after saved experiences updated)
+        if (_isGlobalToggleActive && _lastGlobeMapCenter != null) {
+          print("🗺️ MAP SCREEN: Refetching public experiences after data reload");
+          unawaited(() async {
+            try {
+              await _fetchNearbyPublicExperiences(_lastGlobeMapCenter!);
+            } catch (e) {
+              print("🗺️ MAP SCREEN: Error refetching public experiences: $e");
+            }
+          }());
         }
       }
     }
@@ -517,6 +541,8 @@ class _MapScreenState extends State<MapScreen> {
     int size = 60,
     required Color backgroundColor, // Added required background color parameter
     double backgroundOpacity = 0.7, // ADDED: Opacity parameter
+    Color textColor = Colors.black,
+    String? fontFamily,
   }) async {
     final ui.PictureRecorder pictureRecorder = ui.PictureRecorder();
     final Canvas canvas = Canvas(pictureRecorder);
@@ -537,9 +563,16 @@ class _MapScreenState extends State<MapScreen> {
       ui.ParagraphStyle(
         textAlign: TextAlign.center,
         fontSize: size * 0.7, // Adjust emoji size relative to marker size
+        fontFamily: fontFamily,
       ),
     );
+    paragraphBuilder.pushStyle(ui.TextStyle(
+      color: textColor,
+      fontFamily: fontFamily,
+      fontSize: size * 0.7,
+    ));
     paragraphBuilder.addText(text);
+    paragraphBuilder.pop();
     final ui.Paragraph paragraph = paragraphBuilder.build();
     paragraph.layout(ui.ParagraphConstraints(width: size.toDouble()));
 
@@ -561,6 +594,326 @@ class _MapScreenState extends State<MapScreen> {
     }
 
     return BitmapDescriptor.fromBytes(byteData.buffer.asUint8List());
+  }
+
+  // ADDED: Calculate distance in meters between two lat/lng points using Haversine formula
+  double _calculateDistanceInMeters(
+    double lat1,
+    double lng1,
+    double lat2,
+    double lng2,
+  ) {
+    const double earthRadiusMeters = 6371000; // Earth's radius in meters
+    final double dLat = _degreesToRadians(lat2 - lat1);
+    final double dLng = _degreesToRadians(lng2 - lng1);
+    
+    final double a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(_degreesToRadians(lat1)) *
+            Math.cos(_degreesToRadians(lat2)) *
+            Math.sin(dLng / 2) *
+            Math.sin(dLng / 2);
+    
+    final double c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return earthRadiusMeters * c;
+  }
+
+  double _degreesToRadians(double degrees) {
+    return degrees * Math.pi / 180;
+  }
+
+  // ADDED: Check if public experience is already saved by user
+  bool _isPublicExperienceAlreadySaved(PublicExperience publicExp) {
+    // Check by place ID first
+    if (publicExp.placeID.isNotEmpty) {
+      try {
+        _experiences.firstWhere(
+          (exp) =>
+              exp.location.placeId != null &&
+              exp.location.placeId!.isNotEmpty &&
+              exp.location.placeId == publicExp.placeID,
+        );
+        return true; // Found a match
+      } catch (_) {
+        // No match by place ID, continue to coordinate check
+      }
+    }
+
+    // Check by coordinates (within small tolerance)
+    for (final experience in _experiences) {
+      if (_areCoordinatesClose(
+        experience.location.latitude,
+        experience.location.longitude,
+        publicExp.location.latitude,
+        publicExp.location.longitude,
+        tolerance: 0.0001, // Smaller tolerance for exact matches
+      )) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // ADDED: Fetch and filter nearby public experiences within 50 miles
+  Future<void> _fetchNearbyPublicExperiences(LatLng center) async {
+    const double fiftyMilesInMeters = 80467; // 50 miles ≈ 80467 meters
+    const int targetCount = 100;
+    const int maxPages = 20; // Safety limit to avoid excessive fetching
+
+    print(
+        "🗺️ MAP SCREEN: Fetching public experiences near ${center.latitude}, ${center.longitude} (within 50 miles)");
+
+    final List<PublicExperience> nearby = [];
+    DocumentSnapshot<Object?>? lastDoc;
+    bool hasMore = true;
+    int pageCount = 0;
+
+    try {
+      while (nearby.length < targetCount && hasMore && pageCount < maxPages) {
+        pageCount++;
+        final page = await _experienceService.fetchPublicExperiencesPage(
+          startAfter: lastDoc,
+          limit: 50,
+        );
+
+        for (final publicExp in page.experiences) {
+          // Skip if already saved
+          if (_isPublicExperienceAlreadySaved(publicExp)) {
+            continue;
+          }
+
+          // Check distance
+          final distance = _calculateDistanceInMeters(
+            center.latitude,
+            center.longitude,
+            publicExp.location.latitude,
+            publicExp.location.longitude,
+          );
+
+          if (distance <= fiftyMilesInMeters) {
+            nearby.add(publicExp);
+            if (nearby.length >= targetCount) {
+              break;
+            }
+          }
+        }
+
+        lastDoc = page.lastDocument;
+        hasMore = page.hasMore;
+      }
+
+      print(
+          "🗺️ MAP SCREEN: Found ${nearby.length} nearby public experiences (fetched $pageCount pages)");
+
+      if (mounted) {
+        setState(() {
+          _nearbyPublicExperiences = nearby;
+        });
+      }
+
+      // Generate markers for these public experiences
+      await _generatePublicExperienceMarkers();
+    } catch (e) {
+      print("🗺️ MAP SCREEN: Error fetching nearby public experiences: $e");
+      rethrow;
+    }
+  }
+
+  // ADDED: Generate markers for public experiences
+  Future<void> _generatePublicExperienceMarkers() async {
+    print(
+        "🗺️ MAP SCREEN: Generating markers for ${_nearbyPublicExperiences.length} public experiences");
+
+    _publicExperienceMarkers.clear();
+
+    if (!mounted) {
+      print("🗺️ MAP SCREEN: Widget unmounted, skipping public marker generation");
+      return;
+    }
+
+    // Generate cached icons for public experiences (default and selected states)
+    final BitmapDescriptor publicIcon = await _bitmapDescriptorFromText(
+      String.fromCharCode(Icons.public.codePoint),
+      size: 60,
+      backgroundColor: Colors.black,
+      backgroundOpacity: 1.0,
+      textColor: Colors.white,
+      fontFamily: Icons.public.fontFamily,
+    );
+
+    final BitmapDescriptor publicSelectedIcon = await _bitmapDescriptorFromText(
+      String.fromCharCode(Icons.public.codePoint),
+      size: 80,
+      backgroundColor: Colors.black,
+      backgroundOpacity: 1.0,
+      textColor: Colors.white,
+      fontFamily: Icons.public.fontFamily,
+    );
+
+    for (final publicExp in _nearbyPublicExperiences) {
+      final position = LatLng(
+        publicExp.location.latitude,
+        publicExp.location.longitude,
+      );
+
+      final markerId = MarkerId('public_${publicExp.id}');
+      final marker = Marker(
+        markerId: markerId,
+        position: position,
+        infoWindow: InfoWindow(
+          title: publicExp.name,
+        ),
+        icon: publicIcon,
+        onTap: () async {
+          FocusScope.of(context).unfocus();
+          print(
+              "🗺️ MAP SCREEN: Public experience marker tapped: '${publicExp.name}'");
+
+          // Create a temporary marker for the selected public experience
+          final tappedMarkerId = MarkerId('selected_public_experience');
+          final tappedMarker = Marker(
+            markerId: tappedMarkerId,
+            position: position,
+            infoWindow: InfoWindow(
+              title: publicExp.name,
+            ),
+            icon: publicSelectedIcon,
+            zIndex: 1.0,
+          );
+
+          // Fetch business status if available
+          String? businessStatus;
+          bool? openNow;
+          try {
+            if (publicExp.placeID.isNotEmpty) {
+              final detailsMap =
+                  await _mapsService.fetchPlaceDetailsData(publicExp.placeID);
+              businessStatus = detailsMap?['businessStatus'] as String?;
+              openNow =
+                  (detailsMap?['currentOpeningHours']?['openNow']) as bool?;
+            }
+          } catch (e) {
+            businessStatus = null;
+            openNow = null;
+          }
+
+          setState(() {
+            _mapWidgetInitialLocation = publicExp.location;
+            _tappedLocationDetails = publicExp.location;
+            _tappedLocationMarker = tappedMarker;
+            _tappedExperience = null;
+            _tappedExperienceCategory = null;
+            _tappedLocationBusinessStatus = businessStatus;
+            _tappedLocationOpenNow = openNow;
+            _publicReadOnlyExperience = publicExp.toExperienceDraft();
+            _publicPreviewMediaItems = publicExp.buildMediaItemsForPreview();
+            _searchController.clear();
+            _searchResults = [];
+            _showSearchResults = false;
+          });
+          _showMarkerInfoWindow(tappedMarkerId);
+        },
+      );
+
+      _publicExperienceMarkers[publicExp.id] = marker;
+    }
+
+    print(
+        "🗺️ MAP SCREEN: Generated ${_publicExperienceMarkers.length} public experience markers");
+
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  // ADDED: Handle globe toggle button press
+  Future<void> _handleGlobeToggle() async {
+    print("🗺️ MAP SCREEN: Globe toggle pressed. Current state: $_isGlobalToggleActive");
+
+    // Toggle the state
+    final bool newState = !_isGlobalToggleActive;
+
+    if (!newState) {
+      // Turning off: clear public experience data
+      print("🗺️ MAP SCREEN: Deactivating globe view, clearing public experiences");
+      setState(() {
+        _isGlobalToggleActive = false;
+        _nearbyPublicExperiences = [];
+        _publicExperienceMarkers.clear();
+        _lastGlobeMapCenter = null;
+      });
+      return;
+    }
+
+    // Turning on: capture map center and fetch nearby public experiences
+    print("🗺️ MAP SCREEN: Activating globe view, capturing map center...");
+
+    try {
+      // Get the map controller
+      GoogleMapController? controller = _mapController;
+      if (controller == null) {
+        if (!_mapControllerCompleter.isCompleted) {
+          print("🗺️ MAP SCREEN: Map controller not ready yet");
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                  content: Text('Map is still loading. Please try again.')),
+            );
+          }
+          return;
+        }
+        controller = await _mapControllerCompleter.future;
+      }
+
+      // Get the visible region to calculate center
+      final LatLngBounds bounds = await controller.getVisibleRegion();
+      final LatLng center = LatLng(
+        (bounds.northeast.latitude + bounds.southwest.latitude) / 2,
+        (bounds.northeast.longitude + bounds.southwest.longitude) / 2,
+      );
+
+      print(
+          "🗺️ MAP SCREEN: Map center captured: ${center.latitude}, ${center.longitude}");
+
+      // Update state to show loading
+      setState(() {
+        _isGlobalToggleActive = true;
+        _isGlobeLoading = true;
+        _lastGlobeMapCenter = center;
+      });
+
+      // Fetch nearby public experiences
+      await _fetchNearbyPublicExperiences(center);
+
+      // Update state to hide loading
+      if (mounted) {
+        setState(() {
+          _isGlobeLoading = false;
+        });
+      }
+
+      print(
+          "🗺️ MAP SCREEN: Globe view activated with ${_nearbyPublicExperiences.length} public experiences");
+    } catch (e, stackTrace) {
+      print("🗺️ MAP SCREEN: Error activating globe view: $e");
+      print(stackTrace);
+
+      // Revert to inactive state on error
+      if (mounted) {
+        setState(() {
+          _isGlobalToggleActive = false;
+          _isGlobeLoading = false;
+          _nearbyPublicExperiences = [];
+          _publicExperienceMarkers.clear();
+          _lastGlobeMapCenter = null;
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content:
+                  Text('Failed to load nearby experiences: ${e.toString()}')),
+        );
+      }
+    }
   }
 
   // Helper function to navigate to the Experience Page
@@ -2395,6 +2748,13 @@ class _MapScreenState extends State<MapScreen> {
     // Combine experience markers and the tapped marker (if it exists)
     final Map<String, Marker> allMarkers = Map.from(_markers);
 
+    // ADDED: Add public experience markers when globe is active
+    if (_isGlobalToggleActive) {
+      allMarkers.addAll(_publicExperienceMarkers);
+      print(
+          "🗺️ MAP SCREEN: Added ${_publicExperienceMarkers.length} public experience markers (globe active)");
+    }
+
     // If an experience is currently tapped, remove its original marker from the map
     // so it can be replaced by the styled _tappedLocationMarker.
     if (_tappedExperience != null) {
@@ -2434,7 +2794,7 @@ class _MapScreenState extends State<MapScreen> {
                 opacity: animation,
                 child: child,
               ),
-              child: ((_isLoading || _isSharedLoading) && !_isSearching)
+              child: ((_isLoading || _isSharedLoading || _isGlobeLoading) && !_isSearching)
                   ? SizedBox(
                       key: const ValueKey('appbar_spinner'),
                       width: 18,
@@ -2461,11 +2821,7 @@ class _MapScreenState extends State<MapScreen> {
                 color: _isGlobalToggleActive ? Colors.black : Colors.grey,
               ),
               tooltip: 'Toggle global view',
-              onPressed: () {
-                setState(() {
-                  _isGlobalToggleActive = !_isGlobalToggleActive;
-                });
-              },
+              onPressed: _handleGlobeToggle,
             ),
           ),
           Container(
