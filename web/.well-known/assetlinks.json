@@ -1,0 +1,13 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.plendy.app",
+      "sha256_cert_fingerprints": [
+        "FA:41:58:8D:B9:07:32:FD:B3:AB:7B:E5:BE:0F:08:FA:E6:B1:1B:8E:84:25:1D:7A:7D:EB:58:3E:E1:0F:AE:AD",
+        "50:9A:89:F3:B3:B9:01:15:D4:5F:A1:5A:8C:8F:65:44:88:83:CC:CD:A1:99:77:86:23:23:FE:74:F3:FE:AD:D3"
+      ]
+    }
+  }
+]
