@@ -52,6 +52,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../config/app_constants.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
+import '../widgets/web_media_preview_card.dart'; // ADDED: Import for WebMediaPreviewCard
 
 // Convert to StatefulWidget
 class ExperiencePageScreen extends StatefulWidget {
@@ -2130,7 +2131,13 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                   if (isTikTokUrl) {
                     final key = GlobalKey<TikTokPreviewWidgetState>();
                     _tiktokControllerKeys[url] = key;
-                    mediaWidget = TikTokPreviewWidget(
+                    mediaWidget = kIsWeb
+                        ? WebMediaPreviewCard(
+                          url: url,
+                          experienceName: _currentExperience.name,
+                          onOpenPressed: () => _launchUrl(url),
+                        )
+                        : TikTokPreviewWidget(
                       key: key,
                       url: url,
                       launchUrlCallback: _launchUrl,
@@ -2143,7 +2150,13 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                     final key =
                         GlobalKey<instagram_widget.InstagramWebViewState>();
                     _instagramControllerKeys[url] = key;
-                    mediaWidget = instagram_widget.InstagramWebView(
+                    mediaWidget = kIsWeb
+                        ? WebMediaPreviewCard(
+                          url: url,
+                          experienceName: _currentExperience.name,
+                          onOpenPressed: () => _launchUrl(url),
+                        )
+                        : instagram_widget.InstagramWebView(
                       key: key,
                       url: url,
                       height: 640.0,
@@ -2154,7 +2167,13 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                       onPageFinished: (_) {},
                     );
                   } else if (isFacebookUrl) {
-                    mediaWidget = FacebookPreviewWidget(
+                    mediaWidget = kIsWeb
+                        ? WebMediaPreviewCard(
+                          url: url,
+                          experienceName: _currentExperience.name,
+                          onOpenPressed: () => _launchUrl(url),
+                        )
+                        : FacebookPreviewWidget(
                       url: url,
                       height: 500.0,
                       launchUrlCallback: _launchUrl,
@@ -2167,7 +2186,13 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                   } else if (isYouTubeUrl) {
                     final key = GlobalKey<YouTubePreviewWidgetState>();
                     _youtubeControllerKeys[url] = key;
-                    mediaWidget = YouTubePreviewWidget(
+                    mediaWidget = kIsWeb
+                        ? WebMediaPreviewCard(
+                          url: url,
+                          experienceName: _currentExperience.name,
+                          onOpenPressed: () => _launchUrl(url),
+                        )
+                        : YouTubePreviewWidget(
                       key: key,
                       url: url,
                       launchUrlCallback: _launchUrl,

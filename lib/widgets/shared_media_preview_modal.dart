@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart'; // ADDED: Import for kIsWeb
 
 import '../models/experience.dart';
 import '../models/user_category.dart';
@@ -17,6 +18,7 @@ import '../screens/receive_share/widgets/maps_preview_widget.dart';
 import '../services/google_maps_service.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../screens/experience_page_screen.dart';
+import 'web_media_preview_card.dart'; // ADDED: Import for WebMediaPreviewCard
 
 class SharedMediaPreviewModal extends StatefulWidget {
   final Experience experience;
@@ -243,7 +245,13 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
     final type = _classifyUrl(url);
     // Use parity with ExperiencePageScreen content tab
     if (type == _MediaType.tiktok) {
-      return TikTokPreviewWidget(
+      return kIsWeb
+          ? WebMediaPreviewCard(
+            url: url,
+            experienceName: widget.experience.name,
+            onOpenPressed: () => widget.onLaunchUrl(url),
+          )
+          : TikTokPreviewWidget(
         key: ValueKey(url),
         url: url,
         launchUrlCallback: widget.onLaunchUrl,
@@ -252,7 +260,13 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
     }
 
     if (type == _MediaType.instagram) {
-      return instagram_widget.InstagramWebView(
+      return kIsWeb
+          ? WebMediaPreviewCard(
+            url: url,
+            experienceName: widget.experience.name,
+            onOpenPressed: () => widget.onLaunchUrl(url),
+          )
+          : instagram_widget.InstagramWebView(
         key: ValueKey(url),
         url: url,
         height: 640.0,
@@ -263,7 +277,13 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
     }
 
     if (type == _MediaType.facebook) {
-      return FacebookPreviewWidget(
+      return kIsWeb
+          ? WebMediaPreviewCard(
+            url: url,
+            experienceName: widget.experience.name,
+            onOpenPressed: () => widget.onLaunchUrl(url),
+          )
+          : FacebookPreviewWidget(
         key: ValueKey(url),
         url: url,
         height: 500.0,
@@ -275,7 +295,13 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
     }
 
     if (type == _MediaType.youtube) {
-      return YouTubePreviewWidget(
+      return kIsWeb
+          ? WebMediaPreviewCard(
+            url: url,
+            experienceName: widget.experience.name,
+            onOpenPressed: () => widget.onLaunchUrl(url),
+          )
+          : YouTubePreviewWidget(
         key: ValueKey(url),
         url: url,
         launchUrlCallback: widget.onLaunchUrl,

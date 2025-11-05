@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
@@ -422,37 +423,46 @@ class _DiscoverySharePreviewScreenState
 
     switch (type) {
       case _MediaType.tiktok:
-        return SizedBox.expand(
-          child: TikTokPreviewWidget(
-            key: ValueKey('tiktok_$url'),
-            url: url,
-            launchUrlCallback: _launchUrl,
-            showControls: false,
-          ),
-        );
       case _MediaType.instagram:
-        return SizedBox.expand(
-          child: instagram_widget.InstagramWebView(
-            key: ValueKey('instagram_$url'),
-            url: url,
-            height: mediaSize.height,
-            launchUrlCallback: _launchUrl,
-            onWebViewCreated: (_) {},
-            onPageFinished: (_) {},
-          ),
-        );
       case _MediaType.facebook:
-        return SizedBox.expand(
-          child: FacebookPreviewWidget(
-            key: ValueKey('facebook_$url'),
-            url: url,
-            height: mediaSize.height,
-            onWebViewCreated: (_) {},
-            onPageFinished: (_) {},
-            launchUrlCallback: _launchUrl,
-            showControls: false,
-          ),
-        );
+        // On web, these social media embeds don't work well, show a preview card instead
+        if (kIsWeb) {
+          return _buildWebSocialMediaPreview(url, type, experience);
+        }
+        // On mobile, use the native widgets
+        if (type == _MediaType.tiktok) {
+          return SizedBox.expand(
+            child: TikTokPreviewWidget(
+              key: ValueKey('tiktok_$url'),
+              url: url,
+              launchUrlCallback: _launchUrl,
+              showControls: false,
+            ),
+          );
+        } else if (type == _MediaType.instagram) {
+          return SizedBox.expand(
+            child: instagram_widget.InstagramWebView(
+              key: ValueKey('instagram_$url'),
+              url: url,
+              height: mediaSize.height,
+              launchUrlCallback: _launchUrl,
+              onWebViewCreated: (_) {},
+              onPageFinished: (_) {},
+            ),
+          );
+        } else {
+          return SizedBox.expand(
+            child: FacebookPreviewWidget(
+              key: ValueKey('facebook_$url'),
+              url: url,
+              height: mediaSize.height,
+              onWebViewCreated: (_) {},
+              onPageFinished: (_) {},
+              launchUrlCallback: _launchUrl,
+              showControls: false,
+            ),
+          );
+        }
       case _MediaType.youtube:
         return SizedBox.expand(
           child: YouTubePreviewWidget(
@@ -569,6 +579,107 @@ class _DiscoverySharePreviewScreenState
             ),
           ],
         ],
+      ),
+    );
+  }
+
+  Widget _buildWebSocialMediaPreview(
+    String url,
+    _MediaType type,
+    PublicExperience experience,
+  ) {
+    // Social media platforms (Instagram, TikTok, Facebook) restrict iframe embedding
+    // due to CORS policies and privacy concerns. Show an attractive preview card instead.
+    return _buildSocialMediaPlaceholder(url, type, experience);
+  }
+
+  Widget _buildSocialMediaPlaceholder(
+    String url,
+    _MediaType type,
+    PublicExperience experience,
+  ) {
+    String platformName = '';
+    IconData platformIcon = Icons.link;
+    Color platformColor = Colors.grey;
+
+    switch (type) {
+      case _MediaType.instagram:
+        platformName = 'Instagram';
+        platformIcon = FontAwesomeIcons.instagram as IconData;
+        platformColor = const Color(0xFFE4405F);
+        break;
+      case _MediaType.tiktok:
+        platformName = 'TikTok';
+        platformIcon = FontAwesomeIcons.tiktok as IconData;
+        platformColor = Colors.black;
+        break;
+      case _MediaType.facebook:
+        platformName = 'Facebook';
+        platformIcon = FontAwesomeIcons.facebookF as IconData;
+        platformColor = const Color(0xFF1877F2);
+        break;
+      default:
+        platformName = 'Social Media';
+    }
+
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            platformColor.withOpacity(0.3),
+            Colors.black,
+          ],
+        ),
+      ),
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            FaIcon(
+              platformIcon,
+              size: 80,
+              color: Colors.white.withOpacity(0.9),
+            ),
+            const SizedBox(height: 24),
+            Text(
+              experience.name,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'Shared from $platformName',
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.7),
+                fontSize: 16,
+              ),
+            ),
+            const SizedBox(height: 32),
+            ElevatedButton.icon(
+              onPressed: () => _launchUrl(url),
+              icon: const Icon(Icons.open_in_new),
+              label: Text('Open on $platformName'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: platformColor,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 32,
+                  vertical: 16,
+                ),
+                textStyle: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
