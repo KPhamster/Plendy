@@ -8,6 +8,7 @@ import 'collections_screen.dart';
 import 'discovery_screen.dart';
 import 'profile_screen.dart';
 import 'package:provider/provider.dart';
+import '../providers/discovery_share_coordinator.dart';
 
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
@@ -21,6 +22,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   final SharingService _sharingService = SharingService();
   final GlobalKey<DiscoveryScreenState> _discoveryKey =
       GlobalKey<DiscoveryScreenState>();
+  DiscoveryShareCoordinator? _shareCoordinator;
 
   // Define the screens list
   late final List<Widget> _screens;
@@ -106,6 +108,20 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     // Set the context in the sharing service
     _sharingService.setContext(context);
 
+    final coordinator =
+        Provider.of<DiscoveryShareCoordinator>(context, listen: false);
+    if (_shareCoordinator != coordinator) {
+      _shareCoordinator?.removeListener(_handleDiscoveryShareToken);
+      _shareCoordinator = coordinator;
+      _shareCoordinator?.addListener(_handleDiscoveryShareToken);
+      final pendingToken = _shareCoordinator?.pendingToken;
+      if (pendingToken != null && pendingToken.isNotEmpty) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _handleDiscoveryShareToken();
+        });
+      }
+    }
+
     // Listen for shared files
     _sharingService.sharedFiles.addListener(() {
       final sharedFiles = _sharingService.sharedFiles.value;
@@ -118,6 +134,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _shareCoordinator?.removeListener(_handleDiscoveryShareToken);
     // Clean up the sharing service listener
     super.dispose();
   }
@@ -151,6 +168,23 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     if (discoveryState != null) {
       await discoveryState.refreshFeed();
     }
+  }
+
+  void _handleDiscoveryShareToken() {
+    final token = _shareCoordinator?.pendingToken;
+    if (token == null || token.isEmpty) {
+      return;
+    }
+    _shareCoordinator?.clearToken();
+    if (_selectedIndex != 0) {
+      setState(() {
+        _selectedIndex = 0;
+      });
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final discoveryState = _discoveryKey.currentState;
+      discoveryState?.showSharedPreview(token);
+    });
   }
 
   @override

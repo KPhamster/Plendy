@@ -294,6 +294,18 @@ service cloud.firestore {
                       resource.data.sharedWithUserId == request.auth.uid
                     );
     }
+
+    match /discovery_shares/{token} {
+      allow get: if true;
+      allow list: if false;
+      allow create: if request.auth != null &&
+        request.resource.data.token == token &&
+        request.resource.data.mediaUrl is string &&
+        request.resource.data.mediaUrl.size() > 0 &&
+        request.resource.data.experienceSnapshot is map;
+      allow update: if false;
+      allow delete: if false;
+    }
   }
 
   function sharedPermissionDocId(ownerId, itemType, itemId, viewerId) {

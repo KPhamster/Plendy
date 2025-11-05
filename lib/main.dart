@@ -31,6 +31,8 @@ import 'package:app_links/app_links.dart';
 import 'package:firebase_app_check/firebase_app_check.dart';
 import 'screens/share_preview_screen.dart';
 import 'screens/category_share_preview_screen.dart';
+import 'providers/discovery_share_coordinator.dart';
+import 'screens/discovery_share_preview_screen.dart';
 
 // Define a GlobalKey for the Navigator
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
@@ -288,6 +290,9 @@ void main() async {
         ChangeNotifierProvider<CategorySaveProgressNotifier>(
           create: (_) => CategorySaveProgressNotifier(),
         ),
+        ChangeNotifierProvider<DiscoveryShareCoordinator>(
+          create: (_) => DiscoveryShareCoordinator(),
+        ),
       ],
       child: const MyApp(),
     ),
@@ -360,6 +365,8 @@ class _MyAppState extends State<MyApp> {
   bool _initialCheckComplete = false;
   bool _shouldShowReceiveShare = false;
   bool _deepLinkStreamFired = false; // Track if a fresh deep link arrived via stream
+  String? _deferredDiscoveryShareToken;
+  String? _initialDiscoveryShareToken; // NEW: Track initial discovery share token from URL
   static const int _maxNavigatorPushRetries = 12;
 
   void _pushRouteWhenReady(WidgetBuilder builder, {RouteSettings? settings, int attempt = 0}) {
@@ -500,6 +507,26 @@ class _MyAppState extends State<MyApp> {
     super.initState();
 
     print("MAIN: App initializing");
+    
+    // NEW: Check if this is a discovery share preview link on web
+    if (kIsWeb) {
+      try {
+        final uri = Uri.base;
+        final segments = uri.pathSegments;
+        if (segments.isNotEmpty && segments.first.toLowerCase() == 'discovery-share' && segments.length > 1) {
+          final rawToken = segments[1];
+          final token = _cleanToken(rawToken);
+          if (token != null && token.isNotEmpty) {
+            setState(() {
+              _initialDiscoveryShareToken = token;
+            });
+            print("MAIN: Detected initial discovery share token from URL: $token");
+          }
+        }
+      } catch (e) {
+        print("MAIN: Error checking for initial discovery share token: $e");
+      }
+    }
     
     // Add toast right at startup to confirm we're getting here
     // WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -715,6 +742,30 @@ class _MyAppState extends State<MyApp> {
       } else {
         print('DeepLink: Experience share token missing or empty.');
       }
+    } else if (firstSegment == 'discovery-share') {
+      final String? rawToken = segments.length > 1 ? segments[1] : null;
+      final String? token = _cleanToken(rawToken);
+      print('DeepLink: Discovery share - rawToken: ' + rawToken.toString() + ', cleanToken: ' + token.toString());
+      if (token != null && token.isNotEmpty) {
+        final BuildContext? ctx = navigatorKey.currentContext;
+        if (ctx != null) {
+          final coordinator = Provider.of<DiscoveryShareCoordinator>(ctx, listen: false);
+          coordinator.openSharedToken(token);
+        } else {
+          print('DeepLink: Navigator context unavailable for discovery share.');
+          _deferredDiscoveryShareToken = token;
+        }
+        if (kIsWeb) {
+          _pushRouteWhenReady(
+            (_) => DiscoverySharePreviewScreen(token: token),
+            settings: RouteSettings(name: '/discovery-share/' + token),
+          );
+        } else {
+          navigatorKey.currentState?.popUntil((route) => route.isFirst);
+        }
+      } else {
+        print('DeepLink: Discovery share token missing or empty.');
+      }
     } else if (firstSegment == 'shared-category') {
       final String? rawToken = segments.length > 1 ? segments[1] : null;
       final String? token = _cleanToken(rawToken);
@@ -797,6 +848,15 @@ class _MyAppState extends State<MyApp> {
 
     // --- ADDED: Get AuthService from Provider ---
     final authService = Provider.of<AuthService>(context, listen: false);
+    final pendingDiscoveryToken = _deferredDiscoveryShareToken;
+    if (pendingDiscoveryToken != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final coordinator =
+            Provider.of<DiscoveryShareCoordinator>(context, listen: false);
+        coordinator.openSharedToken(pendingDiscoveryToken);
+      });
+      _deferredDiscoveryShareToken = null;
+    }
 
     return MaterialApp(
       navigatorKey: navigatorKey, // Assign the key to MaterialApp
@@ -816,6 +876,12 @@ class _MyAppState extends State<MyApp> {
 
   Widget _buildHomeWidget(AuthService authService, bool launchedFromShare) {
     print("MAIN BUILD DEBUG: _buildHomeWidget called with launchedFromShare=$launchedFromShare");
+    
+    // NEW: Prioritize discovery share preview on web
+    if (kIsWeb && _initialDiscoveryShareToken != null && _initialDiscoveryShareToken!.isNotEmpty) {
+      print("MAIN BUILD DEBUG: Showing DiscoverySharePreviewScreen for token: $_initialDiscoveryShareToken");
+      return DiscoverySharePreviewScreen(token: _initialDiscoveryShareToken!);
+    }
     
     // If we have shared files, show ReceiveShareScreen
     if (launchedFromShare && _sharedFiles != null && _sharedFiles!.isNotEmpty) {
