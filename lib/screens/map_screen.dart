@@ -119,6 +119,7 @@ class _MapScreenState extends State<MapScreen> {
   bool _sharedHasMore = true;
   bool _sharedIsFetching = false;
   static const int _sharedPageSize = 200;
+  bool _isGlobalToggleActive = false; // ADDED: Track globe toggle state
   // ADDED: Fallback paging state when query path fails
   List<String>? _fallbackSharedIds;
   int _fallbackPageOffset = 0;
@@ -2452,6 +2453,21 @@ class _MapScreenState extends State<MapScreen> {
           ],
         ),
         actions: [
+          Container(
+            color: Colors.white,
+            child: IconButton(
+              icon: Icon(
+                Icons.public,
+                color: _isGlobalToggleActive ? Colors.black : Colors.grey,
+              ),
+              tooltip: 'Toggle global view',
+              onPressed: () {
+                setState(() {
+                  _isGlobalToggleActive = !_isGlobalToggleActive;
+                });
+              },
+            ),
+          ),
           Container(
             color: Colors.white,
             child: IconButton(
