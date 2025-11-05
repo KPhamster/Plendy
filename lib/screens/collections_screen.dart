@@ -46,6 +46,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:shared_preferences/shared_preferences.dart';
+import '../widgets/web_media_preview_card.dart'; // ADDED: Import for WebMediaPreviewCard
 
 // Helper classes for shared data
 class _SharedCategoryData {
@@ -776,7 +777,6 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         ? ShareAccessLevel.edit
         : ShareAccessLevel.view;
   }
-
   // ADDED: Background refresh helper for photo resource names
   Future<void> _refreshPhotoResourceNameForExperience(
       Experience experience) async {
@@ -1391,7 +1391,6 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     }
     return flat;
   }
-
   // Build fully dynamic grouping for Content tab (Country -> L1..L7 -> LOC)
   List<Map<String, Object>> _buildDynamicContentGrouping() {
     String n(String? s) => (s ?? '').trim();
@@ -1935,19 +1934,6 @@ class _CollectionsScreenState extends State<CollectionsScreen>
             combinedCategoryIds,
             combinedColorCategoryIds,
           );
-          _ownedSharedCategoryIds
-            ..clear()
-            ..addAll(ownedSharedCategoryIds);
-          _ownedSharedColorCategoryIds
-            ..clear()
-            ..addAll(ownedSharedColorCategoryIds);
-          _ownedSharedExperienceIds
-            ..clear()
-            ..addAll(ownedSharedExperienceIds);
-          _selectedExperienceIds.clear();
-          _isSelectingExperiences = false;
-          _groupedContentItems = [];
-          _filteredGroupedContentItems = [];
           _isLoading = false;
           _selectedCategory = null;
           _selectedColorCategory = null;
@@ -2121,7 +2107,6 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       return 0;
     }
   }
-
   Future<List<_SharedCategoryData>> _resolveSharedCategories(
       List<SharePermission> permissions) async {
     if (permissions.isEmpty) return [];
@@ -2199,7 +2184,6 @@ class _CollectionsScreenState extends State<CollectionsScreen>
 
     return allResults;
   }
-
   Future<List<_SharedExperienceData>> _resolveSharedExperiences(
       List<SharePermission> permissions) async {
     if (permissions.isEmpty) return [];
@@ -2863,7 +2847,6 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       ),
     );
   }
-
   Widget _buildCategoriesList() {
     if (_categories.isEmpty) {
       return const Center(child: Text('No categories found.'));
@@ -3579,7 +3562,6 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     });
   }
   // --- END REFACTORED ---
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -4366,7 +4348,6 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       ),
     );
   }
-
   void _showAddMenu() {
     showModalBottomSheet<void>(
       context: context,
@@ -5048,7 +5029,6 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       ],
     );
   }
-
   // MODIFIED: Widget builder for the Experience List View uses the refactored item builder
   Widget _buildExperiencesListView() {
     if (_filteredExperiences.isEmpty) {
@@ -5781,7 +5761,6 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       );
     }
   }
-
   // --- ADDED: Method to show delete confirmation dialog for content ---
   Future<void> _showDeleteContentConfirmation(GroupedContentItem group) async {
     final mediaItem = group.mediaItem;
@@ -6419,7 +6398,6 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       }
     }
   }
-
   Future<void> _handleBulkDeleteSelectedUserCategories() async {
     final List<UserCategory> selectedCategories = _categories
         .where((category) => _selectedCategoryIds.contains(category.id))
@@ -7188,9 +7166,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       );
     }
   }
-
   // --- ADDED: Builder for Color Category List --- END ---
-
   // --- ADDED: Widget to display experiences for a specific color category --- START ---
   Widget _buildColorCategoryExperiencesList(ColorCategory category) {
     final categoryExperiences = _experiences
@@ -7736,12 +7712,28 @@ class _CollectionsScreenState extends State<CollectionsScreen>
 
     Widget mediaDisplayWidget;
     if (isTikTokUrl) {
-      mediaDisplayWidget = TikTokPreviewWidget(
+      mediaDisplayWidget = kIsWeb
+          ? WebMediaPreviewCard(
+            url: mediaPath,
+            experienceName: group.associatedExperiences.isNotEmpty 
+              ? group.associatedExperiences.first.name 
+              : null,
+            onOpenPressed: () => _launchUrl(mediaPath),
+          )
+          : TikTokPreviewWidget(
         url: mediaPath,
         launchUrlCallback: _launchUrl,
       );
     } else if (isInstagramUrl) {
-      mediaDisplayWidget = instagram_widget.InstagramWebView(
+      mediaDisplayWidget = kIsWeb
+          ? WebMediaPreviewCard(
+            url: mediaPath,
+            experienceName: group.associatedExperiences.isNotEmpty 
+              ? group.associatedExperiences.first.name 
+              : null,
+            onOpenPressed: () => _launchUrl(mediaPath),
+          )
+          : instagram_widget.InstagramWebView(
         url: mediaPath,
         height: 640.0, // Height for InstagramWebView
         launchUrlCallback: _launchUrl,
@@ -7757,7 +7749,15 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         );
       }
     } else if (isFacebookUrl) {
-      mediaDisplayWidget = FacebookPreviewWidget(
+      mediaDisplayWidget = kIsWeb
+          ? WebMediaPreviewCard(
+            url: mediaPath,
+            experienceName: group.associatedExperiences.isNotEmpty 
+              ? group.associatedExperiences.first.name 
+              : null,
+            onOpenPressed: () => _launchUrl(mediaPath),
+          )
+          : FacebookPreviewWidget(
         url: mediaPath,
         height: 500.0, // Height for FacebookPreviewWidget
         launchUrlCallback: _launchUrl,
@@ -7765,7 +7765,15 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         onPageFinished: (_) {},
       );
     } else if (isYouTubeUrl) {
-      mediaDisplayWidget = YouTubePreviewWidget(
+      mediaDisplayWidget = kIsWeb
+          ? WebMediaPreviewCard(
+            url: mediaPath,
+            experienceName: group.associatedExperiences.isNotEmpty 
+              ? group.associatedExperiences.first.name 
+              : null,
+            onOpenPressed: () => _launchUrl(mediaPath),
+          )
+          : YouTubePreviewWidget(
         url: mediaPath,
         launchUrlCallback: _launchUrl,
       );
@@ -7875,7 +7883,6 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       ),
     );
   }
-
   Widget _buildContentListItem(GroupedContentItem group, int index) {
     final mediaItem = group.mediaItem;
     final String mediaPath = mediaItem.path;
@@ -7982,31 +7989,71 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     Widget? mediaWidget;
     if (isExpanded) {
       if (isTikTokUrl) {
-        mediaWidget = TikTokPreviewWidget(
-          url: mediaPath,
-          launchUrlCallback: _launchUrl,
-        );
+        mediaWidget = kIsWeb
+            ? WebMediaPreviewCard(
+                url: mediaPath,
+                experienceName: group.associatedExperiences.isNotEmpty 
+                  ? group.associatedExperiences.first.name 
+                  : null,
+                onOpenPressed: () => _launchUrl(mediaPath),
+              )
+            : TikTokPreviewWidget(
+                url: mediaPath,
+                launchUrlCallback: _launchUrl,
+              );
       } else if (isInstagramUrl) {
-        mediaWidget = instagram_widget.InstagramWebView(
-          url: mediaPath,
-          height: 640.0,
-          launchUrlCallback: _launchUrl,
-          onWebViewCreated: (_) {},
-          onPageFinished: (_) {},
-        );
+        mediaWidget = kIsWeb
+            ? WebMediaPreviewCard(
+                url: mediaPath,
+                experienceName: group.associatedExperiences.isNotEmpty 
+                  ? group.associatedExperiences.first.name 
+                  : null,
+                onOpenPressed: () => _launchUrl(mediaPath),
+              )
+            : instagram_widget.InstagramWebView(
+                url: mediaPath,
+                height: 640.0,
+                launchUrlCallback: _launchUrl,
+                onWebViewCreated: (_) {},
+                onPageFinished: (_) {},
+              );
+        if (kIsWeb) {
+          mediaWidget = Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 360),
+              child: mediaWidget,
+            ),
+          );
+        }
       } else if (isFacebookUrl) {
-        mediaWidget = FacebookPreviewWidget(
-          url: mediaPath,
-          height: 500.0,
-          launchUrlCallback: _launchUrl,
-          onWebViewCreated: (_) {},
-          onPageFinished: (_) {},
-        );
+        mediaWidget = kIsWeb
+            ? WebMediaPreviewCard(
+                url: mediaPath,
+                experienceName: group.associatedExperiences.isNotEmpty 
+                  ? group.associatedExperiences.first.name 
+                  : null,
+                onOpenPressed: () => _launchUrl(mediaPath),
+              )
+            : FacebookPreviewWidget(
+                url: mediaPath,
+                height: 500.0,
+                launchUrlCallback: _launchUrl,
+                onWebViewCreated: (_) {},
+                onPageFinished: (_) {},
+              );
       } else if (isYouTubeUrl) {
-        mediaWidget = YouTubePreviewWidget(
-          url: mediaPath,
-          launchUrlCallback: _launchUrl,
-        );
+        mediaWidget = kIsWeb
+            ? WebMediaPreviewCard(
+                url: mediaPath,
+                experienceName: group.associatedExperiences.isNotEmpty 
+                  ? group.associatedExperiences.first.name 
+                  : null,
+                onOpenPressed: () => _launchUrl(mediaPath),
+              )
+            : YouTubePreviewWidget(
+                url: mediaPath,
+                launchUrlCallback: _launchUrl,
+              );
       } else if (isNetworkUrl) {
         if (lowerPath.endsWith('.jpg') ||
             lowerPath.endsWith('.jpeg') ||
@@ -8621,7 +8668,6 @@ class _CollectionsScreenState extends State<CollectionsScreen>
           '_refreshSharedExperiencesFromCategories: Error refreshing shared experiences: $e');
     }
   }
-
   /// Fetch a paginated set of experiences based on current sort type
   Future<void> _loadExperiencesPage({bool isInitialLoad = false}) async {
     if (_isLoadingMoreExperiences && !isInitialLoad) return;
@@ -9372,7 +9418,6 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
       );
     }
   }
-
   void _showShareUrlOptions(BuildContext context, String url) {
     showModalBottomSheet(
       context: context,

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 import '../models/color_category.dart';
 import '../models/experience.dart';
@@ -24,6 +25,7 @@ import 'receive_share/widgets/instagram_preview_widget.dart'
 import '../widgets/save_to_experiences_modal.dart';
 import 'experience_page_screen.dart';
 import 'map_screen.dart';
+import '../widgets/web_media_preview_card.dart';
 
 class DiscoveryScreen extends StatefulWidget {
   const DiscoveryScreen({
@@ -1253,7 +1255,15 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
     switch (type) {
       case _MediaType.tiktok:
         return SizedBox.expand(
-          child: TikTokPreviewWidget(
+          child: kIsWeb
+              ? Center(
+                  child: WebMediaPreviewCard(
+                    url: url,
+                    experienceName: item.experience.name,
+                    onOpenPressed: () => _launchUrl(url),
+                  ),
+                )
+              : TikTokPreviewWidget(
             key: ValueKey('tiktok_$url'),
             url: url,
             launchUrlCallback: _launchUrl,
@@ -1262,7 +1272,15 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
         );
       case _MediaType.instagram:
         return SizedBox.expand(
-          child: instagram_widget.InstagramWebView(
+          child: kIsWeb
+              ? Center(
+                  child: WebMediaPreviewCard(
+                    url: url,
+                    experienceName: item.experience.name,
+                    onOpenPressed: () => _launchUrl(url),
+                  ),
+                )
+              : instagram_widget.InstagramWebView(
             key: ValueKey('instagram_$url'),
             url: url,
             height: mediaSize.height,
@@ -1273,7 +1291,15 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
         );
       case _MediaType.facebook:
         return SizedBox.expand(
-          child: FacebookPreviewWidget(
+          child: kIsWeb
+              ? Center(
+                  child: WebMediaPreviewCard(
+                    url: url,
+                    experienceName: item.experience.name,
+                    onOpenPressed: () => _launchUrl(url),
+                  ),
+                )
+              : FacebookPreviewWidget(
             key: ValueKey('facebook_$url'),
             url: url,
             height: mediaSize.height,
@@ -1285,7 +1311,15 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
         );
       case _MediaType.youtube:
         return SizedBox.expand(
-          child: YouTubePreviewWidget(
+          child: kIsWeb
+              ? Center(
+                  child: WebMediaPreviewCard(
+                    url: url,
+                    experienceName: item.experience.name,
+                    onOpenPressed: () => _launchUrl(url),
+                  ),
+                )
+              : YouTubePreviewWidget(
             key: ValueKey('youtube_$url'),
             url: url,
             launchUrlCallback: _launchUrl,
