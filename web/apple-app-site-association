@@ -12,6 +12,7 @@
           "NOT /_/*",
           "/shared/*",
           "/shared-category/*",
+          "/discovery-share/*",
           "/*"
         ]
       }

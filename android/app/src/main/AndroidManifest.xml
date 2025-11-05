@@ -78,6 +78,13 @@
                <category android:name="android.intent.category.BROWSABLE" />
                <data android:scheme="https" android:host="plendy.app" android:pathPrefix="/shared"/>
             </intent-filter>
+            <!-- App Links for plendy.app/discovery-share/* -->
+            <intent-filter android:autoVerify="true">
+               <action android:name="android.intent.action.VIEW" />
+               <category android:name="android.intent.category.DEFAULT" />
+               <category android:name="android.intent.category.BROWSABLE" />
+               <data android:scheme="https" android:host="plendy.app" android:pathPrefix="/discovery-share"/>
+            </intent-filter>
         </activity>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->

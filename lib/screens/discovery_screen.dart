@@ -3,6 +3,7 @@ import 'dart:math';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../models/color_category.dart';
@@ -11,6 +12,7 @@ import '../models/public_experience.dart';
 import '../models/shared_media_item.dart';
 import '../models/user_category.dart';
 import '../services/experience_service.dart';
+import '../services/discovery_share_service.dart';
 import '../services/google_maps_service.dart';
 import 'receive_share/widgets/facebook_preview_widget.dart';
 import 'receive_share/widgets/generic_url_preview_widget.dart';
@@ -24,7 +26,12 @@ import 'experience_page_screen.dart';
 import 'map_screen.dart';
 
 class DiscoveryScreen extends StatefulWidget {
-  const DiscoveryScreen({super.key});
+  const DiscoveryScreen({
+    super.key,
+    this.initialShareToken,
+  });
+
+  final String? initialShareToken;
 
   @override
   State<DiscoveryScreen> createState() => DiscoveryScreenState();
@@ -41,6 +48,8 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
 
   final ExperienceService _experienceService = ExperienceService();
   final GoogleMapsService _mapsService = GoogleMapsService();
+  final DiscoveryShareService _discoveryShareService =
+      DiscoveryShareService();
   final Map<String, Future<Map<String, dynamic>?>> _mapsPreviewFutures = {};
   final Map<String, Future<List<Experience>>> _linkedExperiencesFutures = {};
   final Map<String, Future<List<Experience>>>
@@ -62,10 +71,13 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
   bool _isLoading = true;
   bool _isError = false;
   bool _isPreparingMore = false;
+  bool _isShareInProgress = false;
+  bool _isLoadingSharedPreview = false;
   String? _errorMessage;
   int _currentPage = 0;
   double _dragDistance = 0;
   static const double _dragThreshold = 40;
+  String? _lastDisplayedShareToken;
 
   @override
   bool get wantKeepAlive => true;
@@ -74,12 +86,31 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
   void initState() {
     super.initState();
     _initializeFeed();
+    final String? initialToken = widget.initialShareToken;
+    if (initialToken != null && initialToken.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        showSharedPreview(initialToken);
+      });
+    }
   }
 
   @override
   void dispose() {
     _pageController.dispose();
     super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(covariant DiscoveryScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final String? newToken = widget.initialShareToken;
+    if (newToken != null &&
+        newToken.isNotEmpty &&
+        newToken != oldWidget.initialShareToken) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        showSharedPreview(newToken);
+      });
+    }
   }
 
   Future<void> refreshFeed() async {
@@ -100,6 +131,47 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
       _dragDistance = 0;
     });
     await _initializeFeed();
+  }
+
+  Future<void> showSharedPreview(String token) async {
+    if (!mounted || token.isEmpty) return;
+    if (_isLoadingSharedPreview) {
+      return;
+    }
+    if (_lastDisplayedShareToken == token &&
+        _pageController.hasClients &&
+        _feedItems.isNotEmpty) {
+      _maybeAnimateToPage(0);
+      return;
+    }
+
+    setState(() {
+      _isLoadingSharedPreview = true;
+    });
+
+    try {
+      final DiscoverySharePayload payload =
+          await _discoveryShareService.fetchShare(token);
+      if (!mounted) return;
+      await _integrateSharedPayload(payload);
+      _lastDisplayedShareToken = token;
+    } catch (e) {
+      debugPrint('DiscoveryScreen: Failed to load shared preview ($token): $e');
+      if (!mounted) return;
+      final messenger = ScaffoldMessenger.of(context);
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            'Unable to open the shared discovery preview. Please try again.',
+          ),
+        ),
+      );
+    } finally {
+      if (!mounted) return;
+      setState(() {
+        _isLoadingSharedPreview = false;
+      });
+    }
   }
 
   Future<void> _initializeFeed() async {
@@ -146,6 +218,38 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
     } finally {
       _isFetchingExperiences = false;
     }
+  }
+
+  Future<void> _integrateSharedPayload(DiscoverySharePayload payload) async {
+    final PublicExperience experience = payload.experience;
+    final String mediaUrl = payload.mediaUrl;
+    if (mediaUrl.isEmpty) return;
+
+    final _DiscoveryFeedItem newItem = _DiscoveryFeedItem(
+      experience: experience,
+      mediaUrl: mediaUrl,
+    );
+
+    setState(() {
+      _feedItems.removeWhere(
+        (item) =>
+            item.experience.id == experience.id &&
+            item.mediaUrl == mediaUrl,
+      );
+      _feedItems.insert(0, newItem);
+      _currentPage = 0;
+    });
+
+    await _maybeCheckIfMediaSaved(newItem);
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (_pageController.hasClients &&
+          _pageController.position.hasPixels &&
+          _pageController.position.haveDimensions) {
+        _pageController.jumpToPage(0);
+      }
+    });
   }
 
   Future<void> _generateFeedItems({int count = 5}) async {
@@ -349,7 +453,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
       );
     }
 
-    return GestureDetector(
+    final feedContent = GestureDetector(
       onVerticalDragStart: (_) {
         _dragDistance = 0;
       },
@@ -389,6 +493,26 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
           return _buildFeedPage(item);
         },
       ),
+    );
+
+    if (!_isLoadingSharedPreview) {
+      return feedContent;
+    }
+
+    return Stack(
+      children: [
+        feedContent,
+        Positioned.fill(
+          child: IgnorePointer(
+            ignoring: true,
+            child: Center(
+              child: CircularProgressIndicator(
+                color: Colors.white,
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -585,9 +709,8 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
         _buildActionButton(
           icon: Icons.ios_share,
           label: 'Share',
-          onPressed: () {
-            // TODO: Implement share action.
-          },
+          onPressed:
+              _isShareInProgress ? null : () => _handleShareTapped(item),
         ),
         const SizedBox(height: 16),
         _buildActionButton(
@@ -1278,6 +1401,38 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
         ],
       ),
     );
+  }
+
+  Future<void> _handleShareTapped(_DiscoveryFeedItem item) async {
+    if (_isShareInProgress) return;
+    setState(() {
+      _isShareInProgress = true;
+    });
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final String shareUrl = await _discoveryShareService.createShare(
+        experience: item.experience,
+        mediaUrl: item.mediaUrl,
+      );
+      if (!mounted) return;
+      final String shareText =
+          'Check out this experience from Plendy! $shareUrl';
+      await Share.share(shareText);
+    } catch (e) {
+      debugPrint('DiscoveryScreen: Failed to create share link: $e');
+      if (mounted) {
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text('Unable to generate a share link. Please try again.'),
+          ),
+        );
+      }
+    } finally {
+      if (!mounted) return;
+      setState(() {
+        _isShareInProgress = false;
+      });
+    }
   }
 
   _SourceButtonConfig? _resolveSourceButtonConfig(String url) {

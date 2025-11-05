@@ -135,3 +135,48 @@ This is a **Flutter cross-platform mobile application** called Plendy, designed 
 - Apple App Store (iOS) 
 - Firebase Hosting (Web)
 - Manual distribution for desktop platforms
+
+### Deep Linking for Discovery Share URLs
+
+**Implementation:**
+The discovery share feature allows users to share public experiences from the Discovery feed. When a user taps a shared discovery link:
+- If the Plendy app is installed: Opens the app directly to the Discovery screen showing the shared preview
+- If the Plendy app is not installed: Opens the web version at `https://plendy.app/discovery-share/{token}`
+
+**URL Format:**
+- Generated URL: `https://plendy.app/discovery-share/{token}`
+- Token: 12-character alphanumeric token stored in Firestore `discovery_shares` collection
+
+**Platform Configuration:**
+
+*Android:*
+- Configured via intent filters in `android/app/src/main/AndroidManifest.xml`
+- App Links with autoVerify for secure deep linking
+- Path prefix: `/discovery-share`
+
+*iOS:*
+- Configured via `CFBundleURLTypes` in `ios/Runner/Info.plist`
+- Custom URL scheme: `plendy://`
+- Universal Links via `apple-app-site-association` file
+
+**Flow:**
+1. User taps "Share" button on a discovery item
+2. `DiscoveryShareService.createShare()` creates a Firestore entry and returns URL
+3. User shares the URL via social media, messaging, or email
+4. On app install/tap:
+   - `main.dart` deep link handler intercepts the URL
+   - `_handleIncomingUri()` extracts the token from `/discovery-share/{token}`
+   - `DiscoveryShareCoordinator` passes token to `DiscoveryScreen`
+   - `showSharedPreview()` fetches and displays the shared media
+5. On web:
+   - URL routes to `DiscoverySharePreviewScreen`
+   - Same `DiscoveryScreen` component displays the preview
+
+**Files Modified:**
+- `lib/services/discovery_share_service.dart` - URL generation (already configured)
+- `lib/screens/discovery_share_preview_screen.dart` - Web preview wrapper
+- `lib/providers/discovery_share_coordinator.dart` - Deep link coordination
+- `lib/main.dart` - Deep link routing (lines 724-747)
+- `android/app/src/main/AndroidManifest.xml` - Android App Links
+- `ios/Runner/Info.plist` - iOS URL schemes
+- `web/apple-app-site-association` - iOS universal links mapping

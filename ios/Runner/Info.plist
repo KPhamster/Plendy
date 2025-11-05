@@ -52,6 +52,16 @@
 				<string>com.googleusercontent.apps.449728842508-4mhaa8k2k4jipvsa7nesec5k2q5okhvu</string>
 			</array>
 		</dict>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>Plendy</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>plendy</string>
+			</array>
+		</dict>
 	</array>
 	<key>NSUserActivityTypes</key>
 	<array>
