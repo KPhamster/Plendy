@@ -53,6 +53,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../config/app_constants.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import '../widgets/web_media_preview_card.dart'; // ADDED: Import for WebMediaPreviewCard
+import '../widgets/share_experience_bottom_sheet.dart';
 
 // Convert to StatefulWidget
 class ExperiencePageScreen extends StatefulWidget {
@@ -790,8 +791,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
               margin:
                   const EdgeInsets.all(0), // No margin needed when positioned
               decoration: BoxDecoration(
-                color:
-                    Colors.black.withOpacity(0.4), // Slightly darker for visibility
+                color: Colors.black
+                    .withOpacity(0.4), // Slightly darker for visibility
                 shape: BoxShape.circle,
               ),
               child: BackButton(
@@ -993,12 +994,10 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
 
     // Calculate tab counts using the currently selected content source
     final bool isShowingPublicContent = _showingPublicMedia;
-    final bool isMediaTabLoading = isShowingPublicContent
-        ? _isLoadingPublicMedia
-        : _isLoadingMedia;
-    final List<SharedMediaItem> activeMediaItems = isShowingPublicContent
-        ? _publicMediaItems
-        : _mediaItems;
+    final bool isMediaTabLoading =
+        isShowingPublicContent ? _isLoadingPublicMedia : _isLoadingMedia;
+    final List<SharedMediaItem> activeMediaItems =
+        isShowingPublicContent ? _publicMediaItems : _mediaItems;
     final mediaCount =
         isMediaTabLoading ? '...' : activeMediaItems.length.toString();
     final reviewCount = _isLoadingReviews ? '...' : _reviews.length.toString();
@@ -2133,74 +2132,74 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                     _tiktokControllerKeys[url] = key;
                     mediaWidget = kIsWeb
                         ? WebMediaPreviewCard(
-                          url: url,
-                          experienceName: _currentExperience.name,
-                          onOpenPressed: () => _launchUrl(url),
-                        )
+                            url: url,
+                            experienceName: _currentExperience.name,
+                            onOpenPressed: () => _launchUrl(url),
+                          )
                         : TikTokPreviewWidget(
-                      key: key,
-                      url: url,
-                      launchUrlCallback: _launchUrl,
-                      showControls: false,
-                      onWebViewCreated: (controller) {
-                        _webViewControllers[url] = controller;
-                      },
-                    );
+                            key: key,
+                            url: url,
+                            launchUrlCallback: _launchUrl,
+                            showControls: false,
+                            onWebViewCreated: (controller) {
+                              _webViewControllers[url] = controller;
+                            },
+                          );
                   } else if (isInstagramUrl) {
                     final key =
                         GlobalKey<instagram_widget.InstagramWebViewState>();
                     _instagramControllerKeys[url] = key;
                     mediaWidget = kIsWeb
                         ? WebMediaPreviewCard(
-                          url: url,
-                          experienceName: _currentExperience.name,
-                          onOpenPressed: () => _launchUrl(url),
-                        )
+                            url: url,
+                            experienceName: _currentExperience.name,
+                            onOpenPressed: () => _launchUrl(url),
+                          )
                         : instagram_widget.InstagramWebView(
-                      key: key,
-                      url: url,
-                      height: 640.0,
-                      launchUrlCallback: _launchUrl,
-                      onWebViewCreated: (controller) {
-                        _webViewControllers[url] = controller;
-                      },
-                      onPageFinished: (_) {},
-                    );
+                            key: key,
+                            url: url,
+                            height: 640.0,
+                            launchUrlCallback: _launchUrl,
+                            onWebViewCreated: (controller) {
+                              _webViewControllers[url] = controller;
+                            },
+                            onPageFinished: (_) {},
+                          );
                   } else if (isFacebookUrl) {
                     mediaWidget = kIsWeb
                         ? WebMediaPreviewCard(
-                          url: url,
-                          experienceName: _currentExperience.name,
-                          onOpenPressed: () => _launchUrl(url),
-                        )
+                            url: url,
+                            experienceName: _currentExperience.name,
+                            onOpenPressed: () => _launchUrl(url),
+                          )
                         : FacebookPreviewWidget(
-                      url: url,
-                      height: 500.0,
-                      launchUrlCallback: _launchUrl,
-                      onWebViewCreated: (controller) {
-                        _webViewControllers[url] = controller;
-                      },
-                      onPageFinished: (_) {},
-                      showControls: false,
-                    );
+                            url: url,
+                            height: 500.0,
+                            launchUrlCallback: _launchUrl,
+                            onWebViewCreated: (controller) {
+                              _webViewControllers[url] = controller;
+                            },
+                            onPageFinished: (_) {},
+                            showControls: false,
+                          );
                   } else if (isYouTubeUrl) {
                     final key = GlobalKey<YouTubePreviewWidgetState>();
                     _youtubeControllerKeys[url] = key;
                     mediaWidget = kIsWeb
                         ? WebMediaPreviewCard(
-                          url: url,
-                          experienceName: _currentExperience.name,
-                          onOpenPressed: () => _launchUrl(url),
-                        )
+                            url: url,
+                            experienceName: _currentExperience.name,
+                            onOpenPressed: () => _launchUrl(url),
+                          )
                         : YouTubePreviewWidget(
-                      key: key,
-                      url: url,
-                      launchUrlCallback: _launchUrl,
-                      showControls: false,
-                      onWebViewCreated: (controller) {
-                        _webViewControllers[url] = controller;
-                      },
-                    );
+                            key: key,
+                            url: url,
+                            launchUrlCallback: _launchUrl,
+                            showControls: false,
+                            onWebViewCreated: (controller) {
+                              _webViewControllers[url] = controller;
+                            },
+                          );
                   } else if (isNetworkUrl) {
                     final lowerUrl = url.toLowerCase();
                     if (lowerUrl.endsWith('.jpg') ||
@@ -3010,9 +3009,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     if (_hasAttemptedPublicMediaFetch) {
       setState(() {
         _showingPublicMedia = true;
-        _expandedMediaPath = _publicMediaItems.isNotEmpty
-            ? _publicMediaItems.first.path
-            : null;
+        _expandedMediaPath =
+            _publicMediaItems.isNotEmpty ? _publicMediaItems.first.path : null;
       });
       return;
     }
@@ -3337,18 +3335,10 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
 
   // --- ADD: Share bottom sheet ---
   void _showShareBottomSheet() {
-    showModalBottomSheet(
+    showShareExperienceBottomSheet(
       context: context,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (ctx) {
-        return _ShareBottomSheetContent(
-          onDirectShare: _openDirectShareDialog,
-          onCreateLink: _createLinkShareWithOptions,
-        );
-      },
+      onDirectShare: _openDirectShareDialog,
+      onCreateLink: _createLinkShareWithOptions,
     );
   }
 
@@ -3449,114 +3439,6 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     );
   }
   // --- END: Share bottom sheet ---
-}
-
-// --- ADDED: Share bottom sheet content with radio options and persistence ---
-class _ShareBottomSheetContent extends StatefulWidget {
-  final VoidCallback onDirectShare;
-  final Future<void> Function(
-      {required String shareMode, required bool giveEditAccess}) onCreateLink;
-
-  const _ShareBottomSheetContent({
-    required this.onDirectShare,
-    required this.onCreateLink,
-  });
-  @override
-  State<_ShareBottomSheetContent> createState() =>
-      _ShareBottomSheetContentState();
-}
-
-class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
-  String _shareMode = 'separate_copy'; // 'my_copy' | 'separate_copy'
-  bool _giveEditAccess = false;
-  bool _creating = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadLastChoice();
-  }
-
-  Future<void> _loadLastChoice() async {
-    final prefs = await SharedPreferences.getInstance();
-    final lastMode = prefs.getString(AppConstants.lastShareModeKey);
-    final lastEdit = prefs.getBool(AppConstants.lastShareGiveEditAccessKey);
-    setState(() {
-      _shareMode = lastMode ?? 'separate_copy';
-      _giveEditAccess = lastEdit ?? false;
-    });
-  }
-
-  Future<void> _persistChoice() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(AppConstants.lastShareModeKey, _shareMode);
-    await prefs.setBool(
-        AppConstants.lastShareGiveEditAccessKey, _giveEditAccess);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const Text(
-                  'Share Experience',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
-                ),
-                const Spacer(),
-                IconButton(
-                  icon: const Icon(Icons.close),
-                  onPressed: () => Navigator.of(context).pop(),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            ListTile(
-              leading: const Icon(Icons.send_outlined),
-              title: const Text('Share to Plendy users'),
-              onTap: () async {
-                await _persistChoice();
-                Navigator.of(context).pop();
-                widget.onDirectShare();
-              },
-            ),
-            ListTile(
-              leading: _creating
-                  ? const SizedBox(
-                      width: 24,
-                      height: 24,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.link_outlined),
-              title:
-                  Text(_creating ? 'Creating link...' : 'Get shareable link'),
-              onTap: _creating
-                  ? null
-                  : () async {
-                      setState(() => _creating = true);
-                      try {
-                        await _persistChoice();
-                        await widget.onCreateLink(
-                          shareMode: _shareMode,
-                          giveEditAccess:
-                              _shareMode == 'my_copy' ? _giveEditAccess : false,
-                        );
-                      } finally {
-                        if (mounted) setState(() => _creating = false);
-                      }
-                    },
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 }
 
 // --- ADDED Helper class for SliverPersistentHeader (for TabBar) ---

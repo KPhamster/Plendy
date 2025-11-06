@@ -9599,7 +9599,7 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
             const SizedBox(height: 8),
             ListTile(
               leading: const Icon(Icons.send_outlined),
-              title: const Text('Share to Plendy users'),
+              title: const Text('Share to Plendy friends'),
               onTap: () {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(content: Text('Coming soon.')),

@@ -28,6 +28,7 @@ import '../widgets/save_to_experiences_modal.dart';
 import 'experience_page_screen.dart';
 import 'map_screen.dart';
 import '../widgets/web_media_preview_card.dart';
+import '../widgets/share_experience_bottom_sheet.dart';
 
 class DiscoveryScreen extends StatefulWidget {
   const DiscoveryScreen({
@@ -52,8 +53,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
 
   final ExperienceService _experienceService = ExperienceService();
   final GoogleMapsService _mapsService = GoogleMapsService();
-  final DiscoveryShareService _discoveryShareService =
-      DiscoveryShareService();
+  final DiscoveryShareService _discoveryShareService = DiscoveryShareService();
   final Map<String, Future<Map<String, dynamic>?>> _mapsPreviewFutures = {};
   final Map<String, Future<List<Experience>>> _linkedExperiencesFutures = {};
   final PageController _pageController = PageController();
@@ -195,17 +195,17 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
         _ensureSeenMediaLoaded(),
         _ensureUserSavedPlacesLoaded(),
       ]);
-      
+
       // Wait for user data to complete before fetching experiences
       await userDataFuture;
-      
+
       // Quick initial fetch: just get enough for first 10 previews (~20-30 experiences)
       // This reduces wait time significantly
       await _fetchMoreExperiencesIfNeeded(force: true, quickStart: true);
-      
+
       // Generate initial batch of 5 items
       await _generateFeedItems(count: 5);
-      
+
       // Mark the first item as seen since it will be displayed
       if (_feedItems.isNotEmpty) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -214,7 +214,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
           }
         });
       }
-      
+
       // Continue loading more experiences in the background to reach target pool size
       if (mounted) {
         _continueBackgroundLoading();
@@ -233,7 +233,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
       }
     }
   }
-  
+
   Future<void> _continueBackgroundLoading() async {
     // Continue fetching in background without blocking UI
     try {
@@ -251,18 +251,18 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
     if (!force && (_isFetchingExperiences || !_hasMore)) {
       return;
     }
-    
+
     // Target pool size: smaller for quick start, larger for background loading
     final int targetPoolSize = quickStart ? 30 : 100;
     if (!force && _publicExperiences.length >= targetPoolSize) {
       return;
     }
-    
+
     _isFetchingExperiences = true;
     int totalFetched = 0;
     int totalFiltered = 0;
     int totalEligible = 0;
-    
+
     try {
       // Keep paging until we have enough eligible experiences or run out
       while (_publicExperiences.length < targetPoolSize && _hasMore) {
@@ -281,7 +281,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
           final eligibleExperiences = page.experiences.where((exp) {
             // Must have media
             if (exp.allMediaPaths.isEmpty) return false;
-            
+
             // Must not be a place the user already has saved
             final placeId = exp.location.placeId;
             if (placeId != null && placeId.isNotEmpty) {
@@ -290,37 +290,39 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
                 return false;
               }
             }
-            
+
             // Must have at least ONE media URL that the user hasn't saved
             bool hasUnsavedMedia = false;
             for (final mediaUrl in exp.allMediaPaths) {
               final normalizedUrl = _normalizeUrlForComparison(mediaUrl);
-              if (normalizedUrl.isNotEmpty && !_userSavedMediaUrls.contains(normalizedUrl)) {
+              if (normalizedUrl.isNotEmpty &&
+                  !_userSavedMediaUrls.contains(normalizedUrl)) {
                 hasUnsavedMedia = true;
                 break;
               }
             }
-            
+
             if (!hasUnsavedMedia) {
               totalFiltered++;
               return false;
             }
-            
+
             return true;
           }).toList();
-          
+
           if (eligibleExperiences.isNotEmpty) {
             _publicExperiences.addAll(eligibleExperiences);
             totalEligible += eligibleExperiences.length;
           }
         }
-        
+
         // If we've run out of pages, stop
         if (!_hasMore) break;
       }
-      
+
       final loadType = quickStart ? 'Quick start' : 'Background load';
-      debugPrint('DiscoveryScreen: $loadType paging complete. Fetched $totalFetched experiences, filtered $totalFiltered (user has saved), added $totalEligible eligible. Total pool: ${_publicExperiences.length}. HasMore: $_hasMore');
+      debugPrint(
+          'DiscoveryScreen: $loadType paging complete. Fetched $totalFetched experiences, filtered $totalFiltered (user has saved), added $totalEligible eligible. Total pool: ${_publicExperiences.length}. HasMore: $_hasMore');
     } finally {
       _isFetchingExperiences = false;
     }
@@ -337,7 +339,8 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
       _persistedSeenMediaKeys
         ..clear()
         ..addAll(storedKeys ?? const <String>[]);
-      debugPrint('DiscoveryScreen: Loaded ${_persistedSeenMediaKeys.length} seen media keys from storage');
+      debugPrint(
+          'DiscoveryScreen: Loaded ${_persistedSeenMediaKeys.length} seen media keys from storage');
     } catch (e) {
       debugPrint('DiscoveryScreen: Failed to load seen media keys: $e');
       _persistedSeenMediaKeys.clear();
@@ -384,53 +387,59 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
       // Get current user ID
       final userId = FirebaseAuth.instance.currentUser?.uid;
       if (userId == null) {
-        debugPrint('DiscoveryScreen: No authenticated user, skipping saved places load');
+        debugPrint(
+            'DiscoveryScreen: No authenticated user, skipping saved places load');
         return;
       }
-      
+
       final prefs = await _getSharedPreferences();
-      
+
       // Try to load from cache first
       final cachedPlaces = prefs.getStringList(_savedPlacesPrefsKey);
       final cachedMedia = prefs.getStringList(_savedMediaPrefsKey);
       final cacheTimestamp = prefs.getInt('${_savedPlacesPrefsKey}_timestamp');
-      
+
       final now = DateTime.now().millisecondsSinceEpoch;
-      final cacheAge = cacheTimestamp != null ? Duration(milliseconds: now - cacheTimestamp) : null;
-      
+      final cacheAge = cacheTimestamp != null
+          ? Duration(milliseconds: now - cacheTimestamp)
+          : null;
+
       // Use cache if it's valid (less than 6 hours old)
-      if (cachedPlaces != null && cachedMedia != null && 
-          cacheAge != null && cacheAge < _cacheValidDuration) {
+      if (cachedPlaces != null &&
+          cachedMedia != null &&
+          cacheAge != null &&
+          cacheAge < _cacheValidDuration) {
         _userSavedPlaceIds.addAll(cachedPlaces);
         _userSavedMediaUrls.addAll(cachedMedia);
-        debugPrint('DiscoveryScreen: Loaded ${_userSavedPlaceIds.length} place IDs and ${_userSavedMediaUrls.length} media URLs from cache (age: ${cacheAge.inMinutes}min)');
-        
+        debugPrint(
+            'DiscoveryScreen: Loaded ${_userSavedPlaceIds.length} place IDs and ${_userSavedMediaUrls.length} media URLs from cache (age: ${cacheAge.inMinutes}min)');
+
         // Refresh cache in background without blocking
         _refreshUserSavedPlacesInBackground(userId, prefs);
         return;
       }
-      
+
       // No valid cache - load from Firestore
       debugPrint('DiscoveryScreen: No valid cache, loading from Firestore...');
       await _fetchAndCacheUserSavedPlaces(userId, prefs);
-      
     } catch (e) {
       debugPrint('DiscoveryScreen: Failed to load user saved places: $e');
       _userSavedPlaceIds.clear();
       _userSavedMediaUrls.clear();
     }
   }
-  
-  Future<void> _fetchAndCacheUserSavedPlaces(String userId, SharedPreferences prefs) async {
+
+  Future<void> _fetchAndCacheUserSavedPlaces(
+      String userId, SharedPreferences prefs) async {
     // Fetch all user's experiences to get their saved place IDs and media URLs
     final experiences = await _experienceService.getExperiencesByUser(
       userId,
       limit: 10000, // High limit to get all experiences
     );
-    
+
     _userSavedPlaceIds.clear();
     _userSavedMediaUrls.clear();
-    
+
     // Collect all place IDs and media URLs from experiences
     for (final experience in experiences) {
       // Place IDs
@@ -438,7 +447,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
       if (placeId != null && placeId.isNotEmpty) {
         _userSavedPlaceIds.add(placeId);
       }
-      
+
       // Image URLs (direct image links)
       for (final imageUrl in experience.imageUrls) {
         if (imageUrl.isNotEmpty) {
@@ -446,11 +455,12 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
         }
       }
     }
-    
+
     // Also collect media URLs from SharedMediaItems where the user has saved them
     // Query for SharedMediaItems that contain any of the user's experience IDs
-    final experienceIds = experiences.map((e) => e.id).where((id) => id.isNotEmpty).toList();
-    
+    final experienceIds =
+        experiences.map((e) => e.id).where((id) => id.isNotEmpty).toList();
+
     if (experienceIds.isNotEmpty) {
       // Fetch shared media items in batches (Firestore 'array-contains-any' limit is 10)
       const int batchSize = 10;
@@ -461,7 +471,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
               .collection('sharedMediaItems')
               .where('experienceIds', arrayContainsAny: batch)
               .get();
-          
+
           for (final doc in snapshot.docs) {
             try {
               final mediaItem = SharedMediaItem.fromFirestore(doc);
@@ -470,34 +480,42 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
                 _userSavedMediaUrls.add(_normalizeUrlForComparison(path));
               }
             } catch (e) {
-              debugPrint('DiscoveryScreen: Failed to parse SharedMediaItem ${doc.id}: $e');
+              debugPrint(
+                  'DiscoveryScreen: Failed to parse SharedMediaItem ${doc.id}: $e');
             }
           }
         } catch (e) {
-          debugPrint('DiscoveryScreen: Failed to fetch SharedMediaItems batch: $e');
+          debugPrint(
+              'DiscoveryScreen: Failed to fetch SharedMediaItems batch: $e');
         }
       }
     }
-    
-    debugPrint('DiscoveryScreen: Loaded ${_userSavedPlaceIds.length} saved place IDs and ${_userSavedMediaUrls.length} saved media URLs from Firestore');
-    
+
+    debugPrint(
+        'DiscoveryScreen: Loaded ${_userSavedPlaceIds.length} saved place IDs and ${_userSavedMediaUrls.length} saved media URLs from Firestore');
+
     // Cache the results
     try {
-      await prefs.setStringList(_savedPlacesPrefsKey, _userSavedPlaceIds.toList());
-      await prefs.setStringList(_savedMediaPrefsKey, _userSavedMediaUrls.toList());
-      await prefs.setInt('${_savedPlacesPrefsKey}_timestamp', DateTime.now().millisecondsSinceEpoch);
+      await prefs.setStringList(
+          _savedPlacesPrefsKey, _userSavedPlaceIds.toList());
+      await prefs.setStringList(
+          _savedMediaPrefsKey, _userSavedMediaUrls.toList());
+      await prefs.setInt('${_savedPlacesPrefsKey}_timestamp',
+          DateTime.now().millisecondsSinceEpoch);
       debugPrint('DiscoveryScreen: Cached user saved places and media');
     } catch (e) {
       debugPrint('DiscoveryScreen: Failed to cache user saved places: $e');
     }
   }
-  
-  void _refreshUserSavedPlacesInBackground(String userId, SharedPreferences prefs) {
+
+  void _refreshUserSavedPlacesInBackground(
+      String userId, SharedPreferences prefs) {
     // Refresh in background without blocking or showing errors
     Future.microtask(() async {
       try {
         await _fetchAndCacheUserSavedPlaces(userId, prefs);
-        debugPrint('DiscoveryScreen: Background refresh of saved places complete');
+        debugPrint(
+            'DiscoveryScreen: Background refresh of saved places complete');
       } catch (e) {
         debugPrint('DiscoveryScreen: Background refresh failed: $e');
       }
@@ -518,8 +536,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
     setState(() {
       _feedItems.removeWhere(
         (item) =>
-            item.experience.id == experience.id &&
-            item.mediaUrl == mediaUrl,
+            item.experience.id == experience.id && item.mediaUrl == mediaUrl,
       );
       _feedItems.insert(0, newItem);
       _currentPage = 0;
@@ -549,7 +566,8 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
     int skippedFiltered = 0;
     int skippedSeen = 0;
 
-    debugPrint('DiscoveryScreen: Generating $count feed items. Pool: ${_publicExperiences.length} experiences, Seen: ${_persistedSeenMediaKeys.length} media');
+    debugPrint(
+        'DiscoveryScreen: Generating $count feed items. Pool: ${_publicExperiences.length} experiences, Seen: ${_persistedSeenMediaKeys.length} media');
 
     while (newItems.length < count && attempts < maxAttempts) {
       attempts++;
@@ -623,7 +641,8 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
       );
     }
 
-    debugPrint('DiscoveryScreen: Feed generation complete. Generated: ${newItems.length}/$count items in $attempts attempts. Skipped - Seen: $skippedSeen, Filtered: $skippedFiltered');
+    debugPrint(
+        'DiscoveryScreen: Feed generation complete. Generated: ${newItems.length}/$count items in $attempts attempts. Skipped - Seen: $skippedSeen, Filtered: $skippedFiltered');
 
     if (newItems.isNotEmpty) {
       if (mounted) {
@@ -663,7 +682,8 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
     }
     if (didUpdate) {
       await _persistSeenMediaKeys();
-      debugPrint('DiscoveryScreen: Marked ${items.length} item(s) as seen. Total seen: ${_persistedSeenMediaKeys.length}');
+      debugPrint(
+          'DiscoveryScreen: Marked ${items.length} item(s) as seen. Total seen: ${_persistedSeenMediaKeys.length}');
     }
   }
 
@@ -957,7 +977,8 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
                     onPressed: () => _showLinkedExperiencesDialog(item),
                     style: TextButton.styleFrom(
                       foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 4),
                       minimumSize: const Size(0, 0),
                       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     ),
@@ -1033,8 +1054,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
         _buildActionButton(
           icon: Icons.ios_share,
           label: 'Share',
-          onPressed:
-              _isShareInProgress ? null : () => _handleShareTapped(item),
+          onPressed: _isShareInProgress ? null : () => _handleShareTapped(item),
         ),
         const SizedBox(height: 16),
         _buildActionButton(
@@ -1088,7 +1108,8 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
     );
   }
 
-  Future<void> _openReadOnlyExperience(PublicExperience publicExperience) async {
+  Future<void> _openReadOnlyExperience(
+      PublicExperience publicExperience) async {
     final Experience draft = _buildExperienceDraft(publicExperience);
     final List<SharedMediaItem> mediaItems =
         publicExperience.buildMediaItemsForPreview();
@@ -1125,10 +1146,9 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
   Future<void> _openEditableExperience(Experience experience) async {
     await _ensureUserCollectionsLoaded();
     final UserCategory category = _resolveCategoryForExperience(experience);
-    final List<ColorCategory> colorCategories =
-        _userColorCategories.isEmpty
-            ? const <ColorCategory>[]
-            : _userColorCategories;
+    final List<ColorCategory> colorCategories = _userColorCategories.isEmpty
+        ? const <ColorCategory>[]
+        : _userColorCategories;
 
     await Navigator.of(context).push(
       MaterialPageRoute(
@@ -1171,11 +1191,11 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
     if (normalizedKey.isEmpty) return;
     // Add to user's saved media URLs so it won't show up again
     _userSavedMediaUrls.add(normalizedKey);
-    
+
     // Invalidate cache so it refreshes next time
     _invalidateSavedPlacesCache();
   }
-  
+
   void _invalidateSavedPlacesCache() {
     // Invalidate the cache in the background
     Future.microtask(() async {
@@ -1196,7 +1216,8 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
     try {
       // Check if this specific media URL has been saved by THIS user
       final normalizedUrl = _normalizeUrlForComparison(item.mediaUrl);
-      item.isMediaAlreadySaved.value = _userSavedMediaUrls.contains(normalizedUrl);
+      item.isMediaAlreadySaved.value =
+          _userSavedMediaUrls.contains(normalizedUrl);
     } catch (e) {
       debugPrint('DiscoveryScreen: Failed media check: $e');
       item.isMediaAlreadySaved.value = false;
@@ -1208,9 +1229,8 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
     final trimmed = url.trim();
     if (trimmed.isEmpty) return '';
     final lower = trimmed.toLowerCase();
-    final withoutTrailingSlash = lower.endsWith('/')
-        ? lower.substring(0, lower.length - 1)
-        : lower;
+    final withoutTrailingSlash =
+        lower.endsWith('/') ? lower.substring(0, lower.length - 1) : lower;
     return withoutTrailingSlash;
   }
 
@@ -1261,9 +1281,8 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
     _DiscoveryFeedItem item, {
     List<Experience>? seedExperiences,
   }) async {
-    final List<Experience> linkedExperiences =
-        List<Experience>.from(seedExperiences ??
-            await _getLinkedExperiencesForMedia(item.mediaUrl));
+    final List<Experience> linkedExperiences = List<Experience>.from(
+        seedExperiences ?? await _getLinkedExperiencesForMedia(item.mediaUrl));
 
     final List<Experience> dedupedExperiences =
         _dedupeExperiencesById(linkedExperiences);
@@ -1327,8 +1346,8 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
           return const <Experience>[];
         }
 
-        final experiences =
-            await _experienceService.getExperiencesByIds(mediaItem.experienceIds);
+        final experiences = await _experienceService
+            .getExperiencesByIds(mediaItem.experienceIds);
         experiences.sort(
           (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
         );
@@ -1361,7 +1380,8 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
         return AlertDialog(
           backgroundColor: Colors.white,
           surfaceTintColor: Colors.white,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           title: const Text('Linked Experiences'),
           content: SizedBox(
             width: double.maxFinite,
@@ -1512,11 +1532,11 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
                   ),
                 )
               : TikTokPreviewWidget(
-            key: ValueKey('tiktok_$url'),
-            url: url,
-            launchUrlCallback: _launchUrl,
-            showControls: false,
-          ),
+                  key: ValueKey('tiktok_$url'),
+                  url: url,
+                  launchUrlCallback: _launchUrl,
+                  showControls: false,
+                ),
         );
       case _MediaType.instagram:
         return SizedBox.expand(
@@ -1529,13 +1549,13 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
                   ),
                 )
               : instagram_widget.InstagramWebView(
-            key: ValueKey('instagram_$url'),
-            url: url,
-            height: mediaSize.height,
-            launchUrlCallback: _launchUrl,
-            onWebViewCreated: (_) {},
-            onPageFinished: (_) {},
-          ),
+                  key: ValueKey('instagram_$url'),
+                  url: url,
+                  height: mediaSize.height,
+                  launchUrlCallback: _launchUrl,
+                  onWebViewCreated: (_) {},
+                  onPageFinished: (_) {},
+                ),
         );
       case _MediaType.facebook:
         return SizedBox.expand(
@@ -1548,14 +1568,14 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
                   ),
                 )
               : FacebookPreviewWidget(
-            key: ValueKey('facebook_$url'),
-            url: url,
-            height: mediaSize.height,
-            onWebViewCreated: (_) {},
-            onPageFinished: (_) {},
-            launchUrlCallback: _launchUrl,
-            showControls: false,
-          ),
+                  key: ValueKey('facebook_$url'),
+                  url: url,
+                  height: mediaSize.height,
+                  onWebViewCreated: (_) {},
+                  onPageFinished: (_) {},
+                  launchUrlCallback: _launchUrl,
+                  showControls: false,
+                ),
         );
       case _MediaType.youtube:
         return SizedBox.expand(
@@ -1568,13 +1588,13 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
                   ),
                 )
               : YouTubePreviewWidget(
-            key: ValueKey('youtube_$url'),
-            url: url,
-            launchUrlCallback: _launchUrl,
-            showControls: false,
-            onWebViewCreated: (_) {},
-            height: mediaSize.height,
-          ),
+                  key: ValueKey('youtube_$url'),
+                  url: url,
+                  launchUrlCallback: _launchUrl,
+                  showControls: false,
+                  onWebViewCreated: (_) {},
+                  height: mediaSize.height,
+                ),
         );
       case _MediaType.maps:
         _mapsPreviewFutures[url] ??= Future.value({
@@ -1687,34 +1707,56 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
 
   Future<void> _handleShareTapped(_DiscoveryFeedItem item) async {
     if (_isShareInProgress) return;
-    setState(() {
-      _isShareInProgress = true;
-    });
     final messenger = ScaffoldMessenger.of(context);
-    try {
-      final String shareUrl = await _discoveryShareService.createShare(
-        experience: item.experience,
-        mediaUrl: item.mediaUrl,
-      );
-      if (!mounted) return;
-      final String shareText =
-          'Check out this experience from Plendy! $shareUrl';
-      await Share.share(shareText);
-    } catch (e) {
-      debugPrint('DiscoveryScreen: Failed to create share link: $e');
-      if (mounted) {
+
+    await showShareExperienceBottomSheet(
+      context: context,
+      onDirectShare: () {
         messenger.showSnackBar(
-          SnackBar(
-            content: Text('Unable to generate a share link. Please try again.'),
-          ),
+          const SnackBar(content: Text('Direct share coming soon.')),
         );
-      }
-    } finally {
-      if (!mounted) return;
-      setState(() {
-        _isShareInProgress = false;
-      });
-    }
+      },
+      onCreateLink: (
+          {required String shareMode, required bool giveEditAccess}) async {
+        if (_isShareInProgress || !mounted) {
+          return;
+        }
+        setState(() {
+          _isShareInProgress = true;
+        });
+        try {
+          if (shareMode != 'separate_copy' || giveEditAccess) {
+            debugPrint(
+              'DiscoveryScreen: Share mode settings are not supported; proceeding with discovery share defaults.',
+            );
+          }
+          final String shareUrl = await _discoveryShareService.createShare(
+            experience: item.experience,
+            mediaUrl: item.mediaUrl,
+          );
+          if (!mounted) return;
+          Navigator.of(context).pop();
+          final String shareText =
+              'Check out this experience from Plendy! $shareUrl';
+          await Share.share(shareText);
+        } catch (e) {
+          debugPrint('DiscoveryScreen: Failed to create share link: $e');
+          if (mounted) {
+            messenger.showSnackBar(
+              const SnackBar(
+                content:
+                    Text('Unable to generate a share link. Please try again.'),
+              ),
+            );
+          }
+        } finally {
+          if (!mounted) return;
+          setState(() {
+            _isShareInProgress = false;
+          });
+        }
+      },
+    );
   }
 
   _SourceButtonConfig? _resolveSourceButtonConfig(String url) {
