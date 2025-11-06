@@ -2726,6 +2726,21 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
+  String _formatExperienceTitle({
+    required String name,
+    String? icon,
+    bool allowPlaceholderStar = false,
+  }) {
+    final String trimmedIcon = icon?.trim() ?? '';
+    if (trimmedIcon.isEmpty) {
+      return name;
+    }
+    if (!allowPlaceholderStar && trimmedIcon == '*') {
+      return name;
+    }
+    return '$trimmedIcon $name';
+  }
+
   @override
   Widget build(BuildContext context) {
     print("🗺️ MAP SCREEN: Building widget. isLoading: $_isLoading");
@@ -2740,9 +2755,15 @@ class _MapScreenState extends State<MapScreen> {
     final bool hasPublicFallback = _publicReadOnlyExperience != null;
     final bool showExperiencePrompt = _canOpenSelectedExperience;
     final String selectedTitle = _tappedExperience != null
-        ? '${_tappedExperienceCategory?.icon ?? '*'} ${_tappedExperience!.name}'
+        ? _formatExperienceTitle(
+            name: _tappedExperience!.name,
+            icon: _tappedExperienceCategory?.icon,
+          )
         : hasPublicFallback
-            ? '${_publicReadOnlyCategory.icon} ${_publicReadOnlyExperience!.name}'
+            ? _formatExperienceTitle(
+                name: _publicReadOnlyExperience!.name,
+                icon: _publicReadOnlyCategory.icon,
+              )
             : _tappedLocationDetails?.getPlaceName() ?? 'Selected Location';
 
     // Combine experience markers and the tapped marker (if it exists)
