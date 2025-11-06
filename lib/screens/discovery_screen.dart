@@ -59,6 +59,9 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
   final PageController _pageController = PageController();
   final Random _random = Random();
   static const String _seenMediaPrefsKey = 'discovery_seen_media_keys_v1';
+  static const String _savedPlacesPrefsKey = 'discovery_saved_places_v1';
+  static const String _savedMediaPrefsKey = 'discovery_saved_media_v1';
+  static const Duration _cacheValidDuration = Duration(hours: 6);
 
   final List<PublicExperience> _publicExperiences = [];
   final List<_DiscoveryFeedItem> _feedItems = [];
@@ -128,6 +131,9 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
       _feedItems.clear();
       _mapsPreviewFutures.clear();
       _usedMediaKeys.clear();
+      _userSavedPlaceIds.clear();
+      _userSavedMediaUrls.clear();
+      _userPlacesLoadFuture = null; // Force reload of user saved places
       _lastDocument = null;
       _hasMore = true;
       _isFetchingExperiences = false;
@@ -184,9 +190,20 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
 
   Future<void> _initializeFeed() async {
     try {
-      await _ensureSeenMediaLoaded();
-      await _ensureUserSavedPlacesLoaded();
-      await _fetchMoreExperiencesIfNeeded(force: true);
+      // Start loading user's saved data in parallel with initial fetch
+      final userDataFuture = Future.wait([
+        _ensureSeenMediaLoaded(),
+        _ensureUserSavedPlacesLoaded(),
+      ]);
+      
+      // Wait for user data to complete before fetching experiences
+      await userDataFuture;
+      
+      // Quick initial fetch: just get enough for first 10 previews (~20-30 experiences)
+      // This reduces wait time significantly
+      await _fetchMoreExperiencesIfNeeded(force: true, quickStart: true);
+      
+      // Generate initial batch of 5 items
       await _generateFeedItems(count: 5);
       
       // Mark the first item as seen since it will be displayed
@@ -196,6 +213,11 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
             _recordFeedItemsAsSeen([_feedItems[0]]);
           }
         });
+      }
+      
+      // Continue loading more experiences in the background to reach target pool size
+      if (mounted) {
+        _continueBackgroundLoading();
       }
     } catch (e) {
       if (!mounted) return;
@@ -211,14 +233,27 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
       }
     }
   }
+  
+  Future<void> _continueBackgroundLoading() async {
+    // Continue fetching in background without blocking UI
+    try {
+      await _fetchMoreExperiencesIfNeeded(force: true, quickStart: false);
+    } catch (e) {
+      debugPrint('DiscoveryScreen: Background loading failed: $e');
+      // Don't show error to user, just log it
+    }
+  }
 
-  Future<void> _fetchMoreExperiencesIfNeeded({bool force = false}) async {
+  Future<void> _fetchMoreExperiencesIfNeeded({
+    bool force = false,
+    bool quickStart = false,
+  }) async {
     if (!force && (_isFetchingExperiences || !_hasMore)) {
       return;
     }
     
-    // Target: keep fetching until we have at least 100 eligible experiences
-    const int targetPoolSize = 100;
+    // Target pool size: smaller for quick start, larger for background loading
+    final int targetPoolSize = quickStart ? 30 : 100;
     if (!force && _publicExperiences.length >= targetPoolSize) {
       return;
     }
@@ -284,7 +319,8 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
         if (!_hasMore) break;
       }
       
-      debugPrint('DiscoveryScreen: Paging complete. Fetched $totalFetched experiences, filtered $totalFiltered (user has saved), added $totalEligible eligible. Total pool: ${_publicExperiences.length}. HasMore: $_hasMore');
+      final loadType = quickStart ? 'Quick start' : 'Background load';
+      debugPrint('DiscoveryScreen: $loadType paging complete. Fetched $totalFetched experiences, filtered $totalFiltered (user has saved), added $totalEligible eligible. Total pool: ${_publicExperiences.length}. HasMore: $_hasMore');
     } finally {
       _isFetchingExperiences = false;
     }
@@ -352,69 +388,120 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
         return;
       }
       
-      // Fetch all user's experiences to get their saved place IDs and media URLs
-      final experiences = await _experienceService.getExperiencesByUser(
-        userId,
-        limit: 10000, // High limit to get all experiences
-      );
+      final prefs = await _getSharedPreferences();
       
-      _userSavedPlaceIds.clear();
-      _userSavedMediaUrls.clear();
+      // Try to load from cache first
+      final cachedPlaces = prefs.getStringList(_savedPlacesPrefsKey);
+      final cachedMedia = prefs.getStringList(_savedMediaPrefsKey);
+      final cacheTimestamp = prefs.getInt('${_savedPlacesPrefsKey}_timestamp');
       
-      // Collect all place IDs and media URLs from experiences
-      for (final experience in experiences) {
-        // Place IDs
-        final placeId = experience.location.placeId;
-        if (placeId != null && placeId.isNotEmpty) {
-          _userSavedPlaceIds.add(placeId);
-        }
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final cacheAge = cacheTimestamp != null ? Duration(milliseconds: now - cacheTimestamp) : null;
+      
+      // Use cache if it's valid (less than 6 hours old)
+      if (cachedPlaces != null && cachedMedia != null && 
+          cacheAge != null && cacheAge < _cacheValidDuration) {
+        _userSavedPlaceIds.addAll(cachedPlaces);
+        _userSavedMediaUrls.addAll(cachedMedia);
+        debugPrint('DiscoveryScreen: Loaded ${_userSavedPlaceIds.length} place IDs and ${_userSavedMediaUrls.length} media URLs from cache (age: ${cacheAge.inMinutes}min)');
         
-        // Image URLs (direct image links)
-        for (final imageUrl in experience.imageUrls) {
-          if (imageUrl.isNotEmpty) {
-            _userSavedMediaUrls.add(_normalizeUrlForComparison(imageUrl));
-          }
-        }
+        // Refresh cache in background without blocking
+        _refreshUserSavedPlacesInBackground(userId, prefs);
+        return;
       }
       
-      // Also collect media URLs from SharedMediaItems where the user has saved them
-      // Query for SharedMediaItems that contain any of the user's experience IDs
-      final experienceIds = experiences.map((e) => e.id).where((id) => id.isNotEmpty).toList();
+      // No valid cache - load from Firestore
+      debugPrint('DiscoveryScreen: No valid cache, loading from Firestore...');
+      await _fetchAndCacheUserSavedPlaces(userId, prefs);
       
-      if (experienceIds.isNotEmpty) {
-        // Fetch shared media items in batches (Firestore 'array-contains-any' limit is 10)
-        const int batchSize = 10;
-        for (int i = 0; i < experienceIds.length; i += batchSize) {
-          final batch = experienceIds.skip(i).take(batchSize).toList();
-          try {
-            final snapshot = await FirebaseFirestore.instance
-                .collection('sharedMediaItems')
-                .where('experienceIds', arrayContainsAny: batch)
-                .get();
-            
-            for (final doc in snapshot.docs) {
-              try {
-                final mediaItem = SharedMediaItem.fromFirestore(doc);
-                final path = mediaItem.path;
-                if (path.isNotEmpty) {
-                  _userSavedMediaUrls.add(_normalizeUrlForComparison(path));
-                }
-              } catch (e) {
-                debugPrint('DiscoveryScreen: Failed to parse SharedMediaItem ${doc.id}: $e');
-              }
-            }
-          } catch (e) {
-            debugPrint('DiscoveryScreen: Failed to fetch SharedMediaItems batch: $e');
-          }
-        }
-      }
-      
-      debugPrint('DiscoveryScreen: Loaded ${_userSavedPlaceIds.length} saved place IDs and ${_userSavedMediaUrls.length} saved media URLs from user experiences');
     } catch (e) {
       debugPrint('DiscoveryScreen: Failed to load user saved places: $e');
       _userSavedPlaceIds.clear();
       _userSavedMediaUrls.clear();
     }
+  }
+  
+  Future<void> _fetchAndCacheUserSavedPlaces(String userId, SharedPreferences prefs) async {
+    // Fetch all user's experiences to get their saved place IDs and media URLs
+    final experiences = await _experienceService.getExperiencesByUser(
+      userId,
+      limit: 10000, // High limit to get all experiences
+    );
+    
+    _userSavedPlaceIds.clear();
+    _userSavedMediaUrls.clear();
+    
+    // Collect all place IDs and media URLs from experiences
+    for (final experience in experiences) {
+      // Place IDs
+      final placeId = experience.location.placeId;
+      if (placeId != null && placeId.isNotEmpty) {
+        _userSavedPlaceIds.add(placeId);
+      }
+      
+      // Image URLs (direct image links)
+      for (final imageUrl in experience.imageUrls) {
+        if (imageUrl.isNotEmpty) {
+          _userSavedMediaUrls.add(_normalizeUrlForComparison(imageUrl));
+        }
+      }
+    }
+    
+    // Also collect media URLs from SharedMediaItems where the user has saved them
+    // Query for SharedMediaItems that contain any of the user's experience IDs
+    final experienceIds = experiences.map((e) => e.id).where((id) => id.isNotEmpty).toList();
+    
+    if (experienceIds.isNotEmpty) {
+      // Fetch shared media items in batches (Firestore 'array-contains-any' limit is 10)
+      const int batchSize = 10;
+      for (int i = 0; i < experienceIds.length; i += batchSize) {
+        final batch = experienceIds.skip(i).take(batchSize).toList();
+        try {
+          final snapshot = await FirebaseFirestore.instance
+              .collection('sharedMediaItems')
+              .where('experienceIds', arrayContainsAny: batch)
+              .get();
+          
+          for (final doc in snapshot.docs) {
+            try {
+              final mediaItem = SharedMediaItem.fromFirestore(doc);
+              final path = mediaItem.path;
+              if (path.isNotEmpty) {
+                _userSavedMediaUrls.add(_normalizeUrlForComparison(path));
+              }
+            } catch (e) {
+              debugPrint('DiscoveryScreen: Failed to parse SharedMediaItem ${doc.id}: $e');
+            }
+          }
+        } catch (e) {
+          debugPrint('DiscoveryScreen: Failed to fetch SharedMediaItems batch: $e');
+        }
+      }
+    }
+    
+    debugPrint('DiscoveryScreen: Loaded ${_userSavedPlaceIds.length} saved place IDs and ${_userSavedMediaUrls.length} saved media URLs from Firestore');
+    
+    // Cache the results
+    try {
+      await prefs.setStringList(_savedPlacesPrefsKey, _userSavedPlaceIds.toList());
+      await prefs.setStringList(_savedMediaPrefsKey, _userSavedMediaUrls.toList());
+      await prefs.setInt('${_savedPlacesPrefsKey}_timestamp', DateTime.now().millisecondsSinceEpoch);
+      debugPrint('DiscoveryScreen: Cached user saved places and media');
+    } catch (e) {
+      debugPrint('DiscoveryScreen: Failed to cache user saved places: $e');
+    }
+  }
+  
+  void _refreshUserSavedPlacesInBackground(String userId, SharedPreferences prefs) {
+    // Refresh in background without blocking or showing errors
+    Future.microtask(() async {
+      try {
+        await _fetchAndCacheUserSavedPlaces(userId, prefs);
+        debugPrint('DiscoveryScreen: Background refresh of saved places complete');
+      } catch (e) {
+        debugPrint('DiscoveryScreen: Background refresh failed: $e');
+      }
+    });
   }
 
   Future<void> _integrateSharedPayload(DiscoverySharePayload payload) async {
@@ -1084,6 +1171,22 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
     if (normalizedKey.isEmpty) return;
     // Add to user's saved media URLs so it won't show up again
     _userSavedMediaUrls.add(normalizedKey);
+    
+    // Invalidate cache so it refreshes next time
+    _invalidateSavedPlacesCache();
+  }
+  
+  void _invalidateSavedPlacesCache() {
+    // Invalidate the cache in the background
+    Future.microtask(() async {
+      try {
+        final prefs = await _getSharedPreferences();
+        await prefs.remove('${_savedPlacesPrefsKey}_timestamp');
+        debugPrint('DiscoveryScreen: Invalidated saved places cache');
+      } catch (e) {
+        debugPrint('DiscoveryScreen: Failed to invalidate cache: $e');
+      }
+    });
   }
 
   Future<void> _maybeCheckIfMediaSaved(_DiscoveryFeedItem item) async {
