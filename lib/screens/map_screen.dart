@@ -1236,21 +1236,54 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   Future<void> _onPlayExperienceContent() async {
-    final Experience? experience = _tappedExperience;
-    if (experience == null) {
-      print(
-          "🗺️ MAP SCREEN: Play button tapped but no experience is currently selected.");
-      return;
-    }
+    if (_tappedExperience != null) {
+      final Experience experience = _tappedExperience!;
+      final List<SharedMediaItem>? cachedItems =
+          _experienceMediaCache[experience.id];
+      late final List<SharedMediaItem> resolvedItems;
 
-    final List<SharedMediaItem>? cachedItems =
-        _experienceMediaCache[experience.id];
-    late final List<SharedMediaItem> resolvedItems;
+      if (cachedItems == null) {
+        if (experience.sharedMediaItemIds.isEmpty) {
+          print(
+              "🗺️ MAP SCREEN: Play button tapped but experience '${experience.name}' has no shared media IDs.");
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                  content:
+                      Text('No saved content available yet for this experience.')),
+            );
+          }
+          return;
+        }
+        try {
+          print(
+              "🗺️ MAP SCREEN: Fetching media items on-demand for '${experience.name}'.");
+          final fetched = await _experienceService
+              .getSharedMediaItems(experience.sharedMediaItemIds);
+          fetched.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+          resolvedItems = fetched;
+          if (mounted) {
+            setState(() {
+              _experienceMediaCache[experience.id] = fetched;
+            });
+          }
+        } catch (e) {
+          print(
+              "🗺️ MAP SCREEN: Error loading media items for preview: $e");
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Could not load content preview: $e')),
+            );
+          }
+          return;
+        }
+      } else {
+        resolvedItems = cachedItems;
+      }
 
-    if (cachedItems == null) {
-      if (experience.sharedMediaItemIds.isEmpty) {
+      if (resolvedItems.isEmpty) {
         print(
-            "🗺️ MAP SCREEN: Play button tapped but experience '${experience.name}' has no shared media IDs.");
+            "🗺️ MAP SCREEN: No media items available after fetch for '${experience.name}'.");
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -1260,69 +1293,80 @@ class _MapScreenState extends State<MapScreen> {
         }
         return;
       }
-      try {
+
+      if (!mounted) return;
+
+      print(
+          "🗺️ MAP SCREEN: Opening shared media preview modal for '${experience.name}' with ${resolvedItems.length} items.");
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        useRootNavigator: true,
+        builder: (modalContext) {
+          print(
+              "🗺️ MAP SCREEN: Building SharedMediaPreviewModal for '${experience.name}'.");
+          return SharedMediaPreviewModal(
+            experience: experience,
+            mediaItem: resolvedItems.first,
+            mediaItems: resolvedItems,
+            onLaunchUrl: _launchExternalUrl,
+            category: _tappedExperienceCategory,
+            userColorCategories: _colorCategories,
+          );
+        },
+      );
+      print(
+          "🗺️ MAP SCREEN: Shared media preview modal for '${experience.name}' dismissed.");
+      return;
+    }
+
+    if (_publicReadOnlyExperience != null) {
+      final Experience publicExperience = _publicReadOnlyExperience!;
+      final List<SharedMediaItem>? previewItems = _publicPreviewMediaItems;
+
+      if (previewItems == null || previewItems.isEmpty) {
         print(
-            "🗺️ MAP SCREEN: Fetching media items on-demand for '${experience.name}'.");
-        final fetched = await _experienceService
-            .getSharedMediaItems(experience.sharedMediaItemIds);
-        fetched.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-        resolvedItems = fetched;
-        if (mounted) {
-          setState(() {
-            _experienceMediaCache[experience.id] = fetched;
-          });
-        }
-      } catch (e) {
-        print(
-            "🗺️ MAP SCREEN: Error loading media items for preview: $e");
+            "🗺️ MAP SCREEN: Play button tapped but public experience '${publicExperience.name}' has no preview media.");
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Could not load content preview: $e')),
+            const SnackBar(
+                content:
+                    Text('No saved content available yet for this experience.')),
           );
         }
         return;
       }
-    } else {
-      resolvedItems = cachedItems;
-    }
 
-    if (resolvedItems.isEmpty) {
+      if (!mounted) return;
+
       print(
-          "🗺️ MAP SCREEN: No media items available after fetch for '${experience.name}'.");
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content:
-                  Text('No saved content available yet for this experience.')),
-        );
-      }
+          "🗺️ MAP SCREEN: Opening public experience preview modal for '${publicExperience.name}' with ${previewItems.length} items.");
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        useRootNavigator: true,
+        builder: (modalContext) {
+          print(
+              "🗺️ MAP SCREEN: Building SharedMediaPreviewModal for public experience '${publicExperience.name}'.");
+          return SharedMediaPreviewModal(
+            experience: publicExperience,
+            mediaItem: previewItems.first,
+            mediaItems: previewItems,
+            onLaunchUrl: _launchExternalUrl,
+            category: _publicReadOnlyCategory,
+            userColorCategories: const <ColorCategory>[],
+          );
+        },
+      );
+      print(
+          "🗺️ MAP SCREEN: Public shared media preview modal for '${publicExperience.name}' dismissed.");
       return;
     }
 
-    if (!mounted) return;
-
     print(
-        "🗺️ MAP SCREEN: Opening shared media preview modal for '${experience.name}' with ${resolvedItems.length} items.");
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      useRootNavigator: true,
-      builder: (modalContext) {
-        print(
-            "🗺️ MAP SCREEN: Building SharedMediaPreviewModal for '${experience.name}'.");
-        return SharedMediaPreviewModal(
-          experience: experience,
-          mediaItem: resolvedItems.first,
-          mediaItems: resolvedItems,
-          onLaunchUrl: _launchExternalUrl,
-          category: _tappedExperienceCategory,
-          userColorCategories: _colorCategories,
-        );
-      },
-    );
-    print(
-        "🗺️ MAP SCREEN: Shared media preview modal for '${experience.name}' dismissed.");
+        "🗺️ MAP SCREEN: Play button tapped but no experience (saved or public) is currently selected.");
   }
 
   Future<void> _launchExternalUrl(String url) async {
@@ -2748,11 +2792,17 @@ class _MapScreenState extends State<MapScreen> {
     // Calculate keyboard height and adjust layout accordingly
     final double keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
     final bool isKeyboardVisible = keyboardHeight > 0;
+    final bool hasPublicFallback = _publicReadOnlyExperience != null;
     final int tappedExperienceMediaCount = _tappedExperience != null
         ? _getMediaCountForExperience(_tappedExperience!)
         : 0;
-    final bool canPreviewContent = tappedExperienceMediaCount > 0;
-    final bool hasPublicFallback = _publicReadOnlyExperience != null;
+    final int publicExperienceMediaCount = hasPublicFallback
+        ? _publicPreviewMediaItems?.length ?? 0
+        : 0;
+    final int selectedMediaCount = _tappedExperience != null
+        ? tappedExperienceMediaCount
+        : publicExperienceMediaCount;
+    final bool canPreviewContent = selectedMediaCount > 0;
     final bool showExperiencePrompt = _canOpenSelectedExperience;
     final String selectedTitle = _tappedExperience != null
         ? _formatExperienceTitle(
@@ -3162,7 +3212,7 @@ class _MapScreenState extends State<MapScreen> {
                           right: 0,
                           child: Center(
                             child: Text(
-                              'Use the button below to view experience',
+                              'Tap to view experience details',
                               style: TextStyle(
                                 fontSize: 12,
                                 color: Colors.grey[500],
@@ -3266,7 +3316,7 @@ class _MapScreenState extends State<MapScreen> {
                             crossAxisAlignment: CrossAxisAlignment.center,
                             children: [
                               Expanded(child: _buildBusinessStatusWidget()),
-                              if (_tappedExperience != null) ...[
+                              if (_tappedExperience != null || hasPublicFallback) ...[
                                 const SizedBox(width: 12),
                                 GestureDetector(
                                   onTap: _onPlayExperienceContent,
@@ -3304,7 +3354,7 @@ class _MapScreenState extends State<MapScreen> {
                                             ),
                                             child: Center(
                                               child: Text(
-                                                tappedExperienceMediaCount.toString(),
+                                                selectedMediaCount.toString(),
                                                 style: TextStyle(
                                                   color: Theme.of(context).primaryColor,
                                                   fontSize: 12,
