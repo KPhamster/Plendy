@@ -1,9 +1,11 @@
 import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 
@@ -54,18 +56,22 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
       DiscoveryShareService();
   final Map<String, Future<Map<String, dynamic>?>> _mapsPreviewFutures = {};
   final Map<String, Future<List<Experience>>> _linkedExperiencesFutures = {};
-  final Map<String, Future<List<Experience>>>
-      _accessibleExperiencesFutures = {};
-  final Map<String, Future<bool>> _savedMediaByUrlFutures = {};
   final PageController _pageController = PageController();
   final Random _random = Random();
+  static const String _seenMediaPrefsKey = 'discovery_seen_media_keys_v1';
 
   final List<PublicExperience> _publicExperiences = [];
   final List<_DiscoveryFeedItem> _feedItems = [];
   final Set<String> _usedMediaKeys = {};
+  final Set<String> _persistedSeenMediaKeys = <String>{};
+  final Set<String> _userSavedPlaceIds = <String>{};
+  final Set<String> _userSavedMediaUrls = <String>{};
   List<UserCategory> _userCategories = [];
   List<ColorCategory> _userColorCategories = [];
   Future<void>? _userCollectionsFuture;
+  Future<void>? _seenMediaLoadFuture;
+  Future<void>? _userPlacesLoadFuture;
+  SharedPreferences? _sharedPreferences;
 
   DocumentSnapshot<Object?>? _lastDocument;
   bool _hasMore = true;
@@ -178,8 +184,19 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
 
   Future<void> _initializeFeed() async {
     try {
+      await _ensureSeenMediaLoaded();
+      await _ensureUserSavedPlacesLoaded();
       await _fetchMoreExperiencesIfNeeded(force: true);
       await _generateFeedItems(count: 5);
+      
+      // Mark the first item as seen since it will be displayed
+      if (_feedItems.isNotEmpty) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && _feedItems.isNotEmpty) {
+            _recordFeedItemsAsSeen([_feedItems[0]]);
+          }
+        });
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -199,30 +216,209 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
     if (!force && (_isFetchingExperiences || !_hasMore)) {
       return;
     }
+    
+    // Target: keep fetching until we have at least 100 eligible experiences
+    const int targetPoolSize = 100;
+    if (!force && _publicExperiences.length >= targetPoolSize) {
+      return;
+    }
+    
     _isFetchingExperiences = true;
+    int totalFetched = 0;
+    int totalFiltered = 0;
+    int totalEligible = 0;
+    
     try {
-      final page = await _experienceService.fetchPublicExperiencesPage(
-        startAfter: _lastDocument,
-        limit: 50,
-      );
+      // Keep paging until we have enough eligible experiences or run out
+      while (_publicExperiences.length < targetPoolSize && _hasMore) {
+        final page = await _experienceService.fetchPublicExperiencesPage(
+          startAfter: _lastDocument,
+          limit: 50,
+        );
 
-      _lastDocument = page.lastDocument;
-      _hasMore = page.hasMore;
+        _lastDocument = page.lastDocument;
+        _hasMore = page.hasMore;
+        totalFetched += page.experiences.length;
 
-      if (page.experiences.isNotEmpty) {
-        final mediaRichExperiences = page.experiences
-            .where((exp) => exp.allMediaPaths.isNotEmpty)
-            .toList();
-        if (mediaRichExperiences.isNotEmpty) {
-          _publicExperiences.addAll(mediaRichExperiences);
+        if (page.experiences.isNotEmpty) {
+          // Filter: must have media AND user must not have this place saved
+          // AND must have at least one unsaved media URL
+          final eligibleExperiences = page.experiences.where((exp) {
+            // Must have media
+            if (exp.allMediaPaths.isEmpty) return false;
+            
+            // Must not be a place the user already has saved
+            final placeId = exp.location.placeId;
+            if (placeId != null && placeId.isNotEmpty) {
+              if (_userSavedPlaceIds.contains(placeId)) {
+                totalFiltered++;
+                return false;
+              }
+            }
+            
+            // Must have at least ONE media URL that the user hasn't saved
+            bool hasUnsavedMedia = false;
+            for (final mediaUrl in exp.allMediaPaths) {
+              final normalizedUrl = _normalizeUrlForComparison(mediaUrl);
+              if (normalizedUrl.isNotEmpty && !_userSavedMediaUrls.contains(normalizedUrl)) {
+                hasUnsavedMedia = true;
+                break;
+              }
+            }
+            
+            if (!hasUnsavedMedia) {
+              totalFiltered++;
+              return false;
+            }
+            
+            return true;
+          }).toList();
+          
+          if (eligibleExperiences.isNotEmpty) {
+            _publicExperiences.addAll(eligibleExperiences);
+            totalEligible += eligibleExperiences.length;
+          }
         }
+        
+        // If we've run out of pages, stop
+        if (!_hasMore) break;
       }
+      
+      debugPrint('DiscoveryScreen: Paging complete. Fetched $totalFetched experiences, filtered $totalFiltered (user has saved), added $totalEligible eligible. Total pool: ${_publicExperiences.length}. HasMore: $_hasMore');
     } finally {
       _isFetchingExperiences = false;
     }
   }
 
+  Future<void> _ensureSeenMediaLoaded() {
+    return _seenMediaLoadFuture ??= _loadSeenMediaKeys();
+  }
+
+  Future<void> _loadSeenMediaKeys() async {
+    try {
+      final prefs = await _getSharedPreferences();
+      final storedKeys = prefs.getStringList(_seenMediaPrefsKey);
+      _persistedSeenMediaKeys
+        ..clear()
+        ..addAll(storedKeys ?? const <String>[]);
+      debugPrint('DiscoveryScreen: Loaded ${_persistedSeenMediaKeys.length} seen media keys from storage');
+    } catch (e) {
+      debugPrint('DiscoveryScreen: Failed to load seen media keys: $e');
+      _persistedSeenMediaKeys.clear();
+    }
+  }
+
+  Future<SharedPreferences> _getSharedPreferences() async {
+    if (_sharedPreferences != null) {
+      return _sharedPreferences!;
+    }
+    final prefs = await SharedPreferences.getInstance();
+    _sharedPreferences = prefs;
+    return prefs;
+  }
+
+  Future<void> _persistSeenMediaKeys() async {
+    try {
+      final prefs = await _getSharedPreferences();
+      await prefs.setStringList(
+        _seenMediaPrefsKey,
+        _persistedSeenMediaKeys.toList(),
+      );
+    } catch (e) {
+      debugPrint('DiscoveryScreen: Failed to persist seen media keys: $e');
+    }
+  }
+
+  Future<void> _resetPersistedSeenMediaKeys() async {
+    _persistedSeenMediaKeys.clear();
+    try {
+      final prefs = await _getSharedPreferences();
+      await prefs.remove(_seenMediaPrefsKey);
+    } catch (e) {
+      debugPrint('DiscoveryScreen: Failed to reset seen media keys: $e');
+    }
+  }
+
+  Future<void> _ensureUserSavedPlacesLoaded() {
+    return _userPlacesLoadFuture ??= _loadUserSavedPlaces();
+  }
+
+  Future<void> _loadUserSavedPlaces() async {
+    try {
+      // Get current user ID
+      final userId = FirebaseAuth.instance.currentUser?.uid;
+      if (userId == null) {
+        debugPrint('DiscoveryScreen: No authenticated user, skipping saved places load');
+        return;
+      }
+      
+      // Fetch all user's experiences to get their saved place IDs and media URLs
+      final experiences = await _experienceService.getExperiencesByUser(
+        userId,
+        limit: 10000, // High limit to get all experiences
+      );
+      
+      _userSavedPlaceIds.clear();
+      _userSavedMediaUrls.clear();
+      
+      // Collect all place IDs and media URLs from experiences
+      for (final experience in experiences) {
+        // Place IDs
+        final placeId = experience.location.placeId;
+        if (placeId != null && placeId.isNotEmpty) {
+          _userSavedPlaceIds.add(placeId);
+        }
+        
+        // Image URLs (direct image links)
+        for (final imageUrl in experience.imageUrls) {
+          if (imageUrl.isNotEmpty) {
+            _userSavedMediaUrls.add(_normalizeUrlForComparison(imageUrl));
+          }
+        }
+      }
+      
+      // Also collect media URLs from SharedMediaItems where the user has saved them
+      // Query for SharedMediaItems that contain any of the user's experience IDs
+      final experienceIds = experiences.map((e) => e.id).where((id) => id.isNotEmpty).toList();
+      
+      if (experienceIds.isNotEmpty) {
+        // Fetch shared media items in batches (Firestore 'array-contains-any' limit is 10)
+        const int batchSize = 10;
+        for (int i = 0; i < experienceIds.length; i += batchSize) {
+          final batch = experienceIds.skip(i).take(batchSize).toList();
+          try {
+            final snapshot = await FirebaseFirestore.instance
+                .collection('sharedMediaItems')
+                .where('experienceIds', arrayContainsAny: batch)
+                .get();
+            
+            for (final doc in snapshot.docs) {
+              try {
+                final mediaItem = SharedMediaItem.fromFirestore(doc);
+                final path = mediaItem.path;
+                if (path.isNotEmpty) {
+                  _userSavedMediaUrls.add(_normalizeUrlForComparison(path));
+                }
+              } catch (e) {
+                debugPrint('DiscoveryScreen: Failed to parse SharedMediaItem ${doc.id}: $e');
+              }
+            }
+          } catch (e) {
+            debugPrint('DiscoveryScreen: Failed to fetch SharedMediaItems batch: $e');
+          }
+        }
+      }
+      
+      debugPrint('DiscoveryScreen: Loaded ${_userSavedPlaceIds.length} saved place IDs and ${_userSavedMediaUrls.length} saved media URLs from user experiences');
+    } catch (e) {
+      debugPrint('DiscoveryScreen: Failed to load user saved places: $e');
+      _userSavedPlaceIds.clear();
+      _userSavedMediaUrls.clear();
+    }
+  }
+
   Future<void> _integrateSharedPayload(DiscoverySharePayload payload) async {
+    await _ensureSeenMediaLoaded();
     final PublicExperience experience = payload.experience;
     final String mediaUrl = payload.mediaUrl;
     if (mediaUrl.isEmpty) return;
@@ -243,6 +439,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
     });
 
     await _maybeCheckIfMediaSaved(newItem);
+    await _recordFeedItemsAsSeen([newItem]);
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -257,9 +454,15 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
   Future<void> _generateFeedItems({int count = 5}) async {
     if (count <= 0) return;
 
+    await _ensureSeenMediaLoaded();
+
     final List<_DiscoveryFeedItem> newItems = [];
     final int maxAttempts = count * 50;
     int attempts = 0;
+    int skippedFiltered = 0;
+    int skippedSeen = 0;
+
+    debugPrint('DiscoveryScreen: Generating $count feed items. Pool: ${_publicExperiences.length} experiences, Seen: ${_persistedSeenMediaKeys.length} media');
 
     while (newItems.length < count && attempts < maxAttempts) {
       attempts++;
@@ -292,15 +495,29 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
       if (mediaType == _MediaType.yelp ||
           mediaType == _MediaType.maps ||
           mediaType == _MediaType.generic) {
+        skippedFiltered++;
         continue;
       }
 
       final totalCombos = _calculateTotalAvailableMediaPaths();
-      if (totalCombos > 0 && _usedMediaKeys.length >= totalCombos) {
-        _usedMediaKeys.clear();
+      if (totalCombos > 0) {
+        if (_persistedSeenMediaKeys.length >= totalCombos) {
+          debugPrint('DiscoveryScreen: All media seen! Resetting seen keys.');
+          await _resetPersistedSeenMediaKeys();
+        }
+        if (_usedMediaKeys.length >= totalCombos) {
+          _usedMediaKeys.clear();
+        }
       }
 
-      final key = '${experience.id}::$mediaUrl';
+      final key = _mediaKey(experience, mediaUrl);
+      if (_persistedSeenMediaKeys.contains(key)) {
+        skippedSeen++;
+        if (_hasMore && attempts % 20 == 0) {
+          await _fetchMoreExperiencesIfNeeded(force: true);
+        }
+        continue;
+      }
       if (_usedMediaKeys.contains(key)) {
         if (_hasMore && attempts % 20 == 0) {
           await _fetchMoreExperiencesIfNeeded(force: true);
@@ -308,25 +525,8 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
         continue;
       }
 
-      final _FeedFilterResult filterResult =
-          await _evaluateFeedItemVisibility(experience, mediaUrl);
-
-      if (filterResult != _FeedFilterResult.include) {
-        if (filterResult == _FeedFilterResult.skipHasAccess) {
-          final String? placeId = experience.location.placeId;
-          if (placeId != null && placeId.isNotEmpty) {
-            _publicExperiences.removeWhere(
-              (candidate) => candidate.location.placeId == placeId,
-            );
-          } else {
-            _publicExperiences
-                .removeWhere((candidate) => candidate.id == experience.id);
-          }
-        }
-        _usedMediaKeys.add(key);
-        continue;
-      }
-
+      // No need to check "already saved" here - we already filtered out
+      // experiences at places the user has saved during the paging step
       _usedMediaKeys.add(key);
       newItems.add(
         _DiscoveryFeedItem(
@@ -336,11 +536,24 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
       );
     }
 
-    if (newItems.isNotEmpty && mounted) {
-      setState(() {
-        _feedItems.addAll(newItems);
-      });
+    debugPrint('DiscoveryScreen: Feed generation complete. Generated: ${newItems.length}/$count items in $attempts attempts. Skipped - Seen: $skippedSeen, Filtered: $skippedFiltered');
+
+    if (newItems.isNotEmpty) {
+      if (mounted) {
+        setState(() {
+          _feedItems.addAll(newItems);
+        });
+      }
+      // Note: Items are now marked as seen when viewed, not when generated
     }
+  }
+
+  String _mediaKey(PublicExperience experience, String mediaUrl) {
+    final String fallbackId = experience.placeID.isNotEmpty
+        ? experience.placeID
+        : experience.name.trim().toLowerCase();
+    final String idPart = experience.id.isNotEmpty ? experience.id : fallbackId;
+    return '$idPart::$mediaUrl';
   }
 
   int _calculateTotalAvailableMediaPaths() {
@@ -351,10 +564,32 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
     );
   }
 
+  Future<void> _recordFeedItemsAsSeen(List<_DiscoveryFeedItem> items) async {
+    if (items.isEmpty) return;
+    await _ensureSeenMediaLoaded();
+    bool didUpdate = false;
+    for (final item in items) {
+      final key = _mediaKey(item.experience, item.mediaUrl);
+      if (_persistedSeenMediaKeys.add(key)) {
+        didUpdate = true;
+      }
+    }
+    if (didUpdate) {
+      await _persistSeenMediaKeys();
+      debugPrint('DiscoveryScreen: Marked ${items.length} item(s) as seen. Total seen: ${_persistedSeenMediaKeys.length}');
+    }
+  }
+
   void _handlePageChanged(int index) {
     setState(() {
       _currentPage = index;
     });
+
+    // Mark the viewed item as seen
+    if (index >= 0 && index < _feedItems.length) {
+      final item = _feedItems[index];
+      _recordFeedItemsAsSeen([item]);
+    }
 
     if (_feedItems.length - index <= 2) {
       _prepareMoreItems();
@@ -737,7 +972,6 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
         '_buildActionButton requires either an IconData or a Widget.');
     final Widget iconContent =
         iconWidget ?? Icon(icon, color: Colors.white, size: 28);
-    final bool isDisabled = onPressed == null;
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -845,89 +1079,11 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
     }
   }
 
-  Future<List<Experience>> _getAccessibleExperiencesForPlace(
-      String? placeId) {
-    if (placeId == null || placeId.isEmpty) {
-      return Future.value(const <Experience>[]);
-    }
-
-    return _accessibleExperiencesFutures.putIfAbsent(placeId, () async {
-      try {
-        return await _experienceService.findAccessibleExperiencesByPlaceId(
-          placeId,
-        );
-      } catch (e) {
-        debugPrint(
-            'DiscoveryScreen: Failed to fetch accessible experiences for $placeId: $e');
-        return <Experience>[];
-      }
-    });
-  }
-
-  Future<bool> _userHasViewOrEditAccessToPlace(String? placeId) async {
-    final experiences = await _getAccessibleExperiencesForPlace(placeId);
-    return experiences.isNotEmpty;
-  }
-
-  Future<bool> _hasUserSavedMediaByUrl(String mediaUrl) {
-    final String normalizedKey = _normalizeUrlForComparison(mediaUrl);
-    if (normalizedKey.isEmpty) {
-      return Future.value(false);
-    }
-
-    return _savedMediaByUrlFutures.putIfAbsent(normalizedKey, () async {
-      try {
-        final SharedMediaItem? mediaItem =
-            await _experienceService.findSharedMediaItemByPath(mediaUrl);
-        if (mediaItem == null || mediaItem.experienceIds.isEmpty) {
-          return false;
-        }
-
-        final List<Experience> experiences =
-            await _experienceService.getExperiencesByIds(
-          mediaItem.experienceIds,
-        );
-
-        if (experiences.isEmpty) {
-          return false;
-        }
-
-        for (final experience in experiences) {
-          if (_experienceContainsMediaUrl(experience, mediaUrl)) {
-            return true;
-          }
-        }
-
-        return false;
-      } catch (e) {
-        debugPrint('DiscoveryScreen: Failed to resolve saved media for $mediaUrl: $e');
-        return false;
-      }
-    });
-  }
-
-  Future<_FeedFilterResult> _evaluateFeedItemVisibility(
-    PublicExperience experience,
-    String mediaUrl,
-  ) async {
-    final bool hasAccess =
-        await _userHasViewOrEditAccessToPlace(experience.location.placeId);
-    if (hasAccess) {
-      return _FeedFilterResult.skipHasAccess;
-    }
-
-    final bool alreadySaved = await _hasUserSavedMediaByUrl(mediaUrl);
-    if (alreadySaved) {
-      return _FeedFilterResult.skipAlreadySaved;
-    }
-
-    return _FeedFilterResult.include;
-  }
-
   void _markMediaAsSaved(String mediaUrl) {
     final String normalizedKey = _normalizeUrlForComparison(mediaUrl);
     if (normalizedKey.isEmpty) return;
-    _savedMediaByUrlFutures[normalizedKey] = Future.value(true);
+    // Add to user's saved media URLs so it won't show up again
+    _userSavedMediaUrls.add(normalizedKey);
   }
 
   Future<void> _maybeCheckIfMediaSaved(_DiscoveryFeedItem item) async {
@@ -935,24 +1091,13 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
       return;
     }
     try {
-      final bool isSaved = await _hasUserSavedMediaByUrl(item.mediaUrl);
-      item.isMediaAlreadySaved.value = isSaved;
+      // Check if this specific media URL has been saved by THIS user
+      final normalizedUrl = _normalizeUrlForComparison(item.mediaUrl);
+      item.isMediaAlreadySaved.value = _userSavedMediaUrls.contains(normalizedUrl);
     } catch (e) {
       debugPrint('DiscoveryScreen: Failed media check: $e');
       item.isMediaAlreadySaved.value = false;
     }
-  }
-
-  bool _experienceContainsMediaUrl(Experience experience, String url) {
-    if (url.isEmpty) return false;
-    final normalizedUrl = _normalizeUrlForComparison(url);
-    if (normalizedUrl.isEmpty) return false;
-    if (experience.imageUrls.any((entry) =>
-        _normalizeUrlForComparison(entry) == normalizedUrl)) {
-      return true;
-    }
-    // TODO: When shared media metadata includes direct URLs, compare here as well.
-    return false;
   }
 
   String _normalizeUrlForComparison(String? url) {
@@ -1601,12 +1746,6 @@ class _DiscoveryFeedItem {
   final PublicExperience experience;
   final String mediaUrl;
   final ValueNotifier<bool?> isMediaAlreadySaved = ValueNotifier<bool?>(null);
-}
-
-enum _FeedFilterResult {
-  include,
-  skipHasAccess,
-  skipAlreadySaved,
 }
 
 enum _MediaType {
