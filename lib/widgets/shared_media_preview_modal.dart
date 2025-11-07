@@ -51,9 +51,12 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
   late SharedMediaItem _activeItem;
   late PageController _pageController;
   int _currentIndex = 0;
+  bool _isPreviewExpanded = false;
   // For Maps preview parity with ExperiencePageScreen
   final GoogleMapsService _mapsService = GoogleMapsService();
   final Map<String, Future<Map<String, dynamic>?>> _mapsPreviewFutures = {};
+  static const double _defaultPreviewHeight = 640.0;
+  static const double _maxExpandedPreviewHeight = 825.0;
   static const List<String> _monthAbbreviations = [
     'Jan',
     'Feb',
@@ -108,12 +111,32 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
     return '$month $day • $hour12:$minute $period';
   }
 
+  double _getPreviewHeight(BuildContext context) {
+    if (!_isPreviewExpanded) {
+      return _defaultPreviewHeight;
+    }
+    final double screenHeight = MediaQuery.of(context).size.height;
+    final double targetHeight = screenHeight * 1.5;
+    final double clampedHeight =
+        targetHeight.clamp(_defaultPreviewHeight, _maxExpandedPreviewHeight);
+    return clampedHeight.toDouble();
+  }
+
+  void _togglePreviewExpansion() {
+    setState(() {
+      _isPreviewExpanded = !_isPreviewExpanded;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final media = _activeItem;
     final experience = widget.experience;
     final multipleItems = widget.mediaItems.length > 1;
+    final double previewHeight = _getPreviewHeight(context);
+    final double? previewHeightOverride =
+        _isPreviewExpanded ? previewHeight : null;
 
     return FractionallySizedBox(
       heightFactor: 0.95,
@@ -180,8 +203,10 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
                       children: [
                         // Preview (carousel when multiple items)
                         if (multipleItems)
-                          SizedBox(
-                            height: 640.0,
+                          AnimatedContainer(
+                            duration: const Duration(milliseconds: 250),
+                            curve: Curves.easeInOut,
+                            height: previewHeight,
                             child: PageView.builder(
                               controller: _pageController,
                               itemCount: widget.mediaItems.length,
@@ -193,12 +218,20 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
                               },
                               itemBuilder: (context, index) {
                                 final item = widget.mediaItems[index];
-                                return _buildPreview(context, item);
+                                return _buildPreview(
+                                  context,
+                                  item,
+                                  heightOverride: previewHeightOverride,
+                                );
                               },
                             ),
                           )
                         else
-                          _buildPreview(context, media),
+                          _buildPreview(
+                            context,
+                            media,
+                            heightOverride: previewHeightOverride,
+                          ),
                         if (multipleItems) ...[
                           const SizedBox(height: 8),
                           _buildCarouselDots(),
@@ -236,7 +269,11 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
     );
   }
 
-  Widget _buildPreview(BuildContext context, SharedMediaItem mediaItem) {
+  Widget _buildPreview(
+    BuildContext context,
+    SharedMediaItem mediaItem, {
+    double? heightOverride,
+  }) {
     final url = mediaItem.path;
     if (url.isEmpty) {
       return _buildFallbackPreview(
@@ -264,6 +301,7 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
     }
 
     if (type == _MediaType.instagram) {
+      final double instagramHeight = heightOverride ?? 640.0;
       return kIsWeb
           ? WebMediaPreviewCard(
             url: url,
@@ -273,7 +311,7 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
           : instagram_widget.InstagramWebView(
         key: ValueKey(url),
         url: url,
-        height: 640.0,
+        height: instagramHeight,
         launchUrlCallback: widget.onLaunchUrl,
         onWebViewCreated: (_) {},
         onPageFinished: (_) {},
@@ -281,6 +319,7 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
     }
 
     if (type == _MediaType.facebook) {
+      final double facebookHeight = heightOverride ?? 500.0;
       return kIsWeb
           ? WebMediaPreviewCard(
             url: url,
@@ -290,7 +329,7 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
           : FacebookPreviewWidget(
         key: ValueKey(url),
         url: url,
-        height: 500.0,
+        height: facebookHeight,
         onWebViewCreated: (_) {},
         onPageFinished: (_) {},
         launchUrlCallback: widget.onLaunchUrl,
@@ -299,6 +338,7 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
     }
 
     if (type == _MediaType.youtube) {
+      final double? youtubeHeight = heightOverride;
       return kIsWeb
           ? WebMediaPreviewCard(
             url: url,
@@ -310,6 +350,7 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
         url: url,
         launchUrlCallback: widget.onLaunchUrl,
         showControls: false,
+        height: youtubeHeight,
         onWebViewCreated: (_) {},
       );
     }
@@ -333,12 +374,13 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
     }
 
     if (type == _MediaType.yelp) {
+      final double resolvedHeight = heightOverride ?? 1000.0;
       return WebUrlPreviewWidget(
         key: ValueKey(url),
         url: url,
         launchUrlCallback: widget.onLaunchUrl,
         showControls: false,
-        height: 1000.0,
+        height: resolvedHeight,
       );
     }
 
@@ -661,15 +703,45 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
         break;
     }
 
+    final IconData expansionIcon =
+        _isPreviewExpanded ? Icons.fullscreen_exit : Icons.fullscreen;
+    final String expansionTooltip =
+        _isPreviewExpanded ? 'Collapse preview' : 'Expand preview';
+    final Color expansionColor = Colors.blue;
+
     return Row(
       children: [
         const Expanded(child: SizedBox()),
-        IconButton(
-          tooltip: tooltip,
-          iconSize: iconSize,
-          onPressed: isLaunchable ? () => widget.onLaunchUrl(url) : null,
-          icon: Icon(iconData, color: iconColor),
+        SizedBox(
+          width: 160,
+          height: 56,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              Align(
+                alignment: Alignment.center,
+                child: IconButton(
+                  tooltip: tooltip,
+                  iconSize: iconSize,
+                  onPressed: isLaunchable ? () => widget.onLaunchUrl(url) : null,
+                  icon: Icon(iconData, color: iconColor),
+                ),
+              ),
+              Align(
+                alignment: Alignment.centerRight,
+                child: IconButton(
+                  tooltip: expansionTooltip,
+                  iconSize: 26,
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
+                  constraints: const BoxConstraints(),
+                  onPressed: _togglePreviewExpansion,
+                  icon: Icon(expansionIcon, color: expansionColor),
+                ),
+              ),
+            ],
+          ),
         ),
+        const SizedBox(width: 4),
         Expanded(
           child: Align(
             alignment: Alignment.centerRight,
