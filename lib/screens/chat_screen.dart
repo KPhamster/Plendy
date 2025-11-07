@@ -280,7 +280,13 @@ class _ChatScreenState extends State<ChatScreen> {
 
     final experienceName = snapshot['name'] as String? ?? 'Experience';
     final locationData = snapshot['location'] as Map<String, dynamic>?;
-    final imageUrl = snapshot['image'] as String?;
+    
+    // Check if this is a discovery preview share (has highlightedMediaUrl)
+    final highlightedMediaUrl = snapshot['highlightedMediaUrl'] as String?;
+    final isDiscoveryPreview = highlightedMediaUrl != null && highlightedMediaUrl.isNotEmpty;
+    
+    // Use highlighted media URL for discovery shares, otherwise use the main image
+    final imageUrl = isDiscoveryPreview ? highlightedMediaUrl : (snapshot['image'] as String?);
     final description = snapshot['description'] as String?;
     
     // Build location subtitle
@@ -312,13 +318,35 @@ class _ChatScreenState extends State<ChatScreen> {
             if (!isMine)
               Padding(
                 padding: const EdgeInsets.only(left: 8, bottom: 4),
-                child: Text(
-                  '${sender?.displayLabel(fallback: 'Someone') ?? 'Someone'} shared',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.black54,
-                  ),
+                child: Row(
+                  children: [
+                    Text(
+                      '${sender?.displayLabel(fallback: 'Someone') ?? 'Someone'} shared',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.black54,
+                      ),
+                    ),
+                    if (isDiscoveryPreview) ...[
+                      const SizedBox(width: 4),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.purple.shade100,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          'Discovery',
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.purple.shade700,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
               ),
             Card(
@@ -326,66 +354,51 @@ class _ChatScreenState extends State<ChatScreen> {
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: InkWell(
-                onTap: () {
-                  // TODO: Open experience detail view
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Opening $experienceName...')),
-                  );
-                },
-                borderRadius: BorderRadius.circular(12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (imageUrl != null && imageUrl.isNotEmpty)
-                      ClipRRect(
-                        borderRadius: const BorderRadius.vertical(
-                          top: Radius.circular(12),
-                        ),
-                        child: Image.network(
-                          imageUrl,
-                          height: 180,
-                          width: double.infinity,
-                          fit: BoxFit.cover,
-                          errorBuilder: (context, error, stackTrace) {
-                            return Container(
-                              height: 180,
-                              color: Colors.grey.shade300,
-                              child: const Icon(
-                                Icons.image_not_supported,
-                                size: 48,
-                                color: Colors.grey,
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                    Padding(
-                      padding: const EdgeInsets.all(12.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  experienceName,
-                                  style: const TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              const Icon(
-                                Icons.arrow_forward_ios,
-                                size: 16,
-                                color: Colors.grey,
-                              ),
-                            ],
+              child: Stack(
+                children: [
+                  InkWell(
+                    onTap: () => _handleExperienceShareTap(
+                      experienceName: experienceName,
+                      highlightedMediaUrl: highlightedMediaUrl,
+                      snapshot: snapshot,
+                    ),
+                    borderRadius: BorderRadius.circular(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (imageUrl != null && imageUrl.isNotEmpty)
+                          ClipRRect(
+                            borderRadius: const BorderRadius.vertical(
+                              top: Radius.circular(12),
+                            ),
+                            child: _buildMediaPreview(imageUrl, isDiscoveryPreview),
                           ),
+                        Padding(
+                          padding: const EdgeInsets.all(12.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      experienceName,
+                                      style: const TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  const Icon(
+                                    Icons.arrow_forward_ios,
+                                    size: 16,
+                                    color: Colors.grey,
+                                  ),
+                                ],
+                              ),
                           if (locationText.isNotEmpty) ...[
                             const SizedBox(height: 4),
                             Row(
@@ -427,6 +440,26 @@ class _ChatScreenState extends State<ChatScreen> {
                     ),
                   ],
                 ),
+                  ),
+                  // Play button positioned on the bottom-right
+                  Positioned(
+                    right: 12,
+                    bottom: 12,
+                    child: Container(
+                      width: 48,
+                      height: 48,
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).primaryColor,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.play_arrow,
+                        color: Colors.white,
+                        size: 28,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
             Padding(
@@ -536,6 +569,123 @@ class _ChatScreenState extends State<ChatScreen> {
     return participants
         .map((participant) => participant.displayLabel(fallback: 'Friend'))
         .join(', ');
+  }
+
+  Future<void> _handleExperienceShareTap({
+    required String experienceName,
+    required String? highlightedMediaUrl,
+    required Map<String, dynamic> snapshot,
+  }) async {
+    // If it's a discovery preview share with a highlighted media URL, open the URL
+    if (highlightedMediaUrl != null && highlightedMediaUrl.isNotEmpty) {
+      await _openLink(Uri.parse(highlightedMediaUrl));
+      return;
+    }
+
+    // Otherwise, show the experience details (TODO: implement full experience view)
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Opening $experienceName...'),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  Widget _buildMediaPreview(String url, bool isDiscoveryPreview) {
+    // Check if it's a social media link or regular image
+    final lowerUrl = url.toLowerCase();
+    final isSocialMedia = lowerUrl.contains('tiktok.com') ||
+        lowerUrl.contains('instagram.com') ||
+        lowerUrl.contains('facebook.com') ||
+        lowerUrl.contains('youtube.com') ||
+        lowerUrl.contains('youtu.be');
+
+    if (isSocialMedia && isDiscoveryPreview) {
+      // For social media discovery shares, show a preview indicator
+      return Container(
+        height: 180,
+        color: Colors.grey.shade900,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    _getMediaIcon(lowerUrl),
+                    size: 64,
+                    color: Colors.white70,
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Tap to view ${_getMediaType(lowerUrl)}',
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: 14,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Positioned(
+              top: 8,
+              right: 8,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.black54,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Text(
+                  'Discovery Preview',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    
+    // For regular images
+    return Image.network(
+      url,
+      height: 180,
+      width: double.infinity,
+      fit: BoxFit.cover,
+      errorBuilder: (context, error, stackTrace) {
+        return Container(
+          height: 180,
+          color: Colors.grey.shade300,
+          child: const Icon(
+            Icons.image_not_supported,
+            size: 48,
+            color: Colors.grey,
+          ),
+        );
+      },
+    );
+  }
+
+  IconData _getMediaIcon(String url) {
+    if (url.contains('tiktok.com')) return Icons.play_circle_outline;
+    if (url.contains('instagram.com')) return Icons.camera_alt_outlined;
+    if (url.contains('facebook.com')) return Icons.video_library_outlined;
+    if (url.contains('youtube.com') || url.contains('youtu.be')) return Icons.play_circle_outline;
+    return Icons.link;
+  }
+
+  String _getMediaType(String url) {
+    if (url.contains('tiktok.com')) return 'TikTok';
+    if (url.contains('instagram.com')) return 'Instagram';
+    if (url.contains('facebook.com')) return 'Facebook';
+    if (url.contains('youtube.com') || url.contains('youtu.be')) return 'YouTube';
+    return 'content';
   }
 
   String _formatMessageTime(DateTime timestamp) {
