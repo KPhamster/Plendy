@@ -126,7 +126,10 @@ class _MessagesScreenState extends State<MessagesScreen> {
     }
 
     return Scaffold(
+      backgroundColor: Colors.white,
       appBar: AppBar(
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.black,
         title: const Text('Messages'),
         actions: [
           // Debug button for FCM
