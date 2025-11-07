@@ -146,6 +146,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   // Services
   final _googleMapsService = GoogleMapsService();
   final _experienceService = ExperienceService(); // ADDED
+  final ExperienceShareService _experienceShareService =
+      ExperienceShareService();
   // ADDED: AuthService instance
   final _authService = AuthService();
   // REMOVED: Dio instance
@@ -3342,11 +3344,24 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     );
   }
 
-  void _openDirectShareDialog() async {
-    // Minimal placeholder: inform user this will open a people picker
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Direct share coming soon.')),
+  Future<void> _openDirectShareDialog() async {
+    if (!mounted) return;
+    final bool? shared = await showShareToFriendsModal(
+      context: context,
+      subjectLabel: _currentExperience.name,
+      onSubmit: (recipientIds) async {
+        await _experienceShareService.createDirectShare(
+          experience: _currentExperience,
+          toUserIds: recipientIds,
+        );
+      },
     );
+    if (!mounted) return;
+    if (shared == true) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Shared with friends!')),
+      );
+    }
   }
 
   Future<void> _createLinkShareWithOptions({

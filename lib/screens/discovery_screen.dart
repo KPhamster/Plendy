@@ -15,6 +15,7 @@ import '../models/public_experience.dart';
 import '../models/shared_media_item.dart';
 import '../models/user_category.dart';
 import '../services/experience_service.dart';
+import '../services/experience_share_service.dart';
 import '../services/discovery_share_service.dart';
 import '../services/google_maps_service.dart';
 import 'receive_share/widgets/facebook_preview_widget.dart';
@@ -54,6 +55,8 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
   final ExperienceService _experienceService = ExperienceService();
   final GoogleMapsService _mapsService = GoogleMapsService();
   final DiscoveryShareService _discoveryShareService = DiscoveryShareService();
+  final ExperienceShareService _experienceShareService =
+      ExperienceShareService();
   final Map<String, Future<Map<String, dynamic>?>> _mapsPreviewFutures = {};
   final Map<String, Future<List<Experience>>> _linkedExperiencesFutures = {};
   final PageController _pageController = PageController();
@@ -1711,10 +1714,14 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
 
     await showShareExperienceBottomSheet(
       context: context,
-      onDirectShare: () {
-        messenger.showSnackBar(
-          const SnackBar(content: Text('Direct share coming soon.')),
-        );
+      onDirectShare: () async {
+        final bool? shared = await _shareDiscoveryItemWithFriends(item);
+        if (!mounted) return;
+        if (shared == true) {
+          messenger.showSnackBar(
+            const SnackBar(content: Text('Shared with friends!')),
+          );
+        }
       },
       onCreateLink: (
           {required String shareMode, required bool giveEditAccess}) async {
@@ -1757,6 +1764,51 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
         }
       },
     );
+  }
+
+  Future<bool?> _shareDiscoveryItemWithFriends(_DiscoveryFeedItem item) async {
+    if (!mounted) return false;
+
+    final Experience baseExperience =
+        item.experience.toExperienceDraft().copyWith(
+              imageUrls: _buildShareImageList(
+                item.mediaUrl,
+                item.experience.allMediaPaths,
+              ),
+            );
+
+    final bool? shared = await showShareToFriendsModal(
+      context: context,
+      subjectLabel: item.experience.name,
+      onSubmit: (recipientIds) async {
+        await _experienceShareService.createDirectShare(
+          experience: baseExperience,
+          toUserIds: recipientIds,
+        );
+      },
+    );
+    return shared;
+  }
+
+  List<String> _buildShareImageList(String selectedUrl, List<String> allUrls) {
+    final Set<String> seen = {};
+    final List<String> ordered = [];
+
+    void addUrl(String? url) {
+      if (url == null) return;
+      final String trimmed = url.trim();
+      if (trimmed.isEmpty) return;
+      if (seen.add(trimmed)) {
+        ordered.add(trimmed);
+      }
+    }
+
+    addUrl(selectedUrl);
+    for (final url in allUrls) {
+      addUrl(url);
+    }
+
+    return ordered;
   }
 
   _SourceButtonConfig? _resolveSourceButtonConfig(String url) {

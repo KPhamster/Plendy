@@ -199,6 +199,12 @@ class _ChatScreenState extends State<ChatScreen> {
     bool isMine,
     MessageThreadParticipant? sender,
   ) {
+    // For experience share messages, use a special card layout
+    if (message.isExperienceShare) {
+      return _buildExperienceShareCard(message, isMine, sender);
+    }
+
+    // Regular text message bubble
     final alignment = isMine ? Alignment.centerRight : Alignment.centerLeft;
     final bubbleColor =
         isMine ? Theme.of(context).primaryColor : Colors.grey.shade200;
@@ -241,6 +247,197 @@ class _ChatScreenState extends State<ChatScreen> {
             Text(
               _formatMessageTime(message.createdAt),
               style: TextStyle(color: textColor.withOpacity(0.7), fontSize: 11),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildExperienceShareCard(
+    ChatMessage message,
+    bool isMine,
+    MessageThreadParticipant? sender,
+  ) {
+    final alignment = isMine ? Alignment.centerRight : Alignment.centerLeft;
+    final snapshot = message.experienceSnapshot;
+    
+    if (snapshot == null) {
+      // Fallback if snapshot is missing
+      return Align(
+        alignment: alignment,
+        child: Container(
+          margin: const EdgeInsets.symmetric(vertical: 4),
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.grey.shade200,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Text('Shared an experience'),
+        ),
+      );
+    }
+
+    final experienceName = snapshot['name'] as String? ?? 'Experience';
+    final locationData = snapshot['location'] as Map<String, dynamic>?;
+    final imageUrl = snapshot['image'] as String?;
+    final description = snapshot['description'] as String?;
+    
+    // Build location subtitle
+    final List<String> locationParts = [];
+    if (locationData != null) {
+      final city = locationData['city'] as String?;
+      final state = locationData['state'] as String?;
+      if (city != null && city.isNotEmpty) {
+        locationParts.add(city);
+      }
+      if (state != null && state.isNotEmpty) {
+        locationParts.add(state);
+      }
+    }
+    final locationText = locationParts.join(', ');
+
+    return Align(
+      alignment: alignment,
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 8),
+        constraints: BoxConstraints(
+          maxWidth: MediaQuery.of(context).size.width * 0.75,
+        ),
+        child: Column(
+          crossAxisAlignment:
+              isMine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (!isMine)
+              Padding(
+                padding: const EdgeInsets.only(left: 8, bottom: 4),
+                child: Text(
+                  '${sender?.displayLabel(fallback: 'Someone') ?? 'Someone'} shared',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.black54,
+                  ),
+                ),
+              ),
+            Card(
+              elevation: 2,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: InkWell(
+                onTap: () {
+                  // TODO: Open experience detail view
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Opening $experienceName...')),
+                  );
+                },
+                borderRadius: BorderRadius.circular(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (imageUrl != null && imageUrl.isNotEmpty)
+                      ClipRRect(
+                        borderRadius: const BorderRadius.vertical(
+                          top: Radius.circular(12),
+                        ),
+                        child: Image.network(
+                          imageUrl,
+                          height: 180,
+                          width: double.infinity,
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) {
+                            return Container(
+                              height: 180,
+                              color: Colors.grey.shade300,
+                              child: const Icon(
+                                Icons.image_not_supported,
+                                size: 48,
+                                color: Colors.grey,
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    Padding(
+                      padding: const EdgeInsets.all(12.0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  experienceName,
+                                  style: const TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              const Icon(
+                                Icons.arrow_forward_ios,
+                                size: 16,
+                                color: Colors.grey,
+                              ),
+                            ],
+                          ),
+                          if (locationText.isNotEmpty) ...[
+                            const SizedBox(height: 4),
+                            Row(
+                              children: [
+                                const Icon(
+                                  Icons.place_outlined,
+                                  size: 14,
+                                  color: Colors.grey,
+                                ),
+                                const SizedBox(width: 4),
+                                Expanded(
+                                  child: Text(
+                                    locationText,
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      color: Colors.grey.shade700,
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                          if (description != null && description.isNotEmpty) ...[
+                            const SizedBox(height: 8),
+                            Text(
+                              description,
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: Colors.grey.shade600,
+                              ),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.only(top: 4, left: 8, right: 8),
+              child: Text(
+                _formatMessageTime(message.createdAt),
+                style: const TextStyle(
+                  color: Colors.grey,
+                  fontSize: 11,
+                ),
+              ),
             ),
           ],
         ),

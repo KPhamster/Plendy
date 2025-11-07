@@ -151,10 +151,45 @@ class MessageService {
         'senderId': senderId,
         'text': trimmed,
         'createdAt': now,
+        'type': 'text',
       });
 
       transaction.update(threadRef, {
         'lastMessage': trimmed,
+        'lastMessageSenderId': senderId,
+        'lastMessageTimestamp': now,
+        'updatedAt': now,
+      });
+    });
+
+    return messageRef.id;
+  }
+
+  Future<String> sendExperienceShareMessage({
+    required String threadId,
+    required String senderId,
+    required Map<String, dynamic> experienceSnapshot,
+    required String shareId,
+  }) async {
+    final experienceName = experienceSnapshot['name'] as String? ?? 'an experience';
+    final messageText = 'Shared $experienceName';
+
+    final threadRef = _threads.doc(threadId);
+    final messageRef = threadRef.collection('messages').doc();
+    final now = FieldValue.serverTimestamp();
+
+    await _firestore.runTransaction((transaction) async {
+      transaction.set(messageRef, {
+        'senderId': senderId,
+        'text': messageText,
+        'createdAt': now,
+        'type': 'experienceShare',
+        'experienceSnapshot': experienceSnapshot,
+        'shareId': shareId,
+      });
+
+      transaction.update(threadRef, {
+        'lastMessage': messageText,
         'lastMessageSenderId': senderId,
         'lastMessageTimestamp': now,
         'updatedAt': now,
