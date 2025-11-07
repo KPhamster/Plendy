@@ -1784,6 +1784,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
         await _experienceShareService.createDirectShare(
           experience: baseExperience,
           toUserIds: recipientIds,
+          highlightedMediaUrl: item.mediaUrl, // Pass the specific media URL being viewed
         );
       },
     );

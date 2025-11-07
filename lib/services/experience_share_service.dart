@@ -27,12 +27,18 @@ class ExperienceShareService {
     required List<String> toUserIds,
     String? message,
     bool collaboration = false,
+    String? highlightedMediaUrl, // For discovery preview shares
   }) async {
     final userId = _currentUserId;
     if (userId == null) throw Exception('User not authenticated');
     if (toUserIds.isEmpty) throw Exception('No recipients provided');
 
     final snapshot = await _buildSnapshotFromExperienceAsync(experience);
+    
+    // Add highlighted media URL to snapshot if provided (for discovery shares)
+    if (highlightedMediaUrl != null && highlightedMediaUrl.isNotEmpty) {
+      snapshot['highlightedMediaUrl'] = highlightedMediaUrl;
+    }
 
     final data = {
       'experienceId': experience.id,
@@ -43,6 +49,8 @@ class ExperienceShareService {
       if (message != null && message.isNotEmpty) 'message': message,
       'createdAt': FieldValue.serverTimestamp(),
       'snapshot': snapshot,
+      if (highlightedMediaUrl != null && highlightedMediaUrl.isNotEmpty)
+        'highlightedMediaUrl': highlightedMediaUrl,
     };
 
     // Write to the main experience_shares collection for record keeping
