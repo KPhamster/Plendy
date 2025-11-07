@@ -1,7 +1,14 @@
+import 'dart:async';
+import 'dart:math';
+
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/app_constants.dart';
+import '../models/user_profile.dart';
+import '../services/user_service.dart';
 
 typedef ShareBottomSheetCreateLinkCallback = Future<void> Function({
   required String shareMode,
@@ -10,7 +17,7 @@ typedef ShareBottomSheetCreateLinkCallback = Future<void> Function({
 
 Future<T?> showShareExperienceBottomSheet<T>({
   required BuildContext context,
-  required VoidCallback onDirectShare,
+  required Future<void> Function() onDirectShare,
   required ShareBottomSheetCreateLinkCallback onCreateLink,
 }) {
   return showModalBottomSheet<T>(
@@ -35,7 +42,7 @@ class ShareExperienceBottomSheetContent extends StatefulWidget {
     required this.onCreateLink,
   });
 
-  final VoidCallback onDirectShare;
+  final Future<void> Function() onDirectShare;
   final ShareBottomSheetCreateLinkCallback onCreateLink;
 
   @override
@@ -103,7 +110,7 @@ class _ShareExperienceBottomSheetContentState
                 await _persistChoice();
                 if (!mounted) return;
                 Navigator.of(context).pop();
-                widget.onDirectShare();
+                await widget.onDirectShare();
               },
             ),
             ListTile(
@@ -135,6 +142,537 @@ class _ShareExperienceBottomSheetContentState
                     },
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+typedef ShareToFriendsSubmit = Future<void> Function(List<String> userIds);
+
+Future<bool?> showShareToFriendsModal({
+  required BuildContext context,
+  required ShareToFriendsSubmit onSubmit,
+  String? subjectLabel,
+}) {
+  return showModalBottomSheet<bool>(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: Colors.white,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+    ),
+    builder: (ctx) => ShareToFriendsSheet(
+      onSubmit: onSubmit,
+      subjectLabel: subjectLabel,
+    ),
+  );
+}
+
+class ShareToFriendsSheet extends StatefulWidget {
+  const ShareToFriendsSheet({
+    super.key,
+    required this.onSubmit,
+    this.subjectLabel,
+  });
+
+  final ShareToFriendsSubmit onSubmit;
+  final String? subjectLabel;
+
+  @override
+  State<ShareToFriendsSheet> createState() => _ShareToFriendsSheetState();
+}
+
+class _ShareToFriendsSheetState extends State<ShareToFriendsSheet> {
+  final TextEditingController _searchController = TextEditingController();
+  final UserService _userService = UserService();
+  final Map<String, UserProfile> _selectedProfiles = {};
+  final Map<String, DateTime> _lastSharedAt = {};
+
+  final List<UserProfile> _orderedFriends = [];
+  List<UserProfile> _searchResults = [];
+  Set<String> _friendIdSet = {};
+
+  bool _isLoading = true;
+  bool _isSearching = false;
+  bool _isSubmitting = false;
+  String? _initializationError;
+
+  Timer? _debounce;
+
+  @override
+  void initState() {
+    super.initState();
+    _searchController.addListener(_onSearchChanged);
+    _loadFriends();
+  }
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    _searchController
+      ..removeListener(_onSearchChanged)
+      ..dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadFriends() async {
+    final User? currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser == null) {
+      setState(() {
+        _isLoading = false;
+        _initializationError = 'You must be signed in to share with friends.';
+      });
+      return;
+    }
+
+    try {
+      final List<String> friendIds =
+          await _userService.getFriendIds(currentUser.uid);
+      final Set<String> friendIdSet = friendIds.toSet();
+      final Map<String, DateTime> recency =
+          await _fetchRecentShareRecipients(currentUser.uid, friendIdSet);
+      final List<UserProfile> profiles = await _fetchProfiles(friendIds);
+
+      profiles.sort(_compareProfilesByRecency);
+
+      if (!mounted) return;
+      setState(() {
+        _friendIdSet = friendIdSet;
+        _lastSharedAt
+          ..clear()
+          ..addAll(recency);
+        _orderedFriends
+          ..clear()
+          ..addAll(profiles);
+        _isLoading = false;
+      });
+    } catch (e) {
+      debugPrint('ShareToFriendsSheet: Failed to load friends: $e');
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _initializationError =
+            'Unable to load your friends right now. Please try again.';
+      });
+    }
+  }
+
+  Future<Map<String, DateTime>> _fetchRecentShareRecipients(
+    String userId,
+    Set<String> allowedIds,
+  ) async {
+    final Map<String, DateTime> recency = {};
+    try {
+      Query<Map<String, dynamic>> query = FirebaseFirestore.instance
+          .collection('experience_shares')
+          .where('fromUserId', isEqualTo: userId)
+          .orderBy('createdAt', descending: true)
+          .limit(200);
+
+      final QuerySnapshot<Map<String, dynamic>> snapshot = await query.get();
+      for (final doc in snapshot.docs) {
+        final data = doc.data();
+        final List<dynamic> rawRecipients =
+            data['toUserIds'] as List<dynamic>? ?? const [];
+        final Timestamp? ts = data['createdAt'] as Timestamp?;
+        final DateTime createdAt =
+            ts?.toDate() ?? DateTime.fromMillisecondsSinceEpoch(0);
+
+        for (final dynamic raw in rawRecipients) {
+          if (raw is! String || raw.isEmpty) continue;
+          if (!allowedIds.contains(raw)) continue;
+          final DateTime? existing = recency[raw];
+          if (existing == null || createdAt.isAfter(existing)) {
+            recency[raw] = createdAt;
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('ShareToFriendsSheet: Failed to load recency: $e');
+    }
+    return recency;
+  }
+
+  Future<List<UserProfile>> _fetchProfiles(List<String> userIds) async {
+    if (userIds.isEmpty) return const <UserProfile>[];
+    final FirebaseFirestore firestore = FirebaseFirestore.instance;
+    final Map<String, UserProfile> profiles = {};
+
+    for (int i = 0; i < userIds.length; i += 10) {
+      final List<String> chunk =
+          userIds.sublist(i, min(i + 10, userIds.length));
+      final QuerySnapshot<Map<String, dynamic>> snapshot = await firestore
+          .collection('users')
+          .where(FieldPath.documentId, whereIn: chunk)
+          .get();
+      for (final doc in snapshot.docs) {
+        profiles[doc.id] = UserProfile.fromMap(doc.id, doc.data());
+      }
+    }
+
+    return userIds
+        .where(profiles.containsKey)
+        .map((id) => profiles[id]!)
+        .toList();
+  }
+
+  void _onSearchChanged() {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 250), () async {
+      final String query = _searchController.text.trim();
+      if (query.isEmpty) {
+        if (!mounted) return;
+        setState(() {
+          _searchResults = [];
+        });
+        return;
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _isSearching = true;
+      });
+
+      try {
+        final results = await _userService.searchUsers(query);
+        final filtered = results
+            .where((profile) => _friendIdSet.contains(profile.id))
+            .toList()
+          ..sort(_compareProfilesByRecency);
+        if (!mounted) return;
+        setState(() {
+          _searchResults = filtered;
+        });
+      } catch (e) {
+        debugPrint('ShareToFriendsSheet: search failed: $e');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Could not search right now.')),
+          );
+        }
+      } finally {
+        if (!mounted) return;
+        setState(() {
+          _isSearching = false;
+        });
+      }
+    });
+  }
+
+  int _compareProfilesByRecency(UserProfile a, UserProfile b) {
+    final DateTime? lastA = _lastSharedAt[a.id];
+    final DateTime? lastB = _lastSharedAt[b.id];
+    if (lastA != null && lastB != null) {
+      final int comparison = lastB.compareTo(lastA);
+      if (comparison != 0) {
+        return comparison;
+      }
+    } else if (lastA != null) {
+      return -1;
+    } else if (lastB != null) {
+      return 1;
+    }
+    final String nameA =
+        (a.displayName ?? a.username ?? '').toLowerCase().trim();
+    final String nameB =
+        (b.displayName ?? b.username ?? '').toLowerCase().trim();
+    return nameA.compareTo(nameB);
+  }
+
+  void _toggleSelection(UserProfile profile) {
+    setState(() {
+      if (_selectedProfiles.containsKey(profile.id)) {
+        _selectedProfiles.remove(profile.id);
+      } else {
+        _selectedProfiles[profile.id] = profile;
+      }
+    });
+  }
+
+  Future<void> _submitShare() async {
+    if (_selectedProfiles.isEmpty || _isSubmitting) {
+      return;
+    }
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _isSubmitting = true;
+    });
+    try {
+      await widget.onSubmit(_selectedProfiles.keys.toList());
+      if (!mounted) return;
+      Navigator.of(context).pop(true);
+    } catch (e) {
+      debugPrint('ShareToFriendsSheet: submit failed: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Unable to send share. Please try again.'),
+          ),
+        );
+        setState(() {
+          _isSubmitting = false;
+        });
+      }
+    }
+  }
+
+  String? _buildSubtitle(UserProfile profile) {
+    final List<String> parts = [];
+    if (profile.username != null && profile.username!.isNotEmpty) {
+      parts.add('@${profile.username!}');
+    }
+    final DateTime? lastShared = _lastSharedAt[profile.id];
+    if (lastShared != null) {
+      parts.add(_formatRelativeTime(lastShared));
+    }
+    if (parts.isEmpty) return null;
+    return parts.join(' • ');
+  }
+
+  String _formatRelativeTime(DateTime timestamp) {
+    final Duration diff = DateTime.now().difference(timestamp);
+    if (diff.inMinutes < 1) return 'Just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    if (diff.inDays < 7) return '${diff.inDays}d ago';
+    if (diff.inDays < 30) return '${(diff.inDays / 7).floor()}w ago';
+    if (diff.inDays < 365) return '${(diff.inDays / 30).floor()}mo ago';
+    return '${(diff.inDays / 365).floor()}y ago';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final mediaQuery = MediaQuery.of(context);
+    final bottomInset = mediaQuery.viewInsets.bottom;
+    final bool hasSelection = _selectedProfiles.isNotEmpty;
+    final bool isSearching = _searchController.text.trim().isNotEmpty;
+    final List<UserProfile> visibleProfiles =
+        isSearching ? _searchResults : _orderedFriends;
+
+    return FractionallySizedBox(
+      heightFactor: 0.9,
+      child: SafeArea(
+        child: Padding(
+          padding: EdgeInsets.only(bottom: bottomInset),
+          child: Column(
+            children: [
+              _buildHeader(context),
+              _buildSearchField(),
+              if (widget.subjectLabel != null &&
+                  widget.subjectLabel!.isNotEmpty)
+                Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.location_on_outlined, size: 18),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          widget.subjectLabel!,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              if (hasSelection) _buildSelectionChips(),
+              Expanded(
+                child: _buildListContent(
+                  isSearching: isSearching,
+                  visibleProfiles: visibleProfiles,
+                ),
+              ),
+              _buildShareButton(hasSelection),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHeader(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 8, 8),
+      child: Row(
+        children: [
+          const Text(
+            'Share to friends',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+          ),
+          const Spacer(),
+          IconButton(
+            icon: const Icon(Icons.close),
+            onPressed: () => Navigator.of(context).pop(false),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSearchField() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: TextField(
+        controller: _searchController,
+        decoration: InputDecoration(
+          hintText: 'Search by username or name',
+          prefixIcon: const Icon(Icons.search),
+          suffixIcon: _searchController.text.isNotEmpty
+              ? IconButton(
+                  icon: const Icon(Icons.clear),
+                  onPressed: () {
+                    _searchController.clear();
+                    setState(() {
+                      _searchResults = [];
+                    });
+                  },
+                )
+              : null,
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSelectionChips() {
+    return SizedBox(
+      height: 72,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        children: _selectedProfiles.values.map((profile) {
+          final String display =
+              profile.displayName ?? profile.username ?? 'Friend';
+          return Padding(
+            padding: const EdgeInsets.only(right: 8.0),
+            child: Chip(
+              label: Text(display),
+              avatar: profile.photoURL != null && profile.photoURL!.isNotEmpty
+                  ? CircleAvatar(
+                      backgroundImage: NetworkImage(profile.photoURL!),
+                    )
+                  : null,
+              deleteIcon: const Icon(Icons.close),
+              onDeleted: () {
+                setState(() {
+                  _selectedProfiles.remove(profile.id);
+                });
+              },
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  Widget _buildListContent({
+    required bool isSearching,
+    required List<UserProfile> visibleProfiles,
+  }) {
+    if (_isLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (_initializationError != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          child: Text(
+            _initializationError!,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 14),
+          ),
+        ),
+      );
+    }
+
+    if (_friendIdSet.isEmpty) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.symmetric(horizontal: 24),
+          child: Text(
+            'You have no Plendy friends yet. Follow people back to share with them.',
+            textAlign: TextAlign.center,
+          ),
+        ),
+      );
+    }
+
+    if (isSearching) {
+      if (_isSearching) {
+        return const Center(child: CircularProgressIndicator());
+      }
+      if (visibleProfiles.isEmpty) {
+        return const Center(
+          child: Text('No friends found.'),
+        );
+      }
+    } else if (visibleProfiles.isEmpty) {
+      return const Center(
+        child: Text('No recent friends to show yet.'),
+      );
+    }
+
+    return ListView.separated(
+      itemCount: visibleProfiles.length,
+      separatorBuilder: (_, __) => const Divider(height: 1),
+      itemBuilder: (context, index) {
+        final profile = visibleProfiles[index];
+        final bool isSelected = _selectedProfiles.containsKey(profile.id);
+        final String title =
+            profile.displayName ?? profile.username ?? 'Friend';
+        return ListTile(
+          leading: profile.photoURL != null && profile.photoURL!.isNotEmpty
+              ? CircleAvatar(
+                  backgroundImage: NetworkImage(profile.photoURL!),
+                )
+              : CircleAvatar(
+                  child: Text(
+                    title.isNotEmpty ? title[0].toUpperCase() : '?',
+                  ),
+                ),
+          title: Text(title),
+          subtitle: _buildSubtitle(profile) != null
+              ? Text(_buildSubtitle(profile)!)
+              : null,
+          trailing: Icon(
+            isSelected ? Icons.check_circle : Icons.radio_button_unchecked,
+            color: isSelected ? Theme.of(context).primaryColor : Colors.grey,
+          ),
+          onTap: () => _toggleSelection(profile),
+        );
+      },
+    );
+  }
+
+  Widget _buildShareButton(bool hasSelection) {
+    final String label =
+        hasSelection ? 'Share (${_selectedProfiles.length})' : 'Share';
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+        child: SizedBox(
+          width: double.infinity,
+          child: ElevatedButton(
+            onPressed: hasSelection && !_isSubmitting ? _submitShare : null,
+            child: _isSubmitting
+                ? const SizedBox(
+                    height: 20,
+                    width: 20,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: Colors.white),
+                  )
+                : Text(label),
+          ),
         ),
       ),
     );

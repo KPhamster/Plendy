@@ -4,10 +4,12 @@ import 'package:firebase_auth/firebase_auth.dart';
 import '../models/experience.dart';
 import '../models/shared_media_item.dart';
 import 'experience_service.dart';
+import 'message_service.dart';
 
 class ExperienceShareService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
+  final MessageService _messageService = MessageService();
 
   CollectionReference get _shares => _firestore.collection('experience_shares');
 
@@ -43,8 +45,32 @@ class ExperienceShareService {
       'snapshot': snapshot,
     };
 
-    final docRef = await _shares.add(data);
-    return docRef.id;
+    // Write to the main experience_shares collection for record keeping
+    final shareDocRef = await _shares.add(data);
+    
+    // Send experience share message to each recipient via their message thread
+    for (final recipientId in toUserIds) {
+      try {
+        // Get or create a thread between sender and recipient
+        final thread = await _messageService.createOrGetThread(
+          currentUserId: userId,
+          participantIds: [recipientId],
+        );
+        
+        // Send the experience share as a message
+        await _messageService.sendExperienceShareMessage(
+          threadId: thread.id,
+          senderId: userId,
+          experienceSnapshot: snapshot,
+          shareId: shareDocRef.id,
+        );
+      } catch (e) {
+        // Log error but don't fail the entire share
+        print('Failed to send share message to $recipientId: $e');
+      }
+    }
+    
+    return shareDocRef.id;
   }
 
   Future<String> createLinkShare({

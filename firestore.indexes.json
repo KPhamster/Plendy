@@ -23,6 +23,14 @@
         { "fieldPath": "sharedWithUserIds", "arrayConfig": "CONTAINS" },
         { "fieldPath": "location.city", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "experience_shares",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "fromUserId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": [
