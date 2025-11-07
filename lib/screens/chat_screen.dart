@@ -3,9 +3,16 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../models/chat_message.dart';
+import '../models/color_category.dart';
+import '../models/experience.dart';
 import '../models/message_thread.dart';
 import '../models/message_thread_participant.dart';
+import '../models/shared_media_item.dart';
+import '../models/user_category.dart';
+import '../services/experience_service.dart';
 import '../services/message_service.dart';
+import '../widgets/shared_media_preview_modal.dart';
+import 'experience_page_screen.dart';
 import 'messages_screen.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -24,14 +31,20 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen> {
   late final MessageService _messageService;
+  late final ExperienceService _experienceService;
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   bool _sending = false;
+  
+  List<UserCategory> _userCategories = [];
+  List<ColorCategory> _userColorCategories = [];
+  Future<void>? _userCollectionsFuture;
 
   @override
   void initState() {
     super.initState();
     _messageService = MessageService();
+    _experienceService = ExperienceService();
   }
 
   @override
@@ -126,7 +139,10 @@ class _ChatScreenState extends State<ChatScreen> {
         final thread = threadSnapshot.data ?? widget.thread;
         final title = _buildTitle(thread);
         return Scaffold(
+          backgroundColor: Colors.white,
           appBar: AppBar(
+            backgroundColor: Colors.white,
+            foregroundColor: Colors.black,
             leading: BackButton(onPressed: _handleBackPressed),
             title: Text(title),
           ),
@@ -357,10 +373,10 @@ class _ChatScreenState extends State<ChatScreen> {
               child: Stack(
                 children: [
                   InkWell(
-                    onTap: () => _handleExperienceShareTap(
+                    onTap: () => _showMediaPreviewModal(
                       experienceName: experienceName,
-                      highlightedMediaUrl: highlightedMediaUrl,
-                      snapshot: snapshot,
+                      mediaUrl: highlightedMediaUrl ?? (snapshot['image'] as String?),
+                      experienceSnapshot: snapshot,
                     ),
                     borderRadius: BorderRadius.circular(12),
                     child: Column(
@@ -445,17 +461,24 @@ class _ChatScreenState extends State<ChatScreen> {
                   Positioned(
                     right: 12,
                     bottom: 12,
-                    child: Container(
-                      width: 48,
-                      height: 48,
-                      decoration: BoxDecoration(
-                        color: Theme.of(context).primaryColor,
-                        shape: BoxShape.circle,
+                    child: GestureDetector(
+                      onTap: () => _showMediaPreviewModal(
+                        experienceName: experienceName,
+                        mediaUrl: highlightedMediaUrl ?? (snapshot['image'] as String?),
+                        experienceSnapshot: snapshot,
                       ),
-                      child: const Icon(
-                        Icons.play_arrow,
-                        color: Colors.white,
-                        size: 28,
+                      child: Container(
+                        width: 48,
+                        height: 48,
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).primaryColor,
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.play_arrow,
+                          color: Colors.white,
+                          size: 28,
+                        ),
                       ),
                     ),
                   ),
@@ -571,23 +594,196 @@ class _ChatScreenState extends State<ChatScreen> {
         .join(', ');
   }
 
-  Future<void> _handleExperienceShareTap({
+  Future<void> _showMediaPreviewModal({
     required String experienceName,
-    required String? highlightedMediaUrl,
-    required Map<String, dynamic> snapshot,
+    required String? mediaUrl,
+    required Map<String, dynamic> experienceSnapshot,
   }) async {
-    // If it's a discovery preview share with a highlighted media URL, open the URL
-    if (highlightedMediaUrl != null && highlightedMediaUrl.isNotEmpty) {
-      await _openLink(Uri.parse(highlightedMediaUrl));
+    if (mediaUrl == null || mediaUrl.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No media available to preview')),
+      );
       return;
     }
 
-    // Otherwise, show the experience details (TODO: implement full experience view)
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Opening $experienceName...'),
-        duration: const Duration(seconds: 2),
+    // Check if the current user owns or has edit access to the experience
+    final currentUserId = widget.currentUserId;
+    final createdBy = experienceSnapshot['createdBy'] as String?;
+    final ownerUserId = experienceSnapshot['ownerUserId'] as String?;
+    final editorUserIds = experienceSnapshot['editorUserIds'] as List<dynamic>?;
+    
+    final bool hasAccess = createdBy == currentUserId ||
+        ownerUserId == currentUserId ||
+        (editorUserIds != null && editorUserIds.contains(currentUserId));
+
+    // Create a minimal Experience object for the preview modal
+    final experience = Experience(
+      id: experienceSnapshot['id'] as String? ?? 'preview_${DateTime.now().millisecondsSinceEpoch}',
+      name: experienceName,
+      description: experienceSnapshot['description'] as String? ?? '',
+      location: Location.fromMap(experienceSnapshot['location'] as Map<String, dynamic>? ?? {}),
+      createdAt: DateTime.now(),
+      updatedAt: DateTime.now(),
+      editorUserIds: editorUserIds?.map((e) => e.toString()).toList() ?? [],
+      createdBy: createdBy,
+    );
+
+    // Create a SharedMediaItem from the media URL
+    final mediaItem = SharedMediaItem(
+      id: 'preview_${DateTime.now().millisecondsSinceEpoch}',
+      path: mediaUrl,
+      createdAt: DateTime.now(),
+      ownerUserId: currentUserId,
+      experienceIds: [],
+    );
+
+    if (!mounted) return;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      useRootNavigator: true,
+      builder: (modalContext) {
+        return SharedMediaPreviewModal(
+          experience: experience,
+          mediaItem: mediaItem,
+          mediaItems: [mediaItem],
+          onLaunchUrl: (url) => _openLink(Uri.parse(url)),
+          category: null,
+          userColorCategories: const [],
+          showSavedDate: hasAccess, // Only show saved date if user has access
+          onViewExperience: () => _handleViewExperience(experience, experienceSnapshot),
+        );
+      },
+    );
+  }
+
+  Future<void> _handleViewExperience(Experience experience, Map<String, dynamic> snapshot) async {
+    // Extract place ID from snapshot
+    final locationData = snapshot['location'] as Map<String, dynamic>?;
+    final String? placeId = locationData?['placeId'] as String?;
+    
+    // Try to find if user has an editable experience at this place
+    Experience? editableExperience;
+    if (placeId != null && placeId.isNotEmpty) {
+      editableExperience = await _experienceService.findEditableExperienceByPlaceId(placeId);
+    }
+    
+    if (!mounted) return;
+    
+    if (editableExperience != null) {
+      // User has an editable experience at this place
+      await _openEditableExperience(editableExperience);
+    } else {
+      // No editable experience - show as read-only
+      await _openReadOnlyExperience(experience, snapshot);
+    }
+  }
+
+  Future<void> _openEditableExperience(Experience experience) async {
+    await _ensureUserCollectionsLoaded();
+    final UserCategory category = _resolveCategoryForExperience(experience);
+    final List<ColorCategory> colorCategories = _userColorCategories.isEmpty
+        ? const <ColorCategory>[]
+        : _userColorCategories;
+
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ExperiencePageScreen(
+          experience: experience,
+          category: category,
+          userColorCategories: colorCategories,
+        ),
       ),
+    );
+  }
+
+  Future<void> _openReadOnlyExperience(Experience experience, Map<String, dynamic> snapshot) async {
+    // Create a read-only category
+    const readOnlyCategory = UserCategory(
+      id: 'shared_readonly_category',
+      name: 'Shared',
+      icon: '🔗',
+      ownerUserId: 'shared',
+    );
+
+    // Build media items from the snapshot if available
+    final List<SharedMediaItem> mediaItems = [];
+    final mediaUrls = (snapshot['imageUrls'] as List<dynamic>?)?.cast<String>() ?? [];
+    for (final url in mediaUrls) {
+      if (url.isNotEmpty) {
+        mediaItems.add(
+          SharedMediaItem(
+            id: 'preview_${DateTime.now().millisecondsSinceEpoch}_${mediaItems.length}',
+            path: url,
+            createdAt: DateTime.now(),
+            ownerUserId: widget.currentUserId,
+            experienceIds: [],
+          ),
+        );
+      }
+    }
+
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ExperiencePageScreen(
+          experience: experience,
+          category: readOnlyCategory,
+          userColorCategories: const <ColorCategory>[],
+          initialMediaItems: mediaItems.isNotEmpty ? mediaItems : null,
+          readOnlyPreview: true,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _ensureUserCollectionsLoaded() {
+    if (_userCollectionsFuture != null) {
+      return _userCollectionsFuture!;
+    }
+    _userCollectionsFuture = _loadUserCollections().whenComplete(() {
+      _userCollectionsFuture = null;
+    });
+    return _userCollectionsFuture!;
+  }
+
+  Future<void> _loadUserCollections() async {
+    try {
+      final categories = await _experienceService.getUserCategories(
+        includeSharedEditable: true,
+      );
+      final colorCategories = await _experienceService.getUserColorCategories(
+        includeSharedEditable: true,
+      );
+      if (mounted) {
+        setState(() {
+          _userCategories = categories;
+          _userColorCategories = colorCategories;
+        });
+      }
+    } catch (e) {
+      debugPrint('ChatScreen: Failed to load user collections: $e');
+    }
+  }
+
+  UserCategory _resolveCategoryForExperience(Experience experience) {
+    if (experience.categoryId != null) {
+      for (final category in _userCategories) {
+        if (category.id == experience.categoryId) {
+          return category;
+        }
+      }
+    }
+
+    final bool isUncategorized =
+        experience.categoryId == null || experience.categoryId!.isEmpty;
+
+    return UserCategory(
+      id: experience.categoryId ?? 'uncategorized',
+      name: isUncategorized ? 'Uncategorized' : 'Collection',
+      icon: '📍',
+      ownerUserId: experience.createdBy ?? 'system_default',
     );
   }
 

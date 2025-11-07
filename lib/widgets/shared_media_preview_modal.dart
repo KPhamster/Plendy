@@ -27,6 +27,8 @@ class SharedMediaPreviewModal extends StatefulWidget {
   final Future<void> Function(String url) onLaunchUrl;
   final UserCategory? category;
   final List<ColorCategory> userColorCategories;
+  final bool showSavedDate; // Whether to show the "Saved" date/time in metadata
+  final VoidCallback? onViewExperience; // Custom handler for viewing the experience
 
   const SharedMediaPreviewModal({
     super.key,
@@ -36,6 +38,8 @@ class SharedMediaPreviewModal extends StatefulWidget {
     required this.onLaunchUrl,
     this.category,
     this.userColorCategories = const <ColorCategory>[],
+    this.showSavedDate = true, // Default to showing it
+    this.onViewExperience, // Optional custom handler
   });
 
   @override
@@ -480,15 +484,17 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _buildMetadataRow(
-                icon: Icons.schedule,
-                label: 'Saved',
-                value: formattedDate,
-                iconColor: Colors.white,
-                labelColor: Colors.white,
-                valueColor: Colors.white,
-              ),
-              const SizedBox(height: 8),
+              if (widget.showSavedDate) ...[
+                _buildMetadataRow(
+                  icon: Icons.schedule,
+                  label: 'Saved',
+                  value: formattedDate,
+                  iconColor: Colors.white,
+                  labelColor: Colors.white,
+                  valueColor: Colors.white,
+                ),
+                const SizedBox(height: 8),
+              ],
               _buildMetadataRow(
                 icon: Icons.public,
                 label: 'URL',
@@ -675,15 +681,21 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
               onPressed: () {
                 final navigator = Navigator.of(context, rootNavigator: true);
                 navigator.pop();
-                navigator.push(
-                  MaterialPageRoute(
-                    builder: (_) => ExperiencePageScreen(
-                      experience: widget.experience,
-                      category: widget.category ?? _buildFallbackCategory(),
-                      userColorCategories: widget.userColorCategories,
+                
+                // Use custom handler if provided, otherwise use default behavior
+                if (widget.onViewExperience != null) {
+                  widget.onViewExperience!();
+                } else {
+                  navigator.push(
+                    MaterialPageRoute(
+                      builder: (_) => ExperiencePageScreen(
+                        experience: widget.experience,
+                        category: widget.category ?? _buildFallbackCategory(),
+                        userColorCategories: widget.userColorCategories,
+                      ),
                     ),
-                  ),
-                );
+                  );
+                }
               },
             ),
           ),
