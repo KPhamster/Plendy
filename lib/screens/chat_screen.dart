@@ -13,7 +13,6 @@ import '../services/experience_service.dart';
 import '../services/message_service.dart';
 import '../widgets/shared_media_preview_modal.dart';
 import 'experience_page_screen.dart';
-import 'messages_screen.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({
@@ -125,9 +124,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _handleBackPressed() {
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (context) => const MessagesScreen()),
-    );
+    Navigator.of(context).pop();
   }
 
   @override
