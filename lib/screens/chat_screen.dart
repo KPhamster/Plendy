@@ -370,11 +370,30 @@ class _ChatScreenState extends State<ChatScreen> {
               child: Stack(
                 children: [
                   InkWell(
-                    onTap: () => _showMediaPreviewModal(
-                      experienceName: experienceName,
-                      mediaUrl: highlightedMediaUrl ?? (snapshot['image'] as String?),
-                      experienceSnapshot: snapshot,
-                    ),
+                    onTap: () async {
+                      if (isDiscoveryPreview) {
+                        // Discovery preview: show media preview modal
+                        await _showMediaPreviewModal(
+                          experienceName: experienceName,
+                          mediaUrl: highlightedMediaUrl,
+                          experienceSnapshot: snapshot,
+                        );
+                      } else {
+                        // Full experience share: open experience directly
+                        final experience = Experience(
+                          id: snapshot['id'] as String? ?? 'preview_${DateTime.now().millisecondsSinceEpoch}',
+                          name: experienceName,
+                          description: snapshot['description'] as String? ?? '',
+                          location: Location.fromMap(snapshot['location'] as Map<String, dynamic>? ?? {}),
+                          createdAt: DateTime.now(),
+                          updatedAt: DateTime.now(),
+                          editorUserIds: (snapshot['editorUserIds'] as List<dynamic>?)?.map((e) => e.toString()).toList() ?? [],
+                          createdBy: snapshot['createdBy'] as String?,
+                          sharedMediaItemIds: (snapshot['sharedMediaItemIds'] as List<dynamic>?)?.cast<String>() ?? [],
+                        );
+                        await _handleViewExperience(experience, snapshot);
+                      }
+                    },
                     borderRadius: BorderRadius.circular(12),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -454,31 +473,32 @@ class _ChatScreenState extends State<ChatScreen> {
                   ],
                 ),
                   ),
-                  // Play button positioned on the bottom-right
-                  Positioned(
-                    right: 12,
-                    bottom: 12,
-                    child: GestureDetector(
-                      onTap: () => _showMediaPreviewModal(
-                        experienceName: experienceName,
-                        mediaUrl: highlightedMediaUrl ?? (snapshot['image'] as String?),
-                        experienceSnapshot: snapshot,
-                      ),
-                      child: Container(
-                        width: 48,
-                        height: 48,
-                        decoration: BoxDecoration(
-                          color: Theme.of(context).primaryColor,
-                          shape: BoxShape.circle,
+                  // Play button positioned on the bottom-right (only for discovery previews)
+                  if (isDiscoveryPreview)
+                    Positioned(
+                      right: 12,
+                      bottom: 12,
+                      child: GestureDetector(
+                        onTap: () => _showMediaPreviewModal(
+                          experienceName: experienceName,
+                          mediaUrl: highlightedMediaUrl,
+                          experienceSnapshot: snapshot,
                         ),
-                        child: const Icon(
-                          Icons.play_arrow,
-                          color: Colors.white,
-                          size: 28,
+                        child: Container(
+                          width: 48,
+                          height: 48,
+                          decoration: BoxDecoration(
+                            color: Theme.of(context).primaryColor,
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.play_arrow,
+                            color: Colors.white,
+                            size: 28,
+                          ),
                         ),
                       ),
                     ),
-                  ),
                 ],
               ),
             ),
@@ -623,6 +643,7 @@ class _ChatScreenState extends State<ChatScreen> {
       updatedAt: DateTime.now(),
       editorUserIds: editorUserIds?.map((e) => e.toString()).toList() ?? [],
       createdBy: createdBy,
+      sharedMediaItemIds: (experienceSnapshot['sharedMediaItemIds'] as List<dynamic>?)?.cast<String>() ?? [],
     );
 
     // Create a SharedMediaItem from the media URL
@@ -705,30 +726,20 @@ class _ChatScreenState extends State<ChatScreen> {
       ownerUserId: 'shared',
     );
 
-    // Build media items from the snapshot if available
-    final List<SharedMediaItem> mediaItems = [];
-    final mediaUrls = (snapshot['imageUrls'] as List<dynamic>?)?.cast<String>() ?? [];
-    for (final url in mediaUrls) {
-      if (url.isNotEmpty) {
-        mediaItems.add(
-          SharedMediaItem(
-            id: 'preview_${DateTime.now().millisecondsSinceEpoch}_${mediaItems.length}',
-            path: url,
-            createdAt: DateTime.now(),
-            ownerUserId: widget.currentUserId,
-            experienceIds: [],
-          ),
-        );
-      }
-    }
+    // Get sharedMediaItemIds from the snapshot
+    final sharedMediaItemIds = (snapshot['sharedMediaItemIds'] as List<dynamic>?)?.cast<String>() ?? [];
+    
+    // Create an experience with the sharedMediaItemIds so the content tab can load them
+    final experienceWithMedia = experience.copyWith(
+      sharedMediaItemIds: sharedMediaItemIds,
+    );
 
     await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => ExperiencePageScreen(
-          experience: experience,
+          experience: experienceWithMedia,
           category: readOnlyCategory,
           userColorCategories: const <ColorCategory>[],
-          initialMediaItems: mediaItems.isNotEmpty ? mediaItems : null,
           readOnlyPreview: true,
         ),
       ),
