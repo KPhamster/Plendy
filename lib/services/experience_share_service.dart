@@ -175,16 +175,20 @@ class ExperienceShareService {
     }
 
     return {
+      'id': exp.id,
       'name': exp.name,
       'description': exp.description,
       'image': (exp.imageUrls.isNotEmpty ? exp.imageUrls.first : null),
       'imageUrls': exp.imageUrls, // include gallery images
       'mediaUrls': mediaUrls, // expanded content preview
+      'sharedMediaItemIds': exp.sharedMediaItemIds, // Include media item IDs for content tab
       'plendyRating': exp.plendyRating,
       'googleRating': exp.googleRating,
       'googleReviewCount': exp.googleReviewCount,
       'priceRange': exp.priceRange,
       'website': exp.website,
+      'createdBy': exp.createdBy,
+      'editorUserIds': exp.editorUserIds,
       'location': {
         'displayName': exp.location.displayName,
         'address': exp.location.address,
