@@ -2117,6 +2117,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                   right: 16.0,
                   top: 8.0,
                   bottom: 16.0), // Adjust padding
+              shrinkWrap: false, // Let ListView expand to fill available space
               itemCount: mediaItems.length,
               itemBuilder: (context, index) {
                 // MODIFIED: Get SharedMediaItem and its path
@@ -2322,7 +2323,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
 
                 // Keep the Column for layout *within* the list item
                 return Padding(
-                  padding: const EdgeInsets.only(bottom: 24.0),
+                  padding: const EdgeInsets.only(bottom: 12.0), // Reduced from 24.0
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
@@ -2552,9 +2553,9 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                       ),
                       // --- ADDED: 'Also linked to' section --- END ---
 
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 4), // Reduced from 8
                       SizedBox(
-                        height: 48,
+                        height: 40, // Reduced from 48
                         child: Row(
                           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                           children: [
