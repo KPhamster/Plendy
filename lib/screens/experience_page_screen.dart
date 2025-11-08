@@ -1273,8 +1273,6 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     // print('  - Reservable: $formattedReservable');
     // print('  - Parking: $formattedParking');
 
-    // Get Yelp URL (handle null)
-    final String? yelpUrl = experience.yelpUrl;
     // Determine if edit is allowed
     final bool canEdit = _canEditExperience();
     final bool hideLocationDetails = _isLocationUnset(experience);
@@ -1372,21 +1370,15 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
 
                   // 3. Yelp Button (Icon Only)
                   ActionChip(
-                    avatar: Icon(
+                    avatar: const Icon(
                       FontAwesomeIcons.yelp,
-                      color: yelpUrl != null && yelpUrl.isNotEmpty
-                          ? const Color(0xFFd32323) // Yelp Red
-                          : Colors.grey,
+                      color: Color(0xFFd32323), // Yelp Red
                       size: 18,
                     ),
                     label: const SizedBox.shrink(),
                     labelPadding: EdgeInsets.zero,
-                    onPressed: yelpUrl != null && yelpUrl.isNotEmpty
-                        ? () => _launchUrl(yelpUrl)
-                        : null,
-                    tooltip: yelpUrl != null && yelpUrl.isNotEmpty
-                        ? 'Open Yelp Page'
-                        : 'Yelp URL not available',
+                    onPressed: _launchYelpSearch,
+                    tooltip: 'Search on Yelp',
                     backgroundColor: Colors.white,
                     shape: StadiumBorder(
                         side: BorderSide(color: Colors.grey.shade300)),
@@ -2864,6 +2856,70 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Could not open website: $urlString')),
+        );
+      }
+    }
+  }
+
+  Future<void> _launchYelpSearch() async {
+    final String experienceName = _currentExperience.name.trim();
+    final Location location = _currentExperience.location;
+    final String? address = location.address?.trim();
+    Uri uri;
+
+    if (experienceName.isNotEmpty) {
+      final String searchDesc = Uri.encodeComponent(experienceName);
+      final String timestamp =
+          DateTime.now().millisecondsSinceEpoch.toString();
+      if (address != null && address.isNotEmpty) {
+        final String searchLoc = Uri.encodeComponent(address);
+        uri = Uri.parse(
+            'https://www.yelp.com/search?find_desc=$searchDesc&find_loc=$searchLoc&t=$timestamp');
+      } else {
+        uri = Uri.parse(
+            'https://www.yelp.com/search?find_desc=$searchDesc&t=$timestamp');
+      }
+    } else {
+      uri = Uri.parse('https://www.yelp.com');
+    }
+
+    try {
+      bool launched = false;
+      if (uri.toString().contains('yelp.com/search')) {
+        final String? terms = uri.queryParameters['find_desc'];
+        final String? locationQuery = uri.queryParameters['find_loc'];
+        if (terms != null && terms.isNotEmpty) {
+          final String encodedTerms = Uri.encodeComponent(terms);
+          final String locationParam = locationQuery != null &&
+                  locationQuery.isNotEmpty
+              ? '&location=${Uri.encodeComponent(locationQuery)}'
+              : '';
+          final Uri deepLink = Uri.parse(
+              'yelp:///search?terms=$encodedTerms$locationParam');
+          try {
+            if (await canLaunchUrl(deepLink)) {
+              launched = await launchUrl(deepLink,
+                  mode: LaunchMode.externalApplication);
+              if (launched) {
+                return;
+              }
+            }
+          } catch (e) {
+            // Ignore deep link errors and fall back to HTTPS URL
+          }
+        }
+      }
+
+      launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!launched && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open Yelp link/search')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error opening Yelp: $e')),
         );
       }
     }

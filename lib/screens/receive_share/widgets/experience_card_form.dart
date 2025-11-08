@@ -100,56 +100,6 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
   }
   // --- END ADDED ---
 
-  // --- ADDED: Helper to paste Yelp URL from clipboard ---
-  Future<void> _pasteYelpUrlFromClipboard() async {
-    final clipboardData = await Clipboard.getData(Clipboard.kTextPlain);
-    final clipboardText = clipboardData?.text;
-
-    if (clipboardText != null && clipboardText.isNotEmpty) {
-      // --- MODIFIED: Extract URL first ---
-      final extractedUrl = _extractFirstUrl(clipboardText);
-
-      if (extractedUrl != null) {
-        final isYelp = _isYelpUrl(extractedUrl);
-        if (isYelp) {
-          final isValid = _isValidUrl(extractedUrl);
-          if (isValid) {
-            // REMOVED setState
-            // setState(() {
-            widget.cardData.yelpUrlController.text = extractedUrl;
-            // });
-            // Notify parent of update (needed for suffix icon changes)
-            widget.onUpdate(refreshCategories: false);
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                  content: Text('Yelp URL pasted from clipboard.'),
-                  duration: Duration(seconds: 1)),
-            );
-          } else {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Extracted URL is not valid.')),
-            );
-          }
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-                content: Text('Clipboard does not contain a Yelp URL.')),
-          );
-        }
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No URL found in clipboard.')),
-        );
-      }
-      // --- END MODIFICATION ---
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Clipboard is empty.')),
-      );
-    }
-  }
-  // --- END ADDED ---
-
   // --- ADDED: Helper to paste Website URL from clipboard (direct paste) ---
   Future<void> _pasteWebsiteUrlFromClipboard() async {
     final clipboardData = await Clipboard.getData(Clipboard.kTextPlain);
@@ -916,7 +866,6 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
 
     // Access controllers directly from widget.cardData
     final titleController = widget.cardData.titleController;
-    final yelpUrlController = widget.cardData.yelpUrlController;
     final websiteController = widget.cardData.websiteController;
     final titleFocusNode = widget.cardData.titleFocusNode;
     final currentLocation = widget.cardData.selectedLocation;
@@ -1187,6 +1136,34 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                               newTitleFromCard: value.trim());
                         },
                       ),
+                      SizedBox(height: 8),
+
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          Text(
+                            'Search location on Yelp for reference',
+                            textAlign: TextAlign.right,
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodyMedium
+                                ?.copyWith(color: Colors.black87),
+                          ),
+                          const SizedBox(width: 6),
+                          InkWell(
+                            onTap: _launchYelpUrl,
+                            borderRadius: BorderRadius.circular(16),
+                            child: Padding(
+                              padding: const EdgeInsets.all(4.0),
+                              child: Icon(
+                                FontAwesomeIcons.yelp,
+                                size: 22,
+                                color: Colors.red[700],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                       SizedBox(height: 16),
 
                       // --- REPLACEMENT Dropdown with a Button wrapped in ValueListenableBuilder ---
@@ -1428,95 +1405,6 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                       ),
                       // --- END ADDED ---
 
-                      SizedBox(height: 16),
-
-                      // Yelp URL
-                      TextFormField(
-                        controller:
-                            yelpUrlController, // Use controller from widget
-                        decoration: InputDecoration(
-                            labelText: 'Yelp URL (optional)',
-                            hintText: 'https://yelp.com/...',
-                            border: OutlineInputBorder(),
-                            prefixIcon: Icon(
-                                FontAwesomeIcons.yelp), // Use Yelp icon here
-                            suffixIconConstraints: BoxConstraints.tightFor(
-                                width: 110, // Keep width for three icons
-                                height: 48), // Increase width for both icons
-                            // Use suffix to combine clear and launch buttons
-                            suffixIcon: Row(
-                              mainAxisSize: MainAxisSize
-                                  .min, // Prevent row taking full width
-                              mainAxisAlignment: MainAxisAlignment.end,
-                              children: <Widget>[
-                                // Clear button (now first)
-                                if (yelpUrlController.text.isNotEmpty)
-                                  InkWell(
-                                    onTap: () {
-                                      yelpUrlController.clear();
-                                      widget.onUpdate(refreshCategories: false);
-                                    },
-                                    borderRadius: BorderRadius.circular(16),
-                                    child: Padding(
-                                      padding: const EdgeInsets.all(
-                                          4.0), // No horizontal padding
-                                      child: Icon(Icons.clear, size: 22),
-                                    ),
-                                  ),
-                                // Spacer
-                                if (yelpUrlController.text
-                                    .isNotEmpty) // Only show spacer if clear button is shown
-                                  const SizedBox(width: 4),
-
-                                // Paste Button (now second)
-                                InkWell(
-                                  onTap: _pasteYelpUrlFromClipboard,
-                                  borderRadius: BorderRadius.circular(16),
-                                  child: Padding(
-                                    padding: const EdgeInsets.all(
-                                        4.0), // No horizontal padding
-                                    child: Icon(Icons.content_paste,
-                                        size: 22, color: Colors.blue[700]),
-                                  ),
-                                ),
-
-                                // Spacer
-                                const SizedBox(width: 4),
-
-                                // Yelp launch button (remains last)
-                                InkWell(
-                                  onTap:
-                                      _launchYelpUrl, // Always calls _launchYelpUrl
-                                  borderRadius: BorderRadius.circular(16),
-                                  child: Padding(
-                                    padding: const EdgeInsets.fromLTRB(
-                                        4.0,
-                                        4.0,
-                                        8.0,
-                                        4.0), // Add padding only on the right end
-                                    child: Icon(FontAwesomeIcons.yelp,
-                                        size: 22,
-                                        color: Colors
-                                            .red[700]), // Always active color
-                                  ),
-                                ),
-                              ],
-                            )),
-                        keyboardType: TextInputType.url,
-                        validator: (value) {
-                          if (value != null && value.isNotEmpty) {
-                            // Use refined _isValidUrl
-                            if (!_isValidUrl(value)) {
-                              return 'Please enter a valid URL (http/https)';
-                            }
-                          }
-                          return null;
-                        },
-                        onChanged: (value) {
-                          // REMOVED Listener calls _triggerRebuild if needed
-                          // widget.onUpdate();
-                        },
-                      ),
                       SizedBox(height: 16),
 
                       // Official website
