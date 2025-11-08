@@ -170,6 +170,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   static const double _contentPreviewDefaultHeight = 640.0;
   static const double _contentPreviewMaxExpandedHeight = 830.0;
   // --- END ADDED ---
+  bool _isMediaShareInProgress = false;
   // --- ADDED: Maps preview futures cache for content tab ---
   final Map<String, Future<Map<String, dynamic>?>> _mapsPreviewFutures = {};
   // --- END ADDED ---
@@ -2598,16 +2599,9 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                                   Colors.blue, // Use blue like expand/collapse
                               tooltip:
                                   'Share Media', // Tooltip for the new button
-                              onPressed: () {
-                                // TODO: Implement share media functionality
-                                print(
-                                    'Share media button tapped for url: $url');
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                      content: Text(
-                                          'Share media not implemented yet.')),
-                                );
-                              },
+                              onPressed: _isMediaShareInProgress
+                                  ? null
+                                  : () => _handleMediaShareButtonPressed(item),
                             ),
                             // Open in App button
                             IconButton(
@@ -3456,6 +3450,86 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     }
   }
   // --- END: Removal confirmation and execution ---
+
+  // --- Media item share helpers ---
+  Future<void> _handleMediaShareButtonPressed(SharedMediaItem mediaItem) async {
+    if (!mounted) return;
+    await showShareExperienceBottomSheet(
+      context: context,
+      onDirectShare: () => _shareMediaItemDirectly(mediaItem),
+      onCreateLink: ({
+        required String shareMode,
+        required bool giveEditAccess,
+      }) =>
+          _createLinkShareForMedia(
+        shareMode: shareMode,
+        giveEditAccess: giveEditAccess,
+      ),
+    );
+  }
+
+  Future<void> _shareMediaItemDirectly(SharedMediaItem mediaItem) async {
+    if (!mounted) return;
+    final bool? shared = await showShareToFriendsModal(
+      context: context,
+      subjectLabel: _currentExperience.name,
+      onSubmit: (recipientIds) async {
+        await _experienceShareService.createDirectShare(
+          experience: _currentExperience,
+          toUserIds: recipientIds,
+          highlightedMediaUrl:
+              mediaItem.path.isNotEmpty ? mediaItem.path : null,
+        );
+      },
+    );
+    if (!mounted) return;
+    if (shared == true) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Shared with friends!')),
+      );
+    }
+  }
+
+  Future<void> _createLinkShareForMedia({
+    required String shareMode,
+    required bool giveEditAccess,
+  }) async {
+    if (_isMediaShareInProgress || !mounted) return;
+    setState(() {
+      _isMediaShareInProgress = true;
+    });
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final DateTime expiresAt = DateTime.now().add(const Duration(days: 30));
+      final String url = await _experienceShareService.createLinkShare(
+        experience: _currentExperience,
+        expiresAt: expiresAt,
+        linkMode: shareMode,
+        grantEdit: giveEditAccess,
+      );
+      if (!mounted) return;
+      final route = ModalRoute.of(context);
+      if (route != null && !route.isCurrent) {
+        Navigator.of(context).pop();
+      }
+      await Share.share('Check out this experience from Plendy! $url');
+    } catch (e) {
+      if (mounted) {
+        messenger.showSnackBar(
+          const SnackBar(
+            content:
+                Text('Unable to generate a share link. Please try again.'),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isMediaShareInProgress = false;
+        });
+      }
+    }
+  }
 
   // --- ADD: Share bottom sheet ---
   void _showShareBottomSheet() {

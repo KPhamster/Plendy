@@ -1063,9 +1063,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
         _buildActionButton(
           icon: Icons.more_vert,
           label: 'More',
-          onPressed: () {
-            // TODO: Implement more action.
-          },
+          onPressed: () => _showMoreOptions(item),
         ),
       ],
     );
@@ -1108,6 +1106,145 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
           ),
         ),
       ],
+    );
+  }
+
+  void _showMoreOptions(_DiscoveryFeedItem item) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.flag_outlined),
+                title: const Text('Report'),
+                onTap: () {
+                  Navigator.of(sheetContext).pop();
+                  _showReportDialog(item);
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  void _showReportDialog(_DiscoveryFeedItem item) {
+    String? selectedReason;
+    final TextEditingController explanationController = TextEditingController();
+
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              backgroundColor: Colors.white,
+              surfaceTintColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              title: const Text(
+                'What would you like to report about this content?',
+                style: TextStyle(fontSize: 18),
+              ),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    RadioListTile<String>(
+                      title: const Text('Inappropriate content'),
+                      value: 'inappropriate',
+                      groupValue: selectedReason,
+                      onChanged: (value) {
+                        setState(() {
+                          selectedReason = value;
+                        });
+                      },
+                      contentPadding: EdgeInsets.zero,
+                      dense: true,
+                    ),
+                    RadioListTile<String>(
+                      title: const Text('Incorrect Information'),
+                      value: 'incorrect',
+                      groupValue: selectedReason,
+                      onChanged: (value) {
+                        setState(() {
+                          selectedReason = value;
+                        });
+                      },
+                      contentPadding: EdgeInsets.zero,
+                      dense: true,
+                    ),
+                    RadioListTile<String>(
+                      title: const Text('Other'),
+                      value: 'other',
+                      groupValue: selectedReason,
+                      onChanged: (value) {
+                        setState(() {
+                          selectedReason = value;
+                        });
+                      },
+                      contentPadding: EdgeInsets.zero,
+                      dense: true,
+                    ),
+                    const SizedBox(height: 16),
+                    const Text(
+                      'Please explain:',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.black87,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: explanationController,
+                      maxLines: 4,
+                      decoration: InputDecoration(
+                        hintText: 'Provide additional details...',
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        contentPadding: const EdgeInsets.all(12),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    explanationController.dispose();
+                    Navigator.of(dialogContext).pop();
+                  },
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  onPressed: () {
+                    // TODO: Add report submission functionality
+                    explanationController.dispose();
+                    Navigator.of(dialogContext).pop();
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Theme.of(context).primaryColor,
+                    foregroundColor: Colors.white,
+                  ),
+                  child: const Text('Submit'),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 
