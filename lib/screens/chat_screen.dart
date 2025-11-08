@@ -364,6 +364,7 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
             Card(
               elevation: 2,
+              color: isMine ? Theme.of(context).primaryColor : Colors.grey.shade300,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
               ),
@@ -405,16 +406,31 @@ class _ChatScreenState extends State<ChatScreen> {
                               child: Container(
                                 height: 120,
                                 decoration: BoxDecoration(
-                                  color: Colors.grey.shade100,
+                                  color: Colors.white,
                                   borderRadius: const BorderRadius.vertical(
                                     top: Radius.circular(12),
                                   ),
                                 ),
                                 child: Center(
-                                  child: FaIcon(
-                                    _getMediaIcon(imageUrl),
-                                    size: 56,
-                                    color: Theme.of(context).primaryColor,
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      FaIcon(
+                                        _getMediaIcon(imageUrl),
+                                        size: 56,
+                                        color: _getMediaIconColor(imageUrl),
+                                      ),
+                                      const SizedBox(height: 8),
+                                      Text(
+                                        'Open in ${_getMediaLabel(imageUrl)}',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w500,
+                                          color: _getMediaIconColor(imageUrl),
+                                        ),
+                                        textAlign: TextAlign.center,
+                                      ),
+                                    ],
                                   ),
                                 ),
                               ),
@@ -452,19 +468,20 @@ class _ChatScreenState extends State<ChatScreen> {
                                   Expanded(
                                     child: Text(
                                       experienceName,
-                                      style: const TextStyle(
+                                      style: TextStyle(
                                         fontSize: 16,
                                         fontWeight: FontWeight.w600,
+                                        color: isMine ? Colors.white : Colors.black,
                                       ),
                                       maxLines: 2,
                                       overflow: TextOverflow.ellipsis,
                                     ),
                                   ),
                                   const SizedBox(width: 8),
-                                  const Icon(
+                                  Icon(
                                     Icons.arrow_forward_ios,
                                     size: 16,
-                                    color: Colors.grey,
+                                    color: isMine ? Colors.white : Colors.grey,
                                   ),
                                 ],
                               ),
@@ -472,10 +489,10 @@ class _ChatScreenState extends State<ChatScreen> {
                             const SizedBox(height: 4),
                             Row(
                               children: [
-                                const Icon(
+                                Icon(
                                   Icons.place_outlined,
                                   size: 14,
-                                  color: Colors.grey,
+                                  color: isMine ? Colors.white : Colors.grey,
                                 ),
                                 const SizedBox(width: 4),
                                 Expanded(
@@ -483,7 +500,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                     locationText,
                                     style: TextStyle(
                                       fontSize: 13,
-                                      color: Colors.grey.shade700,
+                                      color: isMine ? Colors.white : Colors.grey.shade700,
                                     ),
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
@@ -513,12 +530,12 @@ class _ChatScreenState extends State<ChatScreen> {
                           width: 48,
                           height: 48,
                           decoration: BoxDecoration(
-                            color: Theme.of(context).primaryColor,
+                            color: isMine ? Colors.white : Theme.of(context).primaryColor,
                             shape: BoxShape.circle,
                           ),
-                          child: const Icon(
+                          child: Icon(
                             Icons.play_arrow,
-                            color: Colors.white,
+                            color: isMine ? Theme.of(context).primaryColor : Colors.white,
                             size: 28,
                           ),
                         ),
@@ -826,6 +843,22 @@ class _ChatScreenState extends State<ChatScreen> {
     if (url.contains('facebook.com')) return FontAwesomeIcons.facebook;
     if (url.contains('youtube.com') || url.contains('youtu.be')) return FontAwesomeIcons.youtube;
     return Icons.link;
+  }
+
+  String _getMediaLabel(String url) {
+    if (url.contains('tiktok.com')) return 'TikTok';
+    if (url.contains('instagram.com')) return 'Instagram';
+    if (url.contains('facebook.com')) return 'Facebook';
+    if (url.contains('youtube.com') || url.contains('youtu.be')) return 'YouTube';
+    return 'Browser';
+  }
+
+  Color _getMediaIconColor(String url) {
+    if (url.contains('tiktok.com')) return const Color(0xFF000000); // Black
+    if (url.contains('instagram.com')) return const Color(0xFFE4405F); // Instagram gradient (using primary pink)
+    if (url.contains('facebook.com')) return const Color(0xFF1877F2); // Facebook blue
+    if (url.contains('youtube.com') || url.contains('youtu.be')) return const Color(0xFFFF0000); // YouTube red
+    return Colors.grey.shade600; // Generic link color
   }
 
   String _formatMessageTime(DateTime timestamp) {
