@@ -1,5 +1,6 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../models/chat_message.dart';
@@ -300,7 +301,6 @@ class _ChatScreenState extends State<ChatScreen> {
     
     // Use highlighted media URL for discovery shares, otherwise use the main image
     final imageUrl = isDiscoveryPreview ? highlightedMediaUrl : (snapshot['image'] as String?);
-    final description = snapshot['description'] as String?;
     
     // Build location subtitle
     final List<String> locationParts = [];
@@ -399,12 +399,49 @@ class _ChatScreenState extends State<ChatScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         if (imageUrl != null && imageUrl.isNotEmpty)
-                          ClipRRect(
-                            borderRadius: const BorderRadius.vertical(
-                              top: Radius.circular(12),
+                          if (isDiscoveryPreview)
+                            GestureDetector(
+                              onTap: () => _openLink(Uri.parse(imageUrl)),
+                              child: Container(
+                                height: 120,
+                                decoration: BoxDecoration(
+                                  color: Colors.grey.shade100,
+                                  borderRadius: const BorderRadius.vertical(
+                                    top: Radius.circular(12),
+                                  ),
+                                ),
+                                child: Center(
+                                  child: FaIcon(
+                                    _getMediaIcon(imageUrl),
+                                    size: 56,
+                                    color: Theme.of(context).primaryColor,
+                                  ),
+                                ),
+                              ),
+                            )
+                          else
+                            ClipRRect(
+                              borderRadius: const BorderRadius.vertical(
+                                top: Radius.circular(12),
+                              ),
+                              child: Image.network(
+                                imageUrl,
+                                height: 180,
+                                width: double.infinity,
+                                fit: BoxFit.cover,
+                                errorBuilder: (context, error, stackTrace) {
+                                  return Container(
+                                    height: 180,
+                                    color: Colors.grey.shade300,
+                                    child: const Icon(
+                                      Icons.image_not_supported,
+                                      size: 48,
+                                      color: Colors.grey,
+                                    ),
+                                  );
+                                },
+                              ),
                             ),
-                            child: _buildMediaPreview(imageUrl, isDiscoveryPreview),
-                          ),
                         Padding(
                           padding: const EdgeInsets.all(12.0),
                           child: Column(
@@ -453,18 +490,6 @@ class _ChatScreenState extends State<ChatScreen> {
                                   ),
                                 ),
                               ],
-                            ),
-                          ],
-                          if (description != null && description.isNotEmpty) ...[
-                            const SizedBox(height: 8),
-                            Text(
-                              description,
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: Colors.grey.shade600,
-                              ),
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
                             ),
                           ],
                         ],
@@ -795,101 +820,12 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  Widget _buildMediaPreview(String url, bool isDiscoveryPreview) {
-    // Check if it's a social media link or regular image
-    final lowerUrl = url.toLowerCase();
-    final isSocialMedia = lowerUrl.contains('tiktok.com') ||
-        lowerUrl.contains('instagram.com') ||
-        lowerUrl.contains('facebook.com') ||
-        lowerUrl.contains('youtube.com') ||
-        lowerUrl.contains('youtu.be');
-
-    if (isSocialMedia && isDiscoveryPreview) {
-      // For social media discovery shares, show a preview indicator
-      return Container(
-        height: 180,
-        color: Colors.grey.shade900,
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    _getMediaIcon(lowerUrl),
-                    size: 64,
-                    color: Colors.white70,
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    'Tap to view ${_getMediaType(lowerUrl)}',
-                    style: const TextStyle(
-                      color: Colors.white70,
-                      fontSize: 14,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Positioned(
-              top: 8,
-              right: 8,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: Colors.black54,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: const Text(
-                  'Discovery Preview',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-    
-    // For regular images
-    return Image.network(
-      url,
-      height: 180,
-      width: double.infinity,
-      fit: BoxFit.cover,
-      errorBuilder: (context, error, stackTrace) {
-        return Container(
-          height: 180,
-          color: Colors.grey.shade300,
-          child: const Icon(
-            Icons.image_not_supported,
-            size: 48,
-            color: Colors.grey,
-          ),
-        );
-      },
-    );
-  }
-
   IconData _getMediaIcon(String url) {
-    if (url.contains('tiktok.com')) return Icons.play_circle_outline;
-    if (url.contains('instagram.com')) return Icons.camera_alt_outlined;
-    if (url.contains('facebook.com')) return Icons.video_library_outlined;
-    if (url.contains('youtube.com') || url.contains('youtu.be')) return Icons.play_circle_outline;
+    if (url.contains('tiktok.com')) return FontAwesomeIcons.tiktok;
+    if (url.contains('instagram.com')) return FontAwesomeIcons.instagram;
+    if (url.contains('facebook.com')) return FontAwesomeIcons.facebook;
+    if (url.contains('youtube.com') || url.contains('youtu.be')) return FontAwesomeIcons.youtube;
     return Icons.link;
-  }
-
-  String _getMediaType(String url) {
-    if (url.contains('tiktok.com')) return 'TikTok';
-    if (url.contains('instagram.com')) return 'Instagram';
-    if (url.contains('facebook.com')) return 'Facebook';
-    if (url.contains('youtube.com') || url.contains('youtu.be')) return 'YouTube';
-    return 'content';
   }
 
   String _formatMessageTime(DateTime timestamp) {
