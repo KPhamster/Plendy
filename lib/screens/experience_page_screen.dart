@@ -2609,6 +2609,17 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                                                   : 'Open URL',
                               onPressed: () => _launchUrl(url),
                             ),
+                            IconButton(
+                              icon: Icon(isExpanded
+                                  ? Icons.fullscreen_exit
+                                  : Icons.fullscreen),
+                              iconSize: 24,
+                              color: Colors.blue,
+                              tooltip: isExpanded
+                                  ? 'Hide preview'
+                                  : 'Show preview',
+                              onPressed: () => _toggleMediaPreview(url),
+                            ),
                             if (!widget.readOnlyPreview && !isPublicView)
                               IconButton(
                                 icon: const Icon(Icons.delete_outline),
