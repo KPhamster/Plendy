@@ -392,7 +392,24 @@ class _ChatScreenState extends State<ChatScreen> {
                           createdBy: snapshot['createdBy'] as String?,
                           sharedMediaItemIds: (snapshot['sharedMediaItemIds'] as List<dynamic>?)?.cast<String>() ?? [],
                         );
-                        await _handleViewExperience(experience, snapshot);
+                        
+                        // Build media items from mediaUrls in snapshot for public content
+                        final mediaUrls = (snapshot['mediaUrls'] as List<dynamic>?)?.cast<String>() ?? [];
+                        final List<SharedMediaItem> fullExperienceMediaItems = [];
+                        
+                        if (mediaUrls.isNotEmpty) {
+                          for (int i = 0; i < mediaUrls.length; i++) {
+                            fullExperienceMediaItems.add(SharedMediaItem(
+                              id: 'preview_${experience.id}_$i',
+                              path: mediaUrls[i],
+                              createdAt: DateTime.now().subtract(Duration(seconds: mediaUrls.length - i)),
+                              ownerUserId: 'public_discovery',
+                              experienceIds: [],
+                            ));
+                          }
+                        }
+                        
+                        await _handleViewExperience(experience, snapshot, fullExperienceMediaItems);
                       }
                     },
                     borderRadius: BorderRadius.circular(12),
@@ -668,11 +685,9 @@ class _ChatScreenState extends State<ChatScreen> {
     // Check if the current user owns or has edit access to the experience
     final currentUserId = widget.currentUserId;
     final createdBy = experienceSnapshot['createdBy'] as String?;
-    final ownerUserId = experienceSnapshot['ownerUserId'] as String?;
     final editorUserIds = experienceSnapshot['editorUserIds'] as List<dynamic>?;
     
     final bool hasAccess = createdBy == currentUserId ||
-        ownerUserId == currentUserId ||
         (editorUserIds != null && editorUserIds.contains(currentUserId));
 
     // Create a minimal Experience object for the preview modal
@@ -688,13 +703,37 @@ class _ChatScreenState extends State<ChatScreen> {
       sharedMediaItemIds: (experienceSnapshot['sharedMediaItemIds'] as List<dynamic>?)?.cast<String>() ?? [],
     );
 
-    // Create a SharedMediaItem from the media URL
-    final mediaItem = SharedMediaItem(
-      id: 'preview_${DateTime.now().millisecondsSinceEpoch}',
-      path: mediaUrl,
-      createdAt: DateTime.now(),
-      ownerUserId: currentUserId,
-      experienceIds: [],
+    // Build media items from the snapshot
+    // For discovery previews, use mediaUrls from the snapshot
+    final mediaUrls = (experienceSnapshot['mediaUrls'] as List<dynamic>?)?.cast<String>() ?? [];
+    final List<SharedMediaItem> mediaItems = [];
+    
+    if (mediaUrls.isNotEmpty) {
+      // Build SharedMediaItems from the URLs in the snapshot
+      for (int i = 0; i < mediaUrls.length; i++) {
+        mediaItems.add(SharedMediaItem(
+          id: 'preview_${experience.id}_$i',
+          path: mediaUrls[i],
+          createdAt: DateTime.now().subtract(Duration(seconds: mediaUrls.length - i)),
+          ownerUserId: 'public_discovery',
+          experienceIds: [],
+        ));
+      }
+    } else {
+      // Fallback: create a single media item from the highlighted URL
+      mediaItems.add(SharedMediaItem(
+        id: 'preview_${DateTime.now().millisecondsSinceEpoch}',
+        path: mediaUrl,
+        createdAt: DateTime.now(),
+        ownerUserId: currentUserId,
+        experienceIds: [],
+      ));
+    }
+    
+    // Find the media item that matches the highlighted URL
+    final mediaItem = mediaItems.firstWhere(
+      (item) => item.path == mediaUrl,
+      orElse: () => mediaItems.first,
     );
 
     if (!mounted) return;
@@ -708,18 +747,22 @@ class _ChatScreenState extends State<ChatScreen> {
         return SharedMediaPreviewModal(
           experience: experience,
           mediaItem: mediaItem,
-          mediaItems: [mediaItem],
+          mediaItems: mediaItems, // Pass all media items
           onLaunchUrl: (url) => _openLink(Uri.parse(url)),
           category: null,
           userColorCategories: const [],
           showSavedDate: hasAccess, // Only show saved date if user has access
-          onViewExperience: () => _handleViewExperience(experience, experienceSnapshot),
+          onViewExperience: () => _handleViewExperience(experience, experienceSnapshot, mediaItems),
         );
       },
     );
   }
 
-  Future<void> _handleViewExperience(Experience experience, Map<String, dynamic> snapshot) async {
+  Future<void> _handleViewExperience(
+    Experience experience, 
+    Map<String, dynamic> snapshot,
+    List<SharedMediaItem> mediaItems,
+  ) async {
     // Extract place ID from snapshot
     final locationData = snapshot['location'] as Map<String, dynamic>?;
     final String? placeId = locationData?['placeId'] as String?;
@@ -736,8 +779,8 @@ class _ChatScreenState extends State<ChatScreen> {
       // User has an editable experience at this place
       await _openEditableExperience(editableExperience);
     } else {
-      // No editable experience - show as read-only
-      await _openReadOnlyExperience(experience, snapshot);
+      // No editable experience - show as read-only with media items
+      await _openReadOnlyExperience(experience, snapshot, mediaItems);
     }
   }
 
@@ -759,7 +802,11 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  Future<void> _openReadOnlyExperience(Experience experience, Map<String, dynamic> snapshot) async {
+  Future<void> _openReadOnlyExperience(
+    Experience experience, 
+    Map<String, dynamic> snapshot,
+    List<SharedMediaItem> mediaItems,
+  ) async {
     // Create a read-only category
     const readOnlyCategory = UserCategory(
       id: 'shared_readonly_category',
@@ -782,6 +829,7 @@ class _ChatScreenState extends State<ChatScreen> {
           experience: experienceWithMedia,
           category: readOnlyCategory,
           userColorCategories: const <ColorCategory>[],
+          initialMediaItems: mediaItems.isNotEmpty ? mediaItems : null, // Pass media items for public content
           readOnlyPreview: true,
         ),
       ),
