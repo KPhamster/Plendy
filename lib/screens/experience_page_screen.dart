@@ -166,6 +166,9 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
 
   // --- ADDED: Track which media preview is expanded in the Content tab ---
   String? _expandedMediaPath;
+  bool _isMediaPreviewHeightExpanded = false;
+  static const double _contentPreviewDefaultHeight = 640.0;
+  static const double _contentPreviewMaxExpandedHeight = 830.0;
   // --- END ADDED ---
   // --- ADDED: Maps preview futures cache for content tab ---
   final Map<String, Future<Map<String, dynamic>?>> _mapsPreviewFutures = {};
@@ -290,6 +293,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       _mediaItems = List<SharedMediaItem>.from(widget.initialMediaItems!);
       _expandedMediaPath =
           _mediaItems.isNotEmpty ? _mediaItems.first.path : null;
+      _isMediaPreviewHeightExpanded = false;
       _isLoadingMedia = false;
       // Also kick off loading of other experience data based on provided media
       _loadOtherExperienceData();
@@ -1966,7 +1970,37 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       } else {
         _expandedMediaPath = mediaPath;
       }
+      _isMediaPreviewHeightExpanded = false;
     });
+  }
+
+  void _toggleMediaPreviewHeight(String mediaPath) {
+    setState(() {
+      if (_expandedMediaPath != mediaPath) {
+        _expandedMediaPath = mediaPath;
+        _isMediaPreviewHeightExpanded = true;
+      } else {
+        _isMediaPreviewHeightExpanded = !_isMediaPreviewHeightExpanded;
+      }
+    });
+  }
+
+  double? _getMediaPreviewHeightOverride(
+      BuildContext context, String mediaPath) {
+    if (_expandedMediaPath != mediaPath || !_isMediaPreviewHeightExpanded) {
+      return null;
+    }
+    return _calculateExpandedMediaPreviewHeight(context);
+  }
+
+  double _calculateExpandedMediaPreviewHeight(BuildContext context) {
+    final double screenHeight = MediaQuery.of(context).size.height;
+    final double targetHeight = screenHeight * 1.5;
+    final double clampedHeight = targetHeight.clamp(
+      _contentPreviewDefaultHeight,
+      _contentPreviewMaxExpandedHeight,
+    );
+    return clampedHeight.toDouble();
   }
 
   Widget _buildMediaPreviewToggleButton({
@@ -2127,11 +2161,17 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                     !isYelpUrl &&
                     !isMapsUrl;
                 final bool isExpanded = _expandedMediaPath == url;
+                final bool isPreviewHeightExpanded =
+                    isExpanded && _isMediaPreviewHeightExpanded;
+                final double? previewHeightOverride =
+                    _getMediaPreviewHeightOverride(context, url);
 
                 if (isExpanded) {
                   if (isTikTokUrl) {
-                    final key = GlobalKey<TikTokPreviewWidgetState>();
-                    _tiktokControllerKeys[url] = key;
+                    final key = _tiktokControllerKeys.putIfAbsent(
+                      url,
+                      () => GlobalKey<TikTokPreviewWidgetState>(),
+                    );
                     mediaWidget = kIsWeb
                         ? WebMediaPreviewCard(
                             url: url,
@@ -2148,9 +2188,12 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                             },
                           );
                   } else if (isInstagramUrl) {
-                    final key =
-                        GlobalKey<instagram_widget.InstagramWebViewState>();
-                    _instagramControllerKeys[url] = key;
+                    final key = _instagramControllerKeys.putIfAbsent(
+                      url,
+                      () => GlobalKey<instagram_widget.InstagramWebViewState>(),
+                    );
+                    final double instagramHeight =
+                        previewHeightOverride ?? 640.0;
                     mediaWidget = kIsWeb
                         ? WebMediaPreviewCard(
                             url: url,
@@ -2160,7 +2203,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                         : instagram_widget.InstagramWebView(
                             key: key,
                             url: url,
-                            height: 640.0,
+                            height: instagramHeight,
                             launchUrlCallback: _launchUrl,
                             onWebViewCreated: (controller) {
                               _webViewControllers[url] = controller;
@@ -2168,6 +2211,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                             onPageFinished: (_) {},
                           );
                   } else if (isFacebookUrl) {
+                    final double facebookHeight =
+                        previewHeightOverride ?? 500.0;
                     mediaWidget = kIsWeb
                         ? WebMediaPreviewCard(
                             url: url,
@@ -2176,7 +2221,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                           )
                         : FacebookPreviewWidget(
                             url: url,
-                            height: 500.0,
+                            height: facebookHeight,
                             launchUrlCallback: _launchUrl,
                             onWebViewCreated: (controller) {
                               _webViewControllers[url] = controller;
@@ -2185,8 +2230,10 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                             showControls: false,
                           );
                   } else if (isYouTubeUrl) {
-                    final key = GlobalKey<YouTubePreviewWidgetState>();
-                    _youtubeControllerKeys[url] = key;
+                    final key = _youtubeControllerKeys.putIfAbsent(
+                      url,
+                      () => GlobalKey<YouTubePreviewWidgetState>(),
+                    );
                     mediaWidget = kIsWeb
                         ? WebMediaPreviewCard(
                             url: url,
@@ -2198,6 +2245,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                             url: url,
                             launchUrlCallback: _launchUrl,
                             showControls: false,
+                            height: previewHeightOverride,
                             onWebViewCreated: (controller) {
                               _webViewControllers[url] = controller;
                             },
@@ -2232,7 +2280,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                         url: url,
                         launchUrlCallback: _launchUrl,
                         showControls: false,
-                        height: 1000.0,
+                        height: previewHeightOverride ?? 1000.0,
                       );
                     } else if (isMapsUrl) {
                       if (!_mapsPreviewFutures.containsKey(url)) {
@@ -2610,15 +2658,15 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                               onPressed: () => _launchUrl(url),
                             ),
                             IconButton(
-                              icon: Icon(isExpanded
+                              icon: Icon(isPreviewHeightExpanded
                                   ? Icons.fullscreen_exit
                                   : Icons.fullscreen),
                               iconSize: 24,
                               color: Colors.blue,
-                              tooltip: isExpanded
-                                  ? 'Hide preview'
-                                  : 'Show preview',
-                              onPressed: () => _toggleMediaPreview(url),
+                              tooltip: isPreviewHeightExpanded
+                                  ? 'Collapse preview'
+                                  : 'Expand preview',
+                              onPressed: () => _toggleMediaPreviewHeight(url),
                             ),
                             if (!widget.readOnlyPreview && !isPublicView)
                               IconButton(
@@ -2960,6 +3008,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
             _mediaItems = items;
             _expandedMediaPath =
                 _mediaItems.isNotEmpty ? _mediaItems.first.path : null;
+            _isMediaPreviewHeightExpanded = false;
             print("Fetched ${_mediaItems.length} media items for experience.");
           });
           // --- ADDED: Trigger loading of other experience data --- START ---
@@ -2973,6 +3022,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
           setState(() {
             _mediaItems = [];
             _expandedMediaPath = null;
+            _isMediaPreviewHeightExpanded = false;
           });
         }
       }
@@ -2998,6 +3048,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
         _showingPublicMedia = false;
         _expandedMediaPath =
             _mediaItems.isNotEmpty ? _mediaItems.first.path : null;
+        _isMediaPreviewHeightExpanded = false;
       });
       return;
     }
@@ -3024,6 +3075,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
         _showingPublicMedia = true;
         _expandedMediaPath =
             _publicMediaItems.isNotEmpty ? _publicMediaItems.first.path : null;
+        _isMediaPreviewHeightExpanded = false;
       });
       return;
     }
@@ -3032,6 +3084,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       _showingPublicMedia = true;
       _isLoadingPublicMedia = true;
       _expandedMediaPath = null;
+      _isMediaPreviewHeightExpanded = false;
     });
 
     bool fetchCompleted = false;
@@ -3053,6 +3106,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
               ? _publicMediaItems.first.path
               : null;
         }
+        _isMediaPreviewHeightExpanded = false;
       });
     } catch (e) {
       if (!mounted) return;
