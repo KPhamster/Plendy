@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart'; // ADDED: Import for kIsWeb
+import 'package:share_plus/share_plus.dart';
 
 import '../models/experience.dart';
 import '../models/user_category.dart';
@@ -16,9 +17,11 @@ import '../screens/receive_share/widgets/generic_url_preview_widget.dart';
 import '../screens/receive_share/widgets/web_url_preview_widget.dart';
 import '../screens/receive_share/widgets/maps_preview_widget.dart';
 import '../services/google_maps_service.dart';
+import '../services/experience_share_service.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../screens/experience_page_screen.dart';
 import 'web_media_preview_card.dart'; // ADDED: Import for WebMediaPreviewCard
+import '../widgets/share_experience_bottom_sheet.dart';
 
 class SharedMediaPreviewModal extends StatefulWidget {
   final Experience experience;
@@ -52,9 +55,11 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
   late PageController _pageController;
   int _currentIndex = 0;
   bool _isPreviewExpanded = false;
+  bool _isShareInProgress = false;
   // For Maps preview parity with ExperiencePageScreen
   final GoogleMapsService _mapsService = GoogleMapsService();
   final Map<String, Future<Map<String, dynamic>?>> _mapsPreviewFutures = {};
+  final ExperienceShareService _experienceShareService = ExperienceShareService();
   static const double _defaultPreviewHeight = 640.0;
   static const double _maxExpandedPreviewHeight = 825.0;
   static const List<String> _monthAbbreviations = [
@@ -128,6 +133,103 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
     });
   }
 
+  Future<void> _handleShareButtonPressed(SharedMediaItem mediaItem) async {
+    if (!mounted || _isShareInProgress) return;
+    await showShareExperienceBottomSheet(
+      context: context,
+      onDirectShare: () => _shareMediaDirectly(mediaItem),
+      onCreateLink: ({
+        required String shareMode,
+        required bool giveEditAccess,
+      }) =>
+          _createLinkShareForMedia(
+        shareMode: shareMode,
+        giveEditAccess: giveEditAccess,
+      ),
+    );
+  }
+
+  Future<void> _shareMediaDirectly(SharedMediaItem mediaItem) async {
+    final bool? shared = await showShareToFriendsModal(
+      context: context,
+      subjectLabel: widget.experience.name,
+      onSubmit: (recipientIds) async {
+        await _experienceShareService.createDirectShare(
+          experience: widget.experience,
+          toUserIds: recipientIds,
+          highlightedMediaUrl:
+              mediaItem.path.isNotEmpty ? mediaItem.path : null,
+        );
+      },
+    );
+    if (!mounted) return;
+    if (shared == true) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Shared with friends!')),
+      );
+    }
+  }
+
+  Future<void> _createLinkShareForMedia({
+    required String shareMode,
+    required bool giveEditAccess,
+  }) async {
+    if (_isShareInProgress || !mounted) return;
+    setState(() {
+      _isShareInProgress = true;
+    });
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final DateTime expiresAt = DateTime.now().add(const Duration(days: 30));
+      final String url = await _experienceShareService.createLinkShare(
+        experience: widget.experience,
+        expiresAt: expiresAt,
+        linkMode: shareMode,
+        grantEdit: giveEditAccess,
+      );
+      if (!mounted) return;
+      final route = ModalRoute.of(context);
+      if (route != null && !route.isCurrent) {
+        Navigator.of(context).pop();
+      }
+      await Share.share('Check out this experience from Plendy! $url');
+    } catch (e) {
+      if (mounted) {
+        messenger.showSnackBar(
+          const SnackBar(
+            content:
+                Text('Unable to generate a share link. Please try again.'),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isShareInProgress = false;
+        });
+      }
+    }
+  }
+
+  void _handleViewExperienceNavigation() {
+    if (!mounted) return;
+    final navigator = Navigator.of(context, rootNavigator: true);
+    navigator.pop();
+    if (widget.onViewExperience != null) {
+      widget.onViewExperience!();
+      return;
+    }
+    navigator.push(
+      MaterialPageRoute(
+        builder: (_) => ExperiencePageScreen(
+          experience: widget.experience,
+          category: widget.category ?? _buildFallbackCategory(),
+          userColorCategories: widget.userColorCategories,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -177,10 +279,18 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(
-                              experience.name,
-                              style: theme.textTheme.titleMedium
-                                  ?.copyWith(fontWeight: FontWeight.w600),
+                            MouseRegion(
+                              cursor: SystemMouseCursors.click,
+                              child: GestureDetector(
+                                behavior: HitTestBehavior.opaque,
+                                onTap: _handleViewExperienceNavigation,
+                                child: Text(
+                                  experience.name,
+                                  style: theme.textTheme.titleMedium?.copyWith(
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
                             ),
                           ],
                         ),
@@ -708,71 +818,62 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
     final String expansionTooltip =
         _isPreviewExpanded ? 'Collapse preview' : 'Expand preview';
     final Color expansionColor = Colors.blue;
+    final Color shareColor = Colors.blue;
 
-    return Row(
-      children: [
-        const Expanded(child: SizedBox()),
-        SizedBox(
-          width: 160,
-          height: 56,
-          child: Stack(
-            alignment: Alignment.center,
-            children: [
-              Align(
-                alignment: Alignment.center,
-                child: IconButton(
-                  tooltip: tooltip,
-                  iconSize: iconSize,
-                  onPressed: isLaunchable ? () => widget.onLaunchUrl(url) : null,
-                  icon: Icon(iconData, color: iconColor),
-                ),
-              ),
-              Align(
-                alignment: Alignment.centerRight,
-                child: IconButton(
-                  tooltip: expansionTooltip,
-                  iconSize: 26,
-                  padding: const EdgeInsets.symmetric(horizontal: 6),
-                  constraints: const BoxConstraints(),
-                  onPressed: _togglePreviewExpansion,
-                  icon: Icon(expansionIcon, color: expansionColor),
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(width: 4),
-        Expanded(
-          child: Align(
+    final Widget socialButton = IconButton(
+      tooltip: tooltip,
+      iconSize: iconSize,
+      onPressed: isLaunchable ? () => widget.onLaunchUrl(url) : null,
+      icon: Icon(iconData, color: iconColor),
+    );
+
+    final Widget shareButton = IconButton(
+      tooltip: 'Share media',
+      iconSize: 26,
+      color: shareColor,
+      icon: const Icon(Icons.share_outlined),
+      onPressed: _isShareInProgress
+          ? null
+          : () => _handleShareButtonPressed(mediaItem),
+    );
+
+    final Widget expandButton = IconButton(
+      tooltip: expansionTooltip,
+      iconSize: 26,
+      color: expansionColor,
+      icon: Icon(expansionIcon),
+      onPressed: _togglePreviewExpansion,
+    );
+
+    final Widget viewExperienceButton = IconButton(
+      tooltip: 'View experience details',
+      iconSize: 28,
+      icon: Icon(Icons.arrow_forward_rounded,
+          color: Theme.of(context).primaryColor),
+      onPressed: _handleViewExperienceNavigation,
+    );
+
+    return SizedBox(
+      height: 56,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Center(child: socialButton),
+          Align(
             alignment: Alignment.centerRight,
-            child: IconButton(
-              tooltip: 'View experience details',
-              iconSize: 28,
-              icon: Icon(Icons.arrow_forward_rounded,
-                  color: Theme.of(context).primaryColor),
-              onPressed: () {
-                final navigator = Navigator.of(context, rootNavigator: true);
-                navigator.pop();
-                
-                // Use custom handler if provided, otherwise use default behavior
-                if (widget.onViewExperience != null) {
-                  widget.onViewExperience!();
-                } else {
-                  navigator.push(
-                    MaterialPageRoute(
-                      builder: (_) => ExperiencePageScreen(
-                        experience: widget.experience,
-                        category: widget.category ?? _buildFallbackCategory(),
-                        userColorCategories: widget.userColorCategories,
-                      ),
-                    ),
-                  );
-                }
-              },
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                shareButton,
+                const SizedBox(width: 4),
+                expandButton,
+                const SizedBox(width: 4),
+                viewExperienceButton,
+              ],
             ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 

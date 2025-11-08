@@ -2571,8 +2571,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               Experience newExperience = Experience(
                 id: '',
                 name: cardTitle,
-                description:
-                    notes.isNotEmpty ? notes : 'Created from shared content',
+                description: notes,
                 location: locationToSave,
                 categoryId: categoryIdToSave,
                 yelpUrl: cardYelpUrl.isNotEmpty ? cardYelpUrl : null,

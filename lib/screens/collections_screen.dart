@@ -4470,6 +4470,12 @@ class _CollectionsScreenState extends State<CollectionsScreen>
 
     final bool isSelecting = _isSelectingExperiences;
     final bool isSelected = _selectedExperienceIds.contains(experience.id);
+    const double playButtonDiameter = 36.0;
+    const double playIconSize = 20.0;
+    const double badgeDiameter = 18.0;
+    const double badgeFontSize = 11.0;
+    const double badgeBorderWidth = 2.0;
+    const double badgeOffset = -3.0;
 
     final Widget leadingBase = Container(
       width: 56,
@@ -4619,30 +4625,30 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                         clipBehavior: Clip.none,
                         children: [
                           Container(
-                            width: 28,
-                            height: 28,
+                            width: playButtonDiameter,
+                            height: playButtonDiameter,
                             decoration: BoxDecoration(
                               color: Theme.of(context).primaryColor,
                               shape: BoxShape.circle,
                             ),
-                            child: const Icon(
+                            child: Icon(
                               Icons.play_arrow,
                               color: Colors.white,
-                              size: 16,
+                              size: playIconSize,
                             ),
                           ),
                           Positioned(
-                            bottom: -1,
-                            right: -1,
+                            bottom: badgeOffset,
+                            right: badgeOffset,
                             child: Container(
-                              width: 12,
-                              height: 12,
+                              width: badgeDiameter,
+                              height: badgeDiameter,
                               decoration: BoxDecoration(
                                 color: Colors.white,
                                 shape: BoxShape.circle,
                                 border: Border.all(
                                   color: Theme.of(context).primaryColor,
-                                  width: 1.5,
+                                  width: badgeBorderWidth,
                                 ),
                               ),
                               child: Center(
@@ -4650,7 +4656,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                                   contentCount.toString(),
                                   style: TextStyle(
                                     color: Theme.of(context).primaryColor,
-                                    fontSize: 8,
+                                    fontSize: badgeFontSize,
                                     fontWeight: FontWeight.w600,
                                   ),
                                 ),
