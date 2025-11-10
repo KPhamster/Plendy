@@ -1,3 +1,4 @@
+import 'dart:io' show Platform;
 import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -12,12 +13,14 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import '../models/color_category.dart';
 import '../models/experience.dart';
 import '../models/public_experience.dart';
+import '../models/report.dart';
 import '../models/shared_media_item.dart';
 import '../models/user_category.dart';
 import '../services/experience_service.dart';
 import '../services/experience_share_service.dart';
 import '../services/discovery_share_service.dart';
 import '../services/google_maps_service.dart';
+import '../services/report_service.dart';
 import 'receive_share/widgets/facebook_preview_widget.dart';
 import 'receive_share/widgets/generic_url_preview_widget.dart';
 import 'receive_share/widgets/maps_preview_widget.dart';
@@ -57,6 +60,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
   final DiscoveryShareService _discoveryShareService = DiscoveryShareService();
   final ExperienceShareService _experienceShareService =
       ExperienceShareService();
+  final ReportService _reportService = ReportService();
   final Map<String, Future<Map<String, dynamic>?>> _mapsPreviewFutures = {};
   final Map<String, Future<List<Experience>>> _linkedExperiencesFutures = {};
   final PageController _pageController = PageController();
@@ -1139,6 +1143,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
   void _showReportDialog(_DiscoveryFeedItem item) {
     String? selectedReason;
     final TextEditingController explanationController = TextEditingController();
+    bool isSubmitting = false;
 
     showDialog<void>(
       context: context,
@@ -1164,11 +1169,13 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
                       title: const Text('Inappropriate content'),
                       value: 'inappropriate',
                       groupValue: selectedReason,
-                      onChanged: (value) {
-                        setState(() {
-                          selectedReason = value;
-                        });
-                      },
+                      onChanged: isSubmitting
+                          ? null
+                          : (value) {
+                              setState(() {
+                                selectedReason = value;
+                              });
+                            },
                       contentPadding: EdgeInsets.zero,
                       dense: true,
                     ),
@@ -1176,11 +1183,13 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
                       title: const Text('Incorrect Information'),
                       value: 'incorrect',
                       groupValue: selectedReason,
-                      onChanged: (value) {
-                        setState(() {
-                          selectedReason = value;
-                        });
-                      },
+                      onChanged: isSubmitting
+                          ? null
+                          : (value) {
+                              setState(() {
+                                selectedReason = value;
+                              });
+                            },
                       contentPadding: EdgeInsets.zero,
                       dense: true,
                     ),
@@ -1188,11 +1197,13 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
                       title: const Text('Other'),
                       value: 'other',
                       groupValue: selectedReason,
-                      onChanged: (value) {
-                        setState(() {
-                          selectedReason = value;
-                        });
-                      },
+                      onChanged: isSubmitting
+                          ? null
+                          : (value) {
+                              setState(() {
+                                selectedReason = value;
+                              });
+                            },
                       contentPadding: EdgeInsets.zero,
                       dense: true,
                     ),
@@ -1209,6 +1220,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
                     TextField(
                       controller: explanationController,
                       maxLines: 4,
+                      enabled: !isSubmitting,
                       decoration: InputDecoration(
                         hintText: 'Provide additional details...',
                         border: OutlineInputBorder(
@@ -1222,23 +1234,44 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
               ),
               actions: [
                 TextButton(
-                  onPressed: () {
-                    explanationController.dispose();
-                    Navigator.of(dialogContext).pop();
-                  },
+                  onPressed: isSubmitting
+                      ? null
+                      : () {
+                          explanationController.dispose();
+                          Navigator.of(dialogContext).pop();
+                        },
                   child: const Text('Cancel'),
                 ),
                 ElevatedButton(
-                  onPressed: () {
-                    // TODO: Add report submission functionality
-                    explanationController.dispose();
-                    Navigator.of(dialogContext).pop();
-                  },
+                  onPressed: isSubmitting
+                      ? null
+                      : () async {
+                          await _handleReportSubmit(
+                            dialogContext: dialogContext,
+                            item: item,
+                            selectedReason: selectedReason,
+                            explanationController: explanationController,
+                            setSubmitting: (value) {
+                              setState(() {
+                                isSubmitting = value;
+                              });
+                            },
+                          );
+                        },
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Theme.of(context).primaryColor,
                     foregroundColor: Colors.white,
                   ),
-                  child: const Text('Submit'),
+                  child: isSubmitting
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Text('Submit'),
                 ),
               ],
             );
@@ -1246,6 +1279,131 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
         );
       },
     );
+  }
+
+  Future<void> _handleReportSubmit({
+    required BuildContext dialogContext,
+    required _DiscoveryFeedItem item,
+    required String? selectedReason,
+    required TextEditingController explanationController,
+    required void Function(bool) setSubmitting,
+  }) async {
+    // Validate that a reason is selected
+    if (selectedReason == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please select a reason for reporting'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    // Get current user
+    final currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('You must be logged in to report content'),
+        ),
+      );
+      return;
+    }
+
+    setSubmitting(true);
+
+    try {
+      // Check if user has already reported this content
+      final existingReport = await _reportService.findExistingReport(
+        userId: currentUser.uid,
+        experienceId: item.experience.id,
+        previewURL: item.mediaUrl,
+      );
+
+      if (existingReport != null) {
+        if (!mounted) return;
+        explanationController.dispose();
+        Navigator.of(dialogContext).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'You have already reported this content. Thank you for your feedback!',
+            ),
+            duration: Duration(seconds: 3),
+          ),
+        );
+        return;
+      }
+
+      // Get device info
+      final deviceInfo = _getDeviceInfo();
+
+      // Create the Report object
+      final report = Report(
+        id: '', // Will be auto-generated by Firestore
+        userId: currentUser.uid,
+        screenReported: 'discovery_screen',
+        previewURL: item.mediaUrl,
+        experienceId: item.experience.id,
+        reportType: selectedReason,
+        details: explanationController.text.trim(),
+        createdAt: DateTime.now(),
+        reportedUserId: null, // Public experiences don't track original creator
+        publicExperienceId: item.experience.id,
+        deviceInfo: deviceInfo,
+      );
+
+      // Submit via service
+      await _reportService.submitReport(report);
+
+      if (!mounted) return;
+      explanationController.dispose();
+      Navigator.of(dialogContext).pop();
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Report submitted. Thank you for your feedback!'),
+          duration: Duration(seconds: 3),
+        ),
+      );
+
+      debugPrint(
+          'DiscoveryScreen: Report submitted for experience ${item.experience.id}');
+    } catch (e) {
+      debugPrint('DiscoveryScreen: Failed to submit report: $e');
+      if (!mounted) return;
+      setSubmitting(false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Failed to submit report. Please try again.',
+          ),
+          duration: Duration(seconds: 3),
+        ),
+      );
+    }
+  }
+
+  String _getDeviceInfo() {
+    if (kIsWeb) {
+      return 'Web';
+    }
+    try {
+      if (Platform.isIOS) {
+        return 'iOS';
+      } else if (Platform.isAndroid) {
+        return 'Android';
+      } else if (Platform.isMacOS) {
+        return 'macOS';
+      } else if (Platform.isWindows) {
+        return 'Windows';
+      } else if (Platform.isLinux) {
+        return 'Linux';
+      }
+    } catch (e) {
+      debugPrint('DiscoveryScreen: Failed to get platform info: $e');
+    }
+    return 'Unknown';
   }
 
   Future<void> _openReadOnlyExperience(

@@ -1,8 +1,8 @@
 /**
  * Local backfill script to populate sharedWithUserIds on existing experiences.
- * 
+ *
  * This runs directly from your machine, avoiding Cloud Function timeout limits.
- * 
+ *
  * Setup:
  *   1. Download service account key from Firebase Console:
  *      Project Settings > Service Accounts > Generate New Private Key
@@ -120,9 +120,10 @@ async function backfillAllExperiences(dryRun = false) {
   let updatedCount = 0;
   let lastDoc = null;
   const startMs = Date.now();
+  let hasMore = true;
 
   try {
-    while (true) {
+    while (hasMore) {
       // Fetch next batch of experiences
       let query = db
         .collection("experiences")
@@ -137,6 +138,7 @@ async function backfillAllExperiences(dryRun = false) {
 
       if (snap.empty) {
         console.log("\n✓ No more experiences to process");
+        hasMore = false;
         break;
       }
 

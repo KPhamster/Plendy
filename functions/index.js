@@ -4,6 +4,7 @@ const { onDocumentCreated } = require("firebase-functions/v2/firestore"); // For
 const { onRequest } = require("firebase-functions/v2/https"); // For 2nd gen HTTPS endpoints
 const functions = require("firebase-functions"); // Still needed for logger, config, etc.
 const admin = require("firebase-admin");
+const nodemailer = require("nodemailer");
 
 admin.initializeApp();
 
@@ -613,3 +614,264 @@ exports.bulkDeleteSharePermissions = onRequest({ region: "us-central1" }, async 
     res.status(500).json({ ok: false, error: err && err.message ? err.message : String(err) });
   }
 });
+
+/**
+ * Sends an email notification when a new report is created (2nd Gen).
+ * Configure Gmail App Password via environment variable: GMAIL_APP_PASSWORD
+ * Set via: firebase functions:config:set gmail.password="your-app-password"
+ * Or use .env for local: GMAIL_APP_PASSWORD=your-app-password
+ */
+exports.sendReportEmailNotification = onDocumentCreated(
+  "reports/{reportId}",
+  async (event) => {
+    const snapshot = event.data;
+    if (!snapshot) {
+      functions.logger.log("No data associated with the event");
+      return;
+    }
+
+    const reportId = event.params.reportId;
+    const reportData = snapshot.data();
+
+    functions.logger.log(`New report created: ${reportId}`);
+
+    try {
+      // Get reporter user info
+      let reporterName = "Unknown User";
+      let reporterEmail = "N/A";
+      try {
+        const reporterDoc = await db.collection("users").doc(reportData.userId).get();
+        if (reporterDoc.exists) {
+          const reporterProfile = reporterDoc.data();
+          reporterName = reporterProfile?.displayName ||
+            reporterProfile?.username ||
+            reporterProfile?.email ||
+            "Unknown User";
+          reporterEmail = reporterProfile?.email || "N/A";
+        }
+      } catch (err) {
+        functions.logger.error("Error fetching reporter profile:", err);
+      }
+
+      // Get reported experience info
+      let experienceName = "Unknown Experience";
+      try {
+        if (reportData.publicExperienceId) {
+          const expDoc = await db.collection("public_experiences").doc(reportData.publicExperienceId).get();
+          if (expDoc.exists) {
+            const expData = expDoc.data();
+            experienceName = expData?.name || "Unknown Experience";
+          }
+        } else if (reportData.experienceId) {
+          const expDoc = await db.collection("experiences").doc(reportData.experienceId).get();
+          if (expDoc.exists) {
+            const expData = expDoc.data();
+            experienceName = expData?.name || "Unknown Experience";
+          }
+        }
+      } catch (err) {
+        functions.logger.error("Error fetching experience info:", err);
+      }
+
+      // Format the report type
+      const reportTypeLabels = {
+        "inappropriate": "Inappropriate Content",
+        "incorrect": "Incorrect Information",
+        "other": "Other",
+      };
+      const reportTypeLabel = reportTypeLabels[reportData.reportType] || reportData.reportType;
+
+      // Format the timestamp
+      const createdAt = reportData.createdAt?.toDate ? reportData.createdAt.toDate() : new Date();
+      const formattedDate = createdAt.toLocaleString("en-US", {
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        timeZone: "America/Los_Angeles",
+      });
+
+      // Configure email transporter using Gmail
+      // Use environment variable for password
+      const gmailPassword = process.env.GMAIL_APP_PASSWORD || "";
+
+      if (!gmailPassword) {
+        functions.logger.error("Gmail app password not configured. Set GMAIL_APP_PASSWORD environment variable.");
+        return;
+      }
+
+      const transporter = nodemailer.createTransport({
+        service: "gmail",
+        auth: {
+          user: "plendy.experience@gmail.com",
+          pass: gmailPassword,
+        },
+      });
+
+      // Build email HTML
+      const emailHtml = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #d32f2f; border-bottom: 2px solid #d32f2f; padding-bottom: 10px;">
+            🚨 New Content Report
+          </h2>
+          
+          <div style="background-color: #f5f5f5; padding: 20px; border-radius: 8px; margin: 20px 0;">
+            <h3 style="margin-top: 0; color: #333;">Report Details</h3>
+            <table style="width: 100%; border-collapse: collapse;">
+              <tr>
+                <td style="padding: 8px 0; font-weight: bold; color: #666; width: 160px;">Report ID:</td>
+                <td style="padding: 8px 0; color: #333;">${reportId}</td>
+              </tr>
+              <tr>
+                <td style="padding: 8px 0; font-weight: bold; color: #666;">Report Type:</td>
+                <td style="padding: 8px 0; color: #d32f2f; font-weight: bold;">${reportTypeLabel}</td>
+              </tr>
+              <tr>
+                <td style="padding: 8px 0; font-weight: bold; color: #666;">Status:</td>
+                <td style="padding: 8px 0; color: #333;">${reportData.status || "pending"}</td>
+              </tr>
+              <tr>
+                <td style="padding: 8px 0; font-weight: bold; color: #666;">Submitted:</td>
+                <td style="padding: 8px 0; color: #333;">${formattedDate} PST</td>
+              </tr>
+            </table>
+          </div>
+
+          <div style="background-color: #fff3e0; padding: 20px; ` +
+        "border-radius: 8px; margin: 20px 0; " +
+        `border-left: 4px solid #ff9800;">
+            <h3 style="margin-top: 0; color: #333;">Reported Content</h3>
+            <table style="width: 100%; border-collapse: collapse;">
+              <tr>
+                <td style="padding: 8px 0; font-weight: bold; color: #666; width: 160px;">Experience:</td>
+                <td style="padding: 8px 0; color: #333;">${experienceName}</td>
+              </tr>
+              <tr>
+                <td style="padding: 8px 0; font-weight: bold; color: #666;">Screen:</td>
+                <td style="padding: 8px 0; color: #333;">${reportData.screenReported || "N/A"}</td>
+              </tr>
+              <tr>
+                <td style="padding: 8px 0; font-weight: bold; color: #666;">Preview URL:</td>
+                <td style="padding: 8px 0; color: #333; word-break: break-all;">
+                  <a href="${reportData.previewURL || "#"}" ` +
+        "target=\"_blank\" style=\"color: #1976d2;\">" +
+        `${reportData.previewURL || "N/A"}</a>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding: 8px 0; font-weight: bold; color: #666;">` +
+        `Experience ID:</td>
+                <td style="padding: 8px 0; color: #333; ` +
+        "font-family: monospace; font-size: 12px;\">" +
+        `${reportData.experienceId || "N/A"}</td>
+              </tr>
+              ${reportData.publicExperienceId ? `
+              <tr>
+                <td style="padding: 8px 0; font-weight: bold; color: #666;">` +
+        `Public Exp ID:</td>
+                <td style="padding: 8px 0; color: #333; ` +
+        "font-family: monospace; font-size: 12px;\">" +
+        `${reportData.publicExperienceId}</td>
+              </tr>
+              ` : ""}
+            </table>
+          </div>
+
+          <div style="background-color: #e3f2fd; padding: 20px; ` +
+        "border-radius: 8px; margin: 20px 0; " +
+        `border-left: 4px solid #2196f3;">
+            <h3 style="margin-top: 0; color: #333;">Reporter Information</h3>
+            <table style="width: 100%; border-collapse: collapse;">
+              <tr>
+                <td style="padding: 8px 0; font-weight: bold; color: #666; width: 160px;">Name:</td>
+                <td style="padding: 8px 0; color: #333;">${reporterName}</td>
+              </tr>
+              <tr>
+                <td style="padding: 8px 0; font-weight: bold; color: #666;">Email:</td>
+                <td style="padding: 8px 0; color: #333;">${reporterEmail}</td>
+              </tr>
+              <tr>
+                <td style="padding: 8px 0; font-weight: bold; color: #666;">` +
+        `User ID:</td>
+                <td style="padding: 8px 0; color: #333; ` +
+        "font-family: monospace; font-size: 12px;\">" +
+        `${reportData.userId || "N/A"}</td>
+              </tr>
+              ${reportData.deviceInfo ? `
+              <tr>
+                <td style="padding: 8px 0; font-weight: bold; color: #666;">Device:</td>
+                <td style="padding: 8px 0; color: #333;">${reportData.deviceInfo}</td>
+              </tr>
+              ` : ""}
+              ${reportData.reportedUserId ? `
+              <tr>
+                <td style="padding: 8px 0; font-weight: bold; color: #666;">` +
+        `Reported User ID:</td>
+                <td style="padding: 8px 0; color: #333; ` +
+        "font-family: monospace; font-size: 12px;\">" +
+        `${reportData.reportedUserId}</td>
+              </tr>
+              ` : ""}
+            </table>
+          </div>
+
+          ${reportData.details ? `
+          <div style="background-color: #fff; padding: 20px; ` +
+        `border-radius: 8px; margin: 20px 0; border: 1px solid #ddd;">
+            <h3 style="margin-top: 0; color: #333;">Additional Details</h3>
+            <p style="color: #555; line-height: 1.6; white-space: pre-wrap;">${reportData.details}</p>
+          </div>
+          ` : ""}
+
+          <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd; color: #999; font-size: 12px;">
+            <p>This is an automated notification from Plendy's content moderation system.</p>
+            <p>Please review this report and take appropriate action in the admin dashboard.</p>
+          </div>
+        </div>
+      `;
+
+      // Send email
+      const mailOptions = {
+        from: "Plendy Reports <plendy.experience@gmail.com>",
+        to: "plendy.experience@gmail.com",
+        subject: `🚨 New Report: ${reportTypeLabel} - ${experienceName}`,
+        html: emailHtml,
+        text: `
+New Content Report Received
+
+Report ID: ${reportId}
+Report Type: ${reportTypeLabel}
+Status: ${reportData.status || "pending"}
+Submitted: ${formattedDate} PST
+
+Reported Content:
+- Experience: ${experienceName}
+- Screen: ${reportData.screenReported || "N/A"}
+- Preview URL: ${reportData.previewURL || "N/A"}
+- Experience ID: ${reportData.experienceId || "N/A"}
+${reportData.publicExperienceId ? `- Public Experience ID: ${reportData.publicExperienceId}\n` : ""}
+
+Reporter Information:
+- Name: ${reporterName}
+- Email: ${reporterEmail}
+- User ID: ${reportData.userId || "N/A"}
+${reportData.deviceInfo ? `- Device: ${reportData.deviceInfo}\n` : ""}
+${reportData.reportedUserId ? `- Reported User ID: ${reportData.reportedUserId}\n` : ""}
+
+Additional Details:
+${reportData.details || "No additional details provided."}
+
+---
+This is an automated notification from Plendy's content moderation system.
+        `.trim(),
+      };
+
+      await transporter.sendMail(mailOptions);
+      functions.logger.log(`Report email sent successfully for report ${reportId}`);
+    } catch (error) {
+      functions.logger.error("Error sending report email notification:", error);
+      // Don't throw - we don't want the function to fail if email fails
+      // The report is still saved in Firestore
+    }
+  });

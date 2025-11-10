@@ -300,6 +300,33 @@ service cloud.firestore {
       allow update: if false;
       allow delete: if false;
     }
+
+    match /reports/{reportId} {
+      // Users can create reports if they are authenticated and the userId matches
+      allow create: if request.auth != null &&
+        request.resource.data.userId == request.auth.uid &&
+        request.resource.data.reportType is string &&
+        request.resource.data.details is string &&
+        request.resource.data.screenReported is string &&
+        request.resource.data.experienceId is string &&
+        request.resource.data.previewURL is string &&
+        request.resource.data.status == 'pending';
+      
+      // Users can read their own reports
+      allow get: if request.auth != null &&
+        resource.data.userId == request.auth.uid;
+      
+      // Users can list their own reports only
+      allow list: if request.auth != null &&
+        request.auth.uid != null;
+      
+      // Only admins can update reports (status changes, review notes, etc.)
+      // For now, updates are disabled - will be handled by Cloud Functions/Admin SDK
+      allow update: if false;
+      
+      // Users cannot delete reports once submitted
+      allow delete: if false;
+    }
   }
 
   function sharedPermissionDocId(ownerId, itemType, itemId, viewerId) {
