@@ -91,6 +91,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
   bool _isPreparingMore = false;
   bool _isShareInProgress = false;
   bool _isLoadingSharedPreview = false;
+  bool _hasStartedDiscovering = false;
   String? _errorMessage;
   int _currentPage = 0;
   double _dragDistance = 0;
@@ -98,7 +99,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
   String? _lastDisplayedShareToken;
 
   @override
-  bool get wantKeepAlive => true;
+  bool get wantKeepAlive => false; // Changed to false so cover page shows every time
 
   @override
   void initState() {
@@ -108,6 +109,14 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
     if (initialToken != null && initialToken.isNotEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         showSharedPreview(initialToken);
+      });
+    }
+  }
+
+  void _setHasStartedDiscovering(bool value) {
+    if (mounted) {
+      setState(() {
+        _hasStartedDiscovering = value;
       });
     }
   }
@@ -761,6 +770,13 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
   }
 
   Widget _buildBody() {
+    // Show cover page immediately if user hasn't started discovering yet
+    // (loading happens in background)
+    if (!_hasStartedDiscovering) {
+      return _buildCoverPage();
+    }
+
+    // Only show loading/error states if user has started discovering
     if (_isLoading) {
       return const Center(
         child: CircularProgressIndicator(),
@@ -898,6 +914,71 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
 
   void _resetDragTracking() {
     _dragDistance = 0;
+  }
+
+  Widget _buildCoverPage() {
+    final theme = Theme.of(context);
+    final primaryColor = theme.primaryColor;
+
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Colors.black,
+            Colors.grey.shade900,
+            Colors.black,
+          ],
+        ),
+      ),
+      child: SafeArea(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 40.0),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                const Text(
+                  'Explore amazing places and experiences\nshared by the community',
+                  style: TextStyle(
+                    color: Colors.white70,
+                    fontSize: 16,
+                    height: 1.5,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 30),
+                ElevatedButton(
+                  onPressed: () => _setHasStartedDiscovering(true),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: primaryColor,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 48,
+                      vertical: 20,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(30),
+                    ),
+                    elevation: 8,
+                  ),
+                  child: const Text(
+                    'Start Discovering',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 40),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _buildFeedPage(_DiscoveryFeedItem item) {
