@@ -5,6 +5,12 @@ rules_version = '2';
 //    /databases/(default)/documents/users/$(request.auth.uid)).data.isAdmin;
 service firebase.storage {
   match /b/{bucket}/o {
+    // Background images used on the Discovery cover view.
+    match /cover_photos/{allPaths=**} {
+      allow read: if true; // Publicly readable cover backgrounds
+      allow write: if request.auth != null; // Restrict uploads to authenticated users
+    }
+
     match /{allPaths=**} {
       allow read, write: if false;
     }
