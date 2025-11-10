@@ -813,41 +813,52 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
           // --- END: Positioned Back Button ---
 
           // --- ADDED: Positioned Overflow Menu (3-dot) ---
-          if (!widget.readOnlyPreview)
-            Positioned(
-              top: MediaQuery.of(context).padding.top + 8.0,
-              right: 8.0,
-              child: Theme(
-                data: Theme.of(context).copyWith(
-                  popupMenuTheme: const PopupMenuThemeData(color: Colors.white),
-                  canvasColor: Colors.white,
-                ),
-                child: PopupMenuButton<String>(
-                  onSelected: (value) {
-                    if (value == 'remove') {
-                      _promptRemoveExperience();
-                    }
-                  },
-                  itemBuilder: (context) => [
+          Positioned(
+            top: MediaQuery.of(context).padding.top + 8.0,
+            right: 8.0,
+            child: Theme(
+              data: Theme.of(context).copyWith(
+                popupMenuTheme: const PopupMenuThemeData(color: Colors.white),
+                canvasColor: Colors.white,
+              ),
+              child: PopupMenuButton<String>(
+                onSelected: (value) {
+                  if (value == 'remove') {
+                    _promptRemoveExperience();
+                  }
+                  // TODO: Implement report flow.
+                },
+                itemBuilder: (context) {
+                  final menuItems = <PopupMenuEntry<String>>[
                     const PopupMenuItem<String>(
-                      value: 'remove',
-                      child: Text('Remove Experience'),
+                      value: 'report',
+                      child: Text('Report'),
                     ),
-                  ],
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: Colors.black.withOpacity(0.4),
-                      shape: BoxShape.circle,
-                    ),
-                    padding: const EdgeInsets.all(8.0),
-                    child: const Icon(
-                      Icons.more_vert,
-                      color: Colors.white,
-                    ),
+                  ];
+                  if (!widget.readOnlyPreview) {
+                    menuItems.add(
+                      const PopupMenuItem<String>(
+                        value: 'remove',
+                        child: Text('Remove Experience'),
+                      ),
+                    );
+                  }
+                  return menuItems;
+                },
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.4),
+                    shape: BoxShape.circle,
+                  ),
+                  padding: const EdgeInsets.all(8.0),
+                  child: const Icon(
+                    Icons.more_vert,
+                    color: Colors.white,
                   ),
                 ),
               ),
             ),
+          ),
           // --- END: Positioned Overflow Menu (3-dot) ---
 
           // 3. Content (Positioned to add padding)
