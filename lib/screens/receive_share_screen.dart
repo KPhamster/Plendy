@@ -2909,18 +2909,28 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
     }
 
-    if (result != null && mounted) {
-      Future.microtask(() {
-        if (mounted) {
-          // Check mounted before using context
-          FocusScope.of(context).unfocus();
-        }
-      });
+    if (result == null || !mounted) {
+      return;
+    }
 
-      final Location selectedLocationFromResult =
-          result is Map ? result['location'] : result as Location;
-      final provider = context.read<ReceiveShareProvider>();
+    Future.microtask(() {
+      if (mounted) {
+        // Check mounted before using context
+        FocusScope.of(context).unfocus();
+      }
+    });
 
+    if (!mounted) return;
+
+    setState(() {
+      card.isSelectingLocation = true;
+    });
+
+    final Location selectedLocationFromResult =
+        result is Map ? result['location'] : result as Location;
+    final provider = context.read<ReceiveShareProvider>();
+
+    try {
       // --- ADDED: Duplicate Check based on selected location's Place ID ---
       if (selectedLocationFromResult.placeId != null &&
           selectedLocationFromResult.placeId!.isNotEmpty) {
@@ -3057,7 +3067,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               searchQuery: selectedLocation.address ?? 'Selected Location');
         }
       }
-    } else {}
+    } finally {
+      if (mounted) {
+        setState(() {
+          card.isSelectingLocation = false;
+        });
+      }
+    }
   }
 
   Future<void> _selectSavedExperienceForCard(ExperienceCardData card) async {
