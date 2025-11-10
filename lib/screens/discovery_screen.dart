@@ -1419,6 +1419,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
           userColorCategories: const <ColorCategory>[],
           initialMediaItems: mediaItems,
           readOnlyPreview: true,
+          publicExperienceId: publicExperience.id,
         ),
       ),
     );
