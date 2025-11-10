@@ -9,6 +9,7 @@ import 'my_people_screen.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'browser_signin_screen.dart';
 import 'messages_screen.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class ProfileScreen extends StatefulWidget {
   final Future<void> Function()? onRequestDiscoveryRefresh;
@@ -61,6 +62,57 @@ class _ProfileScreenState extends State<ProfileScreen> {
       setState(() {});
     }
     _loadUsername();
+  }
+
+  void _showReportDialog() {
+    showDialog<void>(
+      context: context,
+      builder: (context) {
+        final theme = Theme.of(context);
+        return AlertDialog(
+          backgroundColor: Colors.white,
+          title: const Text('Let us know what you think!'),
+          content: const Text(
+            'Plendy is new and growing so we are always open to suggestions. '
+            'Send us any feedback you have by sending us an email.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              style: TextButton.styleFrom(
+                backgroundColor: Colors.white,
+                foregroundColor: theme.primaryColor,
+              ),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () async {
+                Navigator.of(context).pop();
+                await _launchFeedbackEmail();
+              },
+              style: TextButton.styleFrom(
+                backgroundColor: theme.primaryColor,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Email'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _launchFeedbackEmail() async {
+    final emailUri = Uri(
+      scheme: 'mailto',
+      path: 'plendy.experience@gmail.com',
+    );
+    if (!await launchUrl(emailUri, mode: LaunchMode.externalApplication)) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not open email app.')),
+      );
+    }
   }
 
   @override
@@ -190,6 +242,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 await widget.onRequestDiscoveryRefresh?.call();
                               }
                             },
+                          ),
+                          ListTile(
+                            leading: const Icon(Icons.email_outlined),
+                            title: const Text('Report'),
+                            onTap: _showReportDialog,
                           ),
                         ],
                       );
