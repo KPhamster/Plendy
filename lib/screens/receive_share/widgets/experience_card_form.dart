@@ -998,9 +998,11 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                       ValueListenableBuilder<bool>(
                         valueListenable: widget.cardData.locationEnabled,
                         builder: (context, isEnabled, child) {
+                          final bool isLocationLoading =
+                              widget.cardData.isSelectingLocation;
                           return GestureDetector(
                             // Call the parent's location selection logic
-                            onTap: isEnabled // Use isEnabled from builder
+                            onTap: isEnabled && !isLocationLoading
                                 ? () => widget.onLocationSelect(widget.cardData)
                                 : null,
                             child: Container(
@@ -1069,6 +1071,20 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                                         : Colors.grey[400]),
                                           ),
                                   ),
+                                  if (isLocationLoading)
+                                    Padding(
+                                      padding: const EdgeInsets.only(right: 8.0),
+                                      child: SizedBox(
+                                        width: 20,
+                                        height: 20,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          valueColor: AlwaysStoppedAnimation(
+                                            Theme.of(context).primaryColor,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
                                   // Toggle switch inside the location field
                                   Transform.scale(
                                     scale: 0.8,

@@ -474,58 +474,76 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
       ),
     );
 
-    if (result != null && mounted) {
-      Future.microtask(() => FocusScope.of(context).unfocus());
+    if (result == null || !mounted) {
+      return;
+    }
 
-      final Location selectedLocation =
-          result is Map ? result['location'] : result as Location;
+    Future.microtask(() {
+      if (mounted) {
+        FocusScope.of(context).unfocus();
+      }
+    });
 
-      // Fetch details for the *newly selected* location to get address/website etc.
-      try {
-        if (selectedLocation.placeId == null ||
-            selectedLocation.placeId!.isEmpty) {
-          print(
-              "WARN: Location picked has no Place ID. Performing basic update.");
-          setState(() {
-            _cardData.selectedLocation = selectedLocation;
-            _cardData.searchController.text =
-                selectedLocation.address ?? 'Selected Location';
-            _cardData.locationEnabled.value = true; // Assume enabled if picked
-          });
-          return;
-        }
+    if (!mounted) return;
 
-        Location detailedLocation =
-            await _mapsService.getPlaceDetails(selectedLocation.placeId!);
+    setState(() {
+      _cardData.isSelectingLocation = true;
+    });
+
+    final Location selectedLocation =
+        result is Map ? result['location'] : result as Location;
+
+    // Fetch details for the *newly selected* location to get address/website etc.
+    try {
+      if (selectedLocation.placeId == null ||
+          selectedLocation.placeId!.isEmpty) {
         print(
-            "Edit Modal: Fetched details for picked location: ${detailedLocation.displayName}");
-
-        // Update cardData state
-        setState(() {
-          _cardData.selectedLocation = detailedLocation;
-          _cardData.titleController.text = detailedLocation
-              .getPlaceName(); // Update title? Discuss if needed
-          _cardData.websiteController.text = detailedLocation.website ??
-              _cardData.websiteController
-                  .text; // Keep existing website if new one is null? Or override?
-          _cardData.searchController.text =
-              detailedLocation.address ?? ''; // For display in location field
-          _cardData.locationEnabled.value = true;
-        });
-      } catch (e) {
-        print("Error getting place details after picking location: $e");
-        // Fallback: Update with the basic location selected if details fetch fails
+            "WARN: Location picked has no Place ID. Performing basic update.");
         setState(() {
           _cardData.selectedLocation = selectedLocation;
           _cardData.searchController.text =
               selectedLocation.address ?? 'Selected Location';
-          _cardData.locationEnabled.value = true;
+          _cardData.locationEnabled.value = true; // Assume enabled if picked
         });
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Error updating location details: $e')),
-          );
-        }
+        return;
+      }
+
+      Location detailedLocation =
+          await _mapsService.getPlaceDetails(selectedLocation.placeId!);
+      print(
+          "Edit Modal: Fetched details for picked location: ${detailedLocation.displayName}");
+
+      // Update cardData state
+      setState(() {
+        _cardData.selectedLocation = detailedLocation;
+        _cardData.titleController.text =
+            detailedLocation.getPlaceName(); // Update title? Discuss if needed
+        _cardData.websiteController.text = detailedLocation.website ??
+            _cardData.websiteController
+                .text; // Keep existing website if new one is null? Or override?
+        _cardData.searchController.text =
+            detailedLocation.address ?? ''; // For display in location field
+        _cardData.locationEnabled.value = true;
+      });
+    } catch (e) {
+      print("Error getting place details after picking location: $e");
+      // Fallback: Update with the basic location selected if details fetch fails
+      setState(() {
+        _cardData.selectedLocation = selectedLocation;
+        _cardData.searchController.text =
+            selectedLocation.address ?? 'Selected Location';
+        _cardData.locationEnabled.value = true;
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error updating location details: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _cardData.isSelectingLocation = false;
+        });
       }
     }
   }
@@ -1282,7 +1300,8 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
 
                 // Location selection (using adapted widget/logic)
                 GestureDetector(
-                  onTap: (_cardData.locationEnabled.value)
+                  onTap: (_cardData.locationEnabled.value &&
+                          !_cardData.isSelectingLocation)
                       ? _showLocationPicker
                       : null,
                   child: Container(
@@ -1340,6 +1359,20 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                                           : Colors.grey[400]),
                                 ),
                         ),
+                        if (_cardData.isSelectingLocation)
+                          Padding(
+                            padding: const EdgeInsets.only(right: 8.0),
+                            child: SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation(
+                                  Theme.of(context).primaryColor,
+                                ),
+                              ),
+                            ),
+                          ),
                         Transform.scale(
                           // Toggle switch
                           scale: 0.8,
