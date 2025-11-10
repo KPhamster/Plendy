@@ -3,8 +3,10 @@ import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -97,13 +99,134 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
   double _dragDistance = 0;
   static const double _dragThreshold = 40;
   String? _lastDisplayedShareToken;
+  // Firebase Storage folder containing the curated cover background images.
+  static const String _coverBackgroundFolder = 'cover_photos';
+  static const Duration _coverFadeDuration = Duration(milliseconds: 600);
+  static const List<_CoverQuote> _coverQuotes = [
+    _CoverQuote(
+      text:
+          'The world is full of magical things patiently waiting for our senses to grow sharper.',
+      author: 'W.B. Yeats',
+    ),
+    _CoverQuote(
+      text:
+          'Life is short and the world is wide, so the sooner you start exploring it, the better.',
+      author: 'Simon Raven',
+    ),
+    _CoverQuote(
+      text:
+          'Fill your life with adventures, not things. Have stories to tell, not stuff to show.',
+    ),
+    _CoverQuote(
+      text:
+          'The world is a book, and those who do not travel read only one page.',
+      author: 'Augustine of Hippo',
+    ),
+    _CoverQuote(
+      text:
+          'Not all those who wander are lost.',
+      author: 'J.R.R. Tolkien',
+    ),
+    _CoverQuote(
+      text:
+          'Life is either a daring adventure or nothing at all.',
+      author: 'Helen Keller',
+    ),
+     _CoverQuote(
+      text:
+          'Adventure is worthwhile in itself.',
+      author: 'Amelia Earhart',
+    ),
+     _CoverQuote(
+      text:
+          'The journey of a thousand miles begins with a single step.',
+      author: 'Lao Tzu',
+    ),
+     _CoverQuote(
+      text:
+          'To travel is to live.',
+      author: 'Hans Christian Andersen',
+    ),
+     _CoverQuote(
+      text:
+          'Only those who will risk going too far can possibly find out how far one can go.',
+      author: 'T.S. Eliot',
+    ),
+     _CoverQuote(
+      text:
+          'If you think adventure is dangerous, try routine; it is lethal.',
+      author: 'Paulo Coelho',
+    ),
+    _CoverQuote(
+      text:
+          'Wanderer, there is no path; the path is made by walking.',
+      author: 'Antonio Machado',
+    ),
+    _CoverQuote(
+      text:
+          'Wherever you go, go with all your heart.',
+      author: 'Confucius',
+    ),
+    _CoverQuote(
+      text:
+          'The gladdest moment in human life, methinks, is a departure into unknown lands.',
+      author: 'Richard Francis Burton',
+    ),
+    _CoverQuote(
+      text:
+          'One does not discover new lands without consenting to lose sight of the shore for a very long time.',
+      author: 'André Gide',
+    ),
+    _CoverQuote(
+      text:
+          'I am not the same, having seen the moon shine on the other side of the world.',
+      author: 'Mary Anne Radmacher',
+    ),
+    _CoverQuote(
+      text:
+          'Travel makes one modest; you see what a tiny place you occupy in the world.',
+      author: 'Gustave Flaubert',
+    ),
+    _CoverQuote(
+      text:
+          'The mountains are calling and I must go.',
+      author: 'John Muir',
+    ),
+     _CoverQuote(
+      text:
+          'In every walk with nature one receives far more than he seeks.',
+      author: 'John Muir',
+    ),
+     _CoverQuote(
+      text:
+          'Go confidently in the direction of your dreams. Live the life you have imagined.',
+      author: 'Henry David Thoreau',
+    ),
+     _CoverQuote(
+      text:
+          'Traveling — it leaves you speechless, then turns you into a storyteller.',
+      author: 'Ibn Battuta',
+    ),
+    //  _CoverQuote(
+    //   text:
+    //       '',
+    //   author: '',
+    // ),
+  ];
+  Future<void>? _coverBackgroundsFuture;
+  List<Reference> _coverBackgroundRefs = [];
+  String? _coverBackgroundUrl;
+  _CoverQuote? _currentCoverQuote;
 
   @override
-  bool get wantKeepAlive => false; // Changed to false so cover page shows every time
+  bool get wantKeepAlive =>
+      false; // Changed to false so cover page shows every time
 
   @override
   void initState() {
     super.initState();
+    _currentCoverQuote = _pickRandomCoverQuote();
+    _prepareCoverBackgrounds();
     _initializeFeed();
     final String? initialToken = widget.initialShareToken;
     if (initialToken != null && initialToken.isNotEmpty) {
@@ -117,6 +240,9 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
     if (mounted) {
       setState(() {
         _hasStartedDiscovering = value;
+        if (!value) {
+          _currentCoverQuote = _pickRandomCoverQuote();
+        }
       });
     }
   }
@@ -159,6 +285,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
       _errorMessage = null;
       _currentPage = 0;
       _dragDistance = 0;
+      _currentCoverQuote = _pickRandomCoverQuote();
     });
     await _initializeFeed();
   }
@@ -916,68 +1043,190 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
     _dragDistance = 0;
   }
 
+  _CoverQuote? _pickRandomCoverQuote() {
+    if (_coverQuotes.isEmpty) {
+      return null;
+    }
+    return _coverQuotes[_random.nextInt(_coverQuotes.length)];
+  }
+
+  void _prepareCoverBackgrounds() {
+    _coverBackgroundsFuture ??= _fetchCoverBackgrounds();
+  }
+
+  Future<void> _fetchCoverBackgrounds() async {
+    try {
+      final ListResult result =
+          await FirebaseStorage.instance.ref(_coverBackgroundFolder).listAll();
+      if (result.items.isEmpty) {
+        debugPrint(
+          'DiscoveryScreen: No cover background assets found at $_coverBackgroundFolder',
+        );
+        return;
+      }
+      _coverBackgroundRefs = result.items;
+      await _selectRandomCoverBackground();
+    } catch (e, stackTrace) {
+      debugPrint(
+        'DiscoveryScreen: Failed to load cover backgrounds: $e\n$stackTrace',
+      );
+    }
+  }
+
+  Future<void> _selectRandomCoverBackground() async {
+    if (_coverBackgroundRefs.isEmpty) {
+      return;
+    }
+    final Reference reference =
+        _coverBackgroundRefs[_random.nextInt(_coverBackgroundRefs.length)];
+    try {
+      final String url = await reference.getDownloadURL();
+      if (!mounted) return;
+      setState(() {
+        _coverBackgroundUrl = url;
+      });
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        precacheImage(NetworkImage(url), context);
+      });
+    } catch (e) {
+      debugPrint(
+        'DiscoveryScreen: Failed to fetch cover background URL: $e',
+      );
+    }
+  }
+
   Widget _buildCoverPage() {
     final theme = Theme.of(context);
     final primaryColor = theme.primaryColor;
+    final LinearGradient fallbackGradient = LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: [
+        Colors.black,
+        Colors.grey.shade900,
+        Colors.black,
+      ],
+    );
 
-    return Container(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            Colors.black,
-            Colors.grey.shade900,
-            Colors.black,
-          ],
-        ),
-      ),
-      child: SafeArea(
-        child: Center(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 40.0),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                const Text(
-                  'Explore amazing places and experiences\nshared by the community',
-                  style: TextStyle(
-                    color: Colors.white70,
-                    fontSize: 16,
-                    height: 1.5,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 30),
-                ElevatedButton(
-                  onPressed: () => _setHasStartedDiscovering(true),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: primaryColor,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 48,
-                      vertical: 20,
+    final Widget background = Container(
+      decoration: BoxDecoration(gradient: fallbackGradient),
+    );
+
+    final Widget? coverImage = _coverBackgroundUrl == null
+        ? null
+        : Image.network(
+            _coverBackgroundUrl!,
+            key: ValueKey(_coverBackgroundUrl),
+            fit: BoxFit.cover,
+            color: Colors.black.withOpacity(0.45),
+            colorBlendMode: BlendMode.darken,
+            frameBuilder: (BuildContext context, Widget child, int? frame,
+                bool wasSynchronouslyLoaded) {
+              if (wasSynchronouslyLoaded) {
+                return child;
+              }
+              return AnimatedOpacity(
+                opacity: frame == null ? 0.0 : 1.0,
+                duration: _coverFadeDuration,
+                curve: Curves.easeOut,
+                child: child,
+              );
+            },
+            errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+          );
+
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        background,
+        if (coverImage != null) coverImage,
+        SafeArea(
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 40.0),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  if (_currentCoverQuote != null) ...[
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 20,
+                        vertical: 18,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.08),
+                        borderRadius: BorderRadius.circular(18),
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            _currentCoverQuote!.text,
+                            style: GoogleFonts.playfairDisplay(
+                              color: Colors.white,
+                              fontSize: 24,
+                              height: 1.4,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                          if (_currentCoverQuote!.author != null) ...[
+                            const SizedBox(height: 12),
+                            Text(
+                              '— ${_currentCoverQuote!.author!}',
+                              style: GoogleFonts.playfairDisplay(
+                                color: Colors.white70,
+                                fontSize: 14,
+                                fontStyle: FontStyle.italic,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                          ],
+                        ],
+                      ),
                     ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(30),
-                    ),
-                    elevation: 8,
-                  ),
-                  child: const Text(
-                    'Start Discovering',
+                    const SizedBox(height: 100),
+                  ],
+                  const Text(
+                    'Explore amazing experiences\nshared by the community',
                     style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: 0.5,
+                      color: Colors.white70,
+                      fontSize: 16,
+                      height: 1.5,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 25),
+                  ElevatedButton(
+                    onPressed: () => _setHasStartedDiscovering(true),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: primaryColor,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 48,
+                        vertical: 20,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(30),
+                      ),
+                      elevation: 8,
+                    ),
+                    child: const Text(
+                      'Start Discovering',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0.5,
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(height: 40),
-              ],
+                  const SizedBox(height: 30),
+                ],
+              ),
             ),
           ),
         ),
-      ),
+      ],
     );
   }
 
@@ -2161,7 +2410,8 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
         await _experienceShareService.createDirectShare(
           experience: baseExperience,
           toUserIds: recipientIds,
-          highlightedMediaUrl: item.mediaUrl, // Pass the specific media URL being viewed
+          highlightedMediaUrl:
+              item.mediaUrl, // Pass the specific media URL being viewed
         );
       },
     );
@@ -2346,4 +2596,14 @@ class _SourceButtonConfig {
   final Widget? iconWidget;
   final String label;
   final Color backgroundColor;
+}
+
+class _CoverQuote {
+  const _CoverQuote({
+    required this.text,
+    this.author,
+  });
+
+  final String text;
+  final String? author;
 }
