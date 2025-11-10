@@ -89,8 +89,10 @@ class _MapScreenState extends State<MapScreen> {
   bool? _tappedLocationOpenNow; // ADDED: Track open-now status
   Experience?
       _publicReadOnlyExperience; // ADDED: Cached public experience for discovery launches
+  String? _publicReadOnlyExperienceId; // Tracks tapped public experience ID
   Experience?
       _publicExperienceDraft; // ADDED: Precomputed draft from initial public experience
+  String? _publicExperienceDraftId; // ID for the precomputed draft
   List<SharedMediaItem>?
       _publicPreviewMediaItems; // ADDED: Public media previews for read-only experience page
   static const UserCategory _publicReadOnlyCategory = UserCategory(
@@ -153,6 +155,7 @@ class _MapScreenState extends State<MapScreen> {
     if (widget.initialPublicExperience != null) {
       _publicExperienceDraft =
           widget.initialPublicExperience!.toExperienceDraft();
+      _publicExperienceDraftId = widget.initialPublicExperience!.id;
       _publicPreviewMediaItems =
           widget.initialPublicExperience!.buildMediaItemsForPreview();
     }
@@ -805,6 +808,7 @@ class _MapScreenState extends State<MapScreen> {
             _tappedLocationBusinessStatus = businessStatus;
             _tappedLocationOpenNow = openNow;
             _publicReadOnlyExperience = publicExp.toExperienceDraft();
+            _publicReadOnlyExperienceId = publicExp.id;
             _publicPreviewMediaItems = publicExp.buildMediaItemsForPreview();
             _searchController.clear();
             _searchResults = [];
@@ -930,6 +934,7 @@ class _MapScreenState extends State<MapScreen> {
       _tappedLocationOpenNow = null; // ADDED: Clear open-now status
       _publicReadOnlyExperience =
           null; // ADDED: Clear any public fallback experience
+      _publicReadOnlyExperienceId = null;
     });
     final result = await Navigator.push<bool>(
       context,
@@ -963,6 +968,7 @@ class _MapScreenState extends State<MapScreen> {
         _tappedLocationBusinessStatus = null;
         _tappedLocationOpenNow = null;
         _publicReadOnlyExperience = null;
+        _publicReadOnlyExperienceId = null;
       });
       final dynamic result = await Navigator.push(
         context,
@@ -974,6 +980,7 @@ class _MapScreenState extends State<MapScreen> {
             readOnlyPreview: true,
             initialMediaItems: _publicPreviewMediaItems,
             focusMapOnPop: true,
+            publicExperienceId: _publicReadOnlyExperienceId,
           ),
         ),
       );
@@ -1093,6 +1100,7 @@ class _MapScreenState extends State<MapScreen> {
           _tappedExperience = saved;
           _tappedExperienceCategory = category;
           _publicReadOnlyExperience = null;
+          _publicReadOnlyExperienceId = null;
         });
       }
       return;
@@ -1106,11 +1114,13 @@ class _MapScreenState extends State<MapScreen> {
           _tappedExperience = null;
           _tappedExperienceCategory = null;
           _publicReadOnlyExperience = _publicExperienceDraft;
+          _publicReadOnlyExperienceId = _publicExperienceDraftId;
         });
       }
     } else if (_publicReadOnlyExperience != null && mounted) {
       setState(() {
         _publicReadOnlyExperience = null;
+        _publicReadOnlyExperienceId = null;
       });
     }
   }

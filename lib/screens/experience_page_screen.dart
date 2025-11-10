@@ -1,3 +1,5 @@
+import 'dart:io' show Platform;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_rating_bar/flutter_rating_bar.dart';
 import '../models/experience.dart';
@@ -54,6 +56,9 @@ import '../config/app_constants.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import '../widgets/web_media_preview_card.dart'; // ADDED: Import for WebMediaPreviewCard
 import '../widgets/share_experience_bottom_sheet.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import '../models/report.dart';
+import '../services/report_service.dart';
 
 // Convert to StatefulWidget
 class ExperiencePageScreen extends StatefulWidget {
@@ -70,6 +75,7 @@ class ExperiencePageScreen extends StatefulWidget {
   final String? sharePreviewType; // 'my_copy' | 'separate_copy'
   final String? shareAccessMode; // 'view' | 'edit'
   final bool focusMapOnPop; // When read-only from map, return focus payload
+  final String? publicExperienceId; // Public experience reference when read-only
 
   const ExperiencePageScreen({
     super.key,
@@ -83,6 +89,7 @@ class ExperiencePageScreen extends StatefulWidget {
     this.sharePreviewType,
     this.shareAccessMode,
     this.focusMapOnPop = false,
+    this.publicExperienceId,
   });
 
   @override
@@ -150,6 +157,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       ExperienceShareService();
   // ADDED: AuthService instance
   final _authService = AuthService();
+  final ReportService _reportService = ReportService();
   // REMOVED: Dio instance
   // final _dio = Dio();
 
@@ -821,13 +829,15 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                 popupMenuTheme: const PopupMenuThemeData(color: Colors.white),
                 canvasColor: Colors.white,
               ),
-              child: PopupMenuButton<String>(
-                onSelected: (value) {
-                  if (value == 'remove') {
-                    _promptRemoveExperience();
-                  }
-                  // TODO: Implement report flow.
-                },
+                child: PopupMenuButton<String>(
+                  onSelected: (value) {
+                    if (value == 'report') {
+                      _showReportDialog();
+                    }
+                    if (value == 'remove') {
+                      _promptRemoveExperience();
+                    }
+                  },
                 itemBuilder: (context) {
                   final menuItems = <PopupMenuEntry<String>>[
                     const PopupMenuItem<String>(
@@ -3389,6 +3399,283 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     );
   }
   // --- ADDED: Helper Widget for Other Categories Row --- END ---
+
+  void _showReportDialog() {
+    String? selectedReason;
+    final TextEditingController explanationController = TextEditingController();
+    bool isSubmitting = false;
+
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              backgroundColor: Colors.white,
+              surfaceTintColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              title: const Text(
+                'What would you like to report about this experience?',
+                style: TextStyle(fontSize: 18),
+              ),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    RadioListTile<String>(
+                      title: const Text('Inappropriate content'),
+                      value: 'inappropriate',
+                      groupValue: selectedReason,
+                      onChanged: isSubmitting
+                          ? null
+                          : (value) {
+                              setState(() {
+                                selectedReason = value;
+                              });
+                            },
+                      contentPadding: EdgeInsets.zero,
+                      dense: true,
+                    ),
+                    RadioListTile<String>(
+                      title: const Text('Incorrect Information'),
+                      value: 'incorrect',
+                      groupValue: selectedReason,
+                      onChanged: isSubmitting
+                          ? null
+                          : (value) {
+                              setState(() {
+                                selectedReason = value;
+                              });
+                            },
+                      contentPadding: EdgeInsets.zero,
+                      dense: true,
+                    ),
+                    RadioListTile<String>(
+                      title: const Text('Other'),
+                      value: 'other',
+                      groupValue: selectedReason,
+                      onChanged: isSubmitting
+                          ? null
+                          : (value) {
+                              setState(() {
+                                selectedReason = value;
+                              });
+                            },
+                      contentPadding: EdgeInsets.zero,
+                      dense: true,
+                    ),
+                    const SizedBox(height: 16),
+                    const Text(
+                      'Please explain:',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.black87,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: explanationController,
+                      maxLines: 4,
+                      enabled: !isSubmitting,
+                      decoration: InputDecoration(
+                        hintText: 'Provide additional details...',
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        contentPadding: const EdgeInsets.all(12),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: isSubmitting
+                      ? null
+                      : () {
+                          explanationController.dispose();
+                          Navigator.of(dialogContext).pop();
+                        },
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  onPressed: isSubmitting
+                      ? null
+                      : () async {
+                          await _handleReportSubmit(
+                            dialogContext: dialogContext,
+                            selectedReason: selectedReason,
+                            explanationController: explanationController,
+                            setSubmitting: (value) {
+                              setState(() {
+                                isSubmitting = value;
+                              });
+                            },
+                          );
+                        },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Theme.of(context).primaryColor,
+                    foregroundColor: Colors.white,
+                  ),
+                  child: isSubmitting
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Text('Submit'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _handleReportSubmit({
+    required BuildContext dialogContext,
+    required String? selectedReason,
+    required TextEditingController explanationController,
+    required void Function(bool) setSubmitting,
+  }) async {
+    if (selectedReason == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please select a reason for reporting'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+      return;
+    }
+
+    final currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('You must be logged in to report content'),
+          ),
+        );
+      }
+      return;
+    }
+
+    setSubmitting(true);
+
+    try {
+      const String previewUrl = '';
+      final bool isReadOnly = widget.readOnlyPreview;
+      final String? publicExperienceIdForReport = isReadOnly
+          ? (widget.publicExperienceId?.isNotEmpty == true
+              ? widget.publicExperienceId
+              : (_currentExperience.id.isNotEmpty
+                  ? _currentExperience.id
+                  : null))
+          : null;
+      final String experienceIdForReport = isReadOnly
+          ? (publicExperienceIdForReport ?? _currentExperience.id)
+          : _currentExperience.id;
+
+      final existingReport = await _reportService.findExistingReport(
+        userId: currentUser.uid,
+        experienceId: experienceIdForReport,
+        previewURL: previewUrl,
+      );
+
+      if (existingReport != null) {
+        if (!mounted) return;
+        explanationController.dispose();
+        Navigator.of(dialogContext).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'You have already reported this content. Thank you for your feedback!',
+            ),
+            duration: Duration(seconds: 3),
+          ),
+        );
+        return;
+      }
+
+      final deviceInfo = _getDeviceInfo();
+      final String screenReported = isReadOnly
+          ? 'read-only experience_page_screen'
+          : 'experience_page_screen';
+
+      final report = Report(
+        id: '',
+        userId: currentUser.uid,
+        screenReported: screenReported,
+        previewURL: previewUrl,
+        experienceId: experienceIdForReport,
+        reportType: selectedReason,
+        details: explanationController.text.trim(),
+        createdAt: DateTime.now(),
+        reportedUserId: _currentExperience.createdBy,
+        publicExperienceId: publicExperienceIdForReport,
+        deviceInfo: deviceInfo,
+      );
+
+      await _reportService.submitReport(report);
+
+      if (!mounted) return;
+      explanationController.dispose();
+      Navigator.of(dialogContext).pop();
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Report submitted. Thank you for your feedback!'),
+          duration: Duration(seconds: 3),
+        ),
+      );
+
+      debugPrint(
+        'ExperiencePageScreen: Report submitted for experience ${_currentExperience.id}',
+      );
+    } catch (e) {
+      debugPrint('ExperiencePageScreen: Failed to submit report: $e');
+      if (!mounted) return;
+      setSubmitting(false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Failed to submit report. Please try again.'),
+          duration: Duration(seconds: 3),
+        ),
+      );
+    }
+  }
+
+  String _getDeviceInfo() {
+    if (kIsWeb) {
+      return 'Web';
+    }
+    try {
+      if (Platform.isIOS) {
+        return 'iOS';
+      } else if (Platform.isAndroid) {
+        return 'Android';
+      } else if (Platform.isMacOS) {
+        return 'macOS';
+      } else if (Platform.isWindows) {
+        return 'Windows';
+      } else if (Platform.isLinux) {
+        return 'Linux';
+      }
+    } catch (e) {
+      debugPrint('ExperiencePageScreen: Failed to get platform info: $e');
+    }
+    return 'Unknown';
+  }
 
   // --- ADDED: Removal confirmation and execution ---
   Future<void> _promptRemoveExperience() async {
