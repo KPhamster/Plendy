@@ -10,6 +10,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'browser_signin_screen.dart';
 import 'messages_screen.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'tutorials_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   final Future<void> Function()? onRequestDiscoveryRefresh;
@@ -241,6 +242,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               if (result == true) {
                                 await widget.onRequestDiscoveryRefresh?.call();
                               }
+                            },
+                          ),
+                          ListTile(
+                            leading: const Icon(Icons.menu_book_outlined),
+                            title: const Text('Tutorials'),
+                            onTap: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => const TutorialsScreen(),
+                                ),
+                              );
                             },
                           ),
                           ListTile(
