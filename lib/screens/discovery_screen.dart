@@ -207,9 +207,367 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
           'Traveling — it leaves you speechless, then turns you into a storyteller.',
       author: 'Ibn Battuta',
     ),
-    //  _CoverQuote(
-    //   text:
-    //       '',
+     _CoverQuote(
+      text:
+          'The biggest adventure you can take is to live the life of your dreams.',
+      author: 'Oprah Winfrey',
+    ),
+     _CoverQuote(
+      text:
+          'Because in the end, you won’t remember the time you spent working in an office… Climb that mountain.',
+      author: 'Jack Kerouac',
+    ),
+     _CoverQuote(
+      text:
+          'Live in the sunshine, swim the sea, drink the wild air.',
+      author: 'Ralph Waldo Emerson',
+    ),
+     _CoverQuote(
+      text:
+          'The clearest way into the Universe is through a forest wilderness.',
+      author: 'John Muir',
+    ),
+     _CoverQuote(
+      text:
+          'To travel is to discover that everyone is wrong about other countries.',
+      author: 'Aldous Huxley',
+    ),
+     _CoverQuote(
+      text:
+          'We live in a wonderful world that is full of beauty, charm and adventure.',
+      author: 'Jawaharlal Nehru',
+    ),
+     _CoverQuote(
+      text:
+          'A ship in harbor is safe, but that is not what ships are built for.',
+      author: 'John A. Shedd',
+    ),
+     _CoverQuote(
+      text:
+          'The use of traveling is to regulate imagination by reality.',
+      author: 'Samuel Johnson',
+    ),
+     _CoverQuote(
+      text:
+          'Travel far enough, you meet yourself.',
+      author: 'David Mitchell',
+    ),
+     _CoverQuote(
+      text:
+          'The very basic core of a man’s living spirit is his passion for adventure.',
+      author: 'Christopher McCandless',
+    ),
+     _CoverQuote(
+      text:
+          'Twenty years from now you will be more disappointed by the things you didn’t do than by the ones you did do… Explore. Dream. Discover.',
+      author: 'H. Jackson Brown Jr.',
+    ),
+     _CoverQuote(
+      text:
+          'Oh, the places you’ll go!',
+      author: 'Dr. Seuss',
+    ),
+     _CoverQuote(
+      text:
+          'Exploration is really the essence of the human spirit.',
+      author: 'Frank Borman',
+    ),
+     _CoverQuote(
+      text:
+          'Somewhere, something incredible is waiting to be known.',
+      author: 'Carl Sagan',
+    ),
+     _CoverQuote(
+      text:
+          'To awaken quite alone in a strange town is one of the pleasantest sensations in the world.',
+      author: 'Freya Stark',
+    ),
+     _CoverQuote(
+      text:
+          'The life you have led doesn’t need to be the only life you have.',
+      author: 'Anna Quindlen',
+    ),
+     _CoverQuote(
+      text:
+          'If you’re offered a seat on a rocket ship, don’t ask what seat! Just get on.',
+      author: 'Sheryl Sandberg',
+    ),
+     _CoverQuote(
+      text:
+          'You miss 100% of the shots you don’t take.',
+      author: 'Wayne Gretzky',
+    ),
+     _CoverQuote(
+      text:
+          'I am always doing that which I cannot do, in order that I may learn how to do it.',
+      author: 'Pablo Picasso',
+    ),
+     _CoverQuote(
+      text:
+          'What we fear doing most is usually what we most need to do.',
+      author: 'Tim Ferriss',
+    ),
+     _CoverQuote(
+      text:
+          'Be brave enough to be bad at something new.',
+      author: 'Jon Acuff',
+    ),
+     _CoverQuote(
+      text:
+          'We keep moving forward, opening new doors, and doing new things, because we’re curious.',
+      author: 'Walt Disney',
+    ),
+     _CoverQuote(
+      text:
+          'Fortune favors the bold.',
+      author: 'Virgil',
+    ),
+     _CoverQuote(
+      text:
+          'He who is not courageous enough to take risks will accomplish nothing in life.',
+      author: 'Muhammad Ali',
+    ),
+     _CoverQuote(
+      text:
+          'If it scares you, it might be a good thing to try.',
+      author: 'Seth Godin',
+    ),
+     _CoverQuote(
+      text:
+          'Start where you are. Use what you have. Do what you can.',
+      author: 'Arthur Ashe',
+    ),
+     _CoverQuote(
+      text:
+          'The best time to plant a tree was 20 years ago. The second best time is now.',
+      author: 'Chinese Proverb',
+    ),
+     _CoverQuote(
+      text:
+          'Only those who will risk going too far can possibly find out how far one can go.',
+      author: 'T.S. Eliot',
+    ),      
+     _CoverQuote(
+      text:
+          'Opportunities multiply as they are seized.',
+      author: 'Sun Tzu',
+    ),
+     _CoverQuote(
+      text:
+          'The only impossible journey is the one you never begin.',
+      author: 'Tony Robbins',
+    ),
+     _CoverQuote(
+      text:
+          'The impulse to travel is one of the hopeful symptoms of life.',
+      author: 'Agnes Repplier',
+    ),
+     _CoverQuote(
+      text:
+          'Once you have traveled, the voyage never ends.',
+      author: 'Pat Conroy',
+    ),
+     _CoverQuote(
+      text:
+          'Travel and change of place impart new vigor to the mind.',
+      author: 'Seneca',
+    ),
+     _CoverQuote(
+      text:
+          'A mind that is stretched by a new experience can never go back to its old dimensions.',
+      author: 'Oliver Wendell Holmes Sr.',
+    ),
+     _CoverQuote(
+      text:
+          'People don’t take trips; trips take people.',
+      author: 'John Steinbeck',
+    ),
+     _CoverQuote(
+      text:
+          'It is good to have an end to journey toward; but it is the journey that matters, in the end.',
+      author: 'Ursula K. Le Guin',
+    ),
+     _CoverQuote(
+      text:
+          'The more I traveled, the more I realized fear makes strangers of people who should be friends.',
+      author: 'Shirley MacLaine',
+    ),
+     _CoverQuote(
+      text:
+          'Wherever you go becomes a part of you somehow.',
+      author: 'Anita Desai',
+    ),
+     _CoverQuote(
+      text:
+          'Exploration is wired into our brains. If we can see the horizon, we want to know what’s beyond.',
+      author: 'Buzz Aldrin',
+    ),
+     _CoverQuote(
+      text:'Adventure is allowing the unexpected to happen to you.',
+      author: 'Richard Aldington',
+    ),
+     _CoverQuote(
+      text:'We are all travelers in the wilderness of this world.',
+      author: 'Robert Louis Stevenson',
+    ),
+    _CoverQuote(
+      text:'The journey itself is my home.',
+      author: 'Matsuo Bashō',
+    ),
+    _CoverQuote(
+      text:'Surely, of all the wonders of the world, the horizon is the greatest.',
+      author: 'Freya Stark',
+    ),
+    _CoverQuote(
+      text:'If happiness is the goal—and it should be—then adventures should be top priority.',
+      author: 'Richard Branson',
+    ),
+    _CoverQuote(
+      text:'There’s a whole world out there, right outside your window. You’d be a fool to miss it.',
+      author: 'Charlotte Eriksson',
+    ),
+    _CoverQuote(
+      text:'Once the travel bug bites, there is no known antidote.',
+      author: 'Michael Palin',
+    ),
+    _CoverQuote(
+      text:'Travel makes a wise man better, and a fool worse.',
+      author: 'Thomas Fuller',
+    ),
+    _CoverQuote(
+      text:'Exploration is curiosity put into action.',
+      author: 'Don Walsh',
+    ),
+    _CoverQuote(
+      text:'I took a walk in the woods and came out taller than the trees',
+      author: 'Henry David Thoreau',
+    ),
+    _CoverQuote(
+      text:'Travel brings power and love back into your life.',
+      author: 'Rumi',
+    ),
+    _CoverQuote(
+      text:'One’s destination is never a place, but a new way of seeing things.',
+      author: 'Henry Miller',
+    ),
+    _CoverQuote(
+      text:'We travel, initially, to lose ourselves; and we travel, next, to find ourselves.',
+      author: 'Pico Iyer',
+    ),
+    _CoverQuote(
+      text:'To my mind, the greatest reward and luxury of travel is to be able to experience everyday things as if for the first time.',
+      author: 'Bill Bryson',
+    ),
+    _CoverQuote(
+      text:'The world is big and I want to have a good look at it before it gets dark.',
+      author: 'John Muir',
+    ),
+    _CoverQuote(
+      text:'We wander for distraction, but we travel for fulfillment.',
+      author: 'Hilaire Belloc',
+    ),
+    _CoverQuote(
+      text:'The greatest adventure is what lies ahead.',
+      author: 'J.R.R. Tolkien',
+    ),
+    _CoverQuote(
+      text:'Exploration is the engine that drives innovation.',
+      author: 'Edith Widder',
+    ),
+    _CoverQuote(
+      text:'Between every two pine trees there is a door leading to a new way of life.',
+      author: 'John Muir',
+    ),
+    _CoverQuote(
+      text:'The best education I have ever received was through travel.',
+      author: 'Lisa Ling',
+    ),
+    _CoverQuote(
+      text:'The purpose of life is to live it, to taste experience to the utmost.',
+      author: 'Eleanor Roosevelt',
+    ),
+    _CoverQuote(
+      text:'Experience is the teacher of all things.',
+      author: 'Julius Caesar',
+    ),
+    _CoverQuote(
+      text:'Experience is not what happens to you; it’s what you do with what happens to you.',
+      author: 'Aldous Huxley',
+    ),
+    _CoverQuote(
+      text:'Without new experiences, something inside us sleeps. The sleeper must awaken.',
+      author: 'Frank Herbert',
+    ),
+    _CoverQuote(
+      text:'The most difficult thing is the decision to act; the rest is merely tenacity.',
+      author: 'Amelia Earhart',
+    ),
+    _CoverQuote(
+      text:'Try new things and don’t be afraid to fail; it’s how you grow.',
+      author: 'Indra Nooyi',
+    ),
+    _CoverQuote(
+      text:'Live as if you were to die tomorrow. Learn as if you were to live forever.',
+      author: 'Mahatma Gandhi',
+    ),
+    _CoverQuote(
+      text:'Stuff your eyes with wonder.',
+      author: 'Ray Bradbury',
+    ),
+    _CoverQuote(
+      text:'Jobs fill your pockets, adventures fill your soul.',
+      author: 'Jaime Lyn Beatty',
+    ),
+    _CoverQuote(
+      text:'Not I, nor anyone else can travel that road for you. You must travel it by yourself.',
+      author: 'Walt Whitman',
+    ),
+    _CoverQuote(
+      text:'Travel changes you.',
+      author: 'Anthony Bourdain',
+    ),
+    _CoverQuote(
+      text:'Tell me, what is it you plan to do with your one wild and precious life?',
+      author: 'Mary Oliver',
+    ),
+    _CoverQuote(
+      text:'The discovery of a new dish does more for the happiness of mankind than the discovery of a star.',
+      author: 'Jean Anthelme Brillat-Savarin',
+    ),
+    _CoverQuote(
+      text:'One cannot think well, love well, sleep well, if one has not dined well.”',
+      author: 'Virginia Woolf',
+    ),
+    _CoverQuote(
+      text:'Move, as far as you can—across the ocean or simply across town—and eat interesting food.',
+      author: 'Anthony Bourdain',
+    ),
+    _CoverQuote(
+      text:'Pull up a chair. Take a taste. Come join us. Life is so endlessly delicious.',
+      author: 'Ruth Reichl',
+    ),
+    _CoverQuote(
+      text:'Variety’s the very spice of life.',
+      author: 'William Cowper',
+    ),
+    _CoverQuote(
+      text:'If more of us valued food and cheer and song above hoarded gold, it would be a merrier world.',
+      author: 'J.R.R. Tolkien',
+    ),
+    _CoverQuote(
+      text:'Everywhere is within walking distance if you have the time.',
+      author: 'Steven Wright',
+    ),
+    _CoverQuote(
+      text:'Every exit is an entrance somewhere else.',
+      author: 'Tom Stoppard',
+    ),
+    _CoverQuote(
+      text:'A city is a language, a reservoir of possibilities.',
+      author: 'Rebecca Solnit',
+    ),
+    // _CoverQuote(
+    //   text:'',
     //   author: '',
     // ),
   ];
