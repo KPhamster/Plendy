@@ -3570,16 +3570,20 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         backgroundColor: Colors.white,
         foregroundColor: Colors.black,
         actions: [
-          // ADDED: Map Button
-          IconButton(
-            icon: const Icon(Icons.map_outlined),
-            tooltip: 'View Map',
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => const MapScreen()),
-              );
-            },
+          // ADDED: Map Button with text label
+          Tooltip(
+            message: 'View Map',
+            child: TextButton.icon(
+              style: TextButton.styleFrom(foregroundColor: Colors.black),
+              icon: const Icon(Icons.map_outlined),
+              label: const Text('Map'),
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const MapScreen()),
+                );
+              },
+            ),
           ),
           // --- MODIFIED: Conditionally show sort button for first tab ---
           if (_currentTabIndex == 0 &&

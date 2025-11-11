@@ -115,7 +115,8 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
     ),
     _CoverQuote(
       text:
-          'Fill your life with adventures, not things. Have stories to tell, not stuff to show.',
+          'Fill your life with experiences, not things. Have stories to tell, not stuff to show.',
+      author: 'Abhysheq Shukla',
     ),
     _CoverQuote(
       text:
