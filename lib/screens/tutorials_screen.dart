@@ -30,13 +30,13 @@ class TutorialsScreen extends StatelessWidget {
     _Tutorial(
       title: 'Organize collections',
       description:
-          'Use Collections to group experiences by trip, event, or theme so they are easy to revisit.',
+          'Use Collections to group experiences by trip, event, theme - however you want! - so they are easy to revisit.',
       icon: Icons.collections_bookmark_outlined,
     ),
     _Tutorial(
-      title: 'Invite your friends',
+      title: 'Find and follow your friends',
       description:
-          'Open My People to send invites or accept requests so you can start sharing together.',
+          'Open My People to find and follow your friends so you can start sharing together once they accept your request!',
       icon: Icons.people_outline,
     ),
   ];
