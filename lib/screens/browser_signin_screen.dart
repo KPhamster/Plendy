@@ -70,6 +70,23 @@ class _BrowserSignInScreenState extends State<BrowserSignInScreen> {
     FocusScope.of(context).unfocus(); // Hide keyboard
   }
 
+  void _loadPresetUrl(String url) {
+    _urlController.text = url;
+    _controller.loadRequest(Uri.parse(url));
+  }
+
+  Widget _buildQuickLinkButton({
+    required IconData icon,
+    required String label,
+    required String url,
+  }) {
+    return ElevatedButton.icon(
+      onPressed: () => _loadPresetUrl(url),
+      icon: Icon(icon),
+      label: Text(label),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return WillPopScope(
@@ -93,32 +110,36 @@ class _BrowserSignInScreenState extends State<BrowserSignInScreen> {
             const Padding(
               padding: EdgeInsets.all(16.0),
               child: Text(
-                'Plendy uses a web browser view to display content from Instagram, TikTok, and other sites. For the best experience, use the browser window below to sign into any accounts you wish to save to Plendy from. This ensures all content you save displays correctly. Plendy does not save any data from the web browser.',
+                'Plendy uses a web browser view to display content from Instagram, TikTok, Facebook, YouTube, and other sites. For the best experience, use the browser window below to sign into any accounts you wish to save to Plendy from. This ensures all content you save displays correctly. Plendy does not save any data from the web browser.',
                 textAlign: TextAlign.center,
               ),
             ),
             Padding(
               padding: const EdgeInsets.all(8.0),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              child: Wrap(
+                alignment: WrapAlignment.center,
+                spacing: 12,
+                runSpacing: 8,
                 children: [
-                  ElevatedButton.icon(
-                    onPressed: () {
-                      const url = 'https://instagram.com';
-                      _urlController.text = url;
-                      _controller.loadRequest(Uri.parse(url));
-                    },
-                    icon: const Icon(FontAwesomeIcons.instagram),
-                    label: const Text('Instagram'),
+                  _buildQuickLinkButton(
+                    icon: FontAwesomeIcons.instagram,
+                    label: 'Instagram',
+                    url: 'https://instagram.com',
                   ),
-                  ElevatedButton.icon(
-                    onPressed: () {
-                      const url = 'https://tiktok.com';
-                      _urlController.text = url;
-                      _controller.loadRequest(Uri.parse(url));
-                    },
-                    icon: const Icon(FontAwesomeIcons.tiktok),
-                    label: const Text('TikTok'),
+                  _buildQuickLinkButton(
+                    icon: FontAwesomeIcons.tiktok,
+                    label: 'TikTok',
+                    url: 'https://tiktok.com',
+                  ),
+                  _buildQuickLinkButton(
+                    icon: FontAwesomeIcons.facebook,
+                    label: 'Facebook',
+                    url: 'https://facebook.com',
+                  ),
+                  _buildQuickLinkButton(
+                    icon: FontAwesomeIcons.youtube,
+                    label: 'YouTube',
+                    url: 'https://youtube.com',
                   ),
                 ],
               ),

@@ -144,6 +144,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   bool _isLoadingPublicMedia = false;
   bool _hasAttemptedPublicMediaFetch = false;
   List<SharedMediaItem> _publicMediaItems = [];
+  PublicExperience? _cachedReadOnlyPublicExperienceForMap;
 
   // Hours Expansion State
   bool _isHoursExpanded = false;
@@ -343,6 +344,109 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       'longitude': location.longitude,
       'placeId': location.placeId,
     };
+  }
+
+  Location _buildLocationForMapNavigation() {
+    final Location location = _currentExperience.location;
+    final String? displayName = location.displayName;
+    if (displayName != null && displayName.trim().isNotEmpty) {
+      return location;
+    }
+    final String fallbackName = _currentExperience.name.trim();
+    if (fallbackName.isEmpty) {
+      return location;
+    }
+    return location.copyWith(displayName: fallbackName);
+  }
+
+  List<String> _collectMediaPathsForPublicExperienceFallback() {
+    Iterable<SharedMediaItem> sourceItems = const <SharedMediaItem>[];
+    if (_mediaItems.isNotEmpty) {
+      sourceItems = _mediaItems;
+    } else if (_publicMediaItems.isNotEmpty) {
+      sourceItems = _publicMediaItems;
+    } else if (widget.initialMediaItems != null &&
+        widget.initialMediaItems!.isNotEmpty) {
+      sourceItems = widget.initialMediaItems!;
+    }
+    return sourceItems
+        .map((item) => item.path.trim())
+        .where((path) => path.isNotEmpty)
+        .toList();
+  }
+
+  PublicExperience _buildFallbackPublicExperience(Location location) {
+    final List<String> mediaPaths =
+        _collectMediaPathsForPublicExperienceFallback();
+    final String fallbackId = widget.publicExperienceId?.isNotEmpty == true
+        ? widget.publicExperienceId!
+        : (_currentExperience.location.placeId?.isNotEmpty == true
+            ? _currentExperience.location.placeId!
+            : _currentExperience.id);
+    final String effectivePlaceId =
+        location.placeId?.isNotEmpty == true ? location.placeId! : fallbackId;
+    return PublicExperience(
+      id: fallbackId,
+      name: _currentExperience.name,
+      location: location,
+      placeID: effectivePlaceId,
+      yelpUrl: _currentExperience.yelpUrl,
+      website: _currentExperience.website,
+      allMediaPaths: mediaPaths,
+    );
+  }
+
+  Future<PublicExperience?> _resolvePublicExperienceForMap(
+      Location location) async {
+    if (!widget.readOnlyPreview) {
+      return null;
+    }
+    if (_cachedReadOnlyPublicExperienceForMap != null) {
+      return _cachedReadOnlyPublicExperienceForMap;
+    }
+
+    PublicExperience? publicExperience;
+    try {
+      final String? publicExperienceId = widget.publicExperienceId;
+      if (publicExperienceId != null && publicExperienceId.isNotEmpty) {
+        publicExperience =
+            await _experienceService.findPublicExperienceById(
+                publicExperienceId);
+      }
+      if (publicExperience == null) {
+        final String? placeId = location.placeId;
+        if (placeId != null && placeId.isNotEmpty) {
+          publicExperience =
+              await _experienceService.findPublicExperienceByPlaceId(placeId);
+        }
+      }
+    } catch (e) {
+      debugPrint(
+          'ExperiencePageScreen: Error resolving public experience for map: $e');
+    }
+
+    publicExperience ??= _buildFallbackPublicExperience(location);
+    _cachedReadOnlyPublicExperienceForMap = publicExperience;
+    return publicExperience;
+  }
+
+  Future<void> _handleMapButtonPressed() async {
+    final Location locationForMap = _buildLocationForMapNavigation();
+    PublicExperience? publicExperience;
+    if (widget.readOnlyPreview) {
+      publicExperience = await _resolvePublicExperienceForMap(locationForMap);
+      if (!mounted) return;
+    }
+    if (!mounted) return;
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => MapScreen(
+          initialExperienceLocation: locationForMap,
+          initialPublicExperience: publicExperience,
+        ),
+      ),
+    );
   }
 
   // --- ADDED: Scroll Listener ---
@@ -1335,15 +1439,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                   ),
                   label: const SizedBox.shrink(),
                   labelPadding: EdgeInsets.zero,
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => MapScreen(
-                            initialExperienceLocation:
-                                _currentExperience.location),
-                      ),
-                    );
+                  onPressed: () async {
+                    await _handleMapButtonPressed();
                   },
                   tooltip: 'View Location on App Map', // Updated tooltip
                   backgroundColor: Colors.white,
