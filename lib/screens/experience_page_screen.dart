@@ -960,47 +960,33 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                           ),
                         ),
                       ]),
-                  const SizedBox(height: 16), // Spacing below the top row
+                  if (widget.readOnlyPreview) ...[
+                    const SizedBox(height: 16), // Spacing below the top row
 
-                  // Action Buttons (Centered)
-                  Row(
-                    mainAxisAlignment:
-                        MainAxisAlignment.center, // Center the buttons
-                    children: [
-                      ElevatedButton.icon(
-                        onPressed: () {
-                          // TODO: Implement Follow logic
-                          print('Follow button pressed');
-                        },
-                        icon: const Icon(Icons.add),
-                        label: const Text('Follow'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFFD40000),
-                          foregroundColor: Colors.white,
-                          // Optional: Add styling if needed (e.g., minimumSize)
-                          minimumSize:
-                              Size(140, 36), // Give buttons some minimum width
+                    // Save button only shown in read-only experience view
+                    Row(
+                      mainAxisAlignment:
+                          MainAxisAlignment.center, // Center the buttons
+                      children: [
+                        ElevatedButton.icon(
+                          onPressed: () async {
+                            if (widget.onSaveExperience != null) {
+                              await widget.onSaveExperience!.call();
+                            }
+                          },
+                          icon: const Icon(Icons.bookmark_outline),
+                          label: const Text('Save Experience'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFFD40000),
+                            foregroundColor: Colors.white,
+                            // Optional: Add styling if needed (e.g., minimumSize)
+                            minimumSize: Size(
+                                140, 36), // Give buttons some minimum width
+                          ),
                         ),
-                      ),
-                      const SizedBox(width: 16), // Space between buttons
-                      ElevatedButton.icon(
-                        onPressed: () async {
-                          if (widget.onSaveExperience != null) {
-                            await widget.onSaveExperience!.call();
-                          }
-                        },
-                        icon: const Icon(Icons.bookmark_outline),
-                        label: const Text('Save Experience'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFFD40000),
-                          foregroundColor: Colors.white,
-                          // Optional: Add styling if needed (e.g., minimumSize)
-                          minimumSize:
-                              Size(140, 36), // Give buttons some minimum width
-                        ),
-                      ),
-                    ],
-                  ),
+                      ],
+                    ),
+                  ],
                 ],
               ),
             ),

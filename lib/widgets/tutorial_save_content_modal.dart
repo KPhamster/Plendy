@@ -3,12 +3,17 @@ import 'package:video_player/video_player.dart';
 
 class _TutorialSlide {
   final String description;
-  final String videoAsset;
+  final String? videoAsset;
+  final String? imageAsset;
 
   const _TutorialSlide({
     required this.description,
-    required this.videoAsset,
+    this.videoAsset,
+    this.imageAsset,
   });
+
+  bool get hasVideo => videoAsset != null;
+  bool get hasImage => imageAsset != null;
 }
 
 const List<_TutorialSlide> _tutorialSlides = [
@@ -30,6 +35,17 @@ const List<_TutorialSlide> _tutorialSlides = [
         'You can also add any additional notes.  Customize however you want!',
     videoAsset: 'assets/tutorials/save_content_select_categories.mp4',
   ),
+  _TutorialSlide(
+    description:
+        'Once you save the link, it will show up in your list of experiences and in your Plendy map so you can refer back to it '
+        'and won\'t forget to visit it for your next outing!',
+    videoAsset: 'assets/tutorials/save_content_after_saving.mp4',
+  ),
+  _TutorialSlide(
+    description:
+        'There is a whole world out there to discover. Happy exploring!',
+    imageAsset: 'assets/tutorials/full_plendy_map.png',
+  ),
 ];
 
 Future<void> showTutorialSaveContentModal(BuildContext context) {
@@ -50,33 +66,23 @@ class TutorialSaveContentModal extends StatefulWidget {
 
 class _TutorialSaveContentModalState extends State<TutorialSaveContentModal> {
   final PageController _pageController = PageController();
-  late final List<VideoPlayerController> _videoControllers;
-  late final List<Future<void>> _initializations;
+  late final List<VideoPlayerController?> _videoControllers;
+  late final List<Future<void>?> _initializations;
   int _currentPage = 0;
 
   @override
   void initState() {
     super.initState();
-    _videoControllers = _tutorialSlides
-        .map((slide) => VideoPlayerController.asset(slide.videoAsset))
-        .toList();
-    _initializations = List.generate(_videoControllers.length, (index) async {
-      final controller = _videoControllers[index];
-      await controller.initialize();
-      await controller.setLooping(true);
-    });
-
-    _initializations.first.then((_) {
-      if (!mounted) return;
-      _videoControllers.first.play();
-      setState(() {});
-    });
+    _videoControllers =
+        List<VideoPlayerController?>.filled(_tutorialSlides.length, null);
+    _initializations = List<Future<void>?>.filled(_tutorialSlides.length, null);
+    _startController(_currentPage);
   }
 
   @override
   void dispose() {
     for (final controller in _videoControllers) {
-      controller.dispose();
+      controller?.dispose();
     }
     _pageController.dispose();
     super.dispose();
@@ -87,17 +93,17 @@ class _TutorialSaveContentModalState extends State<TutorialSaveContentModal> {
       _currentPage = index;
     });
 
-    for (var i = 0; i < _videoControllers.length; i++) {
-      if (i == index) {
-        _startController(i);
-      } else {
-        _videoControllers[i].pause();
-      }
-    }
+    _startController(index);
+    _disposeControllers(exceptIndex: index);
   }
 
   void _startController(int index) {
-    final controller = _videoControllers[index];
+    final slide = _tutorialSlides[index];
+    if (!slide.hasVideo) return;
+
+    final controller = _videoControllers[index] ?? _createController(index);
+    final initialization = _initializations[index];
+
     if (controller.value.isInitialized) {
       controller
         ..seekTo(Duration.zero)
@@ -105,13 +111,32 @@ class _TutorialSaveContentModalState extends State<TutorialSaveContentModal> {
       return;
     }
 
-    _initializations[index].then((_) {
+    initialization?.then((_) {
       if (!mounted || _currentPage != index) return;
       controller
         ..seekTo(Duration.zero)
         ..play();
       setState(() {});
     });
+  }
+
+  VideoPlayerController _createController(int index) {
+    final slide = _tutorialSlides[index];
+    final controller = VideoPlayerController.asset(slide.videoAsset!);
+    _videoControllers[index] = controller;
+    _initializations[index] = controller.initialize().then((_) async {
+      await controller.setLooping(true);
+    });
+    return controller;
+  }
+
+  void _disposeControllers({required int exceptIndex}) {
+    for (var i = 0; i < _videoControllers.length; i++) {
+      if (i == exceptIndex) continue;
+      _videoControllers[i]?.dispose();
+      _videoControllers[i] = null;
+      _initializations[i] = null;
+    }
   }
 
   void _handlePrimaryButtonPressed() {
@@ -126,10 +151,15 @@ class _TutorialSaveContentModalState extends State<TutorialSaveContentModal> {
   }
 
   double _currentAspectRatio() {
+    final slide = _tutorialSlides[_currentPage];
     final controller = _videoControllers[_currentPage];
-    final ratio =
-        controller.value.isInitialized ? controller.value.aspectRatio : 16 / 9;
-    return ratio == 0 ? 16 / 9 : ratio;
+    if (slide.hasVideo && controller != null) {
+      final ratio = controller.value.isInitialized
+          ? controller.value.aspectRatio
+          : 16 / 9;
+      return ratio == 0 ? 16 / 9 : ratio;
+    }
+    return 16 / 9;
   }
 
   @override
@@ -183,17 +213,55 @@ class _TutorialSaveContentModalState extends State<TutorialSaveContentModal> {
                     onPageChanged: _handlePageChanged,
                     itemCount: _tutorialSlides.length,
                     itemBuilder: (context, index) {
-                      final controller = _videoControllers[index];
+                      final slide = _tutorialSlides[index];
+                      if (!slide.hasVideo && slide.hasImage) {
+                        return Image.asset(
+                          slide.imageAsset!,
+                          fit: BoxFit.cover,
+                        );
+                      }
+
+                      if (!slide.hasVideo) {
+                        return Container(
+                          color: Colors.black12,
+                          child: const Center(
+                            child: Icon(Icons.play_circle_outline, size: 64),
+                          ),
+                        );
+                      }
+
+                      var controller = _videoControllers[index];
+                      var initialization = _initializations[index];
+
+                      if (controller == null && index == _currentPage) {
+                        controller = _createController(index);
+                        initialization = _initializations[index];
+                        if (index == _currentPage) {
+                          _startController(index);
+                        }
+                      }
+
+                      if (controller == null) {
+                        return Container(
+                          color: Colors.black12,
+                          child: const Center(
+                            child: Icon(Icons.play_circle_outline, size: 64),
+                          ),
+                        );
+                      }
+
+                      final videoController = controller;
+
                       return FutureBuilder<void>(
-                        future: _initializations[index],
+                        future: initialization,
                         builder: (context, snapshot) {
                           if (snapshot.connectionState ==
                                   ConnectionState.done &&
-                              controller.value.isInitialized) {
+                              videoController.value.isInitialized) {
                             return Stack(
                               alignment: Alignment.bottomCenter,
                               children: [
-                                VideoPlayer(controller),
+                                VideoPlayer(videoController),
                                 Container(
                                   decoration: const BoxDecoration(
                                     gradient: LinearGradient(
@@ -211,16 +279,16 @@ class _TutorialSaveContentModalState extends State<TutorialSaveContentModal> {
                                     iconSize: 36,
                                     color: Colors.white,
                                     icon: Icon(
-                                      controller.value.isPlaying
+                                      videoController.value.isPlaying
                                           ? Icons.pause_circle
                                           : Icons.play_circle,
                                     ),
                                     onPressed: () {
                                       setState(() {
-                                        if (controller.value.isPlaying) {
-                                          controller.pause();
+                                        if (videoController.value.isPlaying) {
+                                          videoController.pause();
                                         } else {
-                                          controller.play();
+                                          videoController.play();
                                         }
                                       });
                                     },
@@ -231,7 +299,7 @@ class _TutorialSaveContentModalState extends State<TutorialSaveContentModal> {
                                   right: 12,
                                   bottom: 6,
                                   child: VideoProgressIndicator(
-                                    controller,
+                                    videoController,
                                     allowScrubbing: true,
                                     colors: VideoProgressColors(
                                       backgroundColor: Colors.white24,
@@ -297,7 +365,11 @@ class _TutorialSaveContentModalState extends State<TutorialSaveContentModal> {
                 width: double.infinity,
                 child: FilledButton(
                   onPressed: _handlePrimaryButtonPressed,
-                  child: const Text('Next'),
+                  child: Text(
+                    _currentPage == _tutorialSlides.length - 1
+                        ? 'Done'
+                        : 'Next',
+                  ),
                 ),
               ),
             ],
