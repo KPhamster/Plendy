@@ -1031,6 +1031,28 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     final reviewCount = _isLoadingReviews ? '...' : _reviews.length.toString();
     final commentCount = _isLoadingComments ? '...' : _commentCount.toString();
 
+    // Prepare the tab bar once so we can use its preferred height
+    final TabBar tabBar = TabBar(
+      controller: _tabController,
+      labelColor: Theme.of(context).primaryColor,
+      unselectedLabelColor: Colors.grey[600],
+      indicatorColor: Theme.of(context).primaryColor,
+      tabs: [
+        Tab(
+          icon: Icon(Icons.photo_library_outlined),
+          text: 'Content ($mediaCount)',
+        ),
+        Tab(
+          icon: Icon(Icons.star_border_outlined),
+          text: 'Reviews ($reviewCount)',
+        ),
+        Tab(
+          icon: Icon(Icons.comment_outlined),
+          text: 'Comments ($commentCount)',
+        ),
+      ],
+    );
+
     // Wrap main Scaffold with WillPopScope
     return WillPopScope(
       onWillPop: _handleBackNavigation,
@@ -1085,27 +1107,10 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                   delegate: _SliverAppBarDelegate(
                     Container(
                       color: Colors.white,
-                      child: TabBar(
-                        controller: _tabController,
-                        labelColor: Theme.of(context).primaryColor,
-                        unselectedLabelColor: Colors.grey[600],
-                        indicatorColor: Theme.of(context).primaryColor,
-                        tabs: [
-                          Tab(
-                            icon: Icon(Icons.photo_library_outlined),
-                            text: 'Content ($mediaCount)',
-                          ),
-                          Tab(
-                            icon: Icon(Icons.star_border_outlined),
-                            text: 'Reviews ($reviewCount)',
-                          ),
-                          Tab(
-                            icon: Icon(Icons.comment_outlined),
-                            text: 'Comments ($commentCount)',
-                          ),
-                        ],
-                      ),
+                      child: tabBar,
                     ),
+                    minHeight: tabBar.preferredSize.height,
+                    maxHeight: tabBar.preferredSize.height,
                   ),
                   pinned: true, // Make the TabBar stick
                 ),
@@ -2059,89 +2064,91 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       );
     }
 
-    // Wrap content in a Column with white background
+    // Use a CustomScrollView so the filter row and media list can flex with the
+    // outer NestedScrollView without causing layout overflows.
     return Container(
       color: Colors.white,
-      child: Column(
-        children: [
+      child: CustomScrollView(
+        slivers: [
           // --- MOVED Fullscreen Button to the top ---
-          Padding(
+          SliverPadding(
             padding: const EdgeInsets.only(top: 8.0, right: 16.0, left: 16.0),
-            child: Align(
-              alignment: Alignment.centerRight,
-              child: Wrap(
-                alignment: WrapAlignment.end,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  TextButton.icon(
-                    icon: const Icon(Icons.filter_list,
-                        size: 20.0, color: Colors.black),
-                    label: const Text('Filter',
-                        style: TextStyle(color: Colors.black)),
-                    style: TextButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 8),
-                      textStyle: const TextStyle(fontSize: 13),
-                    ),
-                    onPressed: () {
-                      // TODO: Implement Filter functionality
-                    },
-                  ),
-                  TextButton.icon(
-                    icon:
-                        const Icon(Icons.sort, size: 20.0, color: Colors.black),
-                    label: const Text('Sort',
-                        style: TextStyle(color: Colors.black)),
-                    style: TextButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 8),
-                      textStyle: const TextStyle(fontSize: 13),
-                    ),
-                    onPressed: () {
-                      // TODO: Implement Sort functionality
-                    },
-                  ),
-                  if (_canShowPublicContentToggle)
+            sliver: SliverToBoxAdapter(
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: Wrap(
+                  alignment: WrapAlignment.end,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
                     TextButton.icon(
-                      icon: Icon(
-                        isPublicView ? Icons.bookmark_outline : Icons.public,
-                        size: 20.0,
-                        color: Colors.black,
-                      ),
-                      label: Text(
-                        isPublicView
-                            ? 'Show Saved Content'
-                            : 'Show Public Content',
-                        style: const TextStyle(color: Colors.black),
-                      ),
+                      icon: const Icon(Icons.filter_list,
+                          size: 20.0, color: Colors.black),
+                      label: const Text('Filter',
+                          style: TextStyle(color: Colors.black)),
                       style: TextButton.styleFrom(
                         padding: const EdgeInsets.symmetric(
                             horizontal: 12, vertical: 8),
                         textStyle: const TextStyle(fontSize: 13),
                       ),
-                      onPressed: (_isLoadingPublicMedia && !isPublicView)
-                          ? null
-                          : _toggleContentSource,
+                      onPressed: () {
+                        // TODO: Implement Filter functionality
+                      },
                     ),
-                ],
+                    TextButton.icon(
+                      icon: const Icon(Icons.sort,
+                          size: 20.0, color: Colors.black),
+                      label: const Text('Sort',
+                          style: TextStyle(color: Colors.black)),
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 8),
+                        textStyle: const TextStyle(fontSize: 13),
+                      ),
+                      onPressed: () {
+                        // TODO: Implement Sort functionality
+                      },
+                    ),
+                    if (_canShowPublicContentToggle)
+                      TextButton.icon(
+                        icon: Icon(
+                          isPublicView ? Icons.bookmark_outline : Icons.public,
+                          size: 20.0,
+                          color: Colors.black,
+                        ),
+                        label: Text(
+                          isPublicView
+                              ? 'Show Saved Content'
+                              : 'Show Public Content',
+                          style: const TextStyle(color: Colors.black),
+                        ),
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 8),
+                          textStyle: const TextStyle(fontSize: 13),
+                        ),
+                        onPressed: (_isLoadingPublicMedia && !isPublicView)
+                            ? null
+                            : _toggleContentSource,
+                      ),
+                  ],
+                ),
               ),
             ),
           ),
           // --- END MOVED Button ---
 
-          // IMPORTANT: Use ListView directly here, wrapped in Expanded
-          Expanded(
-            child: ListView.builder(
-              padding: const EdgeInsets.only(
-                  left: 16.0,
-                  right: 16.0,
-                  top: 8.0,
-                  bottom: 16.0), // Adjust padding
-              shrinkWrap: false, // Let ListView expand to fill available space
-              itemCount: mediaItems.length,
-              itemBuilder: (context, index) {
+          // Media list rendered as a sliver so it can flex with available height
+          SliverPadding(
+            padding: const EdgeInsets.only(
+                left: 16.0,
+                right: 16.0,
+                top: 8.0,
+                bottom: 16.0),
+            sliver: SliverList(
+              delegate: SliverChildBuilderDelegate(
+                (context, index) {
                 // MODIFIED: Get SharedMediaItem and its path
                 final item = mediaItems[index];
                 final url = item.path;
@@ -2691,8 +2698,10 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                   ),
                 );
               },
+              childCount: mediaItems.length,
             ),
           ),
+        ),
         ],
       ),
     );
@@ -3952,15 +3961,20 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
 
 // --- ADDED Helper class for SliverPersistentHeader (for TabBar) ---
 class _SliverAppBarDelegate extends SliverPersistentHeaderDelegate {
-  _SliverAppBarDelegate(this._child);
+  _SliverAppBarDelegate(
+    this._child, {
+    required this.minHeight,
+    required this.maxHeight,
+  }) : assert(maxHeight >= minHeight);
 
   final Widget _child;
+  final double minHeight;
+  final double maxHeight;
 
   @override
-  double get minExtent =>
-      kToolbarHeight; // Use a fixed height to avoid layout overflows
+  double get minExtent => minHeight;
   @override
-  double get maxExtent => kToolbarHeight; // Match minExtent exactly
+  double get maxExtent => maxHeight;
 
   @override
   Widget build(

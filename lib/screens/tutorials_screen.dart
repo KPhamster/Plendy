@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'package:plendy/widgets/tutorial_save_content_modal.dart';
+
 class TutorialsScreen extends StatelessWidget {
   const TutorialsScreen({super.key});
 
@@ -8,7 +10,7 @@ class TutorialsScreen extends StatelessWidget {
       title: 'Save content and experiences',
       description:
           'You can save content by tapping the + button in the Collections tab or by sharing content you find on other apps to Plendy.',
-          icon: Icons.add_circle_outline,
+      icon: Icons.add_circle_outline,
     ),
     _Tutorial(
       title: 'Share an experience',
@@ -63,6 +65,9 @@ class TutorialsScreen extends StatelessWidget {
                 style: const TextStyle(fontWeight: FontWeight.w600),
               ),
               subtitle: Text(tutorial.description),
+              onTap: index == 0
+                  ? () => showTutorialSaveContentModal(context)
+                  : null,
             ),
           );
         },
