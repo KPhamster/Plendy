@@ -64,7 +64,26 @@ class TutorialsScreen extends StatelessWidget {
                 tutorial.title,
                 style: const TextStyle(fontWeight: FontWeight.w600),
               ),
-              subtitle: Text(tutorial.description),
+              subtitle: index == 0
+                  ? Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(tutorial.description),
+                        const SizedBox(height: 6),
+                        Text(
+                          'Tap to view tutorial',
+                          style: TextStyle(
+                            color: Theme.of(context)
+                                .colorScheme
+                                .primary
+                                .withValues(alpha: 0.8),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    )
+                  : Text(tutorial.description),
               onTap: index == 0
                   ? () => showTutorialSaveContentModal(context)
                   : null,

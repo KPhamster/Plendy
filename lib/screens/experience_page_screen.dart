@@ -56,6 +56,7 @@ import '../config/app_constants.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import '../widgets/web_media_preview_card.dart'; // ADDED: Import for WebMediaPreviewCard
 import '../widgets/share_experience_bottom_sheet.dart';
+import '../widgets/save_to_experiences_modal.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../models/report.dart';
 import '../services/report_service.dart';
@@ -69,8 +70,6 @@ class ExperiencePageScreen extends StatefulWidget {
   final bool readOnlyPreview; // Hide actions when true
   final String?
       shareBannerFromUserId; // If provided, show overlay text in header
-  final Future<void> Function()?
-      onSaveExperience; // Callback handled by SharePreviewScreen
   // ADDED: Share preview metadata for dynamic messaging
   final String? sharePreviewType; // 'my_copy' | 'separate_copy'
   final String? shareAccessMode; // 'view' | 'edit'
@@ -85,7 +84,6 @@ class ExperiencePageScreen extends StatefulWidget {
     this.initialMediaItems,
     this.readOnlyPreview = false,
     this.shareBannerFromUserId,
-    this.onSaveExperience,
     this.sharePreviewType,
     this.shareAccessMode,
     this.focusMapOnPop = false,
@@ -179,6 +177,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   static const double _contentPreviewMaxExpandedHeight = 830.0;
   // --- END ADDED ---
   bool _isMediaShareInProgress = false;
+  bool _isSaveSheetOpen = false;
   // --- ADDED: Maps preview futures cache for content tab ---
   final Map<String, Future<Map<String, dynamic>?>> _mapsPreviewFutures = {};
   // --- END ADDED ---
@@ -969,11 +968,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                           MainAxisAlignment.center, // Center the buttons
                       children: [
                         ElevatedButton.icon(
-                          onPressed: () async {
-                            if (widget.onSaveExperience != null) {
-                              await widget.onSaveExperience!.call();
-                            }
-                          },
+                          onPressed: () => _handleSaveExperiencePressed(),
                           icon: const Icon(Icons.bookmark_outline),
                           label: const Text('Save Experience'),
                           style: ElevatedButton.styleFrom(
@@ -3006,7 +3001,196 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   }
   // --- END: Helper method to launch map location --- //
 
-  // Save handling delegated to SharePreviewScreen via onSaveExperience
+  Future<void> _handleSaveExperiencePressed() async {
+    if (!widget.readOnlyPreview) return;
+    if (_isSaveSheetOpen) return;
+
+    setState(() {
+      _isSaveSheetOpen = true;
+    });
+
+    try {
+      final String mediaUrl = _resolveSaveMediaUrl();
+      List<Experience> initialExperiences =
+          await _buildInitialExperiencesForSave(mediaUrl: mediaUrl);
+      if (initialExperiences.isEmpty) {
+        initialExperiences = [_buildExperienceDraftForSaveModal()];
+      }
+      if (!mounted) return;
+
+      final String? resultMessage = await showModalBottomSheet<String>(
+        context: context,
+        isScrollControlled: true,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+        ),
+        builder: (_) => SaveToExperiencesModal(
+          initialExperiences: initialExperiences,
+          mediaUrl: mediaUrl,
+        ),
+      );
+
+      if (resultMessage != null && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(resultMessage)),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Unable to open save sheet: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSaveSheetOpen = false;
+        });
+      } else {
+        _isSaveSheetOpen = false;
+      }
+    }
+  }
+
+  String _resolveSaveMediaUrl() {
+    if (_mediaItems.isNotEmpty) {
+      final String primary = _mediaItems.first.path.trim();
+      if (primary.isNotEmpty) {
+        return primary;
+      }
+    }
+    if (_publicMediaItems.isNotEmpty) {
+      final String publicPath = _publicMediaItems.first.path.trim();
+      if (publicPath.isNotEmpty) {
+        return publicPath;
+      }
+    }
+    if (_currentExperience.imageUrls.isNotEmpty) {
+      final String firstImage = _currentExperience.imageUrls.first.trim();
+      if (firstImage.isNotEmpty) {
+        return firstImage;
+      }
+    }
+    final String? headerUrl = _currentExperience.location.photoUrl;
+    if (headerUrl != null && headerUrl.trim().isNotEmpty) {
+      return headerUrl.trim();
+    }
+    return '';
+  }
+
+  Future<List<Experience>> _buildInitialExperiencesForSave({
+    required String mediaUrl,
+  }) async {
+    final List<Experience> linkedExperiences =
+        await _fetchExperiencesLinkedToMedia(mediaUrl);
+    final List<Experience> deduped = _dedupeExperiencesById(linkedExperiences);
+    if (deduped.isEmpty) {
+      return [_buildExperienceDraftForSaveModal()];
+    }
+
+    final bool alreadyContainsCurrent = deduped.any(
+      (experience) => _experiencesLikelyMatch(experience, _currentExperience),
+    );
+
+    if (alreadyContainsCurrent) {
+      return deduped;
+    }
+
+    return [...deduped, _buildExperienceDraftForSaveModal()];
+  }
+
+  Future<List<Experience>> _fetchExperiencesLinkedToMedia(
+      String mediaUrl) async {
+    if (mediaUrl.isEmpty) {
+      return const <Experience>[];
+    }
+
+    try {
+      final SharedMediaItem? mediaItem =
+          await _experienceService.findSharedMediaItemByPath(mediaUrl);
+      if (mediaItem == null || mediaItem.experienceIds.isEmpty) {
+        return const <Experience>[];
+      }
+
+      final experiences =
+          await _experienceService.getExperiencesByIds(mediaItem.experienceIds);
+      experiences.sort(
+        (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+      );
+      return experiences;
+    } catch (e) {
+      debugPrint(
+          'ExperiencePageScreen: Failed to load linked experiences for save: $e');
+      return const <Experience>[];
+    }
+  }
+
+  Experience _buildExperienceDraftForSaveModal() {
+    return _currentExperience.copyWith(
+      id: '',
+      clearCategoryId: true,
+      colorCategoryId: null,
+      otherCategories: const <String>[],
+      editorUserIds: const <String>[],
+      sharedMediaItemIds: const <String>[],
+      sharedMediaType: null,
+    );
+  }
+
+  bool _experiencesLikelyMatch(
+    Experience savedExperience,
+    Experience targetExperience,
+  ) {
+    final String savedPlaceId = savedExperience.location.placeId?.trim() ?? '';
+    final String targetPlaceId = targetExperience.location.placeId?.trim() ?? '';
+    if (savedPlaceId.isNotEmpty && targetPlaceId.isNotEmpty) {
+      return savedPlaceId == targetPlaceId;
+    }
+
+    final String savedName = savedExperience.name.trim().toLowerCase();
+    final String targetName = targetExperience.name.trim().toLowerCase();
+    if (savedName.isEmpty || targetName.isEmpty) {
+      return false;
+    }
+
+    final String savedAddress =
+        (savedExperience.location.address ?? '').trim().toLowerCase();
+    final String targetAddress =
+        (targetExperience.location.address ?? '').trim().toLowerCase();
+
+    if (savedAddress.isNotEmpty && targetAddress.isNotEmpty) {
+      return savedName == targetName && savedAddress == targetAddress;
+    }
+
+    return savedName == targetName;
+  }
+
+  List<Experience> _dedupeExperiencesById(List<Experience> experiences) {
+    final Set<String> seen = <String>{};
+    final List<Experience> deduped = [];
+    for (final exp in experiences) {
+      final String key = _experienceCacheKey(exp);
+      if (seen.add(key)) {
+        deduped.add(exp);
+      }
+    }
+    return deduped;
+  }
+
+  String _experienceCacheKey(Experience experience) {
+    if (experience.id.isNotEmpty) {
+      return experience.id;
+    }
+
+    final Location location = experience.location;
+    final StringBuffer buffer = StringBuffer()
+      ..write(experience.name.trim().toLowerCase())
+      ..write('|')
+      ..write(location.placeId?.trim().toLowerCase() ?? '')
+      ..write('|')
+      ..write((location.address ?? '').trim().toLowerCase());
+    return buffer.toString();
+  }
 
   Future<void> _resolveSharerDisplayName(String userId) async {
     try {

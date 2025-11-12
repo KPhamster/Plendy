@@ -11,7 +11,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:url_launcher/url_launcher.dart';
 import '../services/experience_service.dart';
-import '../widgets/edit_experience_modal.dart';
 import 'main_screen.dart';
 
 class SharePreviewScreen extends StatelessWidget {
@@ -97,7 +96,6 @@ class SharePreviewScreen extends StatelessWidget {
               shareBannerFromUserId: payload.fromUserId,
               sharePreviewType: payload.shareType,
               shareAccessMode: payload.accessMode,
-              onSaveExperience: () => _handleSaveExperience(context, payload),
             );
           },
         ),
@@ -458,71 +456,6 @@ class SharePreviewScreen extends StatelessWidget {
       shareType: (mapped['shareType'] as String?),
       accessMode: (mapped['accessMode'] as String?),
     );
-  }
-}
-
-Future<void> _handleSaveExperience(
-    BuildContext context, _PreviewPayload payload) async {
-  final expService = ExperienceService();
-  final Experience? experience = payload.experience;
-  if (experience == null) {
-    return;
-  }
-
-  try {
-    // Build base for modal: clear categories; keep title/location/links/notes
-    // Set id to '' so modal treats this as a new item and runs duplicate check
-    final Experience baseForModal = experience.copyWith(
-      id: '',
-      clearCategoryId: true,
-      colorCategoryId: null,
-      otherCategories: <String>[],
-      editorUserIds: const <String>[],
-    );
-
-    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
-    final Experience? result = await showModalBottomSheet<Experience>(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (ctx) {
-        return EditExperienceModal(
-          experience: baseForModal,
-          userCategories: const <UserCategory>[],
-          userColorCategories: const <ColorCategory>[],
-          requireCategorySelection: true,
-          scaffoldMessenger: messenger,
-          enableDuplicatePrompt: true,
-        );
-      },
-    );
-
-    if (result == null) return;
-
-    // If the modal ended up editing an existing experience (id set), update; else create
-    if (result.id.isNotEmpty) {
-      await expService.updateExperience(result);
-    } else {
-      await expService.createExperience(result);
-    }
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Experience saved.')),
-      );
-      Navigator.pushAndRemoveUntil(
-        context,
-        MaterialPageRoute(builder: (context) => const MainScreen()),
-        (Route<dynamic> route) => false,
-      );
-    }
-  } catch (e) {
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to save experience: $e')),
-      );
-    }
   }
 }
 
