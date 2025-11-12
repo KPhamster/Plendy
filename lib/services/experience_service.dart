@@ -696,6 +696,30 @@ class ExperienceService {
     }
   }
 
+  /// Fetches a PublicExperience document directly by its document ID.
+  Future<PublicExperience?> findPublicExperienceById(String id) async {
+    if (id.isEmpty) {
+      debugPrint('findPublicExperienceById: Provided ID is empty.');
+      return null;
+    }
+    try {
+      final doc = await _publicExperiencesCollection.doc(id).get();
+      if (doc.exists && doc.data() != null) {
+        debugPrint(
+            'findPublicExperienceById: Found public experience with ID: ${doc.id}');
+        return PublicExperience.fromFirestore(doc);
+      }
+      debugPrint(
+          'findPublicExperienceById: No public experience found for ID: $id');
+      return null;
+    } catch (e, stackTrace) {
+      debugPrint(
+          'findPublicExperienceById: Error fetching public experience $id: $e');
+      debugPrint(stackTrace.toString());
+      return null;
+    }
+  }
+
   /// Creates a new PublicExperience document in Firestore.
   Future<String?> createPublicExperience(
       PublicExperience publicExperience) async {
