@@ -2069,8 +2069,11 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
             padding: const EdgeInsets.only(top: 8.0, right: 16.0, left: 16.0),
             child: Align(
               alignment: Alignment.centerRight,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.end,
+              child: Wrap(
+                alignment: WrapAlignment.end,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 8,
+                runSpacing: 8,
                 children: [
                   TextButton.icon(
                     icon: const Icon(Icons.filter_list,
@@ -2086,7 +2089,6 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                       // TODO: Implement Filter functionality
                     },
                   ),
-                  const SizedBox(width: 8),
                   TextButton.icon(
                     icon:
                         const Icon(Icons.sort, size: 20.0, color: Colors.black),
@@ -2101,8 +2103,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                       // TODO: Implement Sort functionality
                     },
                   ),
-                  if (_canShowPublicContentToggle) ...[
-                    const SizedBox(width: 8),
+                  if (_canShowPublicContentToggle)
                     TextButton.icon(
                       icon: Icon(
                         isPublicView ? Icons.bookmark_outline : Icons.public,
@@ -2124,7 +2125,6 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                           ? null
                           : _toggleContentSource,
                     ),
-                  ],
                 ],
               ),
             ),
