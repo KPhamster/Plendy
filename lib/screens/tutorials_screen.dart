@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:plendy/widgets/tutorial_map_screen_modal.dart';
 import 'package:plendy/widgets/tutorial_save_content_modal.dart';
 
 class TutorialsScreen extends StatelessWidget {
@@ -11,6 +12,14 @@ class TutorialsScreen extends StatelessWidget {
       description:
           'You can save content by tapping the + button in the Collections tab or by sharing content you find on other apps to Plendy.',
       icon: Icons.add_circle_outline,
+      action: _TutorialAction.saveContent,
+    ),
+    _Tutorial(
+      title: 'See the map',
+      description:
+          'See all your experiences on the map! You can filter your experiences and find other experiences publicly shared by the community.',
+      icon: Icons.map_outlined,
+      action: _TutorialAction.map,
     ),
     _Tutorial(
       title: 'Share an experience',
@@ -47,6 +56,40 @@ class TutorialsScreen extends StatelessWidget {
         separatorBuilder: (context, index) => const SizedBox(height: 12),
         itemBuilder: (context, index) {
           final tutorial = _tutorials[index];
+          final hasAction = tutorial.action != _TutorialAction.none;
+          VoidCallback? onTap;
+          switch (tutorial.action) {
+            case _TutorialAction.saveContent:
+              onTap = () => showTutorialSaveContentModal(context);
+              break;
+            case _TutorialAction.map:
+              onTap = () => showTutorialMapScreenModal(context);
+              break;
+            case _TutorialAction.none:
+              onTap = null;
+          }
+
+          final subtitleWidget = hasAction
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(tutorial.description),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Tap to view tutorial',
+                      style: TextStyle(
+                        color: Theme.of(context)
+                            .colorScheme
+                            .primary
+                            .withValues(alpha: 0.8),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                )
+              : Text(tutorial.description);
+
           return Card(
             elevation: 0,
             color: Colors.grey[50],
@@ -64,29 +107,8 @@ class TutorialsScreen extends StatelessWidget {
                 tutorial.title,
                 style: const TextStyle(fontWeight: FontWeight.w600),
               ),
-              subtitle: index == 0
-                  ? Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(tutorial.description),
-                        const SizedBox(height: 6),
-                        Text(
-                          'Tap to view tutorial',
-                          style: TextStyle(
-                            color: Theme.of(context)
-                                .colorScheme
-                                .primary
-                                .withValues(alpha: 0.8),
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                    )
-                  : Text(tutorial.description),
-              onTap: index == 0
-                  ? () => showTutorialSaveContentModal(context)
-                  : null,
+              subtitle: subtitleWidget,
+              onTap: onTap,
             ),
           );
         },
@@ -95,14 +117,18 @@ class TutorialsScreen extends StatelessWidget {
   }
 }
 
+enum _TutorialAction { none, saveContent, map }
+
 class _Tutorial {
   final String title;
   final String description;
   final IconData icon;
+  final _TutorialAction action;
 
   const _Tutorial({
     required this.title,
     required this.description,
     required this.icon,
+    this.action = _TutorialAction.none,
   });
 }

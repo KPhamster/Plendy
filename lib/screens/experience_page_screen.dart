@@ -1292,127 +1292,127 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Modified Category Row to include buttons on the right
-          if (!widget.readOnlyPreview)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8.0),
-              child: Row(
-                children: [
-                  // Category Icon and Name (wrapped in Expanded)
-                  Expanded(
-                    child: Row(
-                      children: [
-                        Text(
-                          _getCurrentCategory().icon,
-                          style: const TextStyle(fontSize: 20),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8.0),
+            child: Row(
+              children: [
+                // Category Icon and Name (wrapped in Expanded)
+                Expanded(
+                  child: Row(
+                    children: [
+                      Text(
+                        _getCurrentCategory().icon,
+                        style: const TextStyle(fontSize: 20),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _computeSharePreviewCategoryLabel() ??
+                              _getCurrentCategory().name,
+                          style: Theme.of(context)
+                              .textTheme
+                              .titleSmall
+                              ?.copyWith(
+                                color: Colors.black87,
+                              ),
+                          softWrap: true,
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
                         ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            _computeSharePreviewCategoryLabel() ??
-                                _getCurrentCategory().name,
-                            style: Theme.of(context)
-                                .textTheme
-                                .titleSmall
-                                ?.copyWith(
-                                  color: Colors.black87,
-                                ),
-                            softWrap: true,
-                            maxLines: 3,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
+                ),
 
-                  // Buttons on the right
-                  // 1. Map Screen Button (View Location on App Map)
-                  ActionChip(
-                    avatar: Icon(
-                      Icons.map_outlined, // Match Collections screen map icon
-                      color: Theme.of(context)
-                          .primaryColor, // Consistent with map icon
-                      size: 18,
-                    ),
-                    label: const SizedBox.shrink(),
-                    labelPadding: EdgeInsets.zero,
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => MapScreen(
-                              initialExperienceLocation:
-                                  _currentExperience.location),
-                        ),
-                      );
-                    },
-                    tooltip: 'View Location on App Map', // Updated tooltip
-                    backgroundColor: Colors.white,
-                    shape: StadiumBorder(
-                        side: BorderSide(color: Colors.grey.shade300)),
-                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    padding: const EdgeInsets.all(4),
+                // Buttons on the right
+                // 1. Map Screen Button (View Location on App Map)
+                ActionChip(
+                  avatar: Icon(
+                    Icons.map_outlined, // Match Collections screen map icon
+                    color: Theme.of(context)
+                        .primaryColor, // Consistent with map icon
+                    size: 18,
                   ),
-                  const SizedBox(width: 4), // Spacing
+                  label: const SizedBox.shrink(),
+                  labelPadding: EdgeInsets.zero,
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => MapScreen(
+                            initialExperienceLocation:
+                                _currentExperience.location),
+                      ),
+                    );
+                  },
+                  tooltip: 'View Location on App Map', // Updated tooltip
+                  backgroundColor: Colors.white,
+                  shape: StadiumBorder(
+                      side: BorderSide(color: Colors.grey.shade300)),
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  padding: const EdgeInsets.all(4),
+                ),
+                const SizedBox(width: 4), // Spacing
 
-                  // 2. Google Button (View on Google Maps)
-                  ActionChip(
-                    avatar: Icon(
-                      FontAwesomeIcons.google, // Google icon
-                      color: const Color(0xFF4285F4), // Official Google Blue
-                      size: 18,
-                    ),
-                    label: const SizedBox.shrink(),
-                    labelPadding: EdgeInsets.zero,
-                    onPressed: () =>
-                        _launchMapLocation(_currentExperience.location),
-                    tooltip: 'View on Map',
-                    backgroundColor: Colors.white,
-                    shape: StadiumBorder(
-                        side: BorderSide(color: Colors.grey.shade300)),
-                    materialTapTargetSize:
-                        MaterialTapTargetSize.shrinkWrap, // Reduce tap area
-                    padding: const EdgeInsets.all(4), // Adjust padding
+                // 2. Google Button (View on Google Maps)
+                ActionChip(
+                  avatar: Icon(
+                    FontAwesomeIcons.google, // Google icon
+                    color: const Color(0xFF4285F4), // Official Google Blue
+                    size: 18,
                   ),
-                  const SizedBox(width: 4), // Spacing
+                  label: const SizedBox.shrink(),
+                  labelPadding: EdgeInsets.zero,
+                  onPressed: () =>
+                      _launchMapLocation(_currentExperience.location),
+                  tooltip: 'View on Map',
+                  backgroundColor: Colors.white,
+                  shape: StadiumBorder(
+                      side: BorderSide(color: Colors.grey.shade300)),
+                  materialTapTargetSize:
+                      MaterialTapTargetSize.shrinkWrap, // Reduce tap area
+                  padding: const EdgeInsets.all(4), // Adjust padding
+                ),
+                const SizedBox(width: 4), // Spacing
 
-                  // 3. Yelp Button (Icon Only)
-                  ActionChip(
-                    avatar: const Icon(
-                      FontAwesomeIcons.yelp,
-                      color: Color(0xFFd32323), // Yelp Red
-                      size: 18,
-                    ),
-                    label: const SizedBox.shrink(),
-                    labelPadding: EdgeInsets.zero,
-                    onPressed: _launchYelpSearch,
-                    tooltip: 'Search on Yelp',
-                    backgroundColor: Colors.white,
-                    shape: StadiumBorder(
-                        side: BorderSide(color: Colors.grey.shade300)),
-                    materialTapTargetSize:
-                        MaterialTapTargetSize.shrinkWrap, // Reduce tap area
-                    padding: const EdgeInsets.all(4), // Adjust padding
+                // 3. Yelp Button (Icon Only)
+                ActionChip(
+                  avatar: const Icon(
+                    FontAwesomeIcons.yelp,
+                    color: Color(0xFFd32323), // Yelp Red
+                    size: 18,
                   ),
-                  const SizedBox(width: 4), // Spacing
+                  label: const SizedBox.shrink(),
+                  labelPadding: EdgeInsets.zero,
+                  onPressed: _launchYelpSearch,
+                  tooltip: 'Search on Yelp',
+                  backgroundColor: Colors.white,
+                  shape: StadiumBorder(
+                      side: BorderSide(color: Colors.grey.shade300)),
+                  materialTapTargetSize:
+                      MaterialTapTargetSize.shrinkWrap, // Reduce tap area
+                  padding: const EdgeInsets.all(4), // Adjust padding
+                ),
+                const SizedBox(width: 4), // Spacing
 
-                  // 4. Share Button
-                  ActionChip(
-                    avatar: Icon(
-                      Icons.share_outlined,
-                      color: Colors.blue, // Or another appropriate color
-                      size: 18,
-                    ),
-                    label: const SizedBox.shrink(),
-                    labelPadding: EdgeInsets.zero,
-                    onPressed: _showShareBottomSheet,
-                    tooltip: 'Share Experience',
-                    backgroundColor: Colors.white,
-                    shape: StadiumBorder(
-                        side: BorderSide(color: Colors.grey.shade300)),
-                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    padding: const EdgeInsets.all(4),
+                // 4. Share Button
+                ActionChip(
+                  avatar: Icon(
+                    Icons.share_outlined,
+                    color: Colors.blue, // Or another appropriate color
+                    size: 18,
                   ),
+                  label: const SizedBox.shrink(),
+                  labelPadding: EdgeInsets.zero,
+                  onPressed: _showShareBottomSheet,
+                  tooltip: 'Share Experience',
+                  backgroundColor: Colors.white,
+                  shape: StadiumBorder(
+                      side: BorderSide(color: Colors.grey.shade300)),
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  padding: const EdgeInsets.all(4),
+                ),
+                if (!widget.readOnlyPreview) ...[
                   const SizedBox(width: 4), // Spacing
 
                   // 5. Edit Button
@@ -1437,8 +1437,9 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                     padding: const EdgeInsets.all(4),
                   ),
                 ],
-              ),
+              ],
             ),
+          ),
           // --- ADDED: Color Category Row (Directly) --- START ---
           Builder(
             builder: (context) {
