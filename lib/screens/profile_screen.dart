@@ -134,163 +134,168 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
         ],
       ),
-      body: Column(
-        children: [
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Center(
-                    child: GestureDetector(
-                      onTap: _openEditProfile,
-                      behavior: HitTestBehavior.translucent,
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          CircleAvatar(
-                            radius: 50,
-                            backgroundImage: user?.photoURL != null
-                                ? NetworkImage(user!.photoURL!)
-                                : null,
-                            child: user?.photoURL == null
-                                ? const Icon(Icons.person, size: 50)
-                                : null,
-                          ),
-                          const SizedBox(height: 16),
-                          if (user?.displayName?.isNotEmpty ?? false)
+      body: SafeArea(
+        child: Column(
+          children: [
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(
+                      child: GestureDetector(
+                        onTap: _openEditProfile,
+                        behavior: HitTestBehavior.translucent,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            CircleAvatar(
+                              radius: 50,
+                              backgroundImage: user?.photoURL != null
+                                  ? NetworkImage(user!.photoURL!)
+                                  : null,
+                              child: user?.photoURL == null
+                                  ? const Icon(Icons.person, size: 50)
+                                  : null,
+                            ),
+                            const SizedBox(height: 16),
+                            if (user?.displayName?.isNotEmpty ?? false)
+                              Text(
+                                user!.displayName!,
+                                style: const TextStyle(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                                textAlign: TextAlign.center,
+                              ),
+                            if (user?.displayName?.isNotEmpty ?? false)
+                              const SizedBox(height: 4),
                             Text(
-                              user!.displayName!,
-                              style: const TextStyle(
-                                fontSize: 20,
-                                fontWeight: FontWeight.bold,
+                              '@${_username ?? '...'}',
+                              style: TextStyle(
+                                fontSize:
+                                    (user?.displayName?.isNotEmpty ?? false)
+                                        ? 16
+                                        : 20,
+                                fontWeight:
+                                    (user?.displayName?.isNotEmpty ?? false)
+                                        ? FontWeight.normal
+                                        : FontWeight.bold,
+                                color: (user?.displayName?.isNotEmpty ?? false)
+                                    ? Colors.grey[600]
+                                    : Colors.black,
                               ),
                               textAlign: TextAlign.center,
                             ),
-                          if (user?.displayName?.isNotEmpty ?? false)
-                            const SizedBox(height: 4),
-                          Text(
-                            '@${_username ?? '...'}',
-                            style: TextStyle(
-                              fontSize: (user?.displayName?.isNotEmpty ?? false)
-                                  ? 16
-                                  : 20,
-                              fontWeight:
-                                  (user?.displayName?.isNotEmpty ?? false)
-                                      ? FontWeight.normal
-                                      : FontWeight.bold,
-                              color: (user?.displayName?.isNotEmpty ?? false)
-                                  ? Colors.grey[600]
-                                  : Colors.black,
-                            ),
-                            textAlign: TextAlign.center,
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Email: ${user?.email ?? 'No email'}',
-                    style: const TextStyle(fontSize: 18),
-                  ),
-                  const SizedBox(height: 16),
-                  Consumer<NotificationStateService>(
-                    builder: (context, notificationService, child) {
-                      return Column(
-                        children: [
-                          ListTile(
-                            leading: IconNotificationDot(
-                              icon: const Icon(Icons.person_add),
-                              showDot: notificationService.hasAnyUnseen,
+                    const SizedBox(height: 8),
+                    Text(
+                      'Email: ${user?.email ?? 'No email'}',
+                      style: const TextStyle(fontSize: 18),
+                    ),
+                    const SizedBox(height: 16),
+                    Consumer<NotificationStateService>(
+                      builder: (context, notificationService, child) {
+                        return Column(
+                          children: [
+                            ListTile(
+                              leading: IconNotificationDot(
+                                icon: const Icon(Icons.person_add),
+                                showDot: notificationService.hasAnyUnseen,
+                              ),
+                              title: const Text('My People'),
+                              onTap: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                      builder: (context) =>
+                                          const MyPeopleScreen()),
+                                );
+                              },
                             ),
-                            title: const Text('My People'),
-                            onTap: () {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
+                            ListTile(
+                              leading: const Icon(Icons.chat_bubble_outline),
+                              title: const Text('Messages'),
+                              onTap: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
                                     builder: (context) =>
-                                        const MyPeopleScreen()),
-                              );
-                            },
-                          ),
-                          ListTile(
-                            leading: const Icon(Icons.chat_bubble_outline),
-                            title: const Text('Messages'),
-                            onTap: () {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) => const MessagesScreen(),
-                                ),
-                              );
-                            },
-                          ),
-                          ListTile(
-                            leading: const Icon(FontAwesomeIcons.instagram),
-                            title:
-                                const Text('Sign in for improved experience'),
-                            onTap: () async {
-                              final result = await Navigator.push<bool>(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) =>
-                                      const BrowserSignInScreen(),
-                                ),
-                              );
-                              if (result == true) {
-                                await widget.onRequestDiscoveryRefresh?.call();
-                              }
-                            },
-                          ),
-                          ListTile(
-                            leading: const Icon(Icons.menu_book_outlined),
-                            title: const Text('Tutorials'),
-                            onTap: () {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) => const TutorialsScreen(),
-                                ),
-                              );
-                            },
-                          ),
-                          ListTile(
-                            leading: const Icon(Icons.email_outlined),
-                            title: const Text('Report'),
-                            onTap: _showReportDialog,
-                          ),
-                        ],
-                      );
-                    },
+                                        const MessagesScreen(),
+                                  ),
+                                );
+                              },
+                            ),
+                            ListTile(
+                              leading: const Icon(FontAwesomeIcons.instagram),
+                              title:
+                                  const Text('Sign in for improved experience'),
+                              onTap: () async {
+                                final result = await Navigator.push<bool>(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) =>
+                                        const BrowserSignInScreen(),
+                                  ),
+                                );
+                                if (result == true) {
+                                  await widget.onRequestDiscoveryRefresh?.call();
+                                }
+                              },
+                            ),
+                            ListTile(
+                              leading: const Icon(Icons.menu_book_outlined),
+                              title: const Text('Tutorials'),
+                              onTap: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) =>
+                                        const TutorialsScreen(),
+                                  ),
+                                );
+                              },
+                            ),
+                            ListTile(
+                              leading: const Icon(Icons.email_outlined),
+                              title: const Text('Report'),
+                              onTap: _showReportDialog,
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () async {
+                    await authService.signOut();
+                    // The StreamBuilder in main.dart will automatically show AuthScreen
+                    // when it detects the user is logged out
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Theme.of(context).primaryColor,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
                   ),
-                ],
-              ),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: () async {
-                  await authService.signOut();
-                  // The StreamBuilder in main.dart will automatically show AuthScreen
-                  // when it detects the user is logged out
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Theme.of(context).primaryColor,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                ),
-                child: const Text(
-                  'Log Out',
-                  style: TextStyle(fontSize: 16, color: Colors.white),
+                  child: const Text(
+                    'Log Out',
+                    style: TextStyle(fontSize: 16, color: Colors.white),
+                  ),
                 ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
