@@ -575,6 +575,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
   Future<void>? _coverBackgroundsFuture;
   List<Reference> _coverBackgroundRefs = [];
   String? _coverBackgroundUrl;
+  bool _isCoverImageLoaded = false;
   _CoverQuote? _currentCoverQuote;
 
   @override
@@ -601,6 +602,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
         _hasStartedDiscovering = value;
         if (!value) {
           _currentCoverQuote = _pickRandomCoverQuote();
+          _isCoverImageLoaded = false; // Reset cover image loaded state when returning to cover
         }
       });
     }
@@ -645,6 +647,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
       _currentPage = 0;
       _dragDistance = 0;
       _currentCoverQuote = _pickRandomCoverQuote();
+      _isCoverImageLoaded = false; // Reset cover image loaded state
     });
     await _initializeFeed();
   }
@@ -1425,11 +1428,38 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
       }
       _coverBackgroundRefs = result.items;
       await _selectRandomCoverBackground();
+      
+      // Pre-fetch additional cover backgrounds in the background for faster switching
+      _prefetchAdditionalCoverBackgrounds();
     } catch (e, stackTrace) {
       debugPrint(
         'DiscoveryScreen: Failed to load cover backgrounds: $e\n$stackTrace',
       );
     }
+  }
+  
+  void _prefetchAdditionalCoverBackgrounds() {
+    // Pre-fetch up to 2 additional random cover backgrounds in the background
+    Future.microtask(() async {
+      if (!mounted || _coverBackgroundRefs.length < 2) return;
+      
+      final indicesToPrefetch = <int>{};
+      while (indicesToPrefetch.length < 2 && indicesToPrefetch.length < _coverBackgroundRefs.length) {
+        indicesToPrefetch.add(_random.nextInt(_coverBackgroundRefs.length));
+      }
+      
+      for (final index in indicesToPrefetch) {
+        if (!mounted) break;
+        try {
+          final url = await _coverBackgroundRefs[index].getDownloadURL();
+          if (!mounted) break;
+          await precacheImage(NetworkImage(url), context);
+          debugPrint('DiscoveryScreen: Pre-fetched cover background ${index + 1}/${_coverBackgroundRefs.length}');
+        } catch (e) {
+          debugPrint('DiscoveryScreen: Failed to pre-fetch cover background: $e');
+        }
+      }
+    });
   }
 
   Future<void> _selectRandomCoverBackground() async {
@@ -1443,10 +1473,14 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
       if (!mounted) return;
       setState(() {
         _coverBackgroundUrl = url;
+        _isCoverImageLoaded = false; // Reset loaded state for new image
       });
+      // Precache immediately (non-blocking) to speed up subsequent loads and animations
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
-        precacheImage(NetworkImage(url), context);
+        precacheImage(NetworkImage(url), context).catchError((e) {
+          debugPrint('DiscoveryScreen: Failed to precache image: $e');
+        });
       });
     } catch (e) {
       debugPrint(
@@ -1482,7 +1516,24 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
             colorBlendMode: BlendMode.darken,
             frameBuilder: (BuildContext context, Widget child, int? frame,
                 bool wasSynchronouslyLoaded) {
+              // Mark image as loaded when frame is available
+              if (frame != null) {
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (mounted && !_isCoverImageLoaded) {
+                    setState(() {
+                      _isCoverImageLoaded = true;
+                    });
+                  }
+                });
+              }
               if (wasSynchronouslyLoaded) {
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (mounted && !_isCoverImageLoaded) {
+                    setState(() {
+                      _isCoverImageLoaded = true;
+                    });
+                  }
+                });
                 return child;
               }
               return AnimatedOpacity(
@@ -1500,6 +1551,22 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
       children: [
         background,
         if (coverImage != null) coverImage,
+        // Show app icon in top 40% while waiting for cover image to load
+        if (!_isCoverImageLoaded)
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            height: MediaQuery.of(context).size.height * 0.4,
+            child: Center(
+              child: Image.asset(
+                'assets/icon/icon.png',
+                fit: BoxFit.contain,
+                width: 360,
+                height: 360,
+              ),
+            ),
+          ),
         SafeArea(
           child: Center(
             child: Padding(

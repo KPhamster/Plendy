@@ -292,6 +292,7 @@ class Experience {
   final List<String> sharedMediaItemIds;
   final String? sharedMediaType; // Added for shared content
   final String? additionalNotes; // Added for user notes
+  final bool isPrivate; // Controls whether the experience is private
 
   // --- ADDED ---
   final String? colorCategoryId; // ID linking to the selected ColorCategory
@@ -337,6 +338,7 @@ class Experience {
     this.sharedMediaType,
     this.additionalNotes,
     required this.editorUserIds,
+    this.isPrivate = false,
     this.colorCategoryId,
     this.otherCategories = const [], // Default to empty list
     this.categoryIconDenorm,
@@ -377,6 +379,7 @@ class Experience {
       sharedMediaType: data['sharedMediaType'],
       additionalNotes: data['additionalNotes'],
       editorUserIds: _parseStringList(data['editorUserIds']),
+      isPrivate: data['isPrivate'] == true,
       colorCategoryId: data['colorCategoryId'] as String?,
       otherCategories: _parseStringList(data['otherCategories']),
       categoryIconDenorm: data['categoryIconDenorm'] as String?,
@@ -415,6 +418,7 @@ class Experience {
       'sharedMediaItemIds': sharedMediaItemIds,
       'sharedMediaType': sharedMediaType,
       'additionalNotes': additionalNotes,
+      'isPrivate': isPrivate,
       'colorCategoryId': colorCategoryId,
       'otherCategories': otherCategories,
       'categoryIconDenorm': categoryIconDenorm,
@@ -453,6 +457,7 @@ class Experience {
     String? sharedMediaType,
     String? additionalNotes,
     List<String>? editorUserIds,
+    bool? isPrivate,
     String? colorCategoryId,
     List<String>? otherCategories,
     String? categoryIconDenorm,
@@ -489,6 +494,7 @@ class Experience {
       sharedMediaType: sharedMediaType ?? this.sharedMediaType,
       additionalNotes: additionalNotes,
       editorUserIds: editorUserIds ?? this.editorUserIds,
+      isPrivate: isPrivate ?? this.isPrivate,
       colorCategoryId: colorCategoryId ?? this.colorCategoryId,
       otherCategories: otherCategories ?? this.otherCategories,
       categoryIconDenorm: categoryIconDenorm ?? this.categoryIconDenorm,

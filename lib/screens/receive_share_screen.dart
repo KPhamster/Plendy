@@ -38,6 +38,7 @@ import 'package:geocoding/geocoding.dart' as geocoding;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'receive_share/widgets/experience_card_form.dart';
 import '../widgets/select_saved_experience_modal_content.dart'; // Attempting relative import again
+import '../widgets/privacy_toggle_button.dart';
 import 'receive_share/widgets/instagram_preview_widget.dart'
     as instagram_widget;
 import 'receive_share/widgets/tiktok_preview_widget.dart';
@@ -254,6 +255,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   // Gate content until URL submitted when required by caller
   bool _urlGateOpen = true;
   bool _didDeferredInit = false;
+  bool _sharedMediaIsPrivate = false;
 
   Widget _buildSharedUrlBar({required bool showInstructions}) {
     // Rebuilds show suffix icons immediately based on controller text
@@ -627,6 +629,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         targetCard.rating = (cardData['rating'] ?? 0.0).toDouble();
         targetCard.placeIdForPreview = cardData['placeIdForPreview'];
         targetCard.existingExperienceId = cardData['existingExperienceId'];
+        targetCard.isPrivate = cardData['isPrivate'] ?? false;
 
         // Restore location if present
         if (cardData['selectedLocation'] != null) {
@@ -645,6 +648,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           targetCard.location = targetCard.selectedLocation;
         }
       }
+    }
+
+    if (formData.containsKey('sharedMediaIsPrivate')) {
+      _sharedMediaIsPrivate = formData['sharedMediaIsPrivate'] == true;
     }
 
     // Clear the persisted data after restoration
@@ -1047,6 +1054,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         'rating': card.rating,
         'placeIdForPreview': card.placeIdForPreview,
         'existingExperienceId': card.existingExperienceId,
+        'isPrivate': card.isPrivate,
       };
 
       // Save location if available
@@ -1071,6 +1079,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     await _sharingService.persistExperienceCardData({
       'cards': allCardsData,
       'timestamp': DateTime.now().toIso8601String(),
+      'sharedMediaIsPrivate': _sharedMediaIsPrivate,
     });
   }
 
@@ -2492,6 +2501,17 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             if (!mounted) return;
 
             if (foundItem != null && foundItem.ownerUserId == currentUserId) {
+              if (foundItem.isPrivate != _sharedMediaIsPrivate) {
+                try {
+                  await _experienceService.updateSharedMediaPrivacy(
+                      foundItem.id, _sharedMediaIsPrivate);
+                  foundItem =
+                      foundItem.copyWith(isPrivate: _sharedMediaIsPrivate);
+                } catch (e) {
+                  debugPrint(
+                      'ReceiveShareScreen: Failed to update media privacy for ${foundItem?.id}: $e');
+                }
+              }
               existingItem = foundItem;
             } else if (foundItem != null) {
             } else {}
@@ -2513,6 +2533,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               ownerUserId: currentUserId,
               experienceIds: [],
               isTiktokPhoto: isTiktokPhoto,
+              isPrivate: _sharedMediaIsPrivate,
             );
             String newItemId =
                 await _experienceService.createSharedMediaItem(newItem);
@@ -2583,6 +2604,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                 editorUserIds: [currentUserId],
                 colorCategoryId: colorCategoryIdToSave,
                 otherCategories: card.selectedOtherCategoryIds,
+                isPrivate: card.isPrivate,
               );
               targetExperienceId =
                   await _experienceService.createExperience(newExperience);
@@ -2618,7 +2640,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                       ? currentExperienceData.editorUserIds
                       : [...currentExperienceData.editorUserIds, currentUserId],
                   colorCategoryId: colorCategoryIdToSave,
-                  otherCategories: card.selectedOtherCategoryIds);
+                  otherCategories: card.selectedOtherCategoryIds,
+                  isPrivate: card.isPrivate);
               await _experienceService.updateExperience(updatedExpData);
               currentExperienceData = updatedExpData;
               if (!mounted) return;
@@ -2667,6 +2690,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                       : currentExperienceData.otherCategories,
                   sharedMediaItemIds: finalMediaIds,
                   updatedAt: now,
+                  isPrivate: card.isPrivate,
                 );
                 await _experienceService.updateExperience(experienceToUpdate);
                 if (!mounted) return;
@@ -2684,7 +2708,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                 if (!mounted) return;
               } catch (e) {}
             }
-            if (canProcessPublicExperience) {
+            final bool shouldUpdatePublicExperience =
+                canProcessPublicExperience &&
+                    !_sharedMediaIsPrivate &&
+                    uniqueMediaPaths.isNotEmpty;
+            if (shouldUpdatePublicExperience) {
               PublicExperience? existingPublicExp = await _experienceService
                   .findPublicExperienceByPlaceId(placeId);
               if (!mounted) return;
@@ -3374,7 +3402,19 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           },
         ),
         automaticallyImplyLeading: false,
-        actions: [],
+        actions: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8.0),
+            child: PrivacyToggleButton(
+              isPrivate: _sharedMediaIsPrivate,
+              onPressed: () {
+                setState(() {
+                  _sharedMediaIsPrivate = !_sharedMediaIsPrivate;
+                });
+              },
+            ),
+          ),
+        ],
       ),
       body: Container(
         color: Colors.white,

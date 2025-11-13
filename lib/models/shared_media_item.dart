@@ -10,6 +10,7 @@ class SharedMediaItem extends Equatable {
   final List<String>
       experienceIds; // List of Experience IDs this media belongs to
   final bool? isTiktokPhoto; // Whether this TikTok URL is a photo carousel (null for non-TikTok items)
+  final bool isPrivate;
   // Add other potential metadata if needed (e.g., mediaType, thumbnail?)
 
   const SharedMediaItem({
@@ -19,10 +20,12 @@ class SharedMediaItem extends Equatable {
     required this.ownerUserId,
     required this.experienceIds,
     this.isTiktokPhoto,
+    this.isPrivate = false,
   });
 
   @override
-  List<Object?> get props => [id, path, createdAt, ownerUserId, experienceIds, isTiktokPhoto];
+  List<Object?> get props =>
+      [id, path, createdAt, ownerUserId, experienceIds, isTiktokPhoto, isPrivate];
 
   /// Creates a SharedMediaItem from a Firestore document
   factory SharedMediaItem.fromFirestore(DocumentSnapshot doc) {
@@ -35,6 +38,7 @@ class SharedMediaItem extends Equatable {
       // Ensure experienceIds is always a List<String>, even if null/empty in Firestore
       experienceIds: List<String>.from(data['experienceIds'] ?? []),
       isTiktokPhoto: data['isTiktokPhoto'] as bool?,
+      isPrivate: data['isPrivate'] == true,
     );
   }
 
@@ -46,6 +50,7 @@ class SharedMediaItem extends Equatable {
       'ownerUserId': ownerUserId,
       'experienceIds': experienceIds,
       if (isTiktokPhoto != null) 'isTiktokPhoto': isTiktokPhoto,
+      'isPrivate': isPrivate,
       // Note: 'id' is the document ID, not stored as a field within the document
     };
   }
@@ -67,6 +72,7 @@ class SharedMediaItem extends Equatable {
     String? ownerUserId,
     List<String>? experienceIds,
     bool? isTiktokPhoto,
+    bool? isPrivate,
   }) {
     return SharedMediaItem(
       id: id ?? this.id,
@@ -75,6 +81,7 @@ class SharedMediaItem extends Equatable {
       ownerUserId: ownerUserId ?? this.ownerUserId,
       experienceIds: experienceIds ?? this.experienceIds,
       isTiktokPhoto: isTiktokPhoto ?? this.isTiktokPhoto,
+      isPrivate: isPrivate ?? this.isPrivate,
     );
   }
 }

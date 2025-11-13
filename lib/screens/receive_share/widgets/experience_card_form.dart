@@ -20,6 +20,7 @@ import 'package:plendy/models/color_category.dart';
 // --- ADDED: Placeholders for Color Category Modals ---
 import 'package:plendy/widgets/add_color_category_modal.dart'; // Placeholder
 import 'package:plendy/widgets/edit_color_categories_modal.dart'; // Placeholder
+import 'package:plendy/widgets/privacy_toggle_button.dart';
 // --- END ADDED ---
 
 // Define necessary callbacks
@@ -972,6 +973,19 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       // Button to choose saved experience
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: PrivacyToggleButton(
+                          isPrivate: widget.cardData.isPrivate,
+                          onPressed: () {
+                            setState(() {
+                              widget.cardData.isPrivate =
+                                  !widget.cardData.isPrivate;
+                            });
+                          },
+                        ),
+                      ),
+                      SizedBox(height: 8),
                       Align(
                         alignment: Alignment.centerRight,
                         child: OutlinedButton.icon(

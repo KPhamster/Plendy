@@ -19,6 +19,7 @@ import 'package:plendy/screens/location_picker_screen.dart'; // ADDED: Import fo
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:plendy/models/share_permission.dart';
 import 'package:plendy/models/enums/share_enums.dart';
+import 'package:plendy/widgets/privacy_toggle_button.dart';
 
 class EditExperienceModal extends StatefulWidget {
   final Experience experience;
@@ -109,6 +110,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
     _cardData.selectedColorCategoryId = widget.experience.colorCategoryId;
     _cardData.selectedOtherCategoryIds = List<String>.from(
         widget.experience.otherCategories); // Initialize other categories
+    _cardData.isPrivate = widget.experience.isPrivate;
     _cardData.selectedLocation = widget.experience.location;
     _cardData.locationEnabled.value =
         widget.experience.location.latitude != 0.0 ||
@@ -1208,6 +1210,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
         additionalNotes: _cardData.notesController.text.trim().isEmpty
             ? null
             : _cardData.notesController.text.trim(),
+        isPrivate: _cardData.isPrivate,
         updatedAt: DateTime.now(), // Update timestamp
       );
 
@@ -1295,6 +1298,18 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                       style: Theme.of(context).textTheme.headlineSmall,
                     ),
                     const SizedBox(height: 20),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: PrivacyToggleButton(
+                        isPrivate: _cardData.isPrivate,
+                        onPressed: () {
+                          setState(() {
+                            _cardData.isPrivate = !_cardData.isPrivate;
+                          });
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 12),
 
                 // --- Form Fields (Similar to ExperienceCardForm) ---
 

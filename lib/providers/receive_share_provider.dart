@@ -67,6 +67,12 @@ class ReceiveShareProvider extends ChangeNotifier {
   }
 
   void _applyDefaultsToCard(ExperienceCardData cardData, {required bool isFirstCard}) {
+    if (isFirstCard) {
+      cardData.isPrivate = false;
+    } else if (_experienceCards.isNotEmpty) {
+      cardData.isPrivate = _experienceCards.last.isPrivate;
+    }
+
     if (_prefs == null) {
       print("Provider WARN (_applyDefaultsToCard): SharedPreferences not available. Cannot apply preference-based defaults.");
       // Fallback to basic defaults if prefs aren't loaded (should not happen if setDependencies is called correctly)
@@ -316,6 +322,7 @@ class ReceiveShareProvider extends ChangeNotifier {
       targetCard.selectedCategoryId = selectedExperience.categoryId;
       targetCard.selectedColorCategoryId = selectedExperience.colorCategoryId;
       targetCard.selectedOtherCategoryIds = List<String>.from(selectedExperience.otherCategories);
+      targetCard.isPrivate = selectedExperience.isPrivate;
       targetCard.yelpUrlController.text = selectedExperience.yelpUrl ?? '';
       targetCard.websiteController.text = selectedExperience.website ?? '';
       targetCard.notesController.text =
