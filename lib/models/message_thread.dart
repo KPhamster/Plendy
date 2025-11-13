@@ -26,6 +26,7 @@ class MessageThread {
   final DateTime? createdAt;
   final DateTime? updatedAt;
   final String participantsKey;
+  final Map<String, DateTime?> lastReadTimestamps; // userId -> last read timestamp
 
   static final RegExp _urlRegex = RegExp(
     r'''((?:https?:\/\/|www\.)[^\s<>()\[\]{}"'`]+)''',
@@ -42,6 +43,7 @@ class MessageThread {
     this.lastMessageTimestamp,
     this.createdAt,
     this.updatedAt,
+    this.lastReadTimestamps = const {},
   });
 
   factory MessageThread.fromFirestore(
@@ -54,6 +56,14 @@ class MessageThread {
       profiles[key] =
           MessageThreadParticipant.fromMap(key, value as Map<String, dynamic>?);
     });
+    
+    // Parse lastReadTimestamps
+    final lastReadRaw = data['lastReadTimestamps'] as Map<String, dynamic>? ?? {};
+    final lastReadTimestamps = <String, DateTime?>{};
+    lastReadRaw.forEach((key, value) {
+      lastReadTimestamps[key] = _parseTimestamp(value);
+    });
+    
     return MessageThread(
       id: doc.id,
       participantIds:
@@ -65,6 +75,7 @@ class MessageThread {
       lastMessageTimestamp: _parseTimestamp(data['lastMessageTimestamp']),
       createdAt: _parseTimestamp(data['createdAt']),
       updatedAt: _parseTimestamp(data['updatedAt']),
+      lastReadTimestamps: lastReadTimestamps,
     );
   }
 
@@ -80,6 +91,29 @@ class MessageThread {
 
   MessageThreadParticipant? participant(String userId) {
     return participantProfiles[userId];
+  }
+
+  /// Check if this thread has unread messages for the given user
+  bool hasUnreadMessages(String userId) {
+    // If there's no last message, no unread messages
+    if (lastMessageTimestamp == null) {
+      return false;
+    }
+    
+    // If user is the sender of the last message, it's not unread for them
+    if (lastMessageSenderId == userId) {
+      return false;
+    }
+    
+    // Check if user has read the thread since the last message
+    final lastRead = lastReadTimestamps[userId];
+    if (lastRead == null) {
+      // Never read, so it's unread
+      return true;
+    }
+    
+    // Unread if last message is after last read time
+    return lastMessageTimestamp!.isAfter(lastRead);
   }
 
   static List<MessageTextSegment> extractMessageSegments(String? message) {

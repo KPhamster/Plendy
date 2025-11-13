@@ -205,7 +205,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             ListTile(
                               leading: IconNotificationDot(
                                 icon: const Icon(Icons.person_add),
-                                showDot: notificationService.hasAnyUnseen,
+                                showDot: notificationService.hasUnseenFollowers || 
+                                         notificationService.hasUnseenFollowRequests,
                               ),
                               title: const Text('My People'),
                               onTap: () {
@@ -218,7 +219,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               },
                             ),
                             ListTile(
-                              leading: const Icon(Icons.chat_bubble_outline),
+                              leading: IconNotificationDot(
+                                icon: const Icon(Icons.chat_bubble_outline),
+                                showDot: notificationService.hasUnreadMessages,
+                              ),
                               title: const Text('Messages'),
                               onTap: () {
                                 Navigator.push(

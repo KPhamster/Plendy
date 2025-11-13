@@ -491,6 +491,53 @@ class AuthService extends ChangeNotifier {
     }
   }
 
+  /// Clean up duplicate FCM tokens manually
+  Future<void> cleanupDuplicateFcmTokens() async {
+    if (kIsWeb) return;
+    
+    try {
+      final user = _currentUser;
+      if (user == null) {
+        print('DEBUG: Cannot cleanup tokens - no user logged in');
+        return;
+      }
+
+      final currentToken = await _firebaseMessaging.getToken();
+      if (currentToken == null) {
+        print('DEBUG: Cannot cleanup tokens - no current token');
+        return;
+      }
+
+      print('DEBUG: Cleaning up duplicate FCM tokens...');
+      print('DEBUG: Current user: ${user.uid}');
+      print('DEBUG: Current token: ${currentToken.substring(0, 30)}...');
+      
+      // Get all tokens for this user
+      final tokensSnapshot = await _firestore
+          .collection('users')
+          .doc(user.uid)
+          .collection('fcmTokens')
+          .get();
+
+      print('DEBUG: Found ${tokensSnapshot.docs.length} tokens in Firestore for this user');
+
+      // Delete all tokens except the current one
+      int deletedCount = 0;
+      for (var doc in tokensSnapshot.docs) {
+        if (doc.id != currentToken) {
+          await doc.reference.delete();
+          deletedCount++;
+          print('DEBUG: Deleted token: ${doc.id.substring(0, 20)}...');
+        }
+      }
+
+      print('DEBUG: Cleanup complete - deleted $deletedCount duplicate tokens');
+      print('DEBUG: ✅ Token cleanup finished');
+    } catch (e) {
+      print('DEBUG: Error cleaning up FCM tokens: $e');
+    }
+  }
+
   // Optional: Method to delete a specific token (e.g., on sign out for this device)
   // Future<void> _deleteTokenFromFirestore(String userId, String token) async {
   //   if (userId.isEmpty || token.isEmpty) return;

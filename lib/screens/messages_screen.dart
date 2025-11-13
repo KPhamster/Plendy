@@ -54,6 +54,13 @@ class _MessagesScreenState extends State<MessagesScreen> {
               const SizedBox(height: 8),
               Text('Tokens in Firestore: ${debugInfo['tokensInFirestore'] ?? 0}'),
               const SizedBox(height: 8),
+              if (debugInfo['tokensInFirestore'] != null && debugInfo['tokensInFirestore'] > 1) ...[
+                const Text(
+                  '⚠️ Multiple tokens detected!',
+                  style: TextStyle(color: Colors.orange, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+              ],
               if (debugInfo['error'] != null) ...[
                 const Text('Error:', style: TextStyle(color: Colors.red)),
                 Text('${debugInfo['error']}', style: const TextStyle(color: Colors.red)),
@@ -74,6 +81,23 @@ class _MessagesScreenState extends State<MessagesScreen> {
           ),
         ),
         actions: [
+          TextButton(
+            onPressed: () async {
+              final scaffoldMessenger = ScaffoldMessenger.of(context);
+              Navigator.pop(context);
+              
+              scaffoldMessenger.showSnackBar(
+                const SnackBar(content: Text('Cleaning up tokens... Check logs')),
+              );
+              
+              await authService.cleanupDuplicateFcmTokens();
+              
+              scaffoldMessenger.showSnackBar(
+                const SnackBar(content: Text('Token cleanup complete!')),
+              );
+            },
+            child: const Text('Deep Clean Tokens'),
+          ),
           TextButton(
             onPressed: () => Navigator.pop(context),
             child: const Text('Close'),
@@ -214,21 +238,36 @@ class _MessagesScreenState extends State<MessagesScreen> {
     final subtitle = _buildSubtitle(thread, currentUserId, participants);
     final timestamp = _formatTimestamp(context,
         thread.lastMessageTimestamp ?? thread.updatedAt ?? thread.createdAt);
+    final isUnread = thread.hasUnreadMessages(currentUserId);
 
     return ListTile(
       leading: _buildAvatar(participants),
-      title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
+      title: Text(
+        title,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          fontWeight: isUnread ? FontWeight.bold : FontWeight.normal,
+        ),
+      ),
       subtitle: subtitle != null
           ? Text(
               subtitle,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontWeight: isUnread ? FontWeight.w600 : FontWeight.normal,
+              ),
             )
           : null,
       trailing: timestamp != null
           ? Text(
               timestamp,
-              style: const TextStyle(fontSize: 12, color: Colors.grey),
+              style: TextStyle(
+                fontSize: 12,
+                color: isUnread ? Colors.black : Colors.grey,
+                fontWeight: isUnread ? FontWeight.bold : FontWeight.normal,
+              ),
             )
           : null,
       onTap: () => _openChat(thread, currentUserId),

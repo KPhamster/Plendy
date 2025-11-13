@@ -45,6 +45,9 @@ class _ChatScreenState extends State<ChatScreen> {
     super.initState();
     _messageService = MessageService();
     _experienceService = ExperienceService();
+    
+    // Mark thread as read when opened
+    _messageService.markThreadAsRead(widget.thread.id, widget.currentUserId);
   }
 
   @override

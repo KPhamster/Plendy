@@ -225,9 +225,10 @@ exports.sendMessageNotificationV2 = onDocumentCreated(
     const threadId = event.params.threadId;
     const messageId = event.params.messageId;
     const messageData = snapshot.data();
+    const senderId = messageData.senderId;
 
     functions.logger.log(
-      `V2: New message ${messageId} in thread ${threadId} from ${messageData.senderId}`,
+      `V2: New message ${messageId} in thread ${threadId} from ${senderId}`,
     );
 
     try {
@@ -288,6 +289,12 @@ exports.sendMessageNotificationV2 = onDocumentCreated(
           }
 
           const tokens = tokensSnapshot.docs.map((doc) => doc.id);
+
+          // Create a unique collapse ID per message (not per thread)
+          // This ensures duplicate deliveries of the SAME message are collapsed
+          // but different messages in the thread are shown
+          const collapseId = `${threadId}_${messageId}`;
+
           const messages = tokens.map((token) => ({
             token: token,
             notification: {
@@ -298,6 +305,7 @@ exports.sendMessageNotificationV2 = onDocumentCreated(
               type: "new_message",
               threadId: threadId,
               senderId: senderId,
+              messageId: messageId, // Add messageId for better tracking
               screen: "/messages",
             },
             android: {
@@ -305,14 +313,22 @@ exports.sendMessageNotificationV2 = onDocumentCreated(
                 channelId: "messages",
                 priority: "high",
                 defaultSound: true,
+                tag: collapseId, // Use messageId for Android to prevent duplicates of THIS message
               },
             },
             apns: {
+              headers: {
+                "apns-collapse-id": collapseId, // Use messageId to collapse duplicate deliveries
+              },
               payload: {
                 aps: {
-                  category: "message",
-                  sound: "default",
+                  "category": "message",
+                  "sound": "default",
+                  "thread-id": threadId, // Group notifications by thread
+                  "mutable-content": 1,
                 },
+                senderId: senderId,
+                messageId: messageId,
               },
             },
           }));
@@ -482,6 +498,60 @@ exports.testMessageNotification = functions.https.onRequest(async (req, res) => 
   } catch (error) {
     functions.logger.error("Test: Error sending notification:", error);
     res.status(500).send(`Error: ${error.toString()}`);
+  }
+});
+
+/**
+ * Clean up cross-contaminated FCM tokens for a user
+ */
+exports.cleanupUserFcmTokens = onRequest(async (req, res) => {
+  const userId = req.query.userId || req.body?.userId;
+
+  if (!userId) {
+    res.status(400).send("userId parameter required");
+    return;
+  }
+
+  try {
+    functions.logger.log("Cleaning up tokens for user:", userId);
+
+    // Get the current user's tokens
+    const userTokensSnapshot = await db
+      .collection("users")
+      .doc(userId)
+      .collection("fcmTokens")
+      .get();
+
+    const userTokens = userTokensSnapshot.docs.map((doc) => doc.id);
+    functions.logger.log("User has", userTokens.length, "tokens");
+
+    // Check all other users for these tokens
+    const allUsersSnapshot = await db.collection("users").get();
+    let removedCount = 0;
+
+    for (const userDoc of allUsersSnapshot.docs) {
+      if (userDoc.id === userId) continue; // Skip the target user
+
+      for (const token of userTokens) {
+        const tokenDoc = await userDoc.ref.collection("fcmTokens").doc(token).get();
+        if (tokenDoc.exists) {
+          functions.logger.log("Found cross-contamination: token under user", userDoc.id);
+          await tokenDoc.ref.delete();
+          removedCount++;
+        }
+      }
+    }
+
+    functions.logger.log("Cleanup complete. Removed", removedCount, "cross-contaminated tokens");
+    res.status(200).json({
+      success: true,
+      userId: userId,
+      userTokenCount: userTokens.length,
+      removedFromOtherUsers: removedCount,
+    });
+  } catch (error) {
+    functions.logger.error("Error cleaning up tokens:", error);
+    res.status(500).send(error.toString());
   }
 });
 
