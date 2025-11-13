@@ -17,9 +17,11 @@ import 'screens/onboarding_screen.dart';
 import 'screens/receive_share_screen.dart';
 import 'screens/follow_requests_screen.dart'; // Import FollowRequestsScreen
 import 'screens/messages_screen.dart'; // Import MessagesScreen
+import 'screens/chat_screen.dart'; // Import ChatScreen
 import 'services/auth_service.dart';
 import 'services/sharing_service.dart';
 import 'models/shared_media_compat.dart';
+import 'models/message_thread.dart'; // Import MessageThread
 import 'services/notification_state_service.dart'; // Import NotificationStateService
 import 'package:provider/provider.dart';
 import 'providers/receive_share_provider.dart';
@@ -46,6 +48,9 @@ final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 // Initialize FlutterLocalNotificationsPlugin (if you want to show foreground notifications)
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
     FlutterLocalNotificationsPlugin();
+
+// Track recently received message IDs to prevent duplicates (iOS issue)
+final Set<String> _recentlyReceivedMessageIds = {};
 
 // FCM: Background message handler (must be a top-level function)
 @pragma('vm:entry-point')
@@ -126,24 +131,63 @@ void _debugCheckAppGroup() {
   // with keys "ShareKey" and "ShareKey#data"
 }
 
+/// Open a chat screen from a notification
+Future<void> _openChatFromNotification(String threadId) async {
+  try {
+    final authService = FirebaseAuth.instance;
+    final currentUserId = authService.currentUser?.uid;
+    
+    if (currentUserId == null) {
+      print('FCM: Cannot open chat - user not logged in');
+      return;
+    }
+    
+    // Fetch the thread
+    final threadDoc = await FirebaseFirestore.instance
+        .collection('message_threads')
+        .doc(threadId)
+        .get();
+    
+    if (!threadDoc.exists) {
+      print('FCM: Thread not found: $threadId');
+      return;
+    }
+    
+    final thread = MessageThread.fromFirestore(threadDoc);
+    
+    // Navigate to chat screen
+    navigatorKey.currentState?.push(
+      MaterialPageRoute(
+        builder: (context) => ChatScreen(
+          thread: thread,
+          currentUserId: currentUserId,
+        ),
+      ),
+    );
+  } catch (e) {
+    print('FCM: Error opening chat from notification: $e');
+  }
+}
+
 Future<void> _configureLocalNotifications() async {
   // Ensure you have an app icon, e.g., android/app/src/main/res/mipmap-hdpi/ic_launcher.png
   const AndroidInitializationSettings initializationSettingsAndroid =
       AndroidInitializationSettings('@mipmap/ic_launcher');
 
   // Add iOS and macOS settings
+  // Request permissions for local notifications on iOS
   const DarwinInitializationSettings initializationSettingsIOS =
       DarwinInitializationSettings(
-    requestSoundPermission: false,
-    requestBadgePermission: false,
-    requestAlertPermission: false,
+    requestSoundPermission: true,
+    requestBadgePermission: true,
+    requestAlertPermission: true,
   );
 
   const DarwinInitializationSettings initializationSettingsMacOS =
       DarwinInitializationSettings(
-    requestSoundPermission: false,
-    requestBadgePermission: false,
-    requestAlertPermission: false,
+    requestSoundPermission: true,
+    requestBadgePermission: true,
+    requestAlertPermission: true,
   );
 
   const InitializationSettings initializationSettings = InitializationSettings(
@@ -151,19 +195,36 @@ Future<void> _configureLocalNotifications() async {
     iOS: initializationSettingsIOS,
     macOS: initializationSettingsMacOS,
   );
-  await flutterLocalNotificationsPlugin.initialize(initializationSettings,
+  
+  final initialized = await flutterLocalNotificationsPlugin.initialize(initializationSettings,
       onDidReceiveNotificationResponse:
-          (NotificationResponse notificationResponse) {
+          (NotificationResponse notificationResponse) async {
     // Handle notification tap when app is in foreground/background but not terminated
     print(
         'Local notification tapped with payload: ${notificationResponse.payload}');
     if (notificationResponse.payload != null &&
         notificationResponse.payload!.isNotEmpty) {
-      // Navigate based on the payload (screen path)
-      final screen = notificationResponse.payload!;
-      print("Local notification: Navigating to screen: $screen");
+      final payload = notificationResponse.payload!;
+      print("Local notification: Handling payload: $payload");
 
-      if (screen == '/follow_requests' && navigatorKey.currentState != null) {
+      // Try to parse as JSON first (for new message notifications)
+      try {
+        final data = jsonDecode(payload) as Map<String, dynamic>;
+        final type = data['type'] as String?;
+        
+        if (type == 'new_message') {
+          final threadId = data['threadId'] as String?;
+          if (threadId != null) {
+            await _openChatFromNotification(threadId);
+            return;
+          }
+        }
+      } catch (_) {
+        // Not JSON, treat as screen path
+      }
+
+      // Handle as screen path (for follow requests, etc.)
+      if (payload == '/follow_requests' && navigatorKey.currentState != null) {
         navigatorKey.currentState!.push(
           MaterialPageRoute(
             builder: (context) => const FollowRequestsScreen(),
@@ -172,6 +233,21 @@ Future<void> _configureLocalNotifications() async {
       }
     }
   });
+  
+  print('Local notifications initialized: $initialized');
+  
+  // Check permissions on iOS
+  if (Platform.isIOS) {
+    final result = await flutterLocalNotificationsPlugin
+        .resolvePlatformSpecificImplementation<
+            IOSFlutterLocalNotificationsPlugin>()
+        ?.requestPermissions(
+          alert: true,
+          badge: true,
+          sound: true,
+        );
+    print('iOS local notification permissions granted: $result');
+  }
 }
 
 void main() async {
@@ -210,9 +286,11 @@ void main() async {
 
     // --- FCM Setup ---
     // Setup local notifications in background to not delay splash screen
-    unawaited(_configureLocalNotifications());
-    // On iOS, enable system notifications in foreground
-    // On Android, we'll manually show notifications using the local plugin
+    await _configureLocalNotifications(); // Make this blocking to ensure it's ready
+    
+    // Enable iOS system notifications in foreground
+    // The apns-collapse-id in the Cloud Function prevents duplicates at the iOS system level
+    // We'll also filter in Flutter to prevent showing sender's own messages
     await FirebaseMessaging.instance
         .setForegroundNotificationPresentationOptions(
       alert: true,
@@ -223,32 +301,92 @@ void main() async {
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {
       print('FCM: Got a message whilst in the foreground!');
       print('FCM: Message data: ${message.data}');
+      print('FCM: Message ID: ${message.messageId}');
+
+      // Deduplicate messages (iOS sometimes delivers the same message twice)
+      // Use a combination that's unique per notification but same for duplicates
+      final threadId = message.data['threadId'] ?? '';
+      final senderId = message.data['senderId'] ?? '';
+      final type = message.data['type'] ?? '';
+      final sentTimestamp = message.sentTime?.millisecondsSinceEpoch ?? DateTime.now().millisecondsSinceEpoch;
+      
+      // Create unique ID - use sentTime to group duplicates that arrive within same second
+      final uniqueId = '$type:$threadId:$senderId:${sentTimestamp ~/ 1000}';
+      
+      print('FCM: Dedup ID: $uniqueId');
+      print('FCM: Already seen: ${_recentlyReceivedMessageIds.contains(uniqueId)}');
+      
+      if (_recentlyReceivedMessageIds.contains(uniqueId)) {
+        print('FCM: ⚠️ Ignoring duplicate message');
+        return;
+      }
+      
+      // Track this message and clean it up after 5 seconds
+      _recentlyReceivedMessageIds.add(uniqueId);
+      Timer(const Duration(seconds: 5), () {
+        _recentlyReceivedMessageIds.remove(uniqueId);
+      });
+
+      // Check if current user is the sender - don't show notification for own messages
+      final currentUserId = FirebaseAuth.instance.currentUser?.uid;
+      
+      print('FCM: Current user ID: $currentUserId');
+      print('FCM: Sender ID from message: $senderId');
+      print('FCM: Match check: ${currentUserId == senderId}');
+      
+      if (currentUserId != null && senderId == currentUserId) {
+        print('FCM: ⚠️ BLOCKING notification - you are the sender!');
+        // Note: iOS may have already shown this notification before we could block it
+        // The apns-collapse-id helps, but iOS shows notifications before Flutter runs
+        return;
+      }
+      
+      print('FCM: ✅ Proceeding to show notification (different sender)');
 
       if (message.notification != null) {
         print(
             'FCM: Message also contained a notification: ${message.notification}');
         
         // Only show local notification on Android
-        // iOS handles foreground notifications via setForegroundNotificationPresentationOptions
+        // iOS uses system notifications (setForegroundNotificationPresentationOptions)
+        // with apns-collapse-id to prevent duplicates at the OS level
         if (Platform.isAndroid) {
+          // Prepare payload with notification data
+          String? payload;
+          final messageType = message.data['type'] as String?;
+          if (messageType == 'new_message') {
+            if (threadId.isNotEmpty) {
+              payload = jsonEncode({'type': messageType, 'threadId': threadId});
+            }
+          } else {
+            payload = message.data['screen'] as String?;
+          }
+          
+          // Use uniqueId as the notification ID to prevent duplicate notifications
+          final notificationId = uniqueId.hashCode;
+          
           flutterLocalNotificationsPlugin.show(
-            message.hashCode,
+            notificationId,
             message.notification!.title,
             message.notification!.body,
             const NotificationDetails(
               android: AndroidNotificationDetails(
-                'plendy_follow_channel', // Unique channel ID
-                'Follow Notifications', // Channel name
-                channelDescription:
-                    'Notifications for new followers and follow requests.',
+                'plendy_messages_channel',
+                'Message Notifications',
+                channelDescription: 'Notifications for new messages.',
                 importance: Importance.max,
                 priority: Priority.high,
                 icon: '@mipmap/ic_launcher',
               ),
             ),
-            payload: message.data['screen']
-                as String?, // Example: screen to navigate to
-          );
+            payload: payload,
+          ).then((_) {
+            print('FCM: ✅ Local notification shown successfully');
+          }).catchError((e) {
+            print('FCM: ❌ Error showing local notification: $e');
+          });
+        } else {
+          print('FCM: iOS system notification will be shown automatically');
         }
       }
     });
@@ -256,8 +394,27 @@ void main() async {
     FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
       print('FCM: Message clicked and opened app!');
       print('FCM: Message data: ${message.data}');
+      
+      // Deduplicate messages using the same logic as onMessage
+      final threadId = message.data['threadId'] ?? '';
+      final senderId = message.data['senderId'] ?? '';
+      final type = message.data['type'] ?? '';
+      final sentTimestamp = message.sentTime?.millisecondsSinceEpoch ?? DateTime.now().millisecondsSinceEpoch;
+      final uniqueId = '$type:$threadId:$senderId:${sentTimestamp ~/ 1000}';
+      
+      print('FCM: Dedup ID: $uniqueId');
+      
+      if (_recentlyReceivedMessageIds.contains(uniqueId)) {
+        print('FCM: ⚠️ Ignoring duplicate message tap');
+        return;
+      }
+      
+      _recentlyReceivedMessageIds.add(uniqueId);
+      Timer(const Duration(seconds: 5), () {
+        _recentlyReceivedMessageIds.remove(uniqueId);
+      });
+      
       final screen = message.data['screen'] as String?;
-      final type = message.data['type'] as String?;
 
       if (screen != null && navigatorKey.currentState != null) {
         print("FCM: Navigating to screen: $screen");
@@ -281,22 +438,24 @@ void main() async {
           //   // Navigate to user profile screen with followerId
           // }
         } else if (type == 'new_message' && screen == '/messages') {
-          // Navigate to Messages screen, and potentially to the specific chat
+          // Navigate to the specific chat thread
           final threadId = message.data['threadId'] as String?;
           final senderId = message.data['senderId'] as String?;
 
           print(
               "FCM: New message notification - threadId: $threadId, senderId: $senderId");
 
-          // Navigate to Messages screen first
-          navigatorKey.currentState!.push(
-            MaterialPageRoute(
-              builder: (context) => const MessagesScreen(),
-            ),
-          );
-
-          // TODO: If threadId is provided, you could navigate directly to the chat
-          // This would require updating the MessagesScreen to accept navigation parameters
+          if (threadId != null) {
+            // Navigate directly to the chat screen
+            _openChatFromNotification(threadId);
+          } else {
+            // Fallback: Navigate to Messages screen if no threadId
+            navigatorKey.currentState!.push(
+              MaterialPageRoute(
+                builder: (context) => const MessagesScreen(),
+              ),
+            );
+          }
         }
       }
     });

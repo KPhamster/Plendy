@@ -238,4 +238,18 @@ class MessageService {
       photoUrl: profile?.photoURL,
     );
   }
+
+  /// Mark a thread as read by the current user
+  Future<void> markThreadAsRead(String threadId, String userId) async {
+    await _threads.doc(threadId).update({
+      'lastReadTimestamps.$userId': FieldValue.serverTimestamp(),
+    });
+  }
+
+  /// Get the count of unread threads for a user
+  Stream<int> watchUnreadCount(String userId) {
+    return watchThreadsForUser(userId).map((threads) {
+      return threads.where((thread) => thread.hasUnreadMessages(userId)).length;
+    });
+  }
 }

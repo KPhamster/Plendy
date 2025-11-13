@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:async';
+import 'message_service.dart';
 
 class NotificationStateService extends ChangeNotifier {
   static final NotificationStateService _instance = NotificationStateService._internal();
@@ -9,6 +10,7 @@ class NotificationStateService extends ChangeNotifier {
   NotificationStateService._internal();
 
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final MessageService _messageService = MessageService();
   
   // Last seen timestamps
   DateTime? _lastSeenFollowers;
@@ -20,10 +22,12 @@ class NotificationStateService extends ChangeNotifier {
   // Streams for real-time data
   StreamSubscription? _followersSubscription;
   StreamSubscription? _followRequestsSubscription;
+  StreamSubscription? _unreadMessagesSubscription;
   
   // Counts of unseen items
   int _unseenFollowersCount = 0;
   int _unseenFollowRequestsCount = 0;
+  int _unreadMessagesCount = 0;
   
   // Lists of unseen item IDs
   Set<String> _unseenFollowerIds = {};
@@ -38,10 +42,12 @@ class NotificationStateService extends ChangeNotifier {
   // Getters
   bool get hasUnseenFollowers => _unseenFollowersCount > 0;
   bool get hasUnseenFollowRequests => _unseenFollowRequestsCount > 0;
-  bool get hasAnyUnseen => hasUnseenFollowers || hasUnseenFollowRequests;
+  bool get hasUnreadMessages => _unreadMessagesCount > 0;
+  bool get hasAnyUnseen => hasUnseenFollowers || hasUnseenFollowRequests || hasUnreadMessages;
   
   int get unseenFollowersCount => _unseenFollowersCount;
   int get unseenFollowRequestsCount => _unseenFollowRequestsCount;
+  int get unreadMessagesCount => _unreadMessagesCount;
   
   Set<String> get unseenFollowerIds => Set.from(_unseenFollowerIds);
   Set<String> get unseenFollowRequestIds => Set.from(_unseenFollowRequestIds);
@@ -96,14 +102,21 @@ class NotificationStateService extends ChangeNotifier {
         .collection('followRequests')
         .snapshots()
         .listen(_handleFollowRequestsChange);
+    
+    // Listen to unread messages count
+    _unreadMessagesSubscription = _messageService
+        .watchUnreadCount(_currentUserId!)
+        .listen(_handleUnreadMessagesChange);
   }
 
   /// Stop listening to changes
   void _stopListening() {
     _followersSubscription?.cancel();
     _followRequestsSubscription?.cancel();
+    _unreadMessagesSubscription?.cancel();
     _followersSubscription = null;
     _followRequestsSubscription = null;
+    _unreadMessagesSubscription = null;
   }
 
   /// Handle followers collection changes
@@ -184,6 +197,12 @@ class NotificationStateService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Handle unread messages count changes
+  void _handleUnreadMessagesChange(int count) {
+    _unreadMessagesCount = count;
+    notifyListeners();
+  }
+
   /// Mark followers as seen (when user visits followers tab)
   Future<void> markFollowersAsSeen() async {
     if (_currentUserId == null) return;
@@ -251,6 +270,7 @@ class NotificationStateService extends ChangeNotifier {
     _seenFollowerIds.clear(); // Clear seen follower IDs
     _unseenFollowersCount = 0;
     _unseenFollowRequestsCount = 0;
+    _unreadMessagesCount = 0;
     notifyListeners();
   }
 
