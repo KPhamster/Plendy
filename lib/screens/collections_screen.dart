@@ -47,6 +47,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../widgets/web_media_preview_card.dart'; // ADDED: Import for WebMediaPreviewCard
+import '../widgets/privacy_toggle_button.dart';
 
 // Helper classes for shared data
 class _SharedCategoryData {
@@ -139,6 +140,19 @@ class GroupedContentItem {
     required this.associatedExperiences,
     this.minDistance,
   });
+
+  GroupedContentItem copyWith({
+    SharedMediaItem? mediaItem,
+    List<Experience>? associatedExperiences,
+    double? minDistance,
+  }) {
+    return GroupedContentItem(
+      mediaItem: mediaItem ?? this.mediaItem,
+      associatedExperiences:
+          associatedExperiences ?? this.associatedExperiences,
+      minDistance: minDistance ?? this.minDistance,
+    );
+  }
 }
 
 class CollectionsScreen extends StatefulWidget {
@@ -8128,6 +8142,40 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       }
     }
 
+    final bool showPrivacyToggle = group.mediaItem.id.isNotEmpty;
+    final circleAvatar = CircleAvatar(
+      radius: 14,
+      backgroundColor: Theme.of(context).primaryColor.withOpacity(0.8),
+      child: Text(
+        '${index + 1}',
+        style: const TextStyle(
+          fontSize: 14.0,
+          fontWeight: FontWeight.bold,
+          color: Colors.white,
+        ),
+      ),
+    );
+
+    final Widget indexHeader = SizedBox(
+      height: 32,
+      width: double.infinity,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          circleAvatar,
+          if (showPrivacyToggle)
+            Positioned(
+              right: 0,
+              child: PrivacyToggleButton(
+                isPrivate: group.mediaItem.isPrivate,
+                showLabel: false,
+                onPressed: () => _toggleGroupedContentPrivacy(group),
+              ),
+            ),
+        ],
+      ),
+    );
+
     return Padding(
       key: ValueKey(mediaPath),
       padding: const EdgeInsets.only(bottom: 24.0),
@@ -8135,21 +8183,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         children: [
           Padding(
             padding: const EdgeInsets.only(bottom: 8.0),
-            child: Center(
-              child: CircleAvatar(
-                radius: 14,
-                backgroundColor:
-                    Theme.of(context).primaryColor.withOpacity(0.8),
-                child: Text(
-                  '$index',
-                  style: const TextStyle(
-                    fontSize: 14.0,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white,
-                  ),
-                ),
-              ),
-            ),
+            child: indexHeader,
           ),
           Container(
             margin: EdgeInsets.zero,
@@ -8292,6 +8326,47 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         ],
       ),
     );
+  }
+
+  Future<void> _toggleGroupedContentPrivacy(GroupedContentItem group) async {
+    final String mediaId = group.mediaItem.id;
+    if (mediaId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('This content item cannot be updated yet.')),
+      );
+      return;
+    }
+    final bool newValue = !group.mediaItem.isPrivate;
+    final previousGrouped = List<GroupedContentItem>.from(_groupedContentItems);
+    final previousFiltered =
+        List<GroupedContentItem>.from(_filteredGroupedContentItems);
+    setState(() {
+      _groupedContentItems = _groupedContentItems
+          .map((item) => item.mediaItem.id == mediaId
+              ? item.copyWith(
+                  mediaItem: item.mediaItem.copyWith(isPrivate: newValue))
+              : item)
+          .toList();
+      _filteredGroupedContentItems = _filteredGroupedContentItems
+          .map((item) => item.mediaItem.id == mediaId
+              ? item.copyWith(
+                  mediaItem: item.mediaItem.copyWith(isPrivate: newValue))
+              : item)
+          .toList();
+    });
+    try {
+      await _experienceService.updateSharedMediaPrivacy(mediaId, newValue);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _groupedContentItems = previousGrouped;
+        _filteredGroupedContentItems = previousFiltered;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('Failed to update privacy. Please try again.')),
+      );
+    }
   }
 
   // ADDED: Dialog to show media details (associated experiences)

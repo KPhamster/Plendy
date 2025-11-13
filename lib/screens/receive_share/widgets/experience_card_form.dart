@@ -21,6 +21,7 @@ import 'package:plendy/models/color_category.dart';
 import 'package:plendy/widgets/add_color_category_modal.dart'; // Placeholder
 import 'package:plendy/widgets/edit_color_categories_modal.dart'; // Placeholder
 import 'package:plendy/widgets/privacy_toggle_button.dart';
+import 'package:plendy/screens/receive_share/widgets/privacy_tooltip_icon.dart';
 // --- END ADDED ---
 
 // Define necessary callbacks
@@ -975,14 +976,24 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                       // Button to choose saved experience
                       Align(
                         alignment: Alignment.centerRight,
-                        child: PrivacyToggleButton(
-                          isPrivate: widget.cardData.isPrivate,
-                          onPressed: () {
-                            setState(() {
-                              widget.cardData.isPrivate =
-                                  !widget.cardData.isPrivate;
-                            });
-                          },
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            PrivacyToggleButton(
+                              isPrivate: widget.cardData.isPrivate,
+                              onPressed: () {
+                                setState(() {
+                                  widget.cardData.isPrivate =
+                                      !widget.cardData.isPrivate;
+                                });
+                              },
+                            ),
+                            const SizedBox(width: 6),
+                            PrivacyTooltipIcon(
+                              message:
+                                  'Make this experience private to hide it from shared lists.',
+                            ),
+                          ],
                         ),
                       ),
                       SizedBox(height: 8),

@@ -60,6 +60,7 @@ import '../widgets/save_to_experiences_modal.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../models/report.dart';
 import '../services/report_service.dart';
+import '../widgets/privacy_toggle_button.dart';
 
 // Convert to StatefulWidget
 class ExperiencePageScreen extends StatefulWidget {
@@ -2266,6 +2267,10 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                     isExpanded && _isMediaPreviewHeightExpanded;
                 final double? previewHeightOverride =
                     _getMediaPreviewHeightOverride(context, url);
+                final bool canEditMediaPrivacy =
+                    !widget.readOnlyPreview &&
+                        !_showingPublicMedia &&
+                        item.id.isNotEmpty;
 
                 if (isExpanded) {
                   if (isTikTokUrl) {
@@ -2430,6 +2435,40 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                 }
 
                 // Keep the Column for layout *within* the list item
+                final circleAvatar = CircleAvatar(
+                  radius: 14,
+                  backgroundColor:
+                      Theme.of(context).primaryColor.withOpacity(0.8),
+                  child: Text(
+                    '${index + 1}',
+                    style: const TextStyle(
+                      fontSize: 14.0,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                );
+
+                final Widget indexHeader = SizedBox(
+                  height: 32,
+                  width: double.infinity,
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      circleAvatar,
+                      if (canEditMediaPrivacy)
+                        Positioned(
+                          right: 0,
+                          child: PrivacyToggleButton(
+                            isPrivate: item.isPrivate,
+                            showLabel: false,
+                            onPressed: () => _toggleMediaItemPrivacy(item),
+                          ),
+                        ),
+                    ],
+                  ),
+                );
+
                 return Padding(
                   padding: const EdgeInsets.only(bottom: 12.0), // Reduced from 24.0
                   child: Column(
@@ -2437,19 +2476,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                     children: [
                       Padding(
                         padding: const EdgeInsets.only(bottom: 8.0, top: 4.0),
-                        child: CircleAvatar(
-                          radius: 14,
-                          backgroundColor:
-                              Theme.of(context).primaryColor.withOpacity(0.8),
-                          child: Text(
-                            '${index + 1}',
-                            style: const TextStyle(
-                              fontSize: 14.0,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ),
+                        child: indexHeader,
                       ),
                       Container(
                         margin: EdgeInsets.zero,
@@ -3474,6 +3501,35 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
           }
         });
       }
+    }
+  }
+
+  Future<void> _toggleMediaItemPrivacy(SharedMediaItem item) async {
+    if (item.id.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('This content item cannot be updated yet.')),
+      );
+      return;
+    }
+    final bool newValue = !item.isPrivate;
+    final previousMedia = List<SharedMediaItem>.from(_mediaItems);
+    setState(() {
+      _mediaItems = _mediaItems
+          .map((media) =>
+              media.id == item.id ? media.copyWith(isPrivate: newValue) : media)
+          .toList();
+    });
+    try {
+      await _experienceService.updateSharedMediaPrivacy(item.id, newValue);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _mediaItems = previousMedia;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('Failed to update privacy. Please try again.')),
+      );
     }
   }
 

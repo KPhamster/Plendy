@@ -39,6 +39,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'receive_share/widgets/experience_card_form.dart';
 import '../widgets/select_saved_experience_modal_content.dart'; // Attempting relative import again
 import '../widgets/privacy_toggle_button.dart';
+import 'receive_share/widgets/privacy_tooltip_icon.dart';
 import 'receive_share/widgets/instagram_preview_widget.dart'
     as instagram_widget;
 import 'receive_share/widgets/tiktok_preview_widget.dart';
@@ -3405,13 +3406,23 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         actions: [
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8.0),
-            child: PrivacyToggleButton(
-              isPrivate: _sharedMediaIsPrivate,
-              onPressed: () {
-                setState(() {
-                  _sharedMediaIsPrivate = !_sharedMediaIsPrivate;
-                });
-              },
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                PrivacyToggleButton(
+                  isPrivate: _sharedMediaIsPrivate,
+                  onPressed: () {
+                    setState(() {
+                      _sharedMediaIsPrivate = !_sharedMediaIsPrivate;
+                    });
+                  },
+                ),
+                const SizedBox(width: 6),
+                PrivacyTooltipIcon(
+                  message:
+                      'If public, the content you are saving will show up in Discovery and your public profile page (not yet implemented) to be viewed by others. If private, it will only be visible to you.',
+                ),
+              ],
             ),
           ),
         ],

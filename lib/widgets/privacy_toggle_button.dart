@@ -4,11 +4,13 @@ import 'package:flutter/material.dart';
 class PrivacyToggleButton extends StatelessWidget {
   final bool isPrivate;
   final VoidCallback onPressed;
+  final bool showLabel;
 
   const PrivacyToggleButton({
     super.key,
     required this.isPrivate,
     required this.onPressed,
+    this.showLabel = true,
   });
 
   @override
@@ -19,27 +21,34 @@ class PrivacyToggleButton extends StatelessWidget {
     final Color backgroundColor = isPrivate ? Colors.white : baseColor;
     final String label = isPrivate ? 'Private' : 'Public';
     final IconData iconData = isPrivate ? Icons.lock : Icons.public;
+    final bool iconOnly = !showLabel;
 
     return OutlinedButton(
       onPressed: onPressed,
       style: OutlinedButton.styleFrom(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        padding: iconOnly
+            ? EdgeInsets.zero
+            : const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         foregroundColor: labelColor,
         backgroundColor: backgroundColor,
         side: BorderSide(color: baseColor),
         visualDensity: VisualDensity.compact,
+        minimumSize: iconOnly ? const Size(36, 36) : null,
+        shape: iconOnly ? const CircleBorder() : null,
       ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            label,
-            style: const TextStyle(fontWeight: FontWeight.w600),
-          ),
-          const SizedBox(width: 6),
-          Icon(iconData, size: 18),
-        ],
-      ),
+      child: iconOnly
+          ? Icon(iconData, size: 18)
+          : Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  label,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(width: 6),
+                Icon(iconData, size: 18),
+              ],
+            ),
     );
   }
 }
