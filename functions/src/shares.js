@@ -91,6 +91,21 @@ exports.onExperienceShareCreate = functions.firestore
               shareId,
               experienceId: share.experienceId || "",
             },
+            android: {
+              notification: {
+                channelId: "shares",
+                priority: "high",
+                defaultSound: true,
+              },
+            },
+            apns: {
+              payload: {
+                aps: {
+                  category: "share",
+                  sound: "default",
+                },
+              },
+            },
           };
           await admin.messaging().sendEachForMulticast({ tokens, ...payload });
         }

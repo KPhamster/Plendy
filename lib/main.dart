@@ -211,6 +211,12 @@ void main() async {
     // --- FCM Setup ---
     // Setup local notifications in background to not delay splash screen
     unawaited(_configureLocalNotifications());
+    await FirebaseMessaging.instance
+        .setForegroundNotificationPresentationOptions(
+      alert: true,
+      badge: true,
+      sound: true,
+    );
 
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {
       print('FCM: Got a message whilst in the foreground!');
@@ -234,7 +240,11 @@ void main() async {
               priority: Priority.high,
               icon: '@mipmap/ic_launcher',
             ),
-            // iOS: DarwinNotificationDetails(), // Add if needed
+            iOS: DarwinNotificationDetails(
+              presentAlert: true,
+              presentBadge: true,
+              presentSound: true,
+            ),
           ),
           payload: message.data['screen']
               as String?, // Example: screen to navigate to

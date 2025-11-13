@@ -290,7 +290,11 @@ class _MyPeopleScreenState extends State<MyPeopleScreen>
   void dispose() {
     // Mark followers as seen when leaving the screen if user visited the Followers tab
     if (_hasVisitedFollowersTab) {
-      _notificationService?.markFollowersAsSeen();
+      // Fire the async operation without awaiting (fire and forget is acceptable here)
+      // The _isUpdatingState flag in NotificationStateService prevents race conditions
+      _notificationService?.markFollowersAsSeen().catchError((e) {
+        print("Error marking followers as seen: $e");
+      });
     }
     
     _tabController.dispose();
