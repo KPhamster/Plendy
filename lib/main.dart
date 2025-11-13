@@ -211,6 +211,8 @@ void main() async {
     // --- FCM Setup ---
     // Setup local notifications in background to not delay splash screen
     unawaited(_configureLocalNotifications());
+    // On iOS, enable system notifications in foreground
+    // On Android, we'll manually show notifications using the local plugin
     await FirebaseMessaging.instance
         .setForegroundNotificationPresentationOptions(
       alert: true,
@@ -225,30 +227,29 @@ void main() async {
       if (message.notification != null) {
         print(
             'FCM: Message also contained a notification: ${message.notification}');
-        flutterLocalNotificationsPlugin.show(
-          message.hashCode,
-          message.notification!.title,
-          message.notification!.body,
-          const NotificationDetails(
-            // Use const for NotificationDetails
-            android: AndroidNotificationDetails(
-              'plendy_follow_channel', // Unique channel ID
-              'Follow Notifications', // Channel name
-              channelDescription:
-                  'Notifications for new followers and follow requests.',
-              importance: Importance.max,
-              priority: Priority.high,
-              icon: '@mipmap/ic_launcher',
+        
+        // Only show local notification on Android
+        // iOS handles foreground notifications via setForegroundNotificationPresentationOptions
+        if (Platform.isAndroid) {
+          flutterLocalNotificationsPlugin.show(
+            message.hashCode,
+            message.notification!.title,
+            message.notification!.body,
+            const NotificationDetails(
+              android: AndroidNotificationDetails(
+                'plendy_follow_channel', // Unique channel ID
+                'Follow Notifications', // Channel name
+                channelDescription:
+                    'Notifications for new followers and follow requests.',
+                importance: Importance.max,
+                priority: Priority.high,
+                icon: '@mipmap/ic_launcher',
+              ),
             ),
-            iOS: DarwinNotificationDetails(
-              presentAlert: true,
-              presentBadge: true,
-              presentSound: true,
-            ),
-          ),
-          payload: message.data['screen']
-              as String?, // Example: screen to navigate to
-        );
+            payload: message.data['screen']
+                as String?, // Example: screen to navigate to
+          );
+        }
       }
     });
 
