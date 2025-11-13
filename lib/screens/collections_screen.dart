@@ -8356,6 +8356,20 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     });
     try {
       await _experienceService.updateSharedMediaPrivacy(mediaId, newValue);
+      final Set<String> placeIds = group.associatedExperiences
+          .map((exp) => exp.location.placeId)
+          .whereType<String>()
+          .where((id) => id.isNotEmpty)
+          .toSet();
+      if (placeIds.isNotEmpty && group.mediaItem.path.isNotEmpty) {
+        unawaited(_maybeSyncPublicMediaPathForGroup(
+          mediaPath: group.mediaItem.path,
+          toggledMediaId: mediaId,
+          newIsPrivate: newValue,
+          placeIds: placeIds,
+          associatedExperiences: group.associatedExperiences,
+        ));
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -8366,6 +8380,60 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         const SnackBar(
             content: Text('Failed to update privacy. Please try again.')),
       );
+    }
+  }
+
+  Future<void> _maybeSyncPublicMediaPathForGroup({
+    required String mediaPath,
+    required String toggledMediaId,
+    required bool newIsPrivate,
+    required Set<String> placeIds,
+    required List<Experience> associatedExperiences,
+  }) async {
+    if (mediaPath.isEmpty || toggledMediaId.isEmpty || placeIds.isEmpty) {
+      return;
+    }
+    try {
+      final items =
+          await _experienceService.getSharedMediaItemsByPath(mediaPath);
+      final bool otherHasPublic = items.any((media) {
+        if (media.id == toggledMediaId) {
+          return false;
+        }
+        return !media.isPrivate;
+      });
+
+      if (newIsPrivate) {
+        if (otherHasPublic) return;
+        for (final placeId in placeIds) {
+          await _experienceService
+              .removeMediaPathFromPublicExperienceByPlaceId(placeId, mediaPath);
+        }
+      } else {
+        if (otherHasPublic) return;
+        for (final placeId in placeIds) {
+          Experience? template;
+          try {
+            template = associatedExperiences
+                .firstWhere((exp) => exp.location.placeId == placeId);
+          } catch (_) {
+            if (associatedExperiences.isNotEmpty) {
+              template = associatedExperiences.first;
+            }
+          }
+          await _experienceService.addMediaPathToPublicExperienceByPlaceId(
+            placeId,
+            mediaPath,
+            experienceTemplate:
+                (template != null && template.location.placeId == placeId)
+                    ? template
+                    : null,
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint(
+          '_maybeSyncPublicMediaPathForGroup: Failed cleanup for $mediaPath -> $e');
     }
   }
 

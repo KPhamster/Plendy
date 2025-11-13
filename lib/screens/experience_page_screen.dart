@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
@@ -3504,6 +3505,51 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     }
   }
 
+  Future<void> _maybeSyncMediaPathWithPublicExperiences({
+    required String mediaPath,
+    required String toggledMediaId,
+    required bool newIsPrivate,
+    required Set<String> placeIds,
+  }) async {
+    if (mediaPath.isEmpty || placeIds.isEmpty || toggledMediaId.isEmpty) {
+      return;
+    }
+
+    try {
+      final items =
+          await _experienceService.getSharedMediaItemsByPath(mediaPath);
+      final bool otherHasPublic = items.any((media) {
+        if (media.id == toggledMediaId) {
+          return false;
+        }
+        return !media.isPrivate;
+      });
+
+      if (newIsPrivate) {
+        if (otherHasPublic) return;
+        for (final placeId in placeIds) {
+          await _experienceService
+              .removeMediaPathFromPublicExperienceByPlaceId(placeId, mediaPath);
+        }
+      } else {
+        if (otherHasPublic) return;
+        final experienceTemplate = _currentExperience;
+        for (final placeId in placeIds) {
+          await _experienceService.addMediaPathToPublicExperienceByPlaceId(
+            placeId,
+            mediaPath,
+            experienceTemplate: experienceTemplate.location.placeId == placeId
+                ? experienceTemplate
+                : null,
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint(
+          '_maybeSyncMediaPathWithPublicExperiences: Failed for $mediaPath -> $e');
+    }
+  }
+
   Future<void> _toggleMediaItemPrivacy(SharedMediaItem item) async {
     if (item.id.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -3521,6 +3567,15 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     });
     try {
       await _experienceService.updateSharedMediaPrivacy(item.id, newValue);
+      final placeId = _currentExperience.location.placeId;
+      if (placeId != null && placeId.isNotEmpty && item.path.isNotEmpty) {
+        unawaited(_maybeSyncMediaPathWithPublicExperiences(
+          mediaPath: item.path,
+          toggledMediaId: item.id,
+          newIsPrivate: newValue,
+          placeIds: {placeId},
+        ));
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() {

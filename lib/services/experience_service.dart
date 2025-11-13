@@ -893,6 +893,82 @@ class ExperienceService {
     }
   }
 
+  Future<List<SharedMediaItem>> getSharedMediaItemsByPath(
+      String path) async {
+    if (path.isEmpty) return [];
+    try {
+      final snapshot = await _sharedMediaItemsCollection
+          .where('path', isEqualTo: path)
+          .get();
+      return snapshot.docs
+          .map((doc) => SharedMediaItem.fromFirestore(doc))
+          .toList();
+    } catch (e) {
+      debugPrint('getSharedMediaItemsByPath: Failed for $path: $e');
+      return [];
+    }
+  }
+
+  Future<void> removeMediaPathFromPublicExperienceByPlaceId(
+      String placeId, String mediaPath) async {
+    if (placeId.isEmpty || mediaPath.isEmpty) return;
+    try {
+      final publicExperience =
+          await findPublicExperienceByPlaceId(placeId);
+      if (publicExperience == null) {
+        debugPrint(
+            'removeMediaPathFromPublicExperienceByPlaceId: No public experience for placeId $placeId');
+        return;
+      }
+      await _publicExperiencesCollection.doc(publicExperience.id).update({
+        'allMediaPaths': FieldValue.arrayRemove([mediaPath])
+      });
+      debugPrint(
+          'removeMediaPathFromPublicExperienceByPlaceId: Removed $mediaPath for placeId $placeId');
+    } catch (e) {
+      debugPrint(
+          'removeMediaPathFromPublicExperienceByPlaceId: Failed for placeId $placeId, mediaPath $mediaPath: $e');
+    }
+  }
+
+  Future<void> addMediaPathToPublicExperienceByPlaceId(
+      String placeId, String mediaPath,
+      {Experience? experienceTemplate}) async {
+    if (placeId.isEmpty || mediaPath.isEmpty) return;
+    try {
+      final publicExperience =
+          await findPublicExperienceByPlaceId(placeId);
+      if (publicExperience == null) {
+        if (experienceTemplate == null) {
+          debugPrint(
+              'addMediaPathToPublicExperienceByPlaceId: No public experience for placeId $placeId and no template provided');
+          return;
+        }
+        final newPublicExperience = PublicExperience(
+          id: '',
+          name: experienceTemplate.name,
+          location: experienceTemplate.location,
+          placeID: placeId,
+          yelpUrl: experienceTemplate.yelpUrl,
+          website: experienceTemplate.website,
+          allMediaPaths: [mediaPath],
+        );
+        await createPublicExperience(newPublicExperience);
+        debugPrint(
+            'addMediaPathToPublicExperienceByPlaceId: Created new public experience for placeId $placeId with mediaPath');
+        return;
+      }
+      await _publicExperiencesCollection.doc(publicExperience.id).update({
+        'allMediaPaths': FieldValue.arrayUnion([mediaPath])
+      });
+      debugPrint(
+          'addMediaPathToPublicExperienceByPlaceId: Added $mediaPath for placeId $placeId');
+    } catch (e) {
+      debugPrint(
+          'addMediaPathToPublicExperienceByPlaceId: Failed for placeId $placeId, mediaPath $mediaPath: $e');
+    }
+  }
+
   /// Adds an experience ID to the experienceIds array of a SharedMediaItem document.
   Future<void> addExperienceLinkToMediaItem(
       String mediaItemId, String experienceId) async {
