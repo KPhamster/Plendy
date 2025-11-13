@@ -1,52 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 
-class _TutorialSlide {
-  final String description;
-  final String? videoAsset;
-  final String? imageAsset;
-
-  const _TutorialSlide({
-    required this.description,
-    this.videoAsset,
-    this.imageAsset,
-  });
-
-  bool get hasVideo => videoAsset != null;
-  bool get hasImage => imageAsset != null;
-}
-
-const List<_TutorialSlide> _tutorialSlides = [
-  _TutorialSlide(
-    description:
-        'See a cool reel for a popping new restaurant that you want to try later?\n\n'
-        'Save videos and webpages from your favorite apps (Instagram, TikTok, YouTube, any webpage, etc.) '
-        'by tapping the share button and sharing to Plendy. The shared content will open in Plendy.',
-    videoAsset: 'assets/tutorials/save_content.mp4',
-  ),
-  _TutorialSlide(
-    description:
-        'Once the shared link opens in Plendy, you can link it to a location so that it shows up in your Plendy map!',
-    videoAsset: 'assets/tutorials/save_content_select_location.mp4',
-  ),
-  _TutorialSlide(
-    description:
-        'You can categorize your shared link with a primary category, a color category, and secondary categories. '
-        'You can also add any additional notes.  Customize however you want!',
-    videoAsset: 'assets/tutorials/save_content_select_categories.mp4',
-  ),
-  _TutorialSlide(
-    description:
-        'Once you save the link, it will show up in your list of experiences and in your Plendy map so you can refer back to it '
-        'and won\'t forget to visit it for your next outing!',
-    videoAsset: 'assets/tutorials/save_content_after_saving.mp4',
-  ),
-  _TutorialSlide(
-    description:
-        'There is a whole world out there to discover. Happy exploring!',
-    imageAsset: 'assets/tutorials/full_plendy_map.png',
-  ),
-];
+import '../models/tutorial_slide.dart';
 
 Future<void> showTutorialSaveContentModal(BuildContext context) {
   return showDialog<void>(
@@ -74,8 +29,8 @@ class _TutorialSaveContentModalState extends State<TutorialSaveContentModal> {
   void initState() {
     super.initState();
     _videoControllers =
-        List<VideoPlayerController?>.filled(_tutorialSlides.length, null);
-    _initializations = List<Future<void>?>.filled(_tutorialSlides.length, null);
+        List<VideoPlayerController?>.filled(tutorialSlides.length, null);
+    _initializations = List<Future<void>?>.filled(tutorialSlides.length, null);
     _startController(_currentPage);
   }
 
@@ -98,7 +53,7 @@ class _TutorialSaveContentModalState extends State<TutorialSaveContentModal> {
   }
 
   void _startController(int index) {
-    final slide = _tutorialSlides[index];
+    final slide = tutorialSlides[index];
     if (!slide.hasVideo) return;
 
     final controller = _videoControllers[index] ?? _createController(index);
@@ -121,7 +76,7 @@ class _TutorialSaveContentModalState extends State<TutorialSaveContentModal> {
   }
 
   VideoPlayerController _createController(int index) {
-    final slide = _tutorialSlides[index];
+    final slide = tutorialSlides[index];
     final controller = VideoPlayerController.asset(slide.videoAsset!);
     _videoControllers[index] = controller;
     _initializations[index] = controller.initialize().then((_) async {
@@ -140,7 +95,7 @@ class _TutorialSaveContentModalState extends State<TutorialSaveContentModal> {
   }
 
   void _handlePrimaryButtonPressed() {
-    if (_currentPage < _tutorialSlides.length - 1) {
+    if (_currentPage < tutorialSlides.length - 1) {
       _pageController.nextPage(
         duration: const Duration(milliseconds: 250),
         curve: Curves.easeInOut,
@@ -151,7 +106,7 @@ class _TutorialSaveContentModalState extends State<TutorialSaveContentModal> {
   }
 
   double _currentAspectRatio() {
-    final slide = _tutorialSlides[_currentPage];
+    final slide = tutorialSlides[_currentPage];
     final controller = _videoControllers[_currentPage];
     if (slide.hasVideo && controller != null) {
       final ratio = controller.value.isInitialized
@@ -165,7 +120,7 @@ class _TutorialSaveContentModalState extends State<TutorialSaveContentModal> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final slide = _tutorialSlides[_currentPage];
+    final slide = tutorialSlides[_currentPage];
     return Dialog(
       backgroundColor: Colors.white,
       surfaceTintColor: Colors.white,
@@ -211,9 +166,9 @@ class _TutorialSaveContentModalState extends State<TutorialSaveContentModal> {
                     controller: _pageController,
                     physics: const BouncingScrollPhysics(),
                     onPageChanged: _handlePageChanged,
-                    itemCount: _tutorialSlides.length,
+                    itemCount: tutorialSlides.length,
                     itemBuilder: (context, index) {
-                      final slide = _tutorialSlides[index];
+                      final slide = tutorialSlides[index];
                       if (!slide.hasVideo && slide.hasImage) {
                         return Image.asset(
                           slide.imageAsset!,
@@ -345,7 +300,7 @@ class _TutorialSaveContentModalState extends State<TutorialSaveContentModal> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: List.generate(
-                  _tutorialSlides.length,
+                  tutorialSlides.length,
                   (index) => AnimatedContainer(
                     duration: const Duration(milliseconds: 200),
                     margin: const EdgeInsets.symmetric(horizontal: 4),
@@ -366,9 +321,7 @@ class _TutorialSaveContentModalState extends State<TutorialSaveContentModal> {
                 child: FilledButton(
                   onPressed: _handlePrimaryButtonPressed,
                   child: Text(
-                    _currentPage == _tutorialSlides.length - 1
-                        ? 'Done'
-                        : 'Next',
+                    _currentPage == tutorialSlides.length - 1 ? 'Done' : 'Next',
                   ),
                 ),
               ),
