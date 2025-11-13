@@ -9022,17 +9022,21 @@ class CollectionsScreenState extends State<CollectionsScreen>
 
   Future<void> _loadExperiences(String userId) async {
     _isExperiencesLoading = true;
+    bool experiencesLoaded = false;
     try {
       // Use new paginated fetch for initial load
       await _loadExperiencesPage(isInitialLoad: true);
-
-      if (_contentPreloadRequested &&
-          !_contentLoaded &&
-          !_isContentLoading) {
-        await _loadGroupedContent();
-      }
+      experiencesLoaded = true;
     } finally {
       _isExperiencesLoading = false;
+    }
+
+    if (experiencesLoaded &&
+        _contentPreloadRequested &&
+        !_contentLoaded &&
+        !_isContentLoading) {
+      // Trigger Content tab resolution even when there are zero experiences
+      await _loadGroupedContent();
     }
   }
 
