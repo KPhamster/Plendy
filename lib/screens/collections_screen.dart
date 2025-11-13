@@ -9017,11 +9017,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       // Use new paginated fetch for initial load
       await _loadExperiencesPage(isInitialLoad: true);
 
-      if (_tabController.index == 2 && !_contentLoaded && !_isContentLoading) {
+      if (!_contentLoaded && !_isContentLoading) {
         await _loadGroupedContent();
-        if (_hasActiveFilters) {
-          _applyFiltersAndUpdateLists();
-        }
       }
     } finally {
       _isExperiencesLoading = false;
