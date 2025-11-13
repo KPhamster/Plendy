@@ -26,7 +26,8 @@ class AuthService extends ChangeNotifier {
       _currentUser = user;
       if (user != null) {
         // Delay FCM setup slightly to allow UI to settle
-        Timer(const Duration(milliseconds: 500), () => _setupFcmForUser(user.uid));
+        Timer(const Duration(milliseconds: 500),
+            () => _setupFcmForUser(user.uid));
       } else {
         // Optional: If user logs out, you might want to delete their old token or handle it.
         // For simplicity, we are not deleting tokens on logout here, but it's a consideration.
@@ -36,7 +37,8 @@ class AuthService extends ChangeNotifier {
     // Initial setup if user is already logged in when AuthService is instantiated
     if (_currentUser != null) {
       // Delay FCM setup slightly for initial logged-in state too
-      Timer(const Duration(milliseconds: 500), () => _setupFcmForUser(_currentUser!.uid));
+      Timer(const Duration(milliseconds: 500),
+          () => _setupFcmForUser(_currentUser!.uid));
     }
   }
 
@@ -57,6 +59,10 @@ class AuthService extends ChangeNotifier {
       // Save user email to Firestore
       if (credential.user != null) {
         await _userService.saveUserEmail(credential.user!.uid, email);
+        await _userService.updateUserCoreData(credential.user!.uid, {
+          'hasCompletedOnboarding': false,
+          'hasFinishedOnboardingFlow': false,
+        });
 
         // Initialize default categories for new user
         try {
@@ -146,6 +152,10 @@ class AuthService extends ChangeNotifier {
         if (isNewUser) {
           print(
               "Attempting to initialize default categories for new Google user...");
+          await _userService.updateUserCoreData(userCredential.user!.uid, {
+            'hasCompletedOnboarding': false,
+            'hasFinishedOnboardingFlow': false,
+          });
           // --- MODIFIED: Rethrow initialization errors --- START ---
           try {
             // Use Future.wait to run initializations concurrently but wait for both
@@ -195,14 +205,14 @@ class AuthService extends ChangeNotifier {
     // to prevent permission-denied errors from active Firestore listeners
     final notificationService = NotificationStateService();
     notificationService.cleanup();
-    
-    // Optional: Before signing out, you might want to delete the current device's FCM token 
+
+    // Optional: Before signing out, you might want to delete the current device's FCM token
     // from the user's list if you have a way to identify it specifically.
     // String? token = await _firebaseMessaging.getToken();
     // if (currentUser != null && token != null) {
     //   await _deleteTokenFromFirestore(currentUser!.uid, token);
     // }
-    
+
     await _auth.signOut();
     await _googleSignIn.signOut();
     _currentUser = null;
@@ -214,17 +224,21 @@ class AuthService extends ChangeNotifier {
 
     try {
       print('Setting up FCM for user: $userId');
-      
+
       // Check current permission status first
-      NotificationSettings currentSettings = await _firebaseMessaging.getNotificationSettings();
-      print('Current FCM permission status: ${currentSettings.authorizationStatus}');
-      
+      NotificationSettings currentSettings =
+          await _firebaseMessaging.getNotificationSettings();
+      print(
+          'Current FCM permission status: ${currentSettings.authorizationStatus}');
+
       // Only request permission if not already granted
-      if (currentSettings.authorizationStatus == AuthorizationStatus.notDetermined) {
+      if (currentSettings.authorizationStatus ==
+          AuthorizationStatus.notDetermined) {
         print('Requesting FCM permission...');
-        
+
         // Request permission with timeout to prevent freezing
-        NotificationSettings settings = await _firebaseMessaging.requestPermission(
+        NotificationSettings settings = await _firebaseMessaging
+            .requestPermission(
           alert: true,
           announcement: false,
           badge: true,
@@ -233,7 +247,8 @@ class AuthService extends ChangeNotifier {
           provisional: false,
           sound: true,
           providesAppNotificationSettings: true,
-        ).timeout(
+        )
+            .timeout(
           const Duration(seconds: 10),
           onTimeout: () {
             print('FCM permission request timed out');
@@ -253,22 +268,27 @@ class AuthService extends ChangeNotifier {
             );
           },
         );
-        
-        print('FCM permission request completed with status: ${settings.authorizationStatus}');
+
+        print(
+            'FCM permission request completed with status: ${settings.authorizationStatus}');
         currentSettings = settings;
       }
 
       // Handle the permission result
-      if (currentSettings.authorizationStatus == AuthorizationStatus.authorized) {
+      if (currentSettings.authorizationStatus ==
+          AuthorizationStatus.authorized) {
         print('User granted FCM permission');
         await _setupFcmToken(userId);
-      } else if (currentSettings.authorizationStatus == AuthorizationStatus.provisional) {
+      } else if (currentSettings.authorizationStatus ==
+          AuthorizationStatus.provisional) {
         print('User granted provisional FCM permission');
         await _setupFcmToken(userId);
       } else {
-        print('User declined or has not accepted FCM permission: ${currentSettings.authorizationStatus}');
+        print(
+            'User declined or has not accepted FCM permission: ${currentSettings.authorizationStatus}');
         if (currentSettings.authorizationStatus == AuthorizationStatus.denied) {
-          print('FCM: Permission denied. User needs to manually enable notifications in device settings.');
+          print(
+              'FCM: Permission denied. User needs to manually enable notifications in device settings.');
           // TODO: You could show a dialog here guiding the user to enable notifications manually
           // or implement a method to open device settings
         }
@@ -285,9 +305,10 @@ class AuthService extends ChangeNotifier {
       print('DEBUG: Getting FCM token for user $userId...');
       String? token = await _firebaseMessaging.getToken();
       if (token != null) {
-        print('DEBUG: Got FCM token: ${token.substring(0, 50)}...'); // Show first 50 chars
+        print(
+            'DEBUG: Got FCM token: ${token.substring(0, 50)}...'); // Show first 50 chars
         await _saveTokenToFirestore(userId, token);
-        
+
         // Listen for token refresh
         _firebaseMessaging.onTokenRefresh.listen((newToken) {
           print('DEBUG: FCM token refreshed: ${newToken.substring(0, 50)}...');
@@ -303,7 +324,8 @@ class AuthService extends ChangeNotifier {
 
   Future<void> _saveTokenToFirestore(String userId, String token) async {
     if (userId.isEmpty || token.isEmpty) {
-      print("DEBUG: Cannot save FCM token - userId: '${userId}', token: '${token.isEmpty ? 'empty' : 'not empty'}'");
+      print(
+          "DEBUG: Cannot save FCM token - userId: '${userId}', token: '${token.isEmpty ? 'empty' : 'not empty'}'");
       return;
     }
     try {
@@ -314,9 +336,10 @@ class AuthService extends ChangeNotifier {
           .collection('fcmTokens')
           .doc(token) // Use token as document ID for easy add/delete
           .set({
-            'createdAt': FieldValue.serverTimestamp(),
-            'platform': defaultTargetPlatform.toString(), // Optional: store platform
-          });
+        'createdAt': FieldValue.serverTimestamp(),
+        'platform':
+            defaultTargetPlatform.toString(), // Optional: store platform
+      });
       print("DEBUG: FCM token successfully saved for user $userId");
     } catch (e) {
       print("DEBUG: Error saving FCM token for user $userId: $e");
@@ -326,23 +349,28 @@ class AuthService extends ChangeNotifier {
   // Method to manually check and request FCM permissions
   Future<void> checkAndRequestFcmPermissions() async {
     if (kIsWeb) return;
-    
+
     try {
       print('DEBUG: Checking FCM permission status...');
-      NotificationSettings settings = await _firebaseMessaging.getNotificationSettings();
+      NotificationSettings settings =
+          await _firebaseMessaging.getNotificationSettings();
       print('DEBUG: Current FCM permission: ${settings.authorizationStatus}');
-      
+
       if (settings.authorizationStatus == AuthorizationStatus.denied) {
-        print('DEBUG: FCM permission denied. User needs to enable notifications manually.');
-        print('DEBUG: Guide user to: Settings > Apps > Plendy > Notifications > Allow notifications');
-      } else if (settings.authorizationStatus == AuthorizationStatus.notDetermined) {
+        print(
+            'DEBUG: FCM permission denied. User needs to enable notifications manually.');
+        print(
+            'DEBUG: Guide user to: Settings > Apps > Plendy > Notifications > Allow notifications');
+      } else if (settings.authorizationStatus ==
+          AuthorizationStatus.notDetermined) {
         print('DEBUG: FCM permission not determined. Requesting permission...');
         final newSettings = await _firebaseMessaging.requestPermission(
           alert: true,
           badge: true,
           sound: true,
         );
-        print('DEBUG: Permission request result: ${newSettings.authorizationStatus}');
+        print(
+            'DEBUG: Permission request result: ${newSettings.authorizationStatus}');
       } else {
         print('DEBUG: FCM permission granted: ${settings.authorizationStatus}');
       }
@@ -350,34 +378,35 @@ class AuthService extends ChangeNotifier {
       print('DEBUG: Error checking FCM permissions: $e');
     }
   }
-  
+
   // Method to get FCM token info for debugging
   Future<Map<String, dynamic>> getFcmDebugInfo() async {
     if (kIsWeb) return {'error': 'Web not supported'};
-    
+
     try {
       final user = _currentUser;
       if (user == null) {
         return {'error': 'No user logged in'};
       }
-      
+
       final settings = await _firebaseMessaging.getNotificationSettings();
       final token = await _firebaseMessaging.getToken();
-      
+
       // Check if token exists in Firestore
       final tokensSnapshot = await _firestore
           .collection('users')
           .doc(user.uid)
           .collection('fcmTokens')
           .get();
-      
+
       return {
         'userId': user.uid,
         'permissionStatus': settings.authorizationStatus.toString(),
         'hasToken': token != null,
         'tokenPreview': token?.substring(0, 50) ?? 'null',
         'tokensInFirestore': tokensSnapshot.docs.length,
-        'tokenIds': tokensSnapshot.docs.map((doc) => doc.id.substring(0, 20)).toList(),
+        'tokenIds':
+            tokensSnapshot.docs.map((doc) => doc.id.substring(0, 20)).toList(),
       };
     } catch (e) {
       return {'error': e.toString()};
