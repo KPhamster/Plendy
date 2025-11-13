@@ -3,7 +3,6 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:provider/provider.dart';
 
 import '../services/auth_service.dart';
-import 'onboarding_screen.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -27,11 +26,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           _passwordController.text,
         );
         if (mounted) {
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute(
-              builder: (_) => const OnboardingScreen(),
-            ),
-          );
+          Navigator.of(context).pop();
         }
       } catch (e) {
         if (mounted) {

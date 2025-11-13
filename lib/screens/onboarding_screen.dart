@@ -6,10 +6,11 @@ import 'package:video_player/video_player.dart';
 import '../models/tutorial_slide.dart';
 import '../services/user_service.dart';
 import 'browser_signin_screen.dart';
-import 'main_screen.dart';
 
 class OnboardingScreen extends StatefulWidget {
-  const OnboardingScreen({super.key});
+  final VoidCallback? onFinishedFlow;
+
+  const OnboardingScreen({super.key, this.onFinishedFlow});
 
   @override
   State<OnboardingScreen> createState() => _OnboardingScreenState();
@@ -30,6 +31,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
   int _currentPage = 0;
   bool _isSavingProfile = false;
+  bool _isCompletingOnboarding = false;
   String? _displayNameError;
   String? _usernameError;
 
@@ -59,6 +61,43 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         List<Future<void>?>.filled(tutorialSlides.length, null);
     _displayNameController.addListener(_handleProfileFieldChange);
     _usernameController.addListener(_handleProfileFieldChange);
+    _prefillExistingValues();
+  }
+
+  void _prefillExistingValues() {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null && (user.displayName?.isNotEmpty ?? false)) {
+      _displayNameController.text = user.displayName!;
+    }
+
+    if (user == null) return;
+
+    _userService.getUserProfile(user.uid).then((profile) {
+      if (!mounted) return;
+
+      final profileDisplayName = profile?.displayName ?? '';
+      final profileUsername = profile?.username ?? '';
+
+      if (profileDisplayName.trim().isNotEmpty &&
+          _displayNameController.text.trim().isEmpty) {
+        _displayNameController.text = profileDisplayName;
+      }
+
+      if (profileUsername.trim().isNotEmpty &&
+          _usernameController.text.trim().isEmpty) {
+        _usernameController.text = profileUsername;
+      }
+
+      if (_usernameController.text.trim().isNotEmpty) {
+        _usernameError = null;
+      }
+
+      if (_displayNameController.text.trim().isNotEmpty) {
+        _displayNameError = null;
+      }
+
+      setState(() {});
+    });
   }
 
   @override
@@ -116,6 +155,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   }
 
   Future<void> _handlePrimaryAction() async {
+    if (_isCompletingOnboarding) return;
     FocusScope.of(context).unfocus();
     if (_isOnProfileStep) {
       await _submitProfileInfo();
@@ -123,7 +163,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     }
 
     if (_currentPage == _totalPages - 1) {
-      _finishOnboarding();
+      await _completeOnboarding();
       return;
     }
 
@@ -152,12 +192,6 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         throw Exception('No signed-in user found.');
       }
 
-      final isAvailable = await _userService.isUsernameAvailable(username);
-      if (!isAvailable) {
-        setState(() => _usernameError = 'Username is already taken');
-        return;
-      }
-
       final success = await _userService.setUsername(user.uid, username);
       if (!success) {
         setState(() => _usernameError = 'Could not save username. Try again.');
@@ -167,6 +201,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       await user.updateDisplayName(displayName);
       await _userService.updateUserCoreData(user.uid, {
         'displayName': displayName,
+        'hasCompletedOnboarding': true,
+        'hasFinishedOnboardingFlow': true,
       });
 
       if (!mounted) return;
@@ -198,11 +234,26 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     });
   }
 
-  void _finishOnboarding() {
-    Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => const MainScreen()),
-      (route) => false,
-    );
+  Future<void> _completeOnboarding() async {
+    if (_isCompletingOnboarding) return;
+    setState(() => _isCompletingOnboarding = true);
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) {
+        throw Exception('No signed-in user found.');
+      }
+      widget.onFinishedFlow?.call();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isCompletingOnboarding = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not finish onboarding: $e')),
+      );
+      return;
+    }
+    if (mounted) {
+      setState(() => _isCompletingOnboarding = false);
+    }
   }
 
   void _startTutorialVideo(int slideIndex) {
@@ -320,7 +371,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
               child: Row(
                 children: [
-                  if (_currentPage > 0)
+                  if (_currentPage > 0 && _currentPage != 1)
                     TextButton(
                       onPressed: _handleBackPressed,
                       child: const Text('Back'),
@@ -332,9 +383,11 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                     width: 200,
                     child: ElevatedButton(
                       style: primaryButtonStyle,
-                      onPressed: _isOnProfileStep && !_canSubmitProfile
+                      onPressed: (_isOnProfileStep && !_canSubmitProfile) ||
+                              _isCompletingOnboarding ||
+                              (_isOnProfileStep && _isSavingProfile)
                           ? null
-                          : (_isSavingProfile ? null : _handlePrimaryAction),
+                          : _handlePrimaryAction,
                       child: _isOnProfileStep && _isSavingProfile
                           ? const SizedBox(
                               height: 20,
@@ -345,7 +398,18 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                                     AlwaysStoppedAnimation<Color>(Colors.white),
                               ),
                             )
-                          : Text(_primaryButtonLabel),
+                          : _isCompletingOnboarding &&
+                                  _currentPage == _totalPages - 1
+                              ? const SizedBox(
+                                  height: 20,
+                                  width: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    valueColor: AlwaysStoppedAnimation<Color>(
+                                        Colors.white),
+                                  ),
+                                )
+                              : Text(_primaryButtonLabel),
                     ),
                   ),
                 ],

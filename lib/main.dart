@@ -1,3 +1,4 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'; // For MethodChannel
 import 'dart:math' as math;
@@ -12,6 +13,7 @@ import 'package:firebase_messaging/firebase_messaging.dart'; // FCM Import
 import 'package:flutter_local_notifications/flutter_local_notifications.dart'; // Local Notifications Import
 import 'screens/auth_screen.dart';
 import 'screens/main_screen.dart';
+import 'screens/onboarding_screen.dart';
 import 'screens/receive_share_screen.dart';
 import 'screens/follow_requests_screen.dart'; // Import FollowRequestsScreen
 import 'screens/messages_screen.dart'; // Import MessagesScreen
@@ -25,7 +27,8 @@ import 'providers/category_save_progress_notifier.dart';
 import 'dart:async'; // Import dart:async for StreamSubscription
 import 'services/google_maps_service.dart'; // ADDED: Import GoogleMapsService
 import 'firebase_options.dart'; // Import Firebase options
-import 'package:flutter/foundation.dart' show kIsWeb, kReleaseMode; // Import kIsWeb, kReleaseMode
+import 'package:flutter/foundation.dart'
+    show kIsWeb, kReleaseMode; // Import kIsWeb, kReleaseMode
 import 'package:flutter_web_plugins/url_strategy.dart';
 import 'package:app_links/app_links.dart';
 import 'package:firebase_app_check/firebase_app_check.dart';
@@ -36,7 +39,6 @@ import 'screens/discovery_share_preview_screen.dart';
 
 // Define a GlobalKey for the Navigator
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
-
 
 // Debug logging function for cold start issues
 // _writeDebugLog disabled (unused)
@@ -49,24 +51,26 @@ final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform, // Ensure Firebase is initialized here too
+    options: DefaultFirebaseOptions
+        .currentPlatform, // Ensure Firebase is initialized here too
   );
   print("Handling a background message: ${message.messageId}");
   print("Background Message data: ${message.data}");
-   if (message.notification != null) {
-      print('Background message also contained a notification: ${message.notification}');
-      // You could potentially show a local notification here if needed for background messages,
-      // but often the system tray notification from FCM is sufficient and desired.
-   }
+  if (message.notification != null) {
+    print(
+        'Background message also contained a notification: ${message.notification}');
+    // You could potentially show a local notification here if needed for background messages,
+    // but often the system tray notification from FCM is sufficient and desired.
+  }
 }
 
 // DEBUG: Function to periodically check for shared data
 void _startShareDebugTimer() {
   print("DEBUG: Starting share debug timer...");
-  
+
   // Check immediately
   _checkForSharedData();
-  
+
   // Then check every 2 seconds
   Timer.periodic(Duration(seconds: 2), (timer) {
     _checkForSharedData();
@@ -80,10 +84,12 @@ Future<void> _checkForSharedData() async {
     if (Platform.isIOS) {
       _debugCheckAppGroup();
     }
-    
+
     // Check initial media (for when app was closed)
     final initial = await ShareHandlerPlatform.instance.getInitialSharedMedia();
-    if (initial != null && ((initial.content?.isNotEmpty ?? false) || (initial.attachments?.isNotEmpty ?? false))) {
+    if (initial != null &&
+        ((initial.content?.isNotEmpty ?? false) ||
+            (initial.attachments?.isNotEmpty ?? false))) {
       final files = _convertSharedMedia(initial);
       print("🎯 DEBUG: Found INITIAL shared data: ${files.length} items");
       for (var item in files) {
@@ -93,7 +99,7 @@ Future<void> _checkForSharedData() async {
     }
 
     // Note: URL/text are delivered via getInitialMedia as SharedMediaType.text on iOS
-    
+
     // Also check the stream for live updates
     ShareHandlerPlatform.instance.sharedMediaStream.listen((media) {
       final value = _convertSharedMedia(media);
@@ -123,16 +129,18 @@ void _debugCheckAppGroup() {
 Future<void> _configureLocalNotifications() async {
   // Ensure you have an app icon, e.g., android/app/src/main/res/mipmap-hdpi/ic_launcher.png
   const AndroidInitializationSettings initializationSettingsAndroid =
-      AndroidInitializationSettings('@mipmap/ic_launcher'); 
-  
+      AndroidInitializationSettings('@mipmap/ic_launcher');
+
   // Add iOS and macOS settings
-  const DarwinInitializationSettings initializationSettingsIOS = DarwinInitializationSettings(
+  const DarwinInitializationSettings initializationSettingsIOS =
+      DarwinInitializationSettings(
     requestSoundPermission: false,
     requestBadgePermission: false,
     requestAlertPermission: false,
   );
-  
-  const DarwinInitializationSettings initializationSettingsMacOS = DarwinInitializationSettings(
+
+  const DarwinInitializationSettings initializationSettingsMacOS =
+      DarwinInitializationSettings(
     requestSoundPermission: false,
     requestBadgePermission: false,
     requestAlertPermission: false,
@@ -143,26 +151,27 @@ Future<void> _configureLocalNotifications() async {
     iOS: initializationSettingsIOS,
     macOS: initializationSettingsMacOS,
   );
-  await flutterLocalNotificationsPlugin.initialize(
-    initializationSettings,
-    onDidReceiveNotificationResponse: (NotificationResponse notificationResponse) {
-      // Handle notification tap when app is in foreground/background but not terminated
-      print('Local notification tapped with payload: ${notificationResponse.payload}');
-      if (notificationResponse.payload != null && notificationResponse.payload!.isNotEmpty) {
-        // Navigate based on the payload (screen path)
-        final screen = notificationResponse.payload!;
-        print("Local notification: Navigating to screen: $screen");
-        
-        if (screen == '/follow_requests' && navigatorKey.currentState != null) {
-          navigatorKey.currentState!.push(
-            MaterialPageRoute(
-              builder: (context) => const FollowRequestsScreen(),
-            ),
-          );
-        }
+  await flutterLocalNotificationsPlugin.initialize(initializationSettings,
+      onDidReceiveNotificationResponse:
+          (NotificationResponse notificationResponse) {
+    // Handle notification tap when app is in foreground/background but not terminated
+    print(
+        'Local notification tapped with payload: ${notificationResponse.payload}');
+    if (notificationResponse.payload != null &&
+        notificationResponse.payload!.isNotEmpty) {
+      // Navigate based on the payload (screen path)
+      final screen = notificationResponse.payload!;
+      print("Local notification: Navigating to screen: $screen");
+
+      if (screen == '/follow_requests' && navigatorKey.currentState != null) {
+        navigatorKey.currentState!.push(
+          MaterialPageRoute(
+            builder: (context) => const FollowRequestsScreen(),
+          ),
+        );
       }
     }
-  );
+  });
 }
 
 void main() async {
@@ -193,7 +202,7 @@ void main() async {
   // Conditionally initialize SharingService if not on web
   if (!kIsWeb) {
     SharingService().init();
-    
+
     // DEBUG: Start timer to check for shared data (Android only)
     if (Platform.isAndroid) {
       _startShareDebugTimer();
@@ -208,23 +217,27 @@ void main() async {
       print('FCM: Message data: ${message.data}');
 
       if (message.notification != null) {
-        print('FCM: Message also contained a notification: ${message.notification}');
+        print(
+            'FCM: Message also contained a notification: ${message.notification}');
         flutterLocalNotificationsPlugin.show(
-          message.hashCode, 
+          message.hashCode,
           message.notification!.title,
           message.notification!.body,
-          const NotificationDetails( // Use const for NotificationDetails
+          const NotificationDetails(
+            // Use const for NotificationDetails
             android: AndroidNotificationDetails(
               'plendy_follow_channel', // Unique channel ID
               'Follow Notifications', // Channel name
-              channelDescription: 'Notifications for new followers and follow requests.',
+              channelDescription:
+                  'Notifications for new followers and follow requests.',
               importance: Importance.max,
               priority: Priority.high,
-              icon: '@mipmap/ic_launcher', 
+              icon: '@mipmap/ic_launcher',
             ),
             // iOS: DarwinNotificationDetails(), // Add if needed
           ),
-          payload: message.data['screen'] as String?, // Example: screen to navigate to
+          payload: message.data['screen']
+              as String?, // Example: screen to navigate to
         );
       }
     });
@@ -234,10 +247,10 @@ void main() async {
       print('FCM: Message data: ${message.data}');
       final screen = message.data['screen'] as String?;
       final type = message.data['type'] as String?;
-      
+
       if (screen != null && navigatorKey.currentState != null) {
         print("FCM: Navigating to screen: $screen");
-        
+
         // Handle different notification types
         if (type == 'follow_request' && screen == '/follow_requests') {
           // Navigate to Follow Requests screen
@@ -249,7 +262,8 @@ void main() async {
         } else if (type == 'new_follower') {
           // For new follower notifications, you might want to navigate to the user's profile
           // For now, we'll just print a message
-          print("FCM: New follower notification - would navigate to user profile");
+          print(
+              "FCM: New follower notification - would navigate to user profile");
           // You could implement navigation to user profile here:
           // final followerId = message.data['followerId'] as String?;
           // if (followerId != null) {
@@ -259,16 +273,17 @@ void main() async {
           // Navigate to Messages screen, and potentially to the specific chat
           final threadId = message.data['threadId'] as String?;
           final senderId = message.data['senderId'] as String?;
-          
-          print("FCM: New message notification - threadId: $threadId, senderId: $senderId");
-          
+
+          print(
+              "FCM: New message notification - threadId: $threadId, senderId: $senderId");
+
           // Navigate to Messages screen first
           navigatorKey.currentState!.push(
             MaterialPageRoute(
               builder: (context) => const MessagesScreen(),
             ),
           );
-          
+
           // TODO: If threadId is provided, you could navigate directly to the chat
           // This would require updating the MessagesScreen to accept navigation parameters
         }
@@ -299,37 +314,37 @@ void main() async {
   );
 }
 
-
 Future<void> _initializeAppCheck() async {
   try {
     if (kIsWeb) {
       await FirebaseAppCheck.instance.activate(
-        webProvider: ReCaptchaV3Provider('6Ldt0sIrAAAAABBHbSmj07DU8gEEzqijAk70XwKA'),
+        webProvider:
+            ReCaptchaV3Provider('6Ldt0sIrAAAAABBHbSmj07DU8gEEzqijAk70XwKA'),
         androidProvider: AndroidProvider.playIntegrity,
         appleProvider: AppleProvider.appAttest,
       );
       print('App Check activated (web + providers).');
     } else {
       // Use Debug provider for debug/profile builds to simplify local dev.
-      final androidProvider = kReleaseMode
-          ? AndroidProvider.playIntegrity
-          : AndroidProvider.debug;
-      final appleProvider = kReleaseMode
-          ? AppleProvider.appAttest
-          : AppleProvider.debug;
+      final androidProvider =
+          kReleaseMode ? AndroidProvider.playIntegrity : AndroidProvider.debug;
+      final appleProvider =
+          kReleaseMode ? AppleProvider.appAttest : AppleProvider.debug;
 
       await FirebaseAppCheck.instance.activate(
         androidProvider: androidProvider,
         appleProvider: appleProvider,
       );
       print('App Check activated (native providers: ' +
-          (kReleaseMode ? 'release' : 'debug') + ')');
+          (kReleaseMode ? 'release' : 'debug') +
+          ')');
     }
     await FirebaseAppCheck.instance.setTokenAutoRefreshEnabled(true);
     // Force initial token request so reCAPTCHA key leaves "Incomplete" and headers appear
     try {
       final token = await FirebaseAppCheck.instance.getToken(true);
-      print('App Check initial token fetched: ' + (token != null && token.isNotEmpty ? 'ok' : 'empty'));
+      print('App Check initial token fetched: ' +
+          (token != null && token.isNotEmpty ? 'ok' : 'empty'));
     } catch (e) {
       print('App Check initial token fetch error: $e');
     }
@@ -364,21 +379,27 @@ class _MyAppState extends State<MyApp> {
   List<SharedMediaFile>? _sharedFiles;
   bool _initialCheckComplete = false;
   bool _shouldShowReceiveShare = false;
-  bool _deepLinkStreamFired = false; // Track if a fresh deep link arrived via stream
+  bool _forceOnboarding = false;
+  bool _deepLinkStreamFired =
+      false; // Track if a fresh deep link arrived via stream
   String? _deferredDiscoveryShareToken;
-  String? _initialDiscoveryShareToken; // NEW: Track initial discovery share token from URL
+  String?
+      _initialDiscoveryShareToken; // NEW: Track initial discovery share token from URL
   static const int _maxNavigatorPushRetries = 12;
 
-  void _pushRouteWhenReady(WidgetBuilder builder, {RouteSettings? settings, int attempt = 0}) {
+  void _pushRouteWhenReady(WidgetBuilder builder,
+      {RouteSettings? settings, int attempt = 0}) {
     if (!mounted) {
       return;
     }
     if (navigatorKey.currentState?.mounted ?? false) {
-      navigatorKey.currentState!.push(MaterialPageRoute(builder: builder, settings: settings));
+      navigatorKey.currentState!
+          .push(MaterialPageRoute(builder: builder, settings: settings));
       return;
     }
     if (attempt >= _maxNavigatorPushRetries) {
-      print('DeepLink: Navigator not ready after ${attempt + 1} attempts; dropping deep link navigation');
+      print(
+          'DeepLink: Navigator not ready after ${attempt + 1} attempts; dropping deep link navigation');
       return;
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -411,7 +432,9 @@ class _MyAppState extends State<MyApp> {
       return uri;
     }
     final int hashIndex = raw.indexOf('#Intent;');
-    final String core = hashIndex >= 0 ? raw.substring(prefix.length, hashIndex) : raw.substring(prefix.length);
+    final String core = hashIndex >= 0
+        ? raw.substring(prefix.length, hashIndex)
+        : raw.substring(prefix.length);
     if (core.isEmpty) {
       return uri;
     }
@@ -432,7 +455,10 @@ class _MyAppState extends State<MyApp> {
         print('DeepLink: Unwrapped link parameter -> ' + nested.toString());
         return nested;
       } catch (e) {
-        print('DeepLink: Failed to parse link parameter "' + linkParam + '": ' + e.toString());
+        print('DeepLink: Failed to parse link parameter "' +
+            linkParam +
+            '": ' +
+            e.toString());
       }
     }
 
@@ -443,7 +469,10 @@ class _MyAppState extends State<MyApp> {
         print('DeepLink: Unwrapped deep_link_id -> ' + nested.toString());
         return nested;
       } catch (e) {
-        print('DeepLink: Failed to parse deep_link_id "' + deepLinkId + '": ' + e.toString());
+        print('DeepLink: Failed to parse deep_link_id "' +
+            deepLinkId +
+            '": ' +
+            e.toString());
       }
     }
 
@@ -456,7 +485,8 @@ class _MyAppState extends State<MyApp> {
           final dynamic target = parsed['target_url'];
           if (target is String && target.isNotEmpty) {
             final Uri nested = Uri.parse(target);
-            print('DeepLink: Unwrapped al_applink_data target_url -> ' + nested.toString());
+            print('DeepLink: Unwrapped al_applink_data target_url -> ' +
+                nested.toString());
             return nested;
           }
         }
@@ -473,17 +503,25 @@ class _MyAppState extends State<MyApp> {
           print('DeepLink: Unwrapped fragment URL -> ' + nested.toString());
           return nested;
         } catch (e) {
-          print('DeepLink: Failed to parse fragment URI "' + fragment + '": ' + e.toString());
+          print('DeepLink: Failed to parse fragment URI "' +
+              fragment +
+              '": ' +
+              e.toString());
         }
       } else if (uri.host.isNotEmpty) {
-        final String prefix = (uri.scheme.isEmpty ? 'https' : uri.scheme) + '://' + uri.host;
-        final String candidate = fragment.startsWith('/') ? fragment : '/' + fragment;
+        final String prefix =
+            (uri.scheme.isEmpty ? 'https' : uri.scheme) + '://' + uri.host;
+        final String candidate =
+            fragment.startsWith('/') ? fragment : '/' + fragment;
         try {
           final Uri nested = Uri.parse(prefix + candidate);
           print('DeepLink: Composed fragment URL -> ' + nested.toString());
           return nested;
         } catch (e) {
-          print('DeepLink: Failed to compose fragment URI "' + fragment + '": ' + e.toString());
+          print('DeepLink: Failed to compose fragment URI "' +
+              fragment +
+              '": ' +
+              e.toString());
         }
       }
     }
@@ -507,27 +545,30 @@ class _MyAppState extends State<MyApp> {
     super.initState();
 
     print("MAIN: App initializing");
-    
+
     // NEW: Check if this is a discovery share preview link on web
     if (kIsWeb) {
       try {
         final uri = Uri.base;
         final segments = uri.pathSegments;
-        if (segments.isNotEmpty && segments.first.toLowerCase() == 'discovery-share' && segments.length > 1) {
+        if (segments.isNotEmpty &&
+            segments.first.toLowerCase() == 'discovery-share' &&
+            segments.length > 1) {
           final rawToken = segments[1];
           final token = _cleanToken(rawToken);
           if (token != null && token.isNotEmpty) {
             setState(() {
               _initialDiscoveryShareToken = token;
             });
-            print("MAIN: Detected initial discovery share token from URL: $token");
+            print(
+                "MAIN: Detected initial discovery share token from URL: $token");
           }
         }
       } catch (e) {
         print("MAIN: Error checking for initial discovery share token: $e");
       }
     }
-    
+
     // Add toast right at startup to confirm we're getting here
     // WidgetsBinding.instance.addPostFrameCallback((_) {
     //   Fluttertoast.showToast(
@@ -546,11 +587,12 @@ class _MyAppState extends State<MyApp> {
           .then((SharedMedia? media) {
         print("MAIN: Initial media check complete");
 
-        final value = media != null ? _convertSharedMedia(media) : <SharedMediaFile>[];
+        final value =
+            media != null ? _convertSharedMedia(media) : <SharedMediaFile>[];
 
         if (value.isNotEmpty) {
           print("MAIN: Found initial shared files: ${value.length}");
-          
+
           // Add toast when we detect shared files
           // Fluttertoast.showToast(
           //   msg: "Found ${value.length} shared files in initState",
@@ -559,26 +601,29 @@ class _MyAppState extends State<MyApp> {
           //   backgroundColor: Colors.green.withOpacity(0.8),
           //   textColor: Colors.white,
           // );
-          
+
           if (mounted) {
             // Check if this is a Yelp URL during cold start - if so, check for existing session
             bool isYelpUrl = false;
             for (final file in value) {
-              if (file.type == SharedMediaType.text || file.type == SharedMediaType.url) {
+              if (file.type == SharedMediaType.text ||
+                  file.type == SharedMediaType.url) {
                 String content = file.path.toLowerCase();
-                if (content.contains('yelp.com/biz') || content.contains('yelp.to/')) {
+                if (content.contains('yelp.com/biz') ||
+                    content.contains('yelp.to/')) {
                   isYelpUrl = true;
                   break;
                 }
               }
             }
-            
+
             // For Yelp URLs during cold start, always create ReceiveShareScreen
             // but let it handle restoration internally
             if (isYelpUrl) {
-              print("MAIN: Cold start Yelp URL detected - will create ReceiveShareScreen with restoration logic");
+              print(
+                  "MAIN: Cold start Yelp URL detected - will create ReceiveShareScreen with restoration logic");
             }
-            
+
             setState(() {
               _sharedFiles = value;
               _initialCheckComplete = true;
@@ -588,7 +633,7 @@ class _MyAppState extends State<MyApp> {
           print("MAIN: Stored initial share data for display");
         } else {
           print("MAIN: No initial shared files found");
-          
+
           // Add toast when no files found
           // Fluttertoast.showToast(
           //   msg: "No shared files found in initState",
@@ -597,7 +642,7 @@ class _MyAppState extends State<MyApp> {
           //   backgroundColor: Colors.orange.withOpacity(0.8),
           //   textColor: Colors.white,
           // );
-          
+
           if (mounted) {
             setState(() {
               _initialCheckComplete = true;
@@ -660,7 +705,7 @@ class _MyAppState extends State<MyApp> {
 
   void _initDeepLinks() async {
     final appLinks = AppLinks();
-    
+
     // iOS: Listen for manually posted deep links (to avoid Safari opening)
     if (Platform.isIOS) {
       const platform = MethodChannel('deep_link_channel');
@@ -672,7 +717,7 @@ class _MyAppState extends State<MyApp> {
         }
       });
     }
-    
+
     // WEB: Handle current URL directly (no plugin needed)
     if (kIsWeb) {
       try {
@@ -696,7 +741,8 @@ class _MyAppState extends State<MyApp> {
     Future.delayed(const Duration(milliseconds: 900), () async {
       try {
         if (_deepLinkStreamFired) {
-          print('DeepLink: Skipping delayed initial app link (stream already fired)');
+          print(
+              'DeepLink: Skipping delayed initial app link (stream already fired)');
           return;
         }
         final initialUri = await appLinks.getInitialAppLink();
@@ -730,10 +776,16 @@ class _MyAppState extends State<MyApp> {
     if (firstSegment == 'shared') {
       final String? rawToken = segments.length > 1 ? segments[1] : null;
       final String? token = _cleanToken(rawToken);
-      print('DeepLink: Experience share - rawToken: ' + rawToken.toString() + ', cleanToken: ' + token.toString());
+      print('DeepLink: Experience share - rawToken: ' +
+          rawToken.toString() +
+          ', cleanToken: ' +
+          token.toString());
       if (token != null && token.isNotEmpty) {
         if (rawToken != null && rawToken != token) {
-          print('DeepLink: Sanitized share token from ' + rawToken + ' to ' + token);
+          print('DeepLink: Sanitized share token from ' +
+              rawToken +
+              ' to ' +
+              token);
         }
         _pushRouteWhenReady(
           (_) => SharePreviewScreen(token: token),
@@ -745,11 +797,15 @@ class _MyAppState extends State<MyApp> {
     } else if (firstSegment == 'discovery-share') {
       final String? rawToken = segments.length > 1 ? segments[1] : null;
       final String? token = _cleanToken(rawToken);
-      print('DeepLink: Discovery share - rawToken: ' + rawToken.toString() + ', cleanToken: ' + token.toString());
+      print('DeepLink: Discovery share - rawToken: ' +
+          rawToken.toString() +
+          ', cleanToken: ' +
+          token.toString());
       if (token != null && token.isNotEmpty) {
         final BuildContext? ctx = navigatorKey.currentContext;
         if (ctx != null) {
-          final coordinator = Provider.of<DiscoveryShareCoordinator>(ctx, listen: false);
+          final coordinator =
+              Provider.of<DiscoveryShareCoordinator>(ctx, listen: false);
           coordinator.openSharedToken(token);
         } else {
           print('DeepLink: Navigator context unavailable for discovery share.');
@@ -769,10 +825,16 @@ class _MyAppState extends State<MyApp> {
     } else if (firstSegment == 'shared-category') {
       final String? rawToken = segments.length > 1 ? segments[1] : null;
       final String? token = _cleanToken(rawToken);
-      print('DeepLink: Category share - rawToken: ' + rawToken.toString() + ', cleanToken: ' + token.toString());
+      print('DeepLink: Category share - rawToken: ' +
+          rawToken.toString() +
+          ', cleanToken: ' +
+          token.toString());
       if (token != null && token.isNotEmpty) {
         if (rawToken != null && rawToken != token) {
-          print('DeepLink: Sanitized category share token from ' + rawToken + ' to ' + token);
+          print('DeepLink: Sanitized category share token from ' +
+              rawToken +
+              ' to ' +
+              token);
         }
         _pushRouteWhenReady(
           (_) => CategorySharePreviewScreen(token: token),
@@ -785,7 +847,6 @@ class _MyAppState extends State<MyApp> {
       print('DeepLink: No handler for path segments: ' + segments.toString());
     }
   }
-
 
   @override
   void dispose() {
@@ -800,8 +861,11 @@ class _MyAppState extends State<MyApp> {
   @override
   Widget build(BuildContext context) {
     // Use the dedicated flag instead of calculating each time
-    bool launchedFromShare = !kIsWeb && _shouldShowReceiveShare && _sharedFiles != null && _sharedFiles!.isNotEmpty;
-    
+    bool launchedFromShare = !kIsWeb &&
+        _shouldShowReceiveShare &&
+        _sharedFiles != null &&
+        _sharedFiles!.isNotEmpty;
+
     print("MAIN BUILD DEBUG: Detailed calculation:");
     print("  !kIsWeb = ${!kIsWeb}");
     print("  _shouldShowReceiveShare = $_shouldShowReceiveShare");
@@ -810,17 +874,20 @@ class _MyAppState extends State<MyApp> {
       print("  _sharedFiles!.isNotEmpty = ${_sharedFiles!.isNotEmpty}");
     }
     print("  Final launchedFromShare = $launchedFromShare");
-    
-    print("MAIN BUILD DEBUG: _initialCheckComplete=$_initialCheckComplete, kIsWeb=$kIsWeb, _sharedFiles is null? ${_sharedFiles == null}");
+
+    print(
+        "MAIN BUILD DEBUG: _initialCheckComplete=$_initialCheckComplete, kIsWeb=$kIsWeb, _sharedFiles is null? ${_sharedFiles == null}");
     print("MAIN BUILD DEBUG: _shouldShowReceiveShare=$_shouldShowReceiveShare");
     if (_sharedFiles != null) {
       print("MAIN BUILD DEBUG: _sharedFiles count=${_sharedFiles!.length}");
       if (_sharedFiles!.isNotEmpty) {
-        print("MAIN BUILD DEBUG: first file=${_sharedFiles!.first.path.substring(0, math.min(100, _sharedFiles!.first.path.length))}");
+        print(
+            "MAIN BUILD DEBUG: first file=${_sharedFiles!.first.path.substring(0, math.min(100, _sharedFiles!.first.path.length))}");
       }
     }
-    print("MAIN BUILD DEBUG: launchedFromShare=$launchedFromShare, _initialCheckComplete=$_initialCheckComplete");
-    
+    print(
+        "MAIN BUILD DEBUG: launchedFromShare=$launchedFromShare, _initialCheckComplete=$_initialCheckComplete");
+
     // Add visual debugging for cold start
     // if (!kIsWeb) {
     //   WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -837,13 +904,15 @@ class _MyAppState extends State<MyApp> {
     //     );
     //   });
     // }
-    
+
     // For cold start with shared files, we simply proceed to show ReceiveShareScreen
     // The complex flow checking is only needed for warm app scenarios
     if (launchedFromShare) {
-      print("MAIN: Cold start with shared files - will create ReceiveShareScreen");
+      print(
+          "MAIN: Cold start with shared files - will create ReceiveShareScreen");
     } else {
-      print("MAIN: No shared files or not cold start - proceeding to normal auth flow");
+      print(
+          "MAIN: No shared files or not cold start - proceeding to normal auth flow");
     }
 
     // --- ADDED: Get AuthService from Provider ---
@@ -874,33 +943,47 @@ class _MyAppState extends State<MyApp> {
     );
   }
 
+  void _handleOnboardingFinished() {
+    if (!_forceOnboarding || !mounted) {
+      return;
+    }
+    setState(() {
+      _forceOnboarding = false;
+    });
+  }
+
   Widget _buildHomeWidget(AuthService authService, bool launchedFromShare) {
-    print("MAIN BUILD DEBUG: _buildHomeWidget called with launchedFromShare=$launchedFromShare");
-    
+    print(
+        "MAIN BUILD DEBUG: _buildHomeWidget called with launchedFromShare=$launchedFromShare");
+
     // NEW: Prioritize discovery share preview on web
-    if (kIsWeb && _initialDiscoveryShareToken != null && _initialDiscoveryShareToken!.isNotEmpty) {
-      print("MAIN BUILD DEBUG: Showing DiscoverySharePreviewScreen for token: $_initialDiscoveryShareToken");
+    if (kIsWeb &&
+        _initialDiscoveryShareToken != null &&
+        _initialDiscoveryShareToken!.isNotEmpty) {
+      print(
+          "MAIN BUILD DEBUG: Showing DiscoverySharePreviewScreen for token: $_initialDiscoveryShareToken");
       return DiscoverySharePreviewScreen(token: _initialDiscoveryShareToken!);
     }
-    
+
     // If we have shared files, show ReceiveShareScreen
     if (launchedFromShare && _sharedFiles != null && _sharedFiles!.isNotEmpty) {
-      print("MAIN BUILD DEBUG: Creating ReceiveShareScreen with ${_sharedFiles!.length} files");
+      print(
+          "MAIN BUILD DEBUG: Creating ReceiveShareScreen with ${_sharedFiles!.length} files");
       // iOS shared content handling - no toast needed
       return ChangeNotifierProvider(
         create: (_) => ReceiveShareProvider(),
         child: ReceiveShareScreen(
-          sharedFiles: _sharedFiles!,
-          onCancel: () {
-            print("MyApp: Closing share screen launched initially");
-            if (mounted) {
-              setState(() {
-                _sharedFiles = null; // Clear shared files
-                _shouldShowReceiveShare = false; // Reset flag
-              });
-            }
-            // No explicit reset needed with share_handler
-          }),
+            sharedFiles: _sharedFiles!,
+            onCancel: () {
+              print("MyApp: Closing share screen launched initially");
+              if (mounted) {
+                setState(() {
+                  _sharedFiles = null; // Clear shared files
+                  _shouldShowReceiveShare = false; // Reset flag
+                });
+              }
+              // No explicit reset needed with share_handler
+            }),
       );
     }
 
@@ -914,7 +997,8 @@ class _MyAppState extends State<MyApp> {
         }
 
         // Initialize/cleanup NotificationStateService based on auth state
-        final notificationService = Provider.of<NotificationStateService>(context, listen: false);
+        final notificationService =
+            Provider.of<NotificationStateService>(context, listen: false);
         if (snapshot.hasData && snapshot.data?.uid != null) {
           // User is logged in - initialize notification service
           WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -928,7 +1012,8 @@ class _MyAppState extends State<MyApp> {
         }
 
         // Print debug info
-        print('Auth state changed: ${snapshot.hasData ? 'Logged in' : 'Logged out'}');
+        print(
+            'Auth state changed: ${snapshot.hasData ? 'Logged in' : 'Logged out'}');
 
         // --- ADDED: Reset share data on logout ---
         if (!snapshot.hasData && _sharedFiles != null) {
@@ -944,9 +1029,67 @@ class _MyAppState extends State<MyApp> {
           });
         }
 
-        return snapshot.hasData
-            ? const MainScreen()
-            : const AuthScreen();
+        if (!snapshot.hasData) {
+          if (_forceOnboarding) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted && _forceOnboarding) {
+                setState(() {
+                  _forceOnboarding = false;
+                });
+              }
+            });
+          }
+          return const AuthScreen();
+        }
+
+        final user = snapshot.data!;
+        return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+          stream: FirebaseFirestore.instance
+              .collection('users')
+              .doc(user.uid)
+              .snapshots(),
+          builder: (context, userSnapshot) {
+            if (userSnapshot.connectionState == ConnectionState.waiting) {
+              return const Center(child: CircularProgressIndicator());
+            }
+
+            if (userSnapshot.hasError) {
+              return const Center(child: Text('Unable to load profile.'));
+            }
+
+            final data = userSnapshot.data?.data();
+            final username = (data?['username'] as String?)?.trim() ?? '';
+            final firestoreDisplayName =
+                (data?['displayName'] as String?)?.trim() ?? '';
+            final authDisplayName = user.displayName?.trim() ?? '';
+            final hasDisplayName =
+                firestoreDisplayName.isNotEmpty || authDisplayName.isNotEmpty;
+            final hasUsername = username.isNotEmpty;
+            final hasFinishedOnboardingFlow =
+                data?['hasFinishedOnboardingFlow'] as bool? ?? true;
+            final requiresOnboarding =
+                !hasDisplayName || !hasUsername || !hasFinishedOnboardingFlow;
+
+            if (requiresOnboarding && !_forceOnboarding) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted && !_forceOnboarding) {
+                  setState(() {
+                    _forceOnboarding = true;
+                  });
+                }
+              });
+            }
+
+            final shouldShowOnboarding = requiresOnboarding || _forceOnboarding;
+
+            if (shouldShowOnboarding) {
+              return OnboardingScreen(
+                onFinishedFlow: _handleOnboardingFinished,
+              );
+            }
+            return const MainScreen();
+          },
+        );
       },
     );
   }
