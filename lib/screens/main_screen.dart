@@ -11,14 +11,16 @@ import 'package:provider/provider.dart';
 import '../providers/discovery_share_coordinator.dart';
 
 class MainScreen extends StatefulWidget {
-  const MainScreen({super.key});
+  final int initialIndex;
+
+  const MainScreen({super.key, this.initialIndex = 0});
 
   @override
-  _MainScreenState createState() => _MainScreenState();
+  State<MainScreen> createState() => _MainScreenState();
 }
 
 class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
-  int _selectedIndex = 0;
+  late int _selectedIndex;
   final SharingService _sharingService = SharingService();
   final GlobalKey<DiscoveryScreenState> _discoveryKey =
       GlobalKey<DiscoveryScreenState>();
@@ -30,6 +32,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    _selectedIndex = widget.initialIndex;
     _screens = [
       DiscoveryScreen(key: _discoveryKey),
       const CollectionsScreen(),
