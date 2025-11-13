@@ -159,10 +159,10 @@ class CollectionsScreen extends StatefulWidget {
   const CollectionsScreen({super.key});
 
   @override
-  State<CollectionsScreen> createState() => _CollectionsScreenState();
+  State<CollectionsScreen> createState() => CollectionsScreenState();
 }
 
-class _CollectionsScreenState extends State<CollectionsScreen>
+class CollectionsScreenState extends State<CollectionsScreen>
     with SingleTickerProviderStateMixin {
   final _authService = AuthService();
   final _experienceService = ExperienceService();
@@ -713,6 +713,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   bool _contentLoaded = false;
   bool _isContentLoading = false;
   bool _isExperiencesLoading = false;
+  bool _contentPreloadRequested = false;
 
   String _buildSharedByLabel({
     required SharePermission permission,
@@ -879,8 +880,8 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         }
       }
       // Trigger lazy load for Content tab when first viewed
-      if (_tabController.index == 2 && !_contentLoaded && !_isContentLoading) {
-        _loadGroupedContent();
+      if (_tabController.index == 2) {
+        startContentPreload();
       }
     });
     
@@ -890,6 +891,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
     _loadSortPreferences().whenComplete(() {
       _loadData();
     });
+    startContentPreload();
   }
 
   @override
@@ -8440,7 +8442,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
   // ADDED: Dialog to show media details (associated experiences)
   void _showMediaDetailsDialog(GroupedContentItem group) {
     showDialog(
-      context: context, // This 'context' is from _CollectionsScreenState
+      context: context, // This 'context' is from CollectionsScreenState
       builder: (BuildContext dialogContext) {
         // Use a different name for dialog's own context
         return AlertDialog(
@@ -8522,7 +8524,7 @@ class _CollectionsScreenState extends State<CollectionsScreen>
                                 orderIndex: category?.orderIndex ?? 9999,
                               );
                           Navigator.push<bool>(
-                            this.context, // Use _CollectionsScreenState's context for navigation
+                            this.context, // Use CollectionsScreenState's context for navigation
                             MaterialPageRoute(
                               builder: (ctx) => ExperiencePageScreen(
                                 // Use 'ctx' for clarity
@@ -8554,6 +8556,13 @@ class _CollectionsScreenState extends State<CollectionsScreen>
         );
       },
     );
+  }
+
+  void startContentPreload() {
+    _contentPreloadRequested = true;
+    if (!_contentLoaded && !_isContentLoading && _experiences.isNotEmpty) {
+      unawaited(_loadGroupedContent());
+    }
   }
 
   Future<void> _loadGroupedContent() async {
@@ -9017,7 +9026,9 @@ class _CollectionsScreenState extends State<CollectionsScreen>
       // Use new paginated fetch for initial load
       await _loadExperiencesPage(isInitialLoad: true);
 
-      if (!_contentLoaded && !_isContentLoading) {
+      if (_contentPreloadRequested &&
+          !_contentLoaded &&
+          !_isContentLoading) {
         await _loadGroupedContent();
       }
     } finally {

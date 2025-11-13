@@ -24,6 +24,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   final SharingService _sharingService = SharingService();
   final GlobalKey<DiscoveryScreenState> _discoveryKey =
       GlobalKey<DiscoveryScreenState>();
+  final GlobalKey<CollectionsScreenState> _collectionsKey =
+      GlobalKey<CollectionsScreenState>();
   DiscoveryShareCoordinator? _shareCoordinator;
 
   // Define the screens list
@@ -35,10 +37,13 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     _selectedIndex = widget.initialIndex;
     _screens = [
       DiscoveryScreen(key: _discoveryKey),
-      const CollectionsScreen(),
+      CollectionsScreen(key: _collectionsKey),
       ProfileScreen(onRequestDiscoveryRefresh: _refreshDiscovery),
     ];
     WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _collectionsKey.currentState?.startContentPreload();
+    });
     if (_sharingService.isNavigatingAwayFromShare) {
       _sharingService.shareNavigationComplete();
       print("MAIN SCREEN: initState called shareNavigationComplete");
