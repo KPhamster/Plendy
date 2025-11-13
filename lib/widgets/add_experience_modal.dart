@@ -933,6 +933,7 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
           createdAt: now,
           updatedAt: now,
           editorUserIds: [currentUserId],
+          isPrivate: _cardData.isPrivate,
         );
 
         final createdExperienceId =

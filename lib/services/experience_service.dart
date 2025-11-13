@@ -878,6 +878,21 @@ class ExperienceService {
     }
   }
 
+  Future<void> updateSharedMediaPrivacy(
+      String mediaItemId, bool isPrivate) async {
+    if (mediaItemId.isEmpty) return;
+    try {
+      await _sharedMediaItemsCollection
+          .doc(mediaItemId)
+          .update({'isPrivate': isPrivate});
+      debugPrint(
+          'updateSharedMediaPrivacy: Set media $mediaItemId isPrivate=$isPrivate');
+    } catch (e) {
+      debugPrint(
+          'updateSharedMediaPrivacy: Failed for $mediaItemId (isPrivate=$isPrivate): $e');
+    }
+  }
+
   /// Adds an experience ID to the experienceIds array of a SharedMediaItem document.
   Future<void> addExperienceLinkToMediaItem(
       String mediaItemId, String experienceId) async {

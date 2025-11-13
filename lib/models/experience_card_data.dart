@@ -60,6 +60,8 @@ class ExperienceCardData {
 
   /// Selected Color Category ID
   String? selectedColorCategoryId;
+  /// Whether this experience should remain private (default public)
+  bool isPrivate = false;
 
   /// Selected IDs for "other" categories
   List<String> selectedOtherCategoryIds = [];

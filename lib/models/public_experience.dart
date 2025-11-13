@@ -146,6 +146,7 @@ class PublicExperience {
         createdAt: DateTime.fromMillisecondsSinceEpoch(index),
         ownerUserId: 'public_experience',
         experienceIds: const <String>[],
+        isPrivate: false,
       );
     }).toList();
   }

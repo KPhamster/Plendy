@@ -142,6 +142,7 @@ class _SaveToExperiencesModalState extends State<SaveToExperiencesModal> {
     card.selectedOtherCategoryIds =
         List<String>.from(previous.selectedOtherCategoryIds);
     card.locationEnabled.value = previous.locationEnabled.value;
+    card.isPrivate = previous.isPrivate;
     _applyCategoryDefaults(card);
   }
 
@@ -167,6 +168,7 @@ class _SaveToExperiencesModalState extends State<SaveToExperiencesModal> {
     card.locationEnabled.value = true;
     card.selectedOtherCategoryIds =
         List<String>.from(experience.otherCategories);
+    card.isPrivate = experience.isPrivate;
 
     if (experience.categoryId?.isNotEmpty ?? false) {
       card.selectedCategoryId = experience.categoryId;
@@ -262,6 +264,7 @@ class _SaveToExperiencesModalState extends State<SaveToExperiencesModal> {
           List<String>.from(selectedExperience.otherCategories);
       card.selectedLocation = selectedExperience.location;
       card.locationEnabled.value = true;
+      card.isPrivate = selectedExperience.isPrivate;
     });
   }
 
@@ -395,6 +398,7 @@ class _SaveToExperiencesModalState extends State<SaveToExperiencesModal> {
             editorUserIds: existing.editorUserIds.contains(userId)
                 ? existing.editorUserIds
                 : [...existing.editorUserIds, userId],
+            isPrivate: card.isPrivate,
           );
 
           await _experienceService.updateExperience(updatedExperience);
@@ -437,6 +441,7 @@ class _SaveToExperiencesModalState extends State<SaveToExperiencesModal> {
             categoryIconDenorm: null,
             colorHexDenorm: null,
             createdBy: userId,
+            isPrivate: card.isPrivate,
           );
 
           final String newId =
@@ -489,6 +494,7 @@ class _SaveToExperiencesModalState extends State<SaveToExperiencesModal> {
       ownerUserId: ownerUserId,
       experienceIds: const [],
       isTiktokPhoto: null,
+      isPrivate: false,
     );
     return _experienceService.createSharedMediaItem(newItem);
   }
