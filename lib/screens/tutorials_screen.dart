@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'package:plendy/screens/main_screen.dart';
+import 'package:plendy/screens/my_people_screen.dart';
 import 'package:plendy/widgets/tutorial_map_screen_modal.dart';
 import 'package:plendy/widgets/tutorial_save_content_modal.dart';
 
@@ -13,6 +15,7 @@ class TutorialsScreen extends StatelessWidget {
           'You can save content by tapping the + button in the Collections tab or by sharing content you find on other apps to Plendy.',
       icon: Icons.add_circle_outline,
       action: _TutorialAction.saveContent,
+      actionHint: 'Tap to view tutorial',
     ),
     _Tutorial(
       title: 'See the map',
@@ -20,6 +23,7 @@ class TutorialsScreen extends StatelessWidget {
           'See all your experiences on the map! You can filter your experiences and find other experiences publicly shared by the community.',
       icon: Icons.map_outlined,
       action: _TutorialAction.map,
+      actionHint: 'Tap to view tutorial',
     ),
     _Tutorial(
       title: 'Share an experience',
@@ -32,12 +36,16 @@ class TutorialsScreen extends StatelessWidget {
       description:
           'Use Collections to group experiences by trip, event, theme - however you want! - so they are easy to revisit.',
       icon: Icons.collections_bookmark_outlined,
+      action: _TutorialAction.collections,
+      actionHint: 'Tap to go to Collections',
     ),
     _Tutorial(
       title: 'Find and follow your friends',
       description:
           'Open My People to find and follow your friends so you can start sharing together once they accept your request!',
       icon: Icons.people_outline,
+      action: _TutorialAction.myPeople,
+      actionHint: 'Tap to go to My People',
     ),
   ];
 
@@ -56,7 +64,6 @@ class TutorialsScreen extends StatelessWidget {
         separatorBuilder: (context, index) => const SizedBox(height: 12),
         itemBuilder: (context, index) {
           final tutorial = _tutorials[index];
-          final hasAction = tutorial.action != _TutorialAction.none;
           VoidCallback? onTap;
           switch (tutorial.action) {
             case _TutorialAction.saveContent:
@@ -65,18 +72,32 @@ class TutorialsScreen extends StatelessWidget {
             case _TutorialAction.map:
               onTap = () => showTutorialMapScreenModal(context);
               break;
+            case _TutorialAction.myPeople:
+              onTap = () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const MyPeopleScreen(),
+                    ),
+                  );
+              break;
+            case _TutorialAction.collections:
+              onTap = () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const MainScreen(initialIndex: 1),
+                    ),
+                  );
+              break;
             case _TutorialAction.none:
               onTap = null;
           }
 
-          final subtitleWidget = hasAction
+          final subtitleWidget = tutorial.actionHint != null
               ? Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(tutorial.description),
                     const SizedBox(height: 6),
                     Text(
-                      'Tap to view tutorial',
+                      tutorial.actionHint!,
                       style: TextStyle(
                         color: Theme.of(context)
                             .colorScheme
@@ -117,18 +138,20 @@ class TutorialsScreen extends StatelessWidget {
   }
 }
 
-enum _TutorialAction { none, saveContent, map }
+enum _TutorialAction { none, saveContent, map, myPeople, collections }
 
 class _Tutorial {
   final String title;
   final String description;
   final IconData icon;
   final _TutorialAction action;
+  final String? actionHint;
 
   const _Tutorial({
     required this.title,
     required this.description,
     required this.icon,
     this.action = _TutorialAction.none,
+    this.actionHint,
   });
 }
