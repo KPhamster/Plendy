@@ -18,6 +18,11 @@ class AuthService extends ChangeNotifier {
 
   User? _currentUser;
   Stream<User?>? _authStateChanges;
+  
+  // Prevent duplicate FCM setup
+  bool _fcmSetupComplete = false;
+  Future<void>? _fcmSetupInProgress;
+  StreamSubscription<String>? _tokenRefreshSubscription;
 
   AuthService() {
     _currentUser = _auth.currentUser;
@@ -206,6 +211,12 @@ class AuthService extends ChangeNotifier {
     final notificationService = NotificationStateService();
     notificationService.cleanup();
 
+    // Clean up FCM state
+    await _tokenRefreshSubscription?.cancel();
+    _tokenRefreshSubscription = null;
+    _fcmSetupComplete = false;
+    _fcmSetupInProgress = null;
+
     // Optional: Before signing out, you might want to delete the current device's FCM token
     // from the user's list if you have a way to identify it specifically.
     // String? token = await _firebaseMessaging.getToken();
@@ -221,6 +232,28 @@ class AuthService extends ChangeNotifier {
 
   Future<void> _setupFcmForUser(String userId) async {
     if (kIsWeb) return; // FCM setup for web is different, skipping for now
+
+    // Prevent duplicate setup - if already complete, skip
+    if (_fcmSetupComplete) {
+      print('DEBUG: FCM already set up, skipping duplicate setup');
+      return;
+    }
+
+    // If setup is in progress, wait for it to complete instead of starting a new one
+    if (_fcmSetupInProgress != null) {
+      print('DEBUG: FCM setup already in progress, waiting for it to complete...');
+      await _fcmSetupInProgress;
+      return;
+    }
+
+    // Mark as in-progress immediately to prevent concurrent calls
+    _fcmSetupInProgress = _performFcmSetup(userId);
+    await _fcmSetupInProgress;
+    _fcmSetupInProgress = null;
+  }
+
+  Future<void> _performFcmSetup(String userId) async {
+    _fcmSetupComplete = true; // Set immediately to prevent retries
 
     try {
       print('Setting up FCM for user: $userId');
@@ -293,9 +326,11 @@ class AuthService extends ChangeNotifier {
           // or implement a method to open device settings
         }
         // Don't set up token if permission denied
+        _fcmSetupComplete = false; // Reset flag if permission denied
       }
     } catch (e) {
       print("Error setting up FCM for user $userId: $e");
+      _fcmSetupComplete = false; // Reset flag on error
       // Don't rethrow - FCM setup failure shouldn't break the app
     }
   }
@@ -309,8 +344,11 @@ class AuthService extends ChangeNotifier {
             'DEBUG: Got FCM token: ${token.substring(0, 50)}...'); // Show first 50 chars
         await _saveTokenToFirestore(userId, token);
 
-        // Listen for token refresh
-        _firebaseMessaging.onTokenRefresh.listen((newToken) {
+        // Cancel any existing token refresh subscription
+        await _tokenRefreshSubscription?.cancel();
+        
+        // Listen for token refresh (only once)
+        _tokenRefreshSubscription = _firebaseMessaging.onTokenRefresh.listen((newToken) {
           print('DEBUG: FCM token refreshed: ${newToken.substring(0, 50)}...');
           _saveTokenToFirestore(userId, newToken);
         });
@@ -330,17 +368,57 @@ class AuthService extends ChangeNotifier {
     }
     try {
       print('DEBUG: Saving FCM token to Firestore for user $userId...');
-      await _firestore
+      
+      // Check if this exact token already exists - if so, skip
+      final tokenDoc = await _firestore
           .collection('users')
           .doc(userId)
           .collection('fcmTokens')
-          .doc(token) // Use token as document ID for easy add/delete
-          .set({
+          .doc(token)
+          .get();
+      
+      if (tokenDoc.exists) {
+        print('DEBUG: Token already exists in Firestore, skipping save');
+        return;
+      }
+      
+      // Use a batch write to ensure atomicity
+      final batch = _firestore.batch();
+      
+      // Get all existing tokens for this device/platform and delete them
+      final existingTokens = await _firestore
+          .collection('users')
+          .doc(userId)
+          .collection('fcmTokens')
+          .where('platform', isEqualTo: defaultTargetPlatform.toString())
+          .get();
+      
+      // Delete old tokens for this platform in the batch
+      int deletedCount = 0;
+      for (var doc in existingTokens.docs) {
+        if (doc.id != token) {
+          batch.delete(doc.reference);
+          deletedCount++;
+          print('DEBUG: Marked old FCM token for deletion: ${doc.id.substring(0, 20)}...');
+        }
+      }
+      
+      // Save the new token in the batch
+      final tokenRef = _firestore
+          .collection('users')
+          .doc(userId)
+          .collection('fcmTokens')
+          .doc(token);
+      
+      batch.set(tokenRef, {
         'createdAt': FieldValue.serverTimestamp(),
-        'platform':
-            defaultTargetPlatform.toString(), // Optional: store platform
+        'platform': defaultTargetPlatform.toString(),
+        'updatedAt': FieldValue.serverTimestamp(),
       });
-      print("DEBUG: FCM token successfully saved for user $userId");
+      
+      // Commit the batch
+      await batch.commit();
+      print("DEBUG: FCM token successfully saved for user $userId (deleted $deletedCount old tokens)");
     } catch (e) {
       print("DEBUG: Error saving FCM token for user $userId: $e");
     }
