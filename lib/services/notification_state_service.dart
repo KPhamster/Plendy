@@ -31,6 +31,9 @@ class NotificationStateService extends ChangeNotifier {
   
   // Cached sets of previously seen followers
   Set<String> _seenFollowerIds = {};
+  
+  // Flag to prevent listener updates during state changes
+  bool _isUpdatingState = false;
 
   // Getters
   bool get hasUnseenFollowers => _unseenFollowersCount > 0;
@@ -105,6 +108,12 @@ class NotificationStateService extends ChangeNotifier {
 
   /// Handle followers collection changes
   void _handleFollowersChange(QuerySnapshot snapshot) {
+    // Skip updates while we're marking followers as seen to avoid race conditions
+    if (_isUpdatingState) {
+      print('DEBUG NotificationStateService: Skipping _handleFollowersChange - state update in progress');
+      return;
+    }
+    
     Set<String> currentFollowerIds = snapshot.docs.map((doc) => doc.id).toSet();
     
     print('DEBUG NotificationStateService: _handleFollowersChange called');
@@ -179,33 +188,41 @@ class NotificationStateService extends ChangeNotifier {
   Future<void> markFollowersAsSeen() async {
     if (_currentUserId == null) return;
     
-    // Get current followers and mark them all as seen
-    final snapshot = await _firestore
-        .collection('users')
-        .doc(_currentUserId)
-        .collection('followers')
-        .get();
+    // Set flag to prevent listener from interfering
+    _isUpdatingState = true;
     
-    Set<String> currentFollowerIds = snapshot.docs.map((doc) => doc.id).toSet();
-    
-    // Simply set seen followers to current followers
-    // If someone unfollows and re-follows, they'll be treated as unseen until next visit
-    _seenFollowerIds = Set.from(currentFollowerIds);
-    
-    _lastSeenFollowers = DateTime.now();
-    _unseenFollowerIds.clear();
-    _unseenFollowersCount = 0;
-    
-    print('DEBUG NotificationStateService: markFollowersAsSeen called');
-    print('DEBUG NotificationStateService: currentFollowerIds = $currentFollowerIds');
-    print('DEBUG NotificationStateService: updated _seenFollowerIds = $_seenFollowerIds');
-    
-    // Save to SharedPreferences
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt('last_seen_followers_$_currentUserId', _lastSeenFollowers!.millisecondsSinceEpoch);
-    await prefs.setStringList('seen_followers_$_currentUserId', _seenFollowerIds.toList());
-    
-    notifyListeners();
+    try {
+      // Get current followers and mark them all as seen
+      final snapshot = await _firestore
+          .collection('users')
+          .doc(_currentUserId)
+          .collection('followers')
+          .get();
+      
+      Set<String> currentFollowerIds = snapshot.docs.map((doc) => doc.id).toSet();
+      
+      // Simply set seen followers to current followers
+      // If someone unfollows and re-follows, they'll be treated as unseen until next visit
+      _seenFollowerIds = Set.from(currentFollowerIds);
+      
+      _lastSeenFollowers = DateTime.now();
+      _unseenFollowerIds.clear();
+      _unseenFollowersCount = 0;
+      
+      print('DEBUG NotificationStateService: markFollowersAsSeen called');
+      print('DEBUG NotificationStateService: currentFollowerIds = $currentFollowerIds');
+      print('DEBUG NotificationStateService: updated _seenFollowerIds = $_seenFollowerIds');
+      
+      // Save to SharedPreferences
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt('last_seen_followers_$_currentUserId', _lastSeenFollowers!.millisecondsSinceEpoch);
+      await prefs.setStringList('seen_followers_$_currentUserId', _seenFollowerIds.toList());
+      
+      notifyListeners();
+    } finally {
+      // Clear flag to allow listener to update again
+      _isUpdatingState = false;
+    }
   }
 
   /// Mark follow requests as seen (when user visits follow requests screen)

@@ -69,6 +69,21 @@ exports.sendFollowRequestNotificationV2 = onDocumentCreated(
           screen: "/follow_requests",
           requesterId: requesterId,
         },
+        android: {
+          notification: {
+            channelId: "social",
+            priority: "high",
+            defaultSound: true,
+          },
+        },
+        apns: {
+          payload: {
+            aps: {
+              category: "social",
+              sound: "default",
+            },
+          },
+        },
       }));
 
       functions.logger.log("V2: Sending FCM to tokens:", tokens, "with messages:", messages);
@@ -148,6 +163,21 @@ exports.sendNewFollowerNotificationV2 = onDocumentCreated(
           type: "new_follower",
           followerId: followerId,
           screen: `/user_profile/${followerId}`,
+        },
+        android: {
+          notification: {
+            channelId: "social",
+            priority: "high",
+            defaultSound: true,
+          },
+        },
+        apns: {
+          payload: {
+            aps: {
+              category: "social",
+              sound: "default",
+            },
+          },
         },
       }));
 

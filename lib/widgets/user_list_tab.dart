@@ -174,7 +174,10 @@ class _UserListTabState extends State<UserListTab> {
       } else {
         return ElevatedButton(
           onPressed: () => _toggleFollow(userProfile.id, false),
-          style: ElevatedButton.styleFrom(backgroundColor: Colors.blue),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Theme.of(context).primaryColor,
+            foregroundColor: Colors.white,
+          ),
           child: const Text("Follow Back"),
         );
       }
