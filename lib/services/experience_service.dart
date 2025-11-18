@@ -1264,6 +1264,7 @@ class ExperienceService {
       categoriesToCheck.add(experience.categoryId!);
     }
     categoriesToCheck.addAll(experience.otherCategories);
+    categoriesToCheck.addAll(experience.otherColorCategoryIds);
     if (experience.colorCategoryId != null &&
         experience.colorCategoryId!.isNotEmpty) {
       categoriesToCheck.add(experience.colorCategoryId!);
@@ -1332,6 +1333,12 @@ class ExperienceService {
           .where('colorCategoryId', isEqualTo: categoryId)
           .get();
       experienceIds.addAll(colorSnapshot.docs.map((d) => d.id));
+      // Query by otherColorCategoryIds (array-contains)
+      final otherColorSnapshot = await _experiencesCollection
+          .where('createdBy', isEqualTo: currentUserId)
+          .where('otherColorCategoryIds', arrayContains: categoryId)
+          .get();
+      experienceIds.addAll(otherColorSnapshot.docs.map((d) => d.id));
 
       debugPrint(
           'updateSharedUserIdsForCategory: Found ${experienceIds.length} experiences for category $categoryId');
@@ -1817,21 +1824,68 @@ class ExperienceService {
           viewerUserId != null && viewerUserId == ownerUserId;
 
       if (isColorCategory) {
-        final Query colorQuery = isOwnerViewing
-            ? _experiencesCollection
+        if (isOwnerViewing) {
+          final futures = await Future.wait([
+            _experiencesCollection
                 .where('createdBy', isEqualTo: ownerUserId)
                 .where('colorCategoryId', isEqualTo: categoryId)
                 .limit(limitPerQuery)
-            : _experiencesCollection
+                .get(),
+            _experiencesCollection
+                .where('createdBy', isEqualTo: ownerUserId)
+                .where('otherColorCategoryIds', arrayContains: categoryId)
+                .limit(limitPerQuery)
+                .get(),
+          ]);
+          final Set<String> seen = {};
+          final List<Experience> experiences = [];
+          for (final snapshot in futures) {
+            for (final doc in snapshot.docs) {
+              if (seen.add(doc.id)) {
+                experiences.add(Experience.fromFirestore(doc));
+              }
+            }
+          }
+          debugPrint(
+              'getExperiencesForOwnerCategory: Fetched ${experiences.length} experiences for color category $categoryId (${isOwnerViewing ? 'owner-view' : 'shared-view'})');
+          return experiences;
+        } else {
+          final Map<String, Experience> byId = {};
+          try {
+            final Query colorQuery = _experiencesCollection
                 .where('sharedWithUserIds', arrayContains: viewerUserId)
                 .where('colorCategoryId', isEqualTo: categoryId)
                 .limit(limitPerQuery);
-        final QuerySnapshot snapshot = await colorQuery.get();
-        final experiences =
-            snapshot.docs.map((doc) => Experience.fromFirestore(doc)).toList();
-        debugPrint(
-            'getExperiencesForOwnerCategory: Fetched ${experiences.length} experiences for color category $categoryId (${isOwnerViewing ? 'owner-view' : 'shared-view'})');
-        return experiences;
+            final colorSnap = await colorQuery.get();
+            for (final doc in colorSnap.docs) {
+              byId[doc.id] = Experience.fromFirestore(doc);
+            }
+          } catch (e) {
+            debugPrint(
+                'getExperiencesForOwnerCategory: color-specific shared query denied, fallback to broad filter. Error: $e');
+          }
+
+          try {
+            final broadSnap = await _experiencesCollection
+                .where('sharedWithUserIds', arrayContains: viewerUserId)
+                .limit(limitPerQuery)
+                .get();
+            for (final doc in broadSnap.docs) {
+              final exp = Experience.fromFirestore(doc);
+              final bool matchesPrimary =
+                  exp.colorCategoryId != null && exp.colorCategoryId == categoryId;
+              final bool matchesOther =
+                  exp.otherColorCategoryIds.contains(categoryId);
+              if (matchesPrimary || matchesOther) {
+                byId.putIfAbsent(exp.id, () => exp);
+              }
+            }
+          } catch (e) {
+            debugPrint(
+                'getExperiencesForOwnerCategory: broad sharedWith fallback for color categories failed: $e');
+          }
+          return byId.values.toList();
+        }
       }
       List<Experience> results = [];
       if (isOwnerViewing) {
@@ -1935,11 +1989,26 @@ class ExperienceService {
     }
 
     // Otherwise, fetch experiences normally (for owned categories)
-    final snapshot = await _experiencesCollection
-        .where('colorCategoryId', isEqualTo: colorCategoryId)
-        .limit(limit)
-        .get();
-    return snapshot.docs.map((doc) => Experience.fromFirestore(doc)).toList();
+    final futures = await Future.wait([
+      _experiencesCollection
+          .where('colorCategoryId', isEqualTo: colorCategoryId)
+          .limit(limit)
+          .get(),
+      _experiencesCollection
+          .where('otherColorCategoryIds', arrayContains: colorCategoryId)
+          .limit(limit)
+          .get(),
+    ]);
+    final List<Experience> results = [];
+    final Set<String> seen = {};
+    for (final snapshot in futures) {
+      for (final doc in snapshot.docs) {
+        if (seen.add(doc.id)) {
+          results.add(Experience.fromFirestore(doc));
+        }
+      }
+    }
+    return results;
   }
 
   /// Get experiences by category

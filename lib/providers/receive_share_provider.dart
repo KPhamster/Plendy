@@ -95,6 +95,8 @@ class ReceiveShareProvider extends ChangeNotifier {
     String? lastUsedCategoryId = _prefs!.getString(AppConstants.lastUsedCategoryKey);
     String? lastUsedColorCategoryId = _prefs!.getString(AppConstants.lastUsedColorCategoryKey);
     List<String>? lastUsedOtherCategoryIds = _prefs!.getStringList(AppConstants.lastUsedOtherCategoriesKey);
+    List<String>? lastUsedOtherColorCategoryIds =
+        _prefs!.getStringList(AppConstants.lastUsedOtherColorCategoriesKey);
 
     // --- Text Category Defaulting ---
     if (isFirstCard) {
@@ -157,6 +159,11 @@ class ReceiveShareProvider extends ChangeNotifier {
         // ADDED: Copy 'Other Categories' as well
         cardData.selectedOtherCategoryIds = List<String>.from(_experienceCards.last.selectedOtherCategoryIds);
         print("Provider (Subsequent Card): Copied other category IDs from previous card to card ${cardData.id.substring(cardData.id.length-4)}");
+        cardData.selectedOtherColorCategoryIds =
+            List<String>.from(
+                _experienceCards.last.selectedOtherColorCategoryIds);
+        print(
+            "Provider (Subsequent Card): Copied other color category IDs from previous card to card ${cardData.id.substring(cardData.id.length - 4)}");
       } 
       // No else needed here as the text category fallback above would have handled the unexpected case.
     }
@@ -169,6 +176,14 @@ class ReceiveShareProvider extends ChangeNotifier {
             .toList();
         cardData.selectedOtherCategoryIds = validOtherIds;
         print("Provider (First Card): Applied PREFERRED other category IDs: $validOtherIds to card ${cardData.id.substring(cardData.id.length - 4)}");
+      }
+      if (lastUsedOtherColorCategoryIds != null) {
+        final validOtherColorIds = lastUsedOtherColorCategoryIds
+            .where((id) => _userColorCategories.any((cat) => cat.id == id))
+            .toList();
+        cardData.selectedOtherColorCategoryIds = validOtherColorIds;
+        print(
+            "Provider (First Card): Applied PREFERRED other color category IDs: $validOtherColorIds to card ${cardData.id.substring(cardData.id.length - 4)}");
       }
     }
   }
@@ -322,6 +337,8 @@ class ReceiveShareProvider extends ChangeNotifier {
       targetCard.selectedCategoryId = selectedExperience.categoryId;
       targetCard.selectedColorCategoryId = selectedExperience.colorCategoryId;
       targetCard.selectedOtherCategoryIds = List<String>.from(selectedExperience.otherCategories);
+      targetCard.selectedOtherColorCategoryIds =
+          List<String>.from(selectedExperience.otherColorCategoryIds);
       targetCard.isPrivate = selectedExperience.isPrivate;
       targetCard.yelpUrlController.text = selectedExperience.yelpUrl ?? '';
       targetCard.websiteController.text = selectedExperience.website ?? '';

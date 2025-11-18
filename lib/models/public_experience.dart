@@ -118,6 +118,7 @@ class PublicExperience {
       additionalNotes: null,
       editorUserIds: const <String>[],
       colorCategoryId: null,
+      otherColorCategoryIds: const <String>[],
       otherCategories: const <String>[],
       categoryIconDenorm: null,
       colorHexDenorm: null,

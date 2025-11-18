@@ -91,6 +91,39 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
   }
   // --- END ADDED ---
 
+  // --- ADDED: Function to show the other color categories selection dialog ---
+  Future<void> _showOtherColorCategoriesSelectionDialog() async {
+    FocusScope.of(context).unfocus();
+    await Future.microtask(() {});
+
+    final result = await showDialog<dynamic>(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext dialogContext) {
+        return _OtherColorCategoriesSelectionDialog(
+          userColorCategoriesNotifier: widget.userColorCategoriesNotifier,
+          initiallySelectedIds: widget.cardData.selectedOtherColorCategoryIds,
+          primaryColorCategoryId: widget.cardData.selectedColorCategoryId,
+          onEditColorCategories: _handleEditColorCategories,
+          onAddColorCategory: () async {
+            await _handleAddColorCategory(selectAfterAdding: false);
+            if (mounted) {
+              _showOtherColorCategoriesSelectionDialog();
+            }
+          },
+        );
+      },
+    );
+
+    if (result is List<String>) {
+      setState(() {
+        widget.cardData.selectedOtherColorCategoryIds = result;
+      });
+      widget.onUpdate(refreshCategories: false);
+    }
+  }
+  // --- END ADDED ---
+
   // --- ADDED: Helper to extract the first URL from text ---
   String? _extractFirstUrl(String text) {
     if (text.isEmpty) return null;
@@ -611,7 +644,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
   }
 
   // --- ADDED: Method to handle adding a new color category ---
-  Future<void> _handleAddColorCategory() async {
+  Future<void> _handleAddColorCategory({bool selectAfterAdding = true}) async {
     FocusScope.of(context).unfocus();
     await Future.microtask(() {});
     // TODO: Implement AddColorCategoryModal
@@ -633,10 +666,12 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
           newCategoryName:
               null); // Pass null for new name, selection happens based on ID
       // Explicitly set the new category ID
-      // REMOVED setState
-      // setState(() {
-      widget.cardData.selectedColorCategoryId = newCategory.id;
-      // });
+      if (selectAfterAdding) {
+        // REMOVED setState
+        // setState(() {
+        widget.cardData.selectedColorCategoryId = newCategory.id;
+        // });
+      }
     }
   }
 
@@ -1448,6 +1483,106 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
 
                       SizedBox(height: 16),
 
+                      // --- ADDED: Other Color Categories Selection ---
+                      Text('Other Color Categories',
+                          style: Theme.of(context)
+                              .textTheme
+                              .bodyMedium
+                              ?.copyWith(color: Colors.grey[600])),
+                      const SizedBox(height: 4),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(12.0),
+                        decoration: BoxDecoration(
+                          border: Border.all(color: Colors.grey),
+                          borderRadius: BorderRadius.circular(8.0),
+                        ),
+                        child: ValueListenableBuilder<List<ColorCategory>>(
+                          valueListenable: widget.userColorCategoriesNotifier,
+                          builder: (context, allColorCategories, child) {
+                            final selectedColorCategories = allColorCategories
+                                .where((cat) => widget.cardData
+                                    .selectedOtherColorCategoryIds
+                                    .contains(cat.id))
+                                .toList();
+
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                if (selectedColorCategories.isEmpty)
+                                  Padding(
+                                    padding: const EdgeInsets.only(bottom: 8.0),
+                                    child: Text(
+                                      'No other color categories assigned.',
+                                      style: TextStyle(color: Colors.grey[700]),
+                                    ),
+                                  )
+                                else
+                                  Padding(
+                                    padding: const EdgeInsets.only(bottom: 8.0),
+                                    child: Wrap(
+                                      spacing: 6.0,
+                                      runSpacing: 6.0,
+                                      children: selectedColorCategories
+                                          .map((category) {
+                                        return Chip(
+                                          backgroundColor: Colors.white,
+                                          avatar: Container(
+                                            width: 18,
+                                            height: 18,
+                                            decoration: BoxDecoration(
+                                              color: category.color,
+                                              shape: BoxShape.circle,
+                                            ),
+                                          ),
+                                          label: Text(category.name),
+                                          onDeleted: () {
+                                            setState(() {
+                                              widget.cardData
+                                                  .selectedOtherColorCategoryIds
+                                                  .remove(category.id);
+                                            });
+                                            widget.onUpdate(
+                                                refreshCategories: false);
+                                          },
+                                          materialTapTargetSize:
+                                              MaterialTapTargetSize.shrinkWrap,
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 0),
+                                          visualDensity: VisualDensity.compact,
+                                          labelPadding:
+                                              const EdgeInsets.symmetric(
+                                                  horizontal: 4.0),
+                                          deleteIconColor: Colors.grey[600],
+                                          deleteButtonTooltipMessage:
+                                              'Remove color category',
+                                        );
+                                      }).toList(),
+                                    ),
+                                  ),
+                                Center(
+                                  child: TextButton.icon(
+                                    icon: const Icon(Icons.add, size: 20),
+                                    label: const Text(
+                                        'Add / Edit Color Categories'),
+                                    onPressed:
+                                        _showOtherColorCategoriesSelectionDialog,
+                                    style: TextButton.styleFrom(
+                                      visualDensity: VisualDensity.compact,
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 12),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            );
+                          },
+                        ),
+                      ),
+                      // --- END ADDED ---
+
+                      SizedBox(height: 16),
+
                       // Official website
                       TextFormField(
                         controller:
@@ -1730,6 +1865,170 @@ class _OtherCategoriesSelectionDialogState
                             style: TextStyle(color: Colors.orange[700])),
                         onPressed: () async {
                           await widget.onEditCategories();
+                        },
+                        style: TextButton.styleFrom(
+                            alignment: Alignment.centerLeft,
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 12)),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          child: const Text('Cancel'),
+          onPressed: () {
+            Navigator.of(context).pop();
+          },
+        ),
+        TextButton(
+          child: const Text('Confirm'),
+          onPressed: () {
+            Navigator.of(context).pop(_selectedIds.toList());
+          },
+        ),
+      ],
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+    );
+  }
+}
+// --- END ADDED ---
+
+// --- ADDED: Dialog for selecting 'Other Color' categories ---
+class _OtherColorCategoriesSelectionDialog extends StatefulWidget {
+  final ValueNotifier<List<ColorCategory>> userColorCategoriesNotifier;
+  final List<String> initiallySelectedIds;
+  final String? primaryColorCategoryId;
+  final Future<bool?> Function() onEditColorCategories;
+  final Future<void> Function() onAddColorCategory;
+
+  const _OtherColorCategoriesSelectionDialog({
+    required this.userColorCategoriesNotifier,
+    required this.initiallySelectedIds,
+    this.primaryColorCategoryId,
+    required this.onEditColorCategories,
+    required this.onAddColorCategory,
+  });
+
+  @override
+  State<_OtherColorCategoriesSelectionDialog> createState() =>
+      _OtherColorCategoriesSelectionDialogState();
+}
+
+class _OtherColorCategoriesSelectionDialogState
+    extends State<_OtherColorCategoriesSelectionDialog> {
+  late Set<String> _selectedIds;
+
+  String? _sharedOwnerLabel(String? ownerName) {
+    if (ownerName == null) return null;
+    final trimmed = ownerName.trim();
+    if (trimmed.isEmpty) return null;
+    return 'Shared by $trimmed';
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedIds = Set<String>.from(widget.initiallySelectedIds);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: Colors.white,
+      title: const Text('Select Other Color Categories'),
+      contentPadding: const EdgeInsets.fromLTRB(0, 20, 0, 0),
+      content: SizedBox(
+        width: double.maxFinite,
+        height: MediaQuery.of(context).size.height * 0.6,
+        child: ValueListenableBuilder<List<ColorCategory>>(
+          valueListenable: widget.userColorCategoriesNotifier,
+          builder: (context, allColorCategories, child) {
+            final availableCategories = allColorCategories
+                .where((cat) => cat.id != widget.primaryColorCategoryId)
+                .toList();
+
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Expanded(
+                  child: ListView.builder(
+                    itemCount: availableCategories.length,
+                    itemBuilder: (context, index) {
+                      final category = availableCategories[index];
+                      final bool isSelected =
+                          _selectedIds.contains(category.id);
+                      final sharedLabel =
+                          _sharedOwnerLabel(category.sharedOwnerDisplayName);
+                      return CheckboxListTile(
+                        title: Text(category.name),
+                        subtitle: sharedLabel != null
+                            ? Text(
+                                sharedLabel,
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .bodySmall
+                                    ?.copyWith(color: Colors.grey[600]),
+                              )
+                            : null,
+                        secondary: Container(
+                          width: 24,
+                          height: 24,
+                          decoration: BoxDecoration(
+                            color: category.color,
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.grey.shade400),
+                          ),
+                        ),
+                        value: isSelected,
+                        onChanged: (bool? value) {
+                          setState(() {
+                            if (value == true) {
+                              _selectedIds.add(category.id);
+                            } else {
+                              _selectedIds.remove(category.id);
+                            }
+                          });
+                        },
+                        controlAffinity: ListTileControlAffinity.leading,
+                      );
+                    },
+                  ),
+                ),
+                const Divider(height: 1),
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 8.0, vertical: 8.0),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      TextButton.icon(
+                        icon:
+                            Icon(Icons.add, size: 20, color: Colors.blue[700]),
+                        label: Text('Add New Color Category',
+                            style: TextStyle(color: Colors.blue[700])),
+                        onPressed: () async {
+                          Navigator.of(context).pop();
+                          await widget.onAddColorCategory();
+                        },
+                        style: TextButton.styleFrom(
+                            alignment: Alignment.centerLeft,
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 12)),
+                      ),
+                      TextButton.icon(
+                        icon: Icon(Icons.edit,
+                            size: 20, color: Colors.orange[700]),
+                        label: Text('Edit Color Categories',
+                            style: TextStyle(color: Colors.orange[700])),
+                        onPressed: () async {
+                          await widget.onEditColorCategories();
                         },
                         style: TextButton.styleFrom(
                             alignment: Alignment.centerLeft,

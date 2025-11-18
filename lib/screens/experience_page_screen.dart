@@ -3724,7 +3724,10 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
 
   // --- ADDED: Helper Widget for Other Categories Row --- START ---
   Widget _buildOtherCategoriesRow(BuildContext context, Experience experience) {
-    if (experience.otherCategories.isEmpty) {
+    final bool hasOtherCategories = experience.otherCategories.isNotEmpty;
+    final bool hasOtherColorCategories =
+        experience.otherColorCategoryIds.isNotEmpty;
+    if (!hasOtherCategories && !hasOtherColorCategories) {
       return const SizedBox.shrink(); // Don't show row if no other categories
     }
 
@@ -3741,8 +3744,23 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
         .cast<UserCategory>()
         .toList();
 
-    // Don't show if no valid category objects were found
-    if (otherCategoryObjects.isEmpty) {
+    final otherColorCategoryObjects = experience.otherColorCategoryIds
+        .map((colorCategoryId) {
+          try {
+            return widget.userColorCategories
+                .firstWhere((cat) => cat.id == colorCategoryId);
+          } catch (e) {
+            return null; // Color category not found
+          }
+        })
+        .where((cat) => cat != null)
+        .cast<ColorCategory>()
+        .toList();
+
+    final bool showOtherCategories = otherCategoryObjects.isNotEmpty;
+    final bool showOtherColorCategories =
+        otherColorCategoryObjects.isNotEmpty;
+    if (!showOtherCategories && !showOtherColorCategories) {
       return const SizedBox.shrink();
     }
 
@@ -3757,28 +3775,65 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  'Other Categories:',
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
-                ),
-                const SizedBox(height: 4),
-                Wrap(
-                  spacing: 6.0,
-                  runSpacing: 6.0,
-                  children: otherCategoryObjects.map((category) {
-                    return Chip(
-                      avatar: Text(category.icon,
-                          style: const TextStyle(fontSize: 14)),
-                      label: Text(category.name),
-                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      padding: const EdgeInsets.symmetric(horizontal: 6),
-                      visualDensity: VisualDensity.compact,
-                      labelPadding: const EdgeInsets.symmetric(horizontal: 4.0),
-                    );
-                  }).toList(),
-                ),
+                if (showOtherCategories) ...[
+                  Text(
+                    'Other Categories:',
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                  ),
+                  const SizedBox(height: 4),
+                  Wrap(
+                    spacing: 6.0,
+                    runSpacing: 6.0,
+                    children: otherCategoryObjects.map((category) {
+                      return Chip(
+                        backgroundColor: Colors.white,
+                        avatar: Text(category.icon,
+                            style: const TextStyle(fontSize: 14)),
+                        label: Text(category.name),
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        padding: const EdgeInsets.symmetric(horizontal: 6),
+                        visualDensity: VisualDensity.compact,
+                        labelPadding:
+                            const EdgeInsets.symmetric(horizontal: 4.0),
+                      );
+                    }).toList(),
+                  ),
+                ],
+                if (showOtherColorCategories) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    'Other Color Categories:',
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                  ),
+                  const SizedBox(height: 4),
+                  Wrap(
+                    spacing: 6.0,
+                    runSpacing: 6.0,
+                    children: otherColorCategoryObjects.map((colorCategory) {
+                      return Chip(
+                        backgroundColor: Colors.white,
+                        avatar: Container(
+                          width: 18,
+                          height: 18,
+                          decoration: BoxDecoration(
+                            color: colorCategory.color,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        label: Text(colorCategory.name),
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        padding: const EdgeInsets.symmetric(horizontal: 6),
+                        visualDensity: VisualDensity.compact,
+                        labelPadding:
+                            const EdgeInsets.symmetric(horizontal: 4.0),
+                      );
+                    }).toList(),
+                  ),
+                ],
               ],
             ),
           ),

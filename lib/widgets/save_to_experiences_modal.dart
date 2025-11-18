@@ -141,6 +141,8 @@ class _SaveToExperiencesModalState extends State<SaveToExperiencesModal> {
     card.selectedColorCategoryId = previous.selectedColorCategoryId;
     card.selectedOtherCategoryIds =
         List<String>.from(previous.selectedOtherCategoryIds);
+    card.selectedOtherColorCategoryIds =
+        List<String>.from(previous.selectedOtherColorCategoryIds);
     card.locationEnabled.value = previous.locationEnabled.value;
     card.isPrivate = previous.isPrivate;
     _applyCategoryDefaults(card);
@@ -168,6 +170,8 @@ class _SaveToExperiencesModalState extends State<SaveToExperiencesModal> {
     card.locationEnabled.value = true;
     card.selectedOtherCategoryIds =
         List<String>.from(experience.otherCategories);
+    card.selectedOtherColorCategoryIds =
+        List<String>.from(experience.otherColorCategoryIds);
     card.isPrivate = experience.isPrivate;
 
     if (experience.categoryId?.isNotEmpty ?? false) {
@@ -262,6 +266,8 @@ class _SaveToExperiencesModalState extends State<SaveToExperiencesModal> {
           (_userColorCategories.isNotEmpty ? _userColorCategories.first.id : null);
       card.selectedOtherCategoryIds =
           List<String>.from(selectedExperience.otherCategories);
+      card.selectedOtherColorCategoryIds =
+          List<String>.from(selectedExperience.otherColorCategoryIds);
       card.selectedLocation = selectedExperience.location;
       card.locationEnabled.value = true;
       card.isPrivate = selectedExperience.isPrivate;
@@ -394,6 +400,7 @@ class _SaveToExperiencesModalState extends State<SaveToExperiencesModal> {
                 notes.isNotEmpty ? notes : existing.additionalNotes,
             sharedMediaItemIds: updatedMediaIds,
             colorCategoryId: card.selectedColorCategoryId,
+            otherColorCategoryIds: card.selectedOtherColorCategoryIds,
             otherCategories: card.selectedOtherCategoryIds,
             editorUserIds: existing.editorUserIds.contains(userId)
                 ? existing.editorUserIds
@@ -437,6 +444,7 @@ class _SaveToExperiencesModalState extends State<SaveToExperiencesModal> {
             additionalNotes: notes.isNotEmpty ? notes : null,
             editorUserIds: [userId],
             colorCategoryId: card.selectedColorCategoryId,
+            otherColorCategoryIds: card.selectedOtherColorCategoryIds,
             otherCategories: card.selectedOtherCategoryIds,
             categoryIconDenorm: null,
             colorHexDenorm: null,
