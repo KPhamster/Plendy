@@ -9,6 +9,7 @@ import '../services/discovery_share_service.dart';
 import 'receive_share/widgets/facebook_preview_widget.dart';
 import 'receive_share/widgets/generic_url_preview_widget.dart';
 import 'receive_share/widgets/maps_preview_widget.dart';
+import 'receive_share/widgets/yelp_preview_widget.dart';
 import 'receive_share/widgets/tiktok_preview_widget.dart';
 import 'receive_share/widgets/youtube_preview_widget.dart';
 import 'receive_share/widgets/instagram_preview_widget.dart'
@@ -524,7 +525,6 @@ class _DiscoverySharePreviewScreenState
           ),
         );
       case _MediaType.generic:
-      case _MediaType.yelp:
         return SizedBox.expand(
           child: Container(
             color: Colors.black,
@@ -533,6 +533,21 @@ class _DiscoverySharePreviewScreenState
               key: ValueKey('generic_$url'),
               url: url,
               launchUrlCallback: _launchUrl,
+            ),
+          ),
+        );
+      case _MediaType.yelp:
+        return SizedBox.expand(
+          child: Container(
+            color: Colors.black,
+            alignment: Alignment.center,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 420),
+              child: YelpPreviewWidget(
+                key: ValueKey('yelp_$url'),
+                yelpUrl: url,
+                launchUrlCallback: _launchUrl,
+              ),
             ),
           ),
         );

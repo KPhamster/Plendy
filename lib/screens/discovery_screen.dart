@@ -1033,6 +1033,13 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
     final String mediaUrl = payload.mediaUrl;
     if (mediaUrl.isEmpty) return;
 
+    // Skip unsupported preview types like Yelp for the discovery feed
+    if (_classifyUrl(mediaUrl) == _MediaType.yelp) {
+      debugPrint(
+          'DiscoveryScreen: Skipping shared payload because Yelp previews are not supported.');
+      return;
+    }
+
     final _DiscoveryFeedItem newItem = _DiscoveryFeedItem(
       experience: experience,
       mediaUrl: mediaUrl,
@@ -2701,7 +2708,6 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
           ),
         );
       case _MediaType.generic:
-      case _MediaType.yelp:
         return SizedBox.expand(
           child: Container(
             color: Colors.black,
@@ -2712,6 +2718,12 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
               launchUrlCallback: _launchUrl,
             ),
           ),
+        );
+      case _MediaType.yelp:
+        return _buildFallbackPreview(
+          icon: Icons.link_off,
+          label: 'Preview unavailable',
+          description: 'This link cannot be previewed here. Tap the source button to open it externally.',
         );
     }
   }

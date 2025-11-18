@@ -32,6 +32,7 @@ import 'receive_share/widgets/maps_preview_widget.dart';
 import 'receive_share/widgets/generic_url_preview_widget.dart';
 import 'receive_share/widgets/google_knowledge_graph_preview_widget.dart';
 import 'receive_share/widgets/web_url_preview_widget.dart';
+import 'receive_share/widgets/yelp_preview_widget.dart';
 import 'receive_share/widgets/image_preview_widget.dart';
 import 'package:flutter/services.dart';
 import 'package:geocoding/geocoding.dart' as geocoding;
@@ -3894,9 +3895,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   Widget _buildUrlPreview(String url, ExperienceCardData? card, int index,
       [String? sharedText]) {
     if (url.contains('yelp.com/biz') || url.contains('yelp.to/')) {
-      // Render Yelp links as a WebView consistent with GoogleKnowledgeGraphPreviewWidget
-      return WebUrlPreviewWidget(
-        url: url,
+      return YelpPreviewWidget(
+        yelpUrl: url,
         launchUrlCallback: _launchUrl,
       );
     }

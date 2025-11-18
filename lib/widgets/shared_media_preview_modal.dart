@@ -16,6 +16,7 @@ import '../screens/receive_share/widgets/youtube_preview_widget.dart';
 import '../screens/receive_share/widgets/generic_url_preview_widget.dart';
 import '../screens/receive_share/widgets/web_url_preview_widget.dart';
 import '../screens/receive_share/widgets/maps_preview_widget.dart';
+import '../screens/receive_share/widgets/yelp_preview_widget.dart';
 import '../services/google_maps_service.dart';
 import '../services/experience_share_service.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
@@ -484,13 +485,13 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
     }
 
     if (type == _MediaType.yelp) {
-      final double resolvedHeight = heightOverride ?? 1000.0;
-      return WebUrlPreviewWidget(
-        key: ValueKey(url),
-        url: url,
-        launchUrlCallback: widget.onLaunchUrl,
-        showControls: false,
-        height: resolvedHeight,
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4.0),
+        child: YelpPreviewWidget(
+          key: ValueKey(url),
+          yelpUrl: url,
+          launchUrlCallback: widget.onLaunchUrl,
+        ),
       );
     }
 
@@ -799,9 +800,9 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
         iconSize = 30;
         break;
       case _MediaType.yelp:
-        iconData = Icons.open_in_new;
-        iconColor = Theme.of(context).primaryColor;
-        tooltip = 'Open in browser';
+        iconData = FontAwesomeIcons.yelp;
+        iconColor = const Color(0xFFD32323);
+        tooltip = 'Open in Yelp';
         iconSize = 28;
         break;
       case _MediaType.image:

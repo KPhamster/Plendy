@@ -25,6 +25,7 @@ import 'receive_share/widgets/youtube_preview_widget.dart';
 import 'receive_share/widgets/generic_url_preview_widget.dart';
 import 'receive_share/widgets/web_url_preview_widget.dart';
 import 'receive_share/widgets/maps_preview_widget.dart';
+import 'receive_share/widgets/yelp_preview_widget.dart';
 // REMOVED: Dio import (no longer needed for thumbnail fetching)
 // import 'package:dio/dio.dart';
 // REMOVED: Dotenv import (no longer needed for credentials)
@@ -2383,11 +2384,9 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                         },
                       );
                     } else if (isYelpUrl) {
-                      mediaWidget = WebUrlPreviewWidget(
-                        url: url,
+                      mediaWidget = YelpPreviewWidget(
+                        yelpUrl: url,
                         launchUrlCallback: _launchUrl,
-                        showControls: false,
-                        height: previewHeightOverride ?? 1000.0,
                       );
                     } else if (isMapsUrl) {
                       if (!_mapsPreviewFutures.containsKey(url)) {
