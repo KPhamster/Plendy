@@ -9,7 +9,6 @@ android/key.properties
 android/release-keystore.jks
 android/app/release-keystore.jks
 # Miscellaneous
-.cursor/
 *.class
 *.log
 *.pyc

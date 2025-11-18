@@ -1582,7 +1582,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
             leaf.sort((a, b) =>
                 b.mediaItem.createdAt.compareTo(a.mediaItem.createdAt));
           }
-          int ordinal = 1;
+          int ordinal = 0;
           for (final g in leaf) {
             flat.add({'item': g, 'pathKey': prefixKey, 'ordinal': ordinal});
             ordinal++;
@@ -1684,7 +1684,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
           items.sort(
               (a, b) => b.mediaItem.createdAt.compareTo(a.mediaItem.createdAt));
         }
-        int ordinal = 1;
+        int ordinal = 0;
         for (final g in items) {
           flat.add({'item': g, 'pathKey': key, 'ordinal': ordinal});
           ordinal++;
@@ -5782,7 +5782,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
             );
           }
           final group = _filteredGroupedContentItems[index - 1];
-          return _buildContentListItem(group, index);
+          return _buildContentListItem(group, index - 1);
         },
       );
     }
