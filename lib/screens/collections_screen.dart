@@ -29,6 +29,7 @@ import 'receive_share/widgets/youtube_preview_widget.dart';
 import 'receive_share/widgets/generic_url_preview_widget.dart';
 import 'receive_share/widgets/web_url_preview_widget.dart';
 import 'receive_share/widgets/maps_preview_widget.dart';
+import 'receive_share/widgets/yelp_preview_widget.dart';
 import '../models/shared_media_item.dart'; // ADDED Import
 import '../widgets/shared_media_preview_modal.dart';
 import '../models/share_permission.dart'; // ADDED Import for SharePermission
@@ -8128,11 +8129,9 @@ class CollectionsScreenState extends State<CollectionsScreen>
             },
           );
         } else if (isYelpUrl) {
-          mediaWidget = WebUrlPreviewWidget(
-            url: mediaPath,
+          mediaWidget = YelpPreviewWidget(
+            yelpUrl: mediaPath,
             launchUrlCallback: _launchUrl,
-            showControls: false,
-            height: 1000.0,
           );
         } else if (isMapsUrl) {
           if (!_mapsPreviewFutures.containsKey(mediaPath) &&
