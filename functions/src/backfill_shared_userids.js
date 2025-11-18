@@ -34,6 +34,12 @@ function getCategoryIdsForExperience(experienceData) {
     categoryIds.add(experienceData.colorCategoryId);
   }
 
+  if (Array.isArray(experienceData.otherColorCategoryIds)) {
+    experienceData.otherColorCategoryIds.forEach((id) =>
+      categoryIds.add(id)
+    );
+  }
+
   return Array.from(categoryIds);
 }
 

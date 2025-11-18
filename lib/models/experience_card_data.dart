@@ -65,6 +65,8 @@ class ExperienceCardData {
 
   /// Selected IDs for "other" categories
   List<String> selectedOtherCategoryIds = [];
+  /// Selected IDs for "other" color categories
+  List<String> selectedOtherColorCategoryIds = [];
 
   ExperienceCardData();
 

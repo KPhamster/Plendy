@@ -296,6 +296,7 @@ class Experience {
 
   // --- ADDED ---
   final String? colorCategoryId; // ID linking to the selected ColorCategory
+  final List<String> otherColorCategoryIds; // ADDED: secondary color category IDs
   final List<String> otherCategories; // List of other category IDs
   // --- END ADDED ---
 
@@ -340,6 +341,7 @@ class Experience {
     required this.editorUserIds,
     this.isPrivate = false,
     this.colorCategoryId,
+    this.otherColorCategoryIds = const [],
     this.otherCategories = const [], // Default to empty list
     this.categoryIconDenorm,
     this.colorHexDenorm,
@@ -381,6 +383,8 @@ class Experience {
       editorUserIds: _parseStringList(data['editorUserIds']),
       isPrivate: data['isPrivate'] == true,
       colorCategoryId: data['colorCategoryId'] as String?,
+      otherColorCategoryIds:
+          _parseStringList(data['otherColorCategoryIds']), // ADDED
       otherCategories: _parseStringList(data['otherCategories']),
       categoryIconDenorm: data['categoryIconDenorm'] as String?,
       colorHexDenorm: data['colorHexDenorm'] as String?,
@@ -420,6 +424,7 @@ class Experience {
       'additionalNotes': additionalNotes,
       'isPrivate': isPrivate,
       'colorCategoryId': colorCategoryId,
+      'otherColorCategoryIds': otherColorCategoryIds,
       'otherCategories': otherCategories,
       'categoryIconDenorm': categoryIconDenorm,
       'colorHexDenorm': colorHexDenorm,
@@ -459,6 +464,7 @@ class Experience {
     List<String>? editorUserIds,
     bool? isPrivate,
     String? colorCategoryId,
+    List<String>? otherColorCategoryIds,
     List<String>? otherCategories,
     String? categoryIconDenorm,
     String? colorHexDenorm,
@@ -496,6 +502,8 @@ class Experience {
       editorUserIds: editorUserIds ?? this.editorUserIds,
       isPrivate: isPrivate ?? this.isPrivate,
       colorCategoryId: colorCategoryId ?? this.colorCategoryId,
+      otherColorCategoryIds:
+          otherColorCategoryIds ?? this.otherColorCategoryIds,
       otherCategories: otherCategories ?? this.otherCategories,
       categoryIconDenorm: categoryIconDenorm ?? this.categoryIconDenorm,
       colorHexDenorm: colorHexDenorm ?? this.colorHexDenorm,

@@ -43,7 +43,11 @@ class CategoryShareService {
         return otherCats.contains(category.id);
       }
       if (colorCategory != null) {
-        return exp.colorCategoryId == colorCategory.id;
+        if (exp.colorCategoryId == colorCategory.id) {
+          return true;
+        }
+        final otherColorIds = exp.otherColorCategoryIds;
+        return otherColorIds.contains(colorCategory.id);
       }
       return false;
     }

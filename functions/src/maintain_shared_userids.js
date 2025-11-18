@@ -19,7 +19,8 @@ const db = getFirestore();
 
 /**
  * Helper: Get all experiences that belong to a category (user or color).
- * Handles primary categoryId, otherCategories, and colorCategoryId.
+ * Handles primary categoryId, otherCategories,
+ * colorCategoryId, and otherColorCategoryIds.
  */
 async function getExperiencesForCategory(ownerUserId, categoryId, isColorCategory) {
   const experiencesRef = db.collection("experiences");
@@ -34,6 +35,14 @@ async function getExperiencesForCategory(ownerUserId, categoryId, isColorCategor
         .get();
 
       snap.docs.forEach((doc) => results.set(doc.id, doc));
+
+      // Query by otherColorCategoryIds (array-contains)
+      const otherColorSnap = await experiencesRef
+        .where("createdBy", "==", ownerUserId)
+        .where("otherColorCategoryIds", "array-contains", categoryId)
+        .get();
+
+      otherColorSnap.docs.forEach((doc) => results.set(doc.id, doc));
     } else {
       // Query by primary categoryId
       const primarySnap = await experiencesRef
@@ -78,6 +87,12 @@ function getCategoryIdsForExperience(experienceData) {
 
   if (experienceData.colorCategoryId) {
     categoryIds.add(experienceData.colorCategoryId);
+  }
+
+  if (Array.isArray(experienceData.otherColorCategoryIds)) {
+    experienceData.otherColorCategoryIds.forEach((id) =>
+      categoryIds.add(id)
+    );
   }
 
   return Array.from(categoryIds);

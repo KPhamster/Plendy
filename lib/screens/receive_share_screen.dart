@@ -623,6 +623,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             cardData['selectedColorCategoryId'];
         targetCard.selectedOtherCategoryIds =
             List<String>.from(cardData['selectedOtherCategoryIds'] ?? []);
+        targetCard.selectedOtherColorCategoryIds =
+            List<String>.from(cardData['selectedOtherColorCategoryIds'] ?? []);
         targetCard.locationController.text =
             cardData['locationController'] ?? '';
         targetCard.searchController.text = cardData['searchController'] ?? '';
@@ -1049,6 +1051,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         'selectedCategoryId': card.selectedCategoryId,
         'selectedColorCategoryId': card.selectedColorCategoryId,
         'selectedOtherCategoryIds': card.selectedOtherCategoryIds,
+        'selectedOtherColorCategoryIds':
+            card.selectedOtherColorCategoryIds,
         'locationController': card.locationController.text,
         'searchController': card.searchController.text,
         'locationEnabled': card.locationEnabled.value,
@@ -2604,6 +2608,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                 updatedAt: now,
                 editorUserIds: [currentUserId],
                 colorCategoryId: colorCategoryIdToSave,
+                otherColorCategoryIds:
+                    card.selectedOtherColorCategoryIds,
                 otherCategories: card.selectedOtherCategoryIds,
                 isPrivate: card.isPrivate,
               );
@@ -2641,6 +2647,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                       ? currentExperienceData.editorUserIds
                       : [...currentExperienceData.editorUserIds, currentUserId],
                   colorCategoryId: colorCategoryIdToSave,
+                  otherColorCategoryIds:
+                      card.selectedOtherColorCategoryIds,
                   otherCategories: card.selectedOtherCategoryIds,
                   isPrivate: card.isPrivate);
               await _experienceService.updateExperience(updatedExpData);
@@ -2686,6 +2694,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                   colorCategoryId: !isNewExperience
                       ? colorCategoryIdToSave
                       : currentExperienceData.colorCategoryId,
+                  otherColorCategoryIds: !isNewExperience
+                      ? card.selectedOtherColorCategoryIds
+                      : currentExperienceData.otherColorCategoryIds,
                   otherCategories: !isNewExperience
                       ? card.selectedOtherCategoryIds
                       : currentExperienceData.otherCategories,
@@ -2814,6 +2825,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         // ADDED: Save last used other categories
         await prefs.setStringList(AppConstants.lastUsedOtherCategoriesKey,
             lastProcessedCard.selectedOtherCategoryIds);
+        await prefs.setStringList(
+            AppConstants.lastUsedOtherColorCategoriesKey,
+            lastProcessedCard.selectedOtherColorCategoryIds);
         if (!mounted) return;
       }
 

@@ -4497,6 +4497,20 @@ class CollectionsScreenState extends State<CollectionsScreen>
     const double badgeBorderWidth = 2.0;
     const double badgeOffset = -3.0;
 
+    final List<ColorCategory> otherColorCategories = experience
+        .otherColorCategoryIds
+        .map((id) => _colorCategories.firstWhereOrNull((cc) => cc.id == id))
+        .whereType<ColorCategory>()
+        .toList();
+    final bool hasOtherCategories = experience.otherCategories.isNotEmpty;
+    final bool hasOtherColorCategories = otherColorCategories.isNotEmpty;
+    final bool hasNotes = experience.additionalNotes != null &&
+        experience.additionalNotes!.isNotEmpty;
+    final bool shouldShowSubRow = hasOtherCategories ||
+        hasOtherColorCategories ||
+        contentCount > 0 ||
+        (hasNotes && !hasOtherCategories && !hasOtherColorCategories);
+
     final Widget leadingBase = Container(
       width: 56,
       height: 56,
@@ -4577,11 +4591,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
               style: Theme.of(context).textTheme.bodySmall,
             ),
           // Row for subcategory icons and/or content count; also lift notes here when no subcategories
-          if (experience.otherCategories.isNotEmpty ||
-              contentCount > 0 ||
-              ((experience.additionalNotes != null &&
-                      experience.additionalNotes!.isNotEmpty) &&
-                  experience.otherCategories.isEmpty))
+          if (shouldShowSubRow)
             Padding(
               padding: const EdgeInsets.only(top: 2.0),
               child: Row(
@@ -4590,24 +4600,38 @@ class CollectionsScreenState extends State<CollectionsScreen>
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        if (experience.otherCategories.isNotEmpty)
+                        if (hasOtherCategories || hasOtherColorCategories)
                           Wrap(
                             spacing: 6.0,
                             runSpacing: 2.0,
-                            children:
-                                experience.otherCategories.map((categoryId) {
-                              final otherCategory =
-                                  _categories.firstWhereOrNull(
-                                (cat) => cat.id == categoryId,
-                              );
-                              if (otherCategory != null) {
-                                return Text(
-                                  otherCategory.icon,
-                                  style: const TextStyle(fontSize: 14),
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            children: [
+                              ...experience.otherCategories
+                                  .map((categoryId) {
+                                final otherCategory =
+                                    _categories.firstWhereOrNull(
+                                  (cat) => cat.id == categoryId,
                                 );
-                              }
-                              return const SizedBox.shrink();
-                            }).toList(),
+                                if (otherCategory != null) {
+                                  return Text(
+                                    otherCategory.icon,
+                                    style: const TextStyle(fontSize: 14),
+                                  );
+                                }
+                                return const SizedBox.shrink();
+                              }),
+                              ...otherColorCategories.map((colorCategory) {
+                                final Color chipColor = colorCategory.color;
+                                return Container(
+                                  width: 10,
+                                  height: 10,
+                                  decoration: BoxDecoration(
+                                    color: chipColor,
+                                    shape: BoxShape.circle,
+                                  ),
+                                );
+                              }),
+                            ],
                           ),
                         if (experience.additionalNotes != null &&
                             experience.additionalNotes!.isNotEmpty)
