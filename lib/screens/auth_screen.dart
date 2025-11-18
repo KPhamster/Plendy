@@ -198,11 +198,13 @@ class _AuthScreenState extends State<AuthScreen> {
 													child: Text('Or Login with', style: TextStyle(color: Colors.black87, fontSize: 14)),
 												),
 												Expanded(child: Divider(color: Colors.grey[400])),
-											],
-										),
-										const SizedBox(height: 12),
-										Center(
-											child: InkWell(
+									],
+									),
+									const SizedBox(height: 12),
+									Row(
+										mainAxisAlignment: MainAxisAlignment.center,
+										children: [
+											InkWell(
 												onTap: () async {
 												try {
 													final result = await authService.signInWithGoogle();
@@ -224,8 +226,31 @@ class _AuthScreenState extends State<AuthScreen> {
 													child: Icon(FontAwesomeIcons.google, color: Color(0xFFD40000), size: 44),
 												),
 											),
-										),
-										const SizedBox(height: 12),
+											InkWell(
+												onTap: () async {
+												try {
+													final result = await authService.signInWithApple();
+													if (result != null) {
+														// If this AuthScreen was pushed on top of the stack, remove it so root shows MainScreen
+														if (!mounted) return;
+														Navigator.of(context, rootNavigator: true).popUntil((route) => route.isFirst);
+													}
+												} catch (e) {
+													if (mounted) {
+														ScaffoldMessenger.of(context).showSnackBar(
+															SnackBar(content: Text(e.toString())),
+														);
+													}
+												}
+												},
+												child: const Padding(
+													padding: EdgeInsets.symmetric(horizontal: 20),
+													child: Icon(FontAwesomeIcons.apple, color: Colors.black, size: 44),
+												),
+											),
+										],
+									),
+									const SizedBox(height: 12),
 										Row(
 											mainAxisAlignment: MainAxisAlignment.center,
 											children: [

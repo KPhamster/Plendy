@@ -9,6 +9,7 @@ android/key.properties
 android/release-keystore.jks
 android/app/release-keystore.jks
 # Miscellaneous
+.cursor/
 *.class
 *.log
 *.pyc
@@ -103,3 +104,4 @@ mcp-server-raygun/node_modules/resolve/bin/resolve
 get-pip.py
 .claude/settings.local.json
 android-mcp-server/
+/.cursor

@@ -1,5 +1,6 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import 'user_service.dart';
 import 'experience_service.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -201,6 +202,100 @@ class AuthService extends ChangeNotifier {
         await signOut();
       }
       rethrow; // Rethrow other errors
+    }
+  }
+
+  // Apple Sign In
+  Future<UserCredential?> signInWithApple() async {
+    UserCredential? userCredential;
+    try {
+      // Request Apple ID credential
+      final appleCredential = await SignInWithApple.getAppleIDCredential(
+        scopes: [
+          AppleIDAuthorizationScopes.email,
+          AppleIDAuthorizationScopes.fullName,
+        ],
+      );
+
+      // Create an OAuth credential for Firebase
+      final oauthCredential = OAuthProvider("apple.com").credential(
+        idToken: appleCredential.identityToken,
+        accessToken: appleCredential.authorizationCode,
+      );
+
+      // Sign in to Firebase with the Apple credential
+      userCredential = await _auth.signInWithCredential(oauthCredential);
+      print(
+          "Firebase authentication with Apple successful for UID: ${userCredential.user?.uid}");
+
+      // Save user email to Firestore (only if user exists)
+      if (userCredential.user != null) {
+        // For Apple Sign In, email might be null if user chose to hide it
+        // Use the email from appleCredential if available
+        String? email = userCredential.user!.email ?? appleCredential.email;
+        
+        if (email != null && email.isNotEmpty) {
+          await _userService.saveUserEmail(userCredential.user!.uid, email);
+        } else {
+          print("Warning: Apple user has no email address.");
+        }
+
+        // Check if this is a new user and initialize default categories if needed
+        final bool isNewUser =
+            userCredential.additionalUserInfo?.isNewUser ?? false;
+        print("Is new Apple user? $isNewUser");
+
+        if (isNewUser) {
+          print(
+              "Attempting to initialize default categories for new Apple user...");
+          await _userService.updateUserCoreData(userCredential.user!.uid, {
+            'hasCompletedOnboarding': false,
+            'hasFinishedOnboardingFlow': false,
+          });
+          
+          try {
+            // Use Future.wait to run initializations concurrently but wait for both
+            await Future.wait([
+              _experienceService
+                  .initializeDefaultUserCategories(userCredential.user!.uid),
+              _experienceService.initializeDefaultUserColorCategories(
+                  userCredential.user!.uid),
+            ]);
+            print(
+                "Default text & color categories initialization successful for new Apple user: ${userCredential.user!.uid}");
+          } catch (e) {
+            print(
+                "CRITICAL ERROR: Failed to initialize default categories for new Apple user: $e");
+            // Rethrow the error to make the sign-in fail if setup fails.
+            rethrow;
+          }
+        }
+      } else {
+        print(
+            "Warning: userCredential.user is null after Apple Sign In. Cannot save email or initialize categories.");
+      }
+
+      return userCredential;
+    } on SignInWithAppleAuthorizationException catch (e) {
+      print("Apple Sign In authorization error: ${e.code} - ${e.message}");
+      // User cancelled or authorization failed
+      if (e.code == AuthorizationErrorCode.canceled) {
+        print("Apple Sign In cancelled by user.");
+        return null;
+      }
+      rethrow;
+    } on FirebaseAuthException catch (e) {
+      print(
+          "FirebaseAuthException during Apple Sign In: ${e.code} - ${e.message}");
+      rethrow;
+    } catch (e) {
+      print("Generic error during Apple Sign In: $e");
+      // Sign out the user from Firebase if an unexpected error occurred
+      if (userCredential?.user != null) {
+        print("Signing out user due to error during post-auth setup...");
+        await signOut();
+      }
+      rethrow;
     }
   }
 
