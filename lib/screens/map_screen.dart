@@ -1499,7 +1499,9 @@ class _MapScreenState extends State<MapScreen> {
 
     final bool colorMatch = _selectedColorCategoryIds.isEmpty ||
         (exp.colorCategoryId != null &&
-            _selectedColorCategoryIds.contains(exp.colorCategoryId));
+            _selectedColorCategoryIds.contains(exp.colorCategoryId)) ||
+        exp.otherColorCategoryIds
+            .any((colorId) => _selectedColorCategoryIds.contains(colorId));
 
     return categoryMatch && colorMatch;
   }
@@ -2739,44 +2741,95 @@ class _MapScreenState extends State<MapScreen> {
 
   // ADDED: Helper to build the Color Category display
   Widget _buildColorCategoryWidget() {
-    if (_tappedExperience == null || _tappedExperience!.colorCategoryId == null) {
+    if (_tappedExperience == null) {
       return const SizedBox.shrink();
     }
 
-    ColorCategory? colorCategory;
-    try {
-      colorCategory = _colorCategories
-          .firstWhere((cc) => cc.id == _tappedExperience!.colorCategoryId);
-    } catch (e) {
-      return const SizedBox.shrink(); // Not found
+    final experience = _tappedExperience!;
+    ColorCategory? primaryColorCategory;
+    if (experience.colorCategoryId != null) {
+      try {
+        primaryColorCategory = _colorCategories
+            .firstWhere((cc) => cc.id == experience.colorCategoryId);
+      } catch (_) {
+        primaryColorCategory = null;
+      }
     }
 
-    // MODIFIED: Removed the Column and header text
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: Colors.grey.shade100,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 12,
-            height: 12,
-            decoration: BoxDecoration(
-              color: _parseColor(colorCategory.colorHex),
-              shape: BoxShape.circle,
-              border: Border.all(color: Colors.grey.shade400, width: 0.5),
+    final List<ColorCategory> otherColorCategories = experience.otherColorCategoryIds
+        .map((id) {
+          try {
+            return _colorCategories.firstWhere((cc) => cc.id == id);
+          } catch (_) {
+            return null;
+          }
+        })
+        .whereType<ColorCategory>()
+        .toList();
+
+    if (primaryColorCategory == null && otherColorCategories.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    final List<Widget> rowChildren = [];
+
+    if (primaryColorCategory != null) {
+      rowChildren.add(
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: Colors.grey.shade100,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 12,
+                height: 12,
+                decoration: BoxDecoration(
+                  color: _parseColor(primaryColorCategory.colorHex),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.grey.shade400, width: 0.5),
+                ),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                primaryColorCategory.name,
+                style: const TextStyle(fontSize: 12),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (otherColorCategories.isNotEmpty) {
+      if (rowChildren.isNotEmpty) {
+        rowChildren.add(const SizedBox(width: 12));
+      }
+      rowChildren.addAll(
+        otherColorCategories.map(
+          (colorCategory) => Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 3.0),
+            child: Container(
+              width: 12,
+              height: 12,
+              decoration: BoxDecoration(
+                color: _parseColor(colorCategory.colorHex),
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.grey.shade400, width: 0.5),
+              ),
             ),
           ),
-          const SizedBox(width: 6),
-          Text(
-            colorCategory.name,
-            style: const TextStyle(fontSize: 12),
-          ),
-        ],
-      ),
+        ),
+      );
+    }
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: rowChildren,
     );
   }
 
