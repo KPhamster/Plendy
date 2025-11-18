@@ -991,7 +991,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                             const SizedBox(width: 6),
                             PrivacyTooltipIcon(
                               message:
-                                  'Make this experience private to hide it from shared lists.',
+                                  'Public experiences will show up in your public profile page (not yet implemented) to be viewed by others. Private experiences will only be visible to you.',
                             ),
                           ],
                         ),
