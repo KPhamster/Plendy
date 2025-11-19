@@ -6,7 +6,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import '../services/auth_service.dart';
 import '../services/user_service.dart';
-// Import UserProfile model
+import 'public_profile_screen.dart';
 
 class EditProfileScreen extends StatefulWidget {
   const EditProfileScreen({super.key});
@@ -24,7 +24,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   bool _isLoading = false;
   String? _usernameError;
   String? _initialUsername;
-  bool _isPrivateProfile = false; // State for privacy setting, default to public
+  bool _isPrivateProfile =
+      false; // State for privacy setting, default to public
   bool? _initialIsPrivateProfile; // Store initial privacy setting
 
   @override
@@ -37,12 +38,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     final user = _authService.currentUser;
     if (user != null) {
       _nameController.text = user.displayName ?? '';
-      final userProfileDoc = await _userService.getUserProfile(user.uid); // Fetch full profile
+      final userProfileDoc =
+          await _userService.getUserProfile(user.uid); // Fetch full profile
       if (mounted) {
         setState(() {
           _usernameController.text = userProfileDoc?.username ?? '';
           _initialUsername = userProfileDoc?.username?.toLowerCase();
-          _isPrivateProfile = userProfileDoc?.isPrivate ?? false; // Load privacy setting
+          _isPrivateProfile =
+              userProfileDoc?.isPrivate ?? false; // Load privacy setting
           _initialIsPrivateProfile = _isPrivateProfile; // Store initial value
         });
       }
@@ -60,14 +63,15 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       }
       return;
     }
-    
+
     if (_initialUsername != null && lowercaseUsername == _initialUsername) {
       setState(() => _usernameError = null);
       return;
     }
 
     if (!RegExp(r'^[a-zA-Z0-9_]{3,20}$').hasMatch(username)) {
-      setState(() => _usernameError = 'Username must be 3-20 characters and contain only letters, numbers, and underscores');
+      setState(() => _usernameError =
+          'Username must be 3-20 characters and contain only letters, numbers, and underscores');
       return;
     }
 
@@ -80,12 +84,30 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   Future<void> _pickImage() async {
     final ImagePicker picker = ImagePicker();
     final XFile? image = await picker.pickImage(source: ImageSource.gallery);
-    
+
     if (image != null) {
       setState(() {
         _imageFile = File(image.path);
       });
     }
+  }
+
+  void _openPublicProfile() {
+    final userId = _authService.currentUser?.uid;
+    if (userId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('Please sign in again to view your public profile.')),
+      );
+      return;
+    }
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PublicProfileScreen(userId: userId),
+      ),
+    );
   }
 
   Future<void> _updateProfile() async {
@@ -104,19 +126,24 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
       String newUsername = _usernameController.text.trim();
       // Compare with initialUsername before it's potentially updated by setUsername
-      bool usernameHasChangedLogically = newUsername.toLowerCase() != (_initialUsername ?? '');
+      bool usernameHasChangedLogically =
+          newUsername.toLowerCase() != (_initialUsername ?? '');
 
       if (newUsername.isNotEmpty && usernameHasChangedLogically) {
         final success = await _userService.setUsername(user.uid, newUsername);
         if (!success) throw Exception('Failed to update username');
-      } else if (newUsername.isEmpty && (_initialUsername != null && _initialUsername!.isNotEmpty)){
-        final success = await _userService.setUsername(user.uid, ""); 
-         if (!success && _initialUsername != null && _initialUsername!.isNotEmpty) {
-           print("Note: setUsername might not support empty string for removal. Firestore fields will be deleted directly in updateUserCoreData.");
-         }
+      } else if (newUsername.isEmpty &&
+          (_initialUsername != null && _initialUsername!.isNotEmpty)) {
+        final success = await _userService.setUsername(user.uid, "");
+        if (!success &&
+            _initialUsername != null &&
+            _initialUsername!.isNotEmpty) {
+          print(
+              "Note: setUsername might not support empty string for removal. Firestore fields will be deleted directly in updateUserCoreData.");
+        }
       }
 
-      String? photoURL = user.photoURL; 
+      String? photoURL = user.photoURL;
 
       if (_imageFile != null) {
         final ref = FirebaseStorage.instance
@@ -141,25 +168,26 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       if (photoURL != null) {
         firestoreUpdateData['photoURL'] = photoURL;
       }
-      
+
       if (newUsername.isNotEmpty) {
-          firestoreUpdateData['username'] = newUsername;
-          firestoreUpdateData['lowercaseUsername'] = newUsername.toLowerCase();
+        firestoreUpdateData['username'] = newUsername;
+        firestoreUpdateData['lowercaseUsername'] = newUsername.toLowerCase();
       } else if (_initialUsername != null && _initialUsername!.isNotEmpty) {
-          firestoreUpdateData['username'] = FieldValue.delete();
-          firestoreUpdateData['lowercaseUsername'] = FieldValue.delete();
+        firestoreUpdateData['username'] = FieldValue.delete();
+        firestoreUpdateData['lowercaseUsername'] = FieldValue.delete();
       }
 
       await _userService.updateUserCoreData(user.uid, firestoreUpdateData);
 
       // Check if profile was private and is now public
       if ((_initialIsPrivateProfile == true) && (_isPrivateProfile == false)) {
-        print("Profile changed from Private to Public. Accepting all pending requests...");
+        print(
+            "Profile changed from Private to Public. Accepting all pending requests...");
         await _userService.acceptAllPendingRequests(user.uid);
       }
 
       if (mounted) {
-        Navigator.pop(context, true); 
+        Navigator.pop(context, true);
       }
     } catch (e) {
       print('Debug: Error occurred: $e');
@@ -185,7 +213,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           onPressed: () => Navigator.pop(context),
           child: const Text(
             'Cancel',
-            style: TextStyle(color: Colors.black, fontWeight: FontWeight.normal),
+            style:
+                TextStyle(color: Colors.black, fontWeight: FontWeight.normal),
           ),
         ),
         actions: [
@@ -208,13 +237,28 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                       radius: 50,
                       backgroundImage: _imageFile != null
                           ? FileImage(_imageFile!)
-                          : (_authService.currentUser?.photoURL != null && _authService.currentUser!.photoURL!.isNotEmpty
-                              ? NetworkImage(_authService.currentUser!.photoURL!)
+                          : (_authService.currentUser?.photoURL != null &&
+                                  _authService.currentUser!.photoURL!.isNotEmpty
+                              ? NetworkImage(
+                                  _authService.currentUser!.photoURL!)
                               : null) as ImageProvider?,
                       child: (_imageFile == null &&
-                              (_authService.currentUser?.photoURL == null || _authService.currentUser!.photoURL!.isEmpty)
+                              (_authService.currentUser?.photoURL == null ||
+                                  _authService.currentUser!.photoURL!.isEmpty)
                           ? const Icon(Icons.camera_alt, size: 50)
                           : null),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: _openPublicProfile,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Theme.of(context).primaryColor,
+                        foregroundColor: Colors.white,
+                      ),
+                      child: const Text('View public profile page'),
                     ),
                   ),
                   const SizedBox(height: 16),
@@ -236,7 +280,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                     ),
                   ),
                   const SizedBox(height: 24), // Added const & more space
-                  const Text('Profile Visibility', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  const Text('Profile Visibility',
+                      style:
+                          TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                   RadioListTile<bool>(
                     title: const Text('Public'),
                     subtitle: const Text('Anyone can follow you.'),
@@ -323,7 +369,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       // After deletion, navigate away from the profile screen, perhaps to the auth screen
       if (mounted) {
         // Return to root and let auth StreamBuilder render AuthScreen
-        Navigator.of(context, rootNavigator: true).popUntil((route) => route.isFirst);
+        Navigator.of(context, rootNavigator: true)
+            .popUntil((route) => route.isFirst);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Account successfully deleted.')),
         );
@@ -352,4 +399,4 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     }
   }
   // --- END ADDED ---
-} 
+}
