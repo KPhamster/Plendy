@@ -1,9 +1,30 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:collection/collection.dart';
 
+import '../models/experience.dart';
+import '../models/user_category.dart';
 import '../models/user_profile.dart';
+import '../models/color_category.dart';
 import '../services/auth_service.dart';
 import '../services/user_service.dart';
+
+// Helper function to parse hex color string
+Color _parseColor(String hexColor) {
+  hexColor = hexColor.toUpperCase().replaceAll("#", "");
+  if (hexColor.length == 6) {
+    hexColor = "FF$hexColor"; // Add alpha if missing
+  }
+  if (hexColor.length == 8) {
+    try {
+      return Color(int.parse("0x$hexColor"));
+    } catch (e) {
+      return Colors.grey; // Default color on parsing error
+    }
+  }
+  return Colors.grey; // Default color on invalid format
+}
 
 class PublicProfileScreen extends StatefulWidget {
   final String userId;
@@ -14,7 +35,8 @@ class PublicProfileScreen extends StatefulWidget {
   State<PublicProfileScreen> createState() => _PublicProfileScreenState();
 }
 
-class _PublicProfileScreenState extends State<PublicProfileScreen> {
+class _PublicProfileScreenState extends State<PublicProfileScreen>
+    with SingleTickerProviderStateMixin {
   final UserService _userService = UserService();
 
   UserProfile? _profile;
@@ -22,13 +44,25 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
   int _followingCount = 0;
   List<String> _followerIds = [];
   List<String> _followingIds = [];
+  List<UserCategory> _publicCategories = [];
+  List<ColorCategory> _publicColorCategories = [];
+  Map<String, List<Experience>> _categoryExperiences = {};
   bool _isLoading = true;
+  bool _isLoadingCollections = true;
   bool _isProcessingFollow = false;
   bool _isFollowing = false;
   bool _ownerFollowsViewer = false;
   bool _hasPendingRequest = false;
   String? _currentUserId;
   bool _initialized = false;
+  late final TabController _tabController;
+  UserCategory? _selectedCategory;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 2, vsync: this);
+  }
 
   @override
   void didChangeDependencies() {
@@ -41,6 +75,12 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
       _initialized = true;
       _loadProfile();
     }
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadProfile({bool showFullPageLoader = true}) async {
@@ -78,6 +118,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
         _hasPendingRequest = hasPendingRequest;
         _isLoading = false;
       });
+      await _loadPublicCollections();
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -87,6 +128,115 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
         const SnackBar(
             content: Text('Failed to load public profile. Please try again.')),
       );
+    }
+  }
+
+  Future<void> _loadPublicCollections() async {
+    if (!mounted) return;
+    setState(() => _isLoadingCollections = true);
+    try {
+      // Load categories and experiences - color categories may fail due to permissions
+      final categoriesSnapshot = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(widget.userId)
+          .collection('categories')
+          .get();
+
+      final experiencesSnapshot = await FirebaseFirestore.instance
+          .collection('experiences')
+          .where('createdBy', isEqualTo: widget.userId)
+          .get();
+
+      final List<UserCategory> categories = [];
+      for (final doc in categoriesSnapshot.docs) {
+        try {
+          final category = UserCategory.fromFirestore(doc);
+          if (category.isPrivate) continue;
+          categories.add(category);
+        } catch (e) {
+          debugPrint(
+              'PublicProfileScreen: skipping invalid category ${doc.id} - $e');
+        }
+      }
+
+      categories.sort((a, b) {
+        final aIndex = a.orderIndex ?? 999999;
+        final bIndex = b.orderIndex ?? 999999;
+        if (aIndex != bIndex) {
+          return aIndex.compareTo(bIndex);
+        }
+        return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+      });
+
+      // Try to load color categories, but continue if permission denied
+      final List<ColorCategory> colorCategories = [];
+      try {
+        final colorCategoriesSnapshot = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(widget.userId)
+            .collection('colorCategories')
+            .get();
+
+        for (final doc in colorCategoriesSnapshot.docs) {
+          try {
+            final colorCategory = ColorCategory.fromFirestore(doc);
+            if (colorCategory.isPrivate) continue;
+            colorCategories.add(colorCategory);
+          } catch (e) {
+            debugPrint(
+                'PublicProfileScreen: skipping invalid color category ${doc.id} - $e');
+          }
+        }
+      } catch (e) {
+        // Permission denied or other error - just skip color categories
+        debugPrint(
+            'PublicProfileScreen: Could not load color categories (likely permission denied) - $e');
+      }
+
+      final List<Experience> experiences = [];
+      for (final doc in experiencesSnapshot.docs) {
+        try {
+          final experience = Experience.fromFirestore(doc);
+          if (experience.isPrivate) continue;
+          experiences.add(experience);
+        } catch (e) {
+          debugPrint(
+              'PublicProfileScreen: skipping invalid experience ${doc.id} - $e');
+        }
+      }
+
+      final Map<String, List<Experience>> catExperiences = {
+        for (final category in categories) category.id: []
+      };
+      final categoryIds = catExperiences.keys.toSet();
+
+      for (final experience in experiences) {
+        final Set<String> relevantCategoryIds = {
+          if (experience.categoryId != null) experience.categoryId!,
+          ...experience.otherCategories,
+        };
+        for (final categoryId in relevantCategoryIds) {
+          if (!categoryIds.contains(categoryId)) continue;
+          catExperiences[categoryId]!.add(experience);
+        }
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _publicCategories = categories;
+        _publicColorCategories = colorCategories;
+        _categoryExperiences = catExperiences;
+        _isLoadingCollections = false;
+      });
+    } catch (e) {
+      debugPrint('PublicProfileScreen: error loading collections - $e');
+      if (!mounted) return;
+      setState(() {
+        _publicCategories = [];
+        _publicColorCategories = [];
+        _categoryExperiences = {};
+        _isLoadingCollections = false;
+      });
     }
   }
 
@@ -465,7 +615,6 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     final profile = _profile;
     final bool viewingOwnProfile =
         _currentUserId != null && _currentUserId == widget.userId;
@@ -544,6 +693,8 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
                 style: const TextStyle(fontSize: 16),
               ),
             ],
+            const SizedBox(height: 24),
+            _buildProfileTabs(),
           ],
         ),
       );
@@ -558,6 +709,469 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
         elevation: 0,
       ),
       body: SafeArea(child: content),
+    );
+  }
+
+  Widget _buildProfileTabs() {
+    final theme = Theme.of(context);
+    final tabBar = TabBar(
+      controller: _tabController,
+      labelColor: theme.primaryColor,
+      unselectedLabelColor: Colors.grey[600],
+      indicatorColor: theme.primaryColor,
+      tabs: const [
+        Tab(
+          icon: Icon(Icons.collections_outlined),
+          text: 'Collection',
+        ),
+        Tab(
+          icon: Icon(Icons.rate_review_outlined),
+          text: 'Reviews',
+        ),
+      ],
+    );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        tabBar,
+        const SizedBox(height: 12),
+        SizedBox(
+          height: 400,
+          child: TabBarView(
+            controller: _tabController,
+            children: [
+              _buildCollectionTab(),
+              const Center(child: Text('Reviews coming soon.')),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCollectionTab() {
+    // Show either categories list OR selected category's experiences
+    if (_selectedCategory != null) {
+      return _buildSelectedCategoryExperiencesView();
+    }
+
+    return _buildPublicCategoriesList();
+  }
+
+  Widget _buildPublicCategoriesList() {
+    if (_isLoadingCollections) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (_publicCategories.isEmpty) {
+      return const Center(child: Text('No public categories to share yet.'));
+    }
+
+    final bool isDesktopWeb = MediaQuery.of(context).size.width > 600;
+
+    if (isDesktopWeb) {
+      // Desktop: Grid view
+      final screenWidth = MediaQuery.of(context).size.width;
+      const double contentMaxWidth = 1200.0;
+      const double defaultPadding = 12.0;
+
+      double horizontalPadding;
+      if (screenWidth > contentMaxWidth) {
+        horizontalPadding = (screenWidth - contentMaxWidth) / 2;
+      } else {
+        horizontalPadding = defaultPadding;
+      }
+
+      return GridView.builder(
+        padding: EdgeInsets.fromLTRB(
+            horizontalPadding, defaultPadding, horizontalPadding, defaultPadding),
+        itemCount: _publicCategories.length,
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 5,
+          mainAxisSpacing: 10.0,
+          crossAxisSpacing: 10.0,
+          childAspectRatio: 3 / 3.5,
+        ),
+        itemBuilder: (context, index) {
+          final category = _publicCategories[index];
+          final experiences = _categoryExperiences[category.id] ?? [];
+          final bool isSelected = _selectedCategory?.id == category.id;
+
+          return Card(
+            key: ValueKey('category_grid_${category.id}'),
+            clipBehavior: Clip.antiAlias,
+            elevation: 2.0,
+            color: isSelected ? Theme.of(context).primaryColor.withOpacity(0.1) : null,
+            shape: isSelected
+                ? RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(4.0),
+                    side: BorderSide(
+                      color: Theme.of(context).primaryColor,
+                      width: 2,
+                    ),
+                  )
+                : null,
+            child: InkWell(
+              onTap: () {
+                setState(() {
+                  if (isSelected) {
+                    _selectedCategory = null;
+                  } else {
+                    _selectedCategory = category;
+                  }
+                });
+              },
+              child: Padding(
+                padding: const EdgeInsets.all(8.0),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: <Widget>[
+                    Text(
+                      category.icon,
+                      style: const TextStyle(fontSize: 32),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      category.name,
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleSmall
+                          ?.copyWith(fontWeight: FontWeight.bold),
+                      textAlign: TextAlign.center,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${experiences.length} ${experiences.length == 1 ? "exp" : "exps"}',
+                      style: Theme.of(context).textTheme.bodySmall,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      );
+    } else {
+      // Mobile: List view
+      return ListView.separated(
+        itemCount: _publicCategories.length,
+        separatorBuilder: (_, __) => const Divider(height: 1),
+        itemBuilder: (context, index) {
+          final category = _publicCategories[index];
+          final experiences = _categoryExperiences[category.id] ?? [];
+          final bool isSelected = _selectedCategory?.id == category.id;
+
+          return ListTile(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+            leading: Padding(
+              padding: const EdgeInsets.only(left: 4, right: 8),
+              child: Text(
+                category.icon,
+                style: const TextStyle(fontSize: 24),
+              ),
+            ),
+            title: Text(category.name),
+            subtitle: Text(
+              '${experiences.length} ${experiences.length == 1 ? 'experience' : 'experiences'}',
+            ),
+            trailing: isSelected
+                ? Icon(Icons.check_circle, color: Theme.of(context).primaryColor)
+                : null,
+            selected: isSelected,
+            onTap: () {
+              setState(() {
+                if (isSelected) {
+                  _selectedCategory = null;
+                } else {
+                  _selectedCategory = category;
+                }
+              });
+            },
+          );
+        },
+      );
+    }
+  }
+
+  Widget _buildExperienceListItem(Experience experience, UserCategory category) {
+    final categoryIcon = category.icon;
+
+    // Get the full address
+    final fullAddress = experience.location.address;
+    
+    // Determine leading box background color from color category with opacity
+    final colorCategoryForBox = _publicColorCategories.firstWhereOrNull(
+      (cc) => cc.id == experience.colorCategoryId,
+    );
+    final Color leadingBoxColor = colorCategoryForBox != null
+        ? _parseColor(colorCategoryForBox.colorHex).withOpacity(0.5)
+        : Colors.white;
+
+    // Number of related content items
+    final int contentCount = experience.sharedMediaItemIds.length;
+
+    const double playButtonDiameter = 36.0;
+    const double playIconSize = 20.0;
+    const double badgeDiameter = 18.0;
+    const double badgeFontSize = 11.0;
+    const double badgeBorderWidth = 2.0;
+    const double badgeOffset = -3.0;
+
+    final List<ColorCategory> otherColorCategories = experience
+        .otherColorCategoryIds
+        .map((id) => _publicColorCategories.firstWhereOrNull((cc) => cc.id == id))
+        .whereType<ColorCategory>()
+        .toList();
+    final bool hasOtherCategories = experience.otherCategories.isNotEmpty;
+    final bool hasOtherColorCategories = otherColorCategories.isNotEmpty;
+    final bool hasNotes = experience.additionalNotes != null &&
+        experience.additionalNotes!.isNotEmpty;
+    final bool shouldShowSubRow = hasOtherCategories ||
+        hasOtherColorCategories ||
+        contentCount > 0 ||
+        (hasNotes && !hasOtherCategories && !hasOtherColorCategories);
+
+    final Widget leadingWidget = Container(
+      width: 56,
+      height: 56,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: leadingBoxColor,
+        borderRadius: BorderRadius.circular(8.0),
+      ),
+      child: MediaQuery(
+        data: MediaQuery.of(context).copyWith(textScaleFactor: 1.0),
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.center,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                categoryIcon,
+                style: const TextStyle(fontSize: 28),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    return ListTile(
+      key: ValueKey(experience.id),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 8.0),
+      visualDensity: const VisualDensity(horizontal: -4),
+      isThreeLine: true,
+      titleAlignment: ListTileTitleAlignment.threeLine,
+      leading: leadingWidget,
+      minLeadingWidth: 56,
+      title: Text(
+        experience.name,
+        overflow: TextOverflow.ellipsis,
+        maxLines: 1,
+      ),
+      subtitle: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (fullAddress != null && fullAddress.isNotEmpty)
+            Text(
+              fullAddress,
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          // Row for subcategory icons and/or content count
+          if (shouldShowSubRow)
+            Padding(
+              padding: const EdgeInsets.only(top: 2.0),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (hasOtherCategories || hasOtherColorCategories)
+                          Wrap(
+                            spacing: 6.0,
+                            runSpacing: 2.0,
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            children: [
+                              ...experience.otherCategories.map((categoryId) {
+                                final otherCategory =
+                                    _publicCategories.firstWhereOrNull(
+                                  (cat) => cat.id == categoryId,
+                                );
+                                if (otherCategory != null) {
+                                  return Text(
+                                    otherCategory.icon,
+                                    style: const TextStyle(fontSize: 14),
+                                  );
+                                }
+                                return const SizedBox.shrink();
+                              }),
+                              ...otherColorCategories.map((colorCategory) {
+                                final Color chipColor = colorCategory.color;
+                                return Container(
+                                  width: 10,
+                                  height: 10,
+                                  decoration: BoxDecoration(
+                                    color: chipColor,
+                                    shape: BoxShape.circle,
+                                  ),
+                                );
+                              }),
+                            ],
+                          ),
+                        if (experience.additionalNotes != null &&
+                            experience.additionalNotes!.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 2.0),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.center,
+                              children: [
+                                Icon(Icons.notes,
+                                    size: 14, color: Colors.grey[600]),
+                                const SizedBox(width: 4),
+                                Expanded(
+                                  child: Text(
+                                    experience.additionalNotes!,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .bodySmall
+                                        ?.copyWith(fontStyle: FontStyle.italic),
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  if (contentCount > 0) ...[
+                    const SizedBox(width: 12),
+                    Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        Container(
+                          width: playButtonDiameter,
+                          height: playButtonDiameter,
+                          decoration: BoxDecoration(
+                            color: Theme.of(context).primaryColor,
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.play_arrow,
+                            color: Colors.white,
+                            size: playIconSize,
+                          ),
+                        ),
+                        Positioned(
+                          bottom: badgeOffset,
+                          right: badgeOffset,
+                          child: Container(
+                            width: badgeDiameter,
+                            height: badgeDiameter,
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: Theme.of(context).primaryColor,
+                                width: badgeBorderWidth,
+                              ),
+                            ),
+                            child: Center(
+                              child: Text(
+                                contentCount.toString(),
+                                style: TextStyle(
+                                  color: Theme.of(context).primaryColor,
+                                  fontSize: badgeFontSize,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSelectedCategoryExperiencesView() {
+    final category = _selectedCategory!;
+    final experiences = _categoryExperiences[category.id] ?? <Experience>[];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Header row with back button and category name
+        Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: Row(
+            children: [
+              IconButton(
+                icon: const Icon(Icons.arrow_back),
+                tooltip: 'Back to Categories',
+                onPressed: () {
+                  setState(() {
+                    _selectedCategory = null;
+                  });
+                },
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SizedBox(
+                      width: 16,
+                      child: Center(child: Text(category.icon)),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        category.name,
+                        style: Theme.of(context).textTheme.titleLarge,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        const Divider(height: 1),
+        // List of experiences for this category
+        Expanded(
+          child: experiences.isEmpty
+              ? Center(
+                  child: Text(
+                    'No public experiences in "${category.name}" yet.',
+                    style: const TextStyle(color: Colors.grey),
+                  ),
+                )
+              : ListView.builder(
+                  itemCount: experiences.length,
+                  itemBuilder: (context, index) {
+                    final experience = experiences[index];
+                    return _buildExperienceListItem(experience, category);
+                  },
+                ),
+        ),
+      ],
     );
   }
 }
