@@ -57,6 +57,7 @@ class _MapScreenState extends State<MapScreen> {
   final ExperienceService _experienceService = ExperienceService();
   final AuthService _authService = AuthService();
   final UserService _userService = UserService();
+  final SharingService _sharingService = SharingService();
   final GoogleMapsService _mapsService =
       GoogleMapsService(); // ADDED: Maps Service
   final Map<String, Marker> _markers = {}; // Use String keys for marker IDs
@@ -84,6 +85,8 @@ class _MapScreenState extends State<MapScreen> {
   Map<String, List<Experience>> _followeePublicExperiences = {};
   Map<String, Map<String, UserCategory>> _followeeCategories = {};
   Map<String, Map<String, ColorCategory>> _followeeColorCategories = {};
+  final Set<String> _sharedCategoryPermissionKeys = {};
+  bool _sharedCategoryPermissionsLoaded = false;
   bool get _hasActiveFilters =>
       _selectedCategoryIds.isNotEmpty ||
       _selectedColorCategoryIds.isNotEmpty ||
@@ -252,6 +255,33 @@ class _MapScreenState extends State<MapScreen> {
     }
   }
 
+  Future<void> _loadCategorySharePermissions(String userId,
+      {bool forceRefresh = false}) async {
+    if (_sharedCategoryPermissionsLoaded && !forceRefresh) {
+      return;
+    }
+    try {
+      final permissions =
+          await _sharingService.getSharedItemsForUser(userId);
+      final Set<String> categoryKeys = permissions
+          .where((perm) => perm.itemType == ShareableItemType.category)
+          .map((perm) => _sharePermissionKey(perm.ownerUserId, perm.itemId))
+          .toSet();
+      if (mounted) {
+        setState(() {
+          _sharedCategoryPermissionKeys
+            ..clear()
+            ..addAll(categoryKeys);
+        });
+        _rebuildFolloweeCategoryIcons();
+      }
+      _sharedCategoryPermissionsLoaded = true;
+    } catch (e) {
+      print(
+          "🗺️ MAP SCREEN: Failed to load category share permissions for $userId: $e");
+    }
+  }
+
   Future<void> _loadFollowingUsers(String userId) async {
     try {
       final List<String> followingIds =
@@ -363,10 +393,6 @@ class _MapScreenState extends State<MapScreen> {
         final Set<String> missingCategoryIds = {};
         final Set<String> missingColorIds = {};
         for (final experience in experiences) {
-          if (experience.categoryIconDenorm != null &&
-              experience.categoryIconDenorm!.isNotEmpty) {
-            continue;
-          }
           final String? categoryId = experience.categoryId;
           if (categoryId == null ||
               categoryId.isEmpty ||
@@ -452,7 +478,7 @@ class _MapScreenState extends State<MapScreen> {
         return;
       }
       final String? icon = _getCategoryIconForExperience(experience);
-      if (icon == null || icon.isEmpty) {
+      if (icon == null || icon.isEmpty || icon == '❓') {
         return;
       }
       iconsByUser.putIfAbsent(ownerId, () => <String>{}).add(icon);
@@ -479,11 +505,22 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   String? _getCategoryIconForExperience(Experience experience) {
+    final String? ownerId = experience.createdBy;
+    final String? categoryId = experience.categoryId;
+    final String? currentUserId = _authService.currentUser?.uid;
+    final bool isFolloweeExperience = ownerId != null &&
+        ownerId.isNotEmpty &&
+        ownerId != currentUserId;
+
+    if (isFolloweeExperience &&
+        !_canAccessFolloweeCategory(ownerId!, categoryId)) {
+      return null;
+    }
+
     if (experience.categoryIconDenorm != null &&
         experience.categoryIconDenorm!.isNotEmpty) {
       return experience.categoryIconDenorm;
     }
-    final String? categoryId = experience.categoryId;
     if (categoryId == null || categoryId.isEmpty) {
       return null;
     }
@@ -492,7 +529,6 @@ class _MapScreenState extends State<MapScreen> {
           _categories.firstWhere((cat) => cat.id == categoryId);
       return category.icon;
     } catch (_) {
-      final String? ownerId = experience.createdBy;
       if (ownerId != null &&
           ownerId.isNotEmpty &&
           _followeeCategories.containsKey(ownerId)) {
@@ -535,6 +571,53 @@ class _MapScreenState extends State<MapScreen> {
     return 'Friend';
   }
 
+  String _sharePermissionKey(String ownerId, String itemId) =>
+      '$ownerId|$itemId';
+
+  bool _hasCategorySharePermission(String ownerId, String itemId) {
+    return _sharedCategoryPermissionKeys
+        .contains(_sharePermissionKey(ownerId, itemId));
+  }
+
+  bool _canAccessFolloweeCategory(String ownerId, String? categoryId) {
+    if (categoryId == null || categoryId.isEmpty) {
+      return false;
+    }
+    final String? currentUserId = _authService.currentUser?.uid;
+    if (ownerId == currentUserId) {
+      return true;
+    }
+    final UserCategory? category =
+        _followeeCategories[ownerId]?[categoryId];
+    if (category == null) {
+      return false;
+    }
+    if (!category.isPrivate) {
+      return true;
+    }
+    return _hasCategorySharePermission(ownerId, category.id);
+  }
+
+  bool _canAccessFolloweeColorCategory(
+      String ownerId, String? colorCategoryId) {
+    if (colorCategoryId == null || colorCategoryId.isEmpty) {
+      return false;
+    }
+    final String? currentUserId = _authService.currentUser?.uid;
+    if (ownerId == currentUserId) {
+      return true;
+    }
+    final ColorCategory? colorCategory =
+        _followeeColorCategories[ownerId]?[colorCategoryId];
+    if (colorCategory == null) {
+      return false;
+    }
+    if (!colorCategory.isPrivate) {
+      return true;
+    }
+    return _hasCategorySharePermission(ownerId, colorCategory.id);
+  }
+
   bool _isExperienceEffectivelyPrivate(Experience experience) {
     if (!experience.hasExplicitPrivacy) {
       return false;
@@ -569,6 +652,8 @@ class _MapScreenState extends State<MapScreen> {
         }
         return;
       }
+
+      await _loadCategorySharePermissions(userId);
 
       unawaited(_loadFollowingUsers(userId));
 
@@ -669,8 +754,8 @@ class _MapScreenState extends State<MapScreen> {
         print("🗺️ MAP SCREEN: [BG] Paging query failed ($e). Falling back to share_permissions path.");
         // On first call, fetch all permission IDs and process in pages
         if (_fallbackSharedIds == null) {
-          final sharingService = SharingService();
-          final sharedPermissions = await sharingService.getSharedItemsForUser(userId);
+          final sharedPermissions =
+              await _sharingService.getSharedItemsForUser(userId);
           final allSharedExperienceIds = sharedPermissions
               .where((perm) => perm.itemType == ShareableItemType.experience)
               .map((perm) => perm.itemId)
@@ -2214,28 +2299,33 @@ class _MapScreenState extends State<MapScreen> {
         continue; // Skip markers with default/invalid coordinates
       }
 
-      // Resolve category metadata, preferring denormalized icon and falling back to owner categories
+      final String? ownerId = experience.createdBy;
+      final String? currentUserId = _authService.currentUser?.uid;
+      final bool isFolloweeExperience = ownerId != null &&
+          ownerId.isNotEmpty &&
+          ownerId != currentUserId;
+
       UserCategory? resolvedCategory;
-      if (experience.categoryId != null && experience.categoryId!.isNotEmpty) {
+      final String? categoryId = experience.categoryId;
+      if (categoryId != null && categoryId.isNotEmpty) {
         try {
-          resolvedCategory = _categories.firstWhere(
-            (cat) => cat.id == experience.categoryId,
-          );
+          resolvedCategory =
+              _categories.firstWhere((cat) => cat.id == categoryId);
         } catch (_) {
-          final String? ownerId = experience.createdBy;
           if (ownerId != null &&
               ownerId.isNotEmpty &&
               _followeeCategories.containsKey(ownerId)) {
-            resolvedCategory = _followeeCategories[ownerId]?[experience.categoryId];
+            resolvedCategory = _followeeCategories[ownerId]?[categoryId];
           }
         }
       }
+      if (isFolloweeExperience &&
+          !_canAccessFolloweeCategory(ownerId!, categoryId)) {
+        resolvedCategory = null;
+      }
+
       final String iconText =
-          (experience.categoryIconDenorm != null && experience.categoryIconDenorm!.isNotEmpty)
-              ? experience.categoryIconDenorm!
-              : ((resolvedCategory != null && resolvedCategory.icon.isNotEmpty)
-                  ? resolvedCategory.icon
-                  : '❓');
+          _getCategoryIconForExperience(experience) ?? '❓';
 
       // Find the corresponding color category *based on the experience's property*
       ColorCategory? colorCategory;
@@ -2253,7 +2343,6 @@ class _MapScreenState extends State<MapScreen> {
           //     "🗺️ MAP SCREEN: Found ColorCategory '${colorCategory.name}' with color ${colorCategory.colorHex}");
         } catch (e) {
           colorCategory = null; // Not found locally
-          final String? ownerId = experience.createdBy;
           if (ownerId != null &&
               ownerId.isNotEmpty &&
               _followeeColorCategories.containsKey(ownerId)) {
@@ -2268,11 +2357,25 @@ class _MapScreenState extends State<MapScreen> {
         //     "🗺️ MAP SCREEN: Experience '${experience.name}' has no colorCategoryId. Using default color.");
       }
 
+      bool canUseColor = true;
+      if (isFolloweeExperience &&
+          experienceColorCategoryId != null &&
+          experienceColorCategoryId.isNotEmpty &&
+          !_canAccessFolloweeColorCategory(
+              ownerId!, experienceColorCategoryId)) {
+        canUseColor = false;
+        colorCategory = null;
+      }
+
       // Determine marker background color (prefer denormalized color if present)
       Color markerBackgroundColor = Colors.grey; // Default
-      if (experience.colorHexDenorm != null && experience.colorHexDenorm!.isNotEmpty) {
+      if (canUseColor &&
+          experience.colorHexDenorm != null &&
+          experience.colorHexDenorm!.isNotEmpty) {
         markerBackgroundColor = _parseColor(experience.colorHexDenorm!);
-      } else if (colorCategory != null && colorCategory.colorHex.isNotEmpty) {
+      } else if (canUseColor &&
+          colorCategory != null &&
+          colorCategory.colorHex.isNotEmpty) {
         markerBackgroundColor = _parseColor(colorCategory.colorHex);
       }
 
@@ -2328,20 +2431,13 @@ class _MapScreenState extends State<MapScreen> {
           print("🗺️ MAP SCREEN: Experience marker tapped for '${experience.name}'. Showing location details panel.");
           
           // --- REGENERATING ICON FOR SELECTED STATE ---
-          Color markerBackgroundColor = Colors.grey;
-          try {
-            if (experience.colorCategoryId != null) {
-              final colorCategory = _colorCategories.firstWhere((cc) => cc.id == experience.colorCategoryId);
-              markerBackgroundColor = _parseColor(colorCategory.colorHex);
-            }
-          } catch (e) { /* Use default grey color */ }
+          final Color selectedMarkerBackgroundColor = markerBackgroundColor;
 
-          final String selectedIconText = (experience.categoryIconDenorm != null && experience.categoryIconDenorm!.isNotEmpty)
-              ? experience.categoryIconDenorm!
-              : (resolvedCategory?.icon ?? '❓');
+          final String selectedIconText =
+              _getCategoryIconForExperience(experience) ?? '❓';
           final selectedIcon = await _bitmapDescriptorFromText(
             selectedIconText,
-            backgroundColor: markerBackgroundColor,
+            backgroundColor: selectedMarkerBackgroundColor,
             size: 100, // 125% of 70
             backgroundOpacity: 1.0, // Fully opaque
           );
