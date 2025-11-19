@@ -2326,7 +2326,8 @@ class CollectionsScreenState extends State<CollectionsScreen>
       // Filter experiences that match this category
       final List<Experience> categoryExperiences = allSharedExperiences.where((exp) {
         if (isColorCategory) {
-          return exp.colorCategoryId == categoryId;
+          return exp.colorCategoryId == categoryId ||
+              exp.otherColorCategoryIds.contains(categoryId);
         } else {
           return exp.categoryId == categoryId ||
               exp.otherCategories.contains(categoryId);
@@ -7021,10 +7022,13 @@ class CollectionsScreenState extends State<CollectionsScreen>
 
   // --- ADDED: Helper to count experiences for a specific color category --- START ---
   int _getExperienceCountForColorCategory(ColorCategory category) {
-    // Filter experiences where colorCategoryId matches the category's ID
-    return _experiences
-        .where((exp) => exp.colorCategoryId == category.id)
-        .length;
+    // Count experiences where the color is primary or listed in otherColorCategoryIds
+    return _experiences.where((exp) {
+      final bool isPrimary = exp.colorCategoryId == category.id;
+      final bool isOther =
+          exp.otherColorCategoryIds.contains(category.id);
+      return isPrimary || isOther;
+    }).length;
   }
   // --- ADDED: Helper to count experiences for a specific color category --- END ---
 
@@ -7394,9 +7398,12 @@ class CollectionsScreenState extends State<CollectionsScreen>
   // --- ADDED: Builder for Color Category List --- END ---
   // --- ADDED: Widget to display experiences for a specific color category --- START ---
   Widget _buildColorCategoryExperiencesList(ColorCategory category) {
-    final categoryExperiences = _experiences
-        .where((exp) => exp.colorCategoryId == category.id)
-        .toList(); // Filter experiences by colorCategoryId
+    final categoryExperiences = _experiences.where((exp) {
+      final bool isPrimary = exp.colorCategoryId == category.id;
+      final bool isOther =
+          exp.otherColorCategoryIds.contains(category.id);
+      return isPrimary || isOther;
+    }).toList(); // Filter experiences by colorCategoryId or otherColorCategoryIds
 
     // Apply the current experience sort order (reuse existing logic if applicable)
     // Note: This creates a sorted copy
@@ -7815,9 +7822,13 @@ class CollectionsScreenState extends State<CollectionsScreen>
           (exp.otherCategories
               .any((catId) => _selectedCategoryIds.contains(catId)));
 
+      final bool matchesPrimaryColor = exp.colorCategoryId != null &&
+          _selectedColorCategoryIds.contains(exp.colorCategoryId);
+      final bool matchesOtherColor = exp.otherColorCategoryIds
+          .any((colorId) => _selectedColorCategoryIds.contains(colorId));
       final bool colorMatch = _selectedColorCategoryIds.isEmpty ||
-          (exp.colorCategoryId != null &&
-              _selectedColorCategoryIds.contains(exp.colorCategoryId));
+          matchesPrimaryColor ||
+          matchesOtherColor;
 
       return categoryMatch && colorMatch;
     }).toList();
@@ -7833,9 +7844,13 @@ class CollectionsScreenState extends State<CollectionsScreen>
             (exp.otherCategories
                 .any((catId) => _selectedCategoryIds.contains(catId)));
 
+        final bool matchesPrimaryColor = exp.colorCategoryId != null &&
+            _selectedColorCategoryIds.contains(exp.colorCategoryId);
+        final bool matchesOtherColor = exp.otherColorCategoryIds.any(
+            (colorId) => _selectedColorCategoryIds.contains(colorId));
         final bool colorMatch = _selectedColorCategoryIds.isEmpty ||
-            (exp.colorCategoryId != null &&
-                _selectedColorCategoryIds.contains(exp.colorCategoryId));
+            matchesPrimaryColor ||
+            matchesOtherColor;
 
         return categoryMatch && colorMatch;
       });
@@ -8982,7 +8997,8 @@ class CollectionsScreenState extends State<CollectionsScreen>
 
         final categoryExperiences = allSharedExperiences.where((exp) {
           if (isColorCategory) {
-            return exp.colorCategoryId == categoryId;
+            return exp.colorCategoryId == categoryId ||
+                exp.otherColorCategoryIds.contains(categoryId);
           } else {
             return exp.categoryId == categoryId ||
                 exp.otherCategories.contains(categoryId);
@@ -9341,9 +9357,12 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
         return inPrimary || inOther;
       }).toList();
     } else if (widget.colorCategory != null) {
-      return allOwned
-          .where((exp) => exp.colorCategoryId == categoryId)
-          .toList();
+      return allOwned.where((exp) {
+        final bool inPrimary = (exp.colorCategoryId == categoryId);
+        final bool inOther =
+            exp.otherColorCategoryIds.contains(categoryId);
+        return inPrimary || inOther;
+      }).toList();
     }
     return [];
   }

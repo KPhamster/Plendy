@@ -14,7 +14,6 @@ import '../services/experience_service.dart';
 import '../services/message_service.dart';
 import '../widgets/shared_media_preview_modal.dart';
 import 'experience_page_screen.dart';
-import 'public_profile_screen.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({
@@ -136,18 +135,6 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _handleBackPressed() {
     Navigator.of(context).pop();
-  }
-
-  void _handleParticipantAvatarTap(MessageThreadParticipant participant) {
-    if (!mounted || participant.id.isEmpty) {
-      return;
-    }
-
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => PublicProfileScreen(userId: participant.id),
-      ),
-    );
   }
 
   void _startEditingTitle(String title) {
@@ -476,7 +463,6 @@ class _ChatScreenState extends State<ChatScreen> {
           _buildParticipantAvatar(
             avatarParticipant,
             size: 34,
-            onTap: () => _handleParticipantAvatarTap(avatarParticipant),
           ),
           const SizedBox(width: 8),
           Flexible(child: bubbleWithConstraints),
@@ -485,345 +471,325 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+
   Widget _buildExperienceShareCard(
     ChatMessage message,
     bool isMine,
     MessageThreadParticipant? sender,
   ) {
-    final alignment = isMine ? Alignment.centerRight : Alignment.centerLeft;
-    final snapshot = message.experienceSnapshot;
+  final alignment = isMine ? Alignment.centerRight : Alignment.centerLeft;
+  final snapshot = message.experienceSnapshot;
 
-    if (snapshot == null) {
-      // Fallback if snapshot is missing
-      return Align(
-        alignment: alignment,
-        child: Container(
-          margin: const EdgeInsets.symmetric(vertical: 4),
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: Colors.grey.shade200,
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Text('Shared an experience'),
-        ),
-      );
-    }
-
-    final experienceName = snapshot['name'] as String? ?? 'Experience';
-    final locationData = snapshot['location'] as Map<String, dynamic>?;
-
-    // Check if this is a discovery preview share (has highlightedMediaUrl)
-    final highlightedMediaUrl = snapshot['highlightedMediaUrl'] as String?;
-    final isDiscoveryPreview =
-        highlightedMediaUrl != null && highlightedMediaUrl.isNotEmpty;
-
-    // Use highlighted media URL for discovery shares, otherwise use the main image
-    final imageUrl = isDiscoveryPreview
-        ? highlightedMediaUrl
-        : (snapshot['image'] as String?);
-
-    // Build location subtitle
-    final List<String> locationParts = [];
-    if (locationData != null) {
-      final city = locationData['city'] as String?;
-      final state = locationData['state'] as String?;
-      if (city != null && city.isNotEmpty) {
-        locationParts.add(city);
-      }
-      if (state != null && state.isNotEmpty) {
-        locationParts.add(state);
-      }
-    }
-    final locationText = locationParts.join(', ');
-
+  if (snapshot == null) {
+    // Fallback if snapshot is missing
     return Align(
       alignment: alignment,
       child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 8),
-        constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width * 0.75,
+        margin: const EdgeInsets.symmetric(vertical: 4),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.grey.shade200,
+          borderRadius: BorderRadius.circular(12),
         ),
-        child: Column(
-          crossAxisAlignment:
-              isMine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (!isMine)
-              Padding(
-                padding: const EdgeInsets.only(left: 8, bottom: 4),
-                child: Row(
-                  children: [
-                    Text(
-                      '${sender?.displayLabel(fallback: 'Someone') ?? 'Someone'} shared',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.black54,
-                      ),
-                    ),
-                    if (isDiscoveryPreview) ...[
-                      const SizedBox(width: 4),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: Colors.purple.shade100,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text(
-                          'Discovery',
-                          style: TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.purple.shade700,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-            Card(
-              elevation: 2,
-              color: isMine
-                  ? Theme.of(context).primaryColor
-                  : Colors.grey.shade300,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Stack(
-                children: [
-                  InkWell(
-                    onTap: () async {
-                      if (isDiscoveryPreview) {
-                        // Discovery preview: show media preview modal
-                        await _showMediaPreviewModal(
-                          experienceName: experienceName,
-                          mediaUrl: highlightedMediaUrl,
-                          experienceSnapshot: snapshot,
-                        );
-                      } else {
-                        // Full experience share: open experience directly
-                        final experience = Experience(
-                          id: snapshot['id'] as String? ??
-                              'preview_${DateTime.now().millisecondsSinceEpoch}',
-                          name: experienceName,
-                          description: snapshot['description'] as String? ?? '',
-                          location: Location.fromMap(
-                              snapshot['location'] as Map<String, dynamic>? ??
-                                  {}),
-                          createdAt: DateTime.now(),
-                          updatedAt: DateTime.now(),
-                          editorUserIds:
-                              (snapshot['editorUserIds'] as List<dynamic>?)
-                                      ?.map((e) => e.toString())
-                                      .toList() ??
-                                  [],
-                          createdBy: snapshot['createdBy'] as String?,
-                          sharedMediaItemIds:
-                              (snapshot['sharedMediaItemIds'] as List<dynamic>?)
-                                      ?.cast<String>() ??
-                                  [],
-                        );
-
-                        // Build media items from mediaUrls in snapshot for public content
-                        final mediaUrls =
-                            (snapshot['mediaUrls'] as List<dynamic>?)
-                                    ?.cast<String>() ??
-                                [];
-                        final List<SharedMediaItem> fullExperienceMediaItems =
-                            [];
-
-                        if (mediaUrls.isNotEmpty) {
-                          for (int i = 0; i < mediaUrls.length; i++) {
-                            fullExperienceMediaItems.add(SharedMediaItem(
-                              id: 'preview_${experience.id}_$i',
-                              path: mediaUrls[i],
-                              createdAt: DateTime.now().subtract(
-                                  Duration(seconds: mediaUrls.length - i)),
-                              ownerUserId: 'public_discovery',
-                              experienceIds: [],
-                            ));
-                          }
-                        }
-
-                        await _handleViewExperience(
-                            experience, snapshot, fullExperienceMediaItems);
-                      }
-                    },
-                    borderRadius: BorderRadius.circular(12),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        if (imageUrl != null && imageUrl.isNotEmpty)
-                          if (isDiscoveryPreview)
-                            GestureDetector(
-                              onTap: () => _openLink(Uri.parse(imageUrl)),
-                              child: Container(
-                                height: 120,
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: const BorderRadius.vertical(
-                                    top: Radius.circular(12),
-                                  ),
-                                ),
-                                child: Center(
-                                  child: Column(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      FaIcon(
-                                        _getMediaIcon(imageUrl),
-                                        size: 56,
-                                        color: _getMediaIconColor(imageUrl),
-                                      ),
-                                      const SizedBox(height: 8),
-                                      Text(
-                                        'Open in ${_getMediaLabel(imageUrl)}',
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.w500,
-                                          color: _getMediaIconColor(imageUrl),
-                                        ),
-                                        textAlign: TextAlign.center,
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            )
-                          else
-                            ClipRRect(
-                              borderRadius: const BorderRadius.vertical(
-                                top: Radius.circular(12),
-                              ),
-                              child: Image.network(
-                                imageUrl,
-                                height: 180,
-                                width: double.infinity,
-                                fit: BoxFit.cover,
-                                errorBuilder: (context, error, stackTrace) {
-                                  return Container(
-                                    height: 180,
-                                    color: Colors.grey.shade300,
-                                    child: const Icon(
-                                      Icons.image_not_supported,
-                                      size: 48,
-                                      color: Colors.grey,
-                                    ),
-                                  );
-                                },
-                              ),
-                            ),
-                        Padding(
-                          padding: const EdgeInsets.all(12.0),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      experienceName,
-                                      style: TextStyle(
-                                        fontSize: 16,
-                                        fontWeight: FontWeight.w600,
-                                        color: isMine
-                                            ? Colors.white
-                                            : Colors.black,
-                                      ),
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Icon(
-                                    Icons.arrow_forward_ios,
-                                    size: 16,
-                                    color: isMine ? Colors.white : Colors.grey,
-                                  ),
-                                ],
-                              ),
-                              if (locationText.isNotEmpty) ...[
-                                const SizedBox(height: 4),
-                                Row(
-                                  children: [
-                                    Icon(
-                                      Icons.place_outlined,
-                                      size: 14,
-                                      color:
-                                          isMine ? Colors.white : Colors.grey,
-                                    ),
-                                    const SizedBox(width: 4),
-                                    Expanded(
-                                      child: Text(
-                                        locationText,
-                                        style: TextStyle(
-                                          fontSize: 13,
-                                          color: isMine
-                                              ? Colors.white
-                                              : Colors.grey.shade700,
-                                        ),
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  // Play button positioned on the bottom-right (only for discovery previews)
-                  if (isDiscoveryPreview)
-                    Positioned(
-                      right: 12,
-                      bottom: 12,
-                      child: GestureDetector(
-                        onTap: () => _showMediaPreviewModal(
-                          experienceName: experienceName,
-                          mediaUrl: highlightedMediaUrl,
-                          experienceSnapshot: snapshot,
-                        ),
-                        child: Container(
-                          width: 48,
-                          height: 48,
-                          decoration: BoxDecoration(
-                            color: isMine
-                                ? Colors.white
-                                : Theme.of(context).primaryColor,
-                            shape: BoxShape.circle,
-                          ),
-                          child: Icon(
-                            Icons.play_arrow,
-                            color: isMine
-                                ? Theme.of(context).primaryColor
-                                : Colors.white,
-                            size: 28,
-                          ),
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.only(top: 4, left: 8, right: 8),
-              child: Text(
-                _formatMessageTime(message.createdAt),
-                style: const TextStyle(
-                  color: Colors.grey,
-                  fontSize: 11,
-                ),
-              ),
-            ),
-          ],
-        ),
+        child: const Text('Shared an experience'),
       ),
     );
   }
+
+  final experienceName = snapshot['name'] as String? ?? 'Experience';
+  final locationData = snapshot['location'] as Map<String, dynamic>?;
+
+  // Check if this is a discovery preview share (has highlightedMediaUrl)
+  final highlightedMediaUrl = snapshot['highlightedMediaUrl'] as String?;
+  final isDiscoveryPreview =
+      highlightedMediaUrl != null && highlightedMediaUrl.isNotEmpty;
+
+  // Use highlighted media URL for discovery shares, otherwise use the main image
+  final imageUrl = isDiscoveryPreview
+      ? highlightedMediaUrl
+      : (snapshot['image'] as String?);
+
+  // Build location subtitle
+  final List<String> locationParts = [];
+  if (locationData != null) {
+    final city = locationData['city'] as String?;
+    final state = locationData['state'] as String?;
+    if (city != null && city.isNotEmpty) {
+      locationParts.add(city);
+    }
+    if (state != null && state.isNotEmpty) {
+      locationParts.add(state);
+    }
+  }
+  final locationText = locationParts.join(', ');
+
+    final card = Container(
+      margin: const EdgeInsets.symmetric(vertical: 4),
+    constraints: BoxConstraints(
+      maxWidth: MediaQuery.of(context).size.width * 0.75,
+    ),
+    child: Column(
+      crossAxisAlignment:
+          isMine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (!isMine)
+          Padding(
+            padding: const EdgeInsets.only(left: 8, bottom: 4),
+            child: Row(
+              children: [
+                Text(
+                  '${sender?.displayLabel(fallback: 'Someone') ?? 'Someone'} shared',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.black54,
+                  ),
+                ),
+                if (isDiscoveryPreview) ...[
+                  const SizedBox(width: 4),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: Colors.purple.shade100,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      'Discovery',
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.purple.shade700,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        Card(
+          elevation: 2,
+          color: isMine
+              ? Theme.of(context).primaryColor
+              : Colors.grey.shade300,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Stack(
+            children: [
+              InkWell(
+                onTap: () async {
+                  if (isDiscoveryPreview) {
+                    // Discovery preview: show media preview modal
+                    await _showMediaPreviewModal(
+                      experienceName: experienceName,
+                      mediaUrl: highlightedMediaUrl,
+                      experienceSnapshot: snapshot,
+                    );
+                  } else {
+                    // Full experience share: open experience directly
+                    final experience = Experience(
+                      id: snapshot['id'] as String? ??
+                          'preview_${DateTime.now().millisecondsSinceEpoch}',
+                      name: experienceName,
+                      description: snapshot['description'] as String? ?? '',
+                      location: Location.fromMap(
+                          snapshot['location'] as Map<String, dynamic>? ??
+                              {}),
+                      createdAt: DateTime.now(),
+                      updatedAt: DateTime.now(),
+                      editorUserIds:
+                          (snapshot['editorUserIds'] as List<dynamic>?)
+                                  ?.map((e) => e.toString())
+                                  .toList() ??
+                              [],
+                      createdBy: snapshot['createdBy'] as String?,
+                      sharedMediaItemIds:
+                          (snapshot['sharedMediaItemIds'] as List<dynamic>?)
+                                  ?.cast<String>() ??
+                              [],
+                    );
+
+                    // Build media items from mediaUrls in snapshot for public content
+                    final mediaUrls =
+                        (snapshot['mediaUrls'] as List<dynamic>?)
+                                ?.cast<String>() ??
+                            [];
+                    final List<SharedMediaItem> fullExperienceMediaItems = [];
+
+                    if (mediaUrls.isNotEmpty) {
+                      for (int i = 0; i < mediaUrls.length; i++) {
+                        fullExperienceMediaItems.add(SharedMediaItem(
+                          id: 'preview_${experience.id}_$i',
+                          path: mediaUrls[i],
+                          createdAt: DateTime.now().subtract(
+                              Duration(seconds: mediaUrls.length - i)),
+                          ownerUserId: 'public_discovery',
+                          experienceIds: [],
+                        ));
+                      }
+                    }
+
+                    await _handleViewExperience(
+                        experience, snapshot, fullExperienceMediaItems);
+                  }
+                },
+                borderRadius: BorderRadius.circular(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (imageUrl != null && imageUrl.isNotEmpty)
+                      if (isDiscoveryPreview)
+                        GestureDetector(
+                          onTap: () => _openLink(Uri.parse(imageUrl)),
+                          child: Container(
+                            height: 120,
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: const BorderRadius.vertical(
+                                top: Radius.circular(12),
+                              ),
+                            ),
+                            child: Center(
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  FaIcon(
+                                    _getMediaIcon(imageUrl),
+                                    size: 56,
+                                    color: _getMediaIconColor(imageUrl),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    'Open in ${_getMediaLabel(imageUrl)}',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w500,
+                                      color: _getMediaIconColor(imageUrl),
+                                    ),
+                                    textAlign: TextAlign.center,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        )
+                      else
+                        ClipRRect(
+                          borderRadius: const BorderRadius.vertical(
+                            top: Radius.circular(12),
+                          ),
+                          child: Image.network(
+                            imageUrl,
+                            height: 180,
+                            width: double.infinity,
+                            fit: BoxFit.cover,
+                            errorBuilder: (context, error, stackTrace) {
+                              return Container(
+                                height: 180,
+                                color: Colors.grey.shade300,
+                                child: const Icon(
+                                  Icons.image_not_supported,
+                                  size: 48,
+                                  color: Colors.grey,
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                    Padding(
+                      padding: const EdgeInsets.all(12.0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  experienceName,
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w600,
+                                    color: isMine
+                                        ? Colors.white
+                                        : Colors.black,
+                                  ),
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Icon(
+                                Icons.arrow_forward_ios,
+                                size: 16,
+                                color: isMine ? Colors.white : Colors.grey,
+                              ),
+                            ],
+                          ),
+                          if (locationText.isNotEmpty) ...[
+                            const SizedBox(height: 4),
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.place_outlined,
+                                  size: 14,
+                                  color:
+                                      isMine ? Colors.white : Colors.grey,
+                                ),
+                                const SizedBox(width: 4),
+                                Expanded(
+                                  child: Text(
+                                    locationText,
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      color: isMine
+                                          ? Colors.white
+                                          : Colors.grey.shade700,
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+
+  if (isMine) {
+    return Align(
+      alignment: alignment,
+      child: card,
+    );
+  }
+
+  final avatarParticipant =
+      sender ?? MessageThreadParticipant(id: message.senderId);
+
+  return Align(
+    alignment: Alignment.centerLeft,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          _buildParticipantAvatar(avatarParticipant, size: 34),
+          const SizedBox(width: 8),
+          Flexible(child: card),
+        ],
+    ),
+  );
+}
 
   Widget _buildMessageText(
     ChatMessage message,
@@ -964,10 +930,6 @@ class _ChatScreenState extends State<ChatScreen> {
                     subtitle: username != null && username != displayName
                         ? Text(username)
                         : null,
-                    onTap: () {
-                      Navigator.of(dialogContext).pop();
-                      _handleParticipantAvatarTap(participant);
-                    },
                   );
                 },
               ),
@@ -987,48 +949,35 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget _buildParticipantAvatar(
     MessageThreadParticipant participant, {
     double size = 40,
-    VoidCallback? onTap,
   }) {
     final photoUrl = participant.photoUrl;
     final radius = size / 2;
-    Widget avatar;
     if (photoUrl != null && photoUrl.isNotEmpty) {
-      avatar = CircleAvatar(
+      return CircleAvatar(
         radius: radius,
         backgroundImage: NetworkImage(photoUrl),
       );
-    } else {
-      final label = participant.displayLabel(fallback: 'Friend').trim();
-      final sanitized = label.replaceAll('@', '').trim();
-      final initialSource = sanitized.isNotEmpty ? sanitized : label;
-      final initial =
-          initialSource.isNotEmpty ? initialSource[0].toUpperCase() : '?';
+    }
 
-      avatar = CircleAvatar(
-        radius: radius,
-        backgroundColor: Colors.grey.shade300,
-        child: Text(
-          initial,
-          style: TextStyle(
-            fontWeight: FontWeight.w600,
-            color: Colors.black,
-            fontSize: radius * 0.9,
-          ),
+    final label = participant.displayLabel(fallback: 'Friend').trim();
+    final sanitized = label.replaceAll('@', '').trim();
+    final initialSource = sanitized.isNotEmpty ? sanitized : label;
+    final initial =
+        initialSource.isNotEmpty ? initialSource[0].toUpperCase() : '?';
+
+    return CircleAvatar(
+      radius: radius,
+      backgroundColor: Colors.grey.shade300,
+      child: Text(
+        initial,
+        style: TextStyle(
+          fontWeight: FontWeight.w600,
+          color: Colors.black,
+          fontSize: radius * 0.9,
         ),
-      );
-    }
-
-    if (onTap != null) {
-      avatar = GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: onTap,
-        child: avatar,
-      );
-    }
-
-    return avatar;
+      ),
+    );
   }
-
   Future<void> _showMediaPreviewModal({
     required String experienceName,
     required String? mediaUrl,
