@@ -20,6 +20,8 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
   UserProfile? _profile;
   int _followersCount = 0;
   int _followingCount = 0;
+  List<String> _followerIds = [];
+  List<String> _followingIds = [];
   bool _isLoading = true;
   bool _isProcessingFollow = false;
   bool _isFollowing = false;
@@ -67,6 +69,8 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
       if (!mounted) return;
       setState(() {
         _profile = profile;
+        _followerIds = followers;
+        _followingIds = following;
         _followersCount = followers.length;
         _followingCount = following.length;
         _isFollowing = isFollowing;
@@ -121,15 +125,21 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
     }
   }
 
+  String _getProfileInitial(UserProfile profile) {
+    final displayName = profile.displayName?.trim();
+    if (displayName != null && displayName.isNotEmpty) {
+      return displayName[0].toUpperCase();
+    }
+    final username = profile.username?.trim();
+    if (username != null && username.isNotEmpty) {
+      return username[0].toUpperCase();
+    }
+    return '?';
+  }
+
   Widget _buildAvatar(UserProfile profile) {
     final photoURL = profile.photoURL;
-    final displayName = profile.displayName?.trim() ?? '';
-    String fallbackLetter = '?';
-    if (displayName.isNotEmpty) {
-      fallbackLetter = displayName[0].toUpperCase();
-    } else if (profile.username?.isNotEmpty ?? false) {
-      fallbackLetter = profile.username![0].toUpperCase();
-    }
+    final fallbackLetter = _getProfileInitial(profile);
 
     return CircleAvatar(
       radius: 60,
@@ -149,19 +159,254 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
     );
   }
 
-  Widget _buildCountTile(String label, int count) {
-    return Column(
-      children: [
-        Text(
-          '$count',
-          style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+  Widget _buildCountTile({
+    required String label,
+    required int count,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '$count',
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              label,
+              style: TextStyle(color: Colors.grey[600], fontSize: 12),
+            ),
+          ],
         ),
-        const SizedBox(height: 4),
-        Text(
-          label,
-          style: TextStyle(color: Colors.grey[600], fontSize: 14),
+      ),
+    );
+  }
+
+  Future<List<UserProfile>> _fetchProfiles(List<String> userIds) async {
+    if (userIds.isEmpty) return [];
+    final profiles = await Future.wait(
+      userIds.map((id) => _userService.getUserProfile(id)),
+    );
+    return profiles.whereType<UserProfile>().toList();
+  }
+
+  Widget _buildProfileAvatar(UserProfile profile, {double size = 40}) {
+    final radius = size / 2;
+    final photoUrl = profile.photoURL;
+    if (photoUrl != null && photoUrl.isNotEmpty) {
+      return CircleAvatar(
+        radius: radius,
+        backgroundImage: NetworkImage(photoUrl),
+      );
+    }
+
+    final fallbackLetter = _getProfileInitial(profile);
+
+    return CircleAvatar(
+      radius: radius,
+      backgroundColor: Colors.grey.shade300,
+      child: Text(
+        fallbackLetter,
+        style: TextStyle(
+          fontWeight: FontWeight.w600,
+          color: Colors.black87,
+          fontSize: radius * 0.9,
         ),
-      ],
+      ),
+    );
+  }
+
+  void _showProfilePhotoDialog(UserProfile profile) {
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        final photoUrl = profile.photoURL;
+        final hasPhoto = photoUrl?.isNotEmpty ?? false;
+        final fallbackLetter = _getProfileInitial(profile);
+        final Widget photoContent = hasPhoto
+            ? InteractiveViewer(
+                child: Image.network(
+                  photoUrl!,
+                  fit: BoxFit.contain,
+                  loadingBuilder: (context, child, progress) {
+                    if (progress == null) return child;
+                    return const Center(child: CircularProgressIndicator());
+                  },
+                  errorBuilder: (context, _, __) {
+                    return Center(
+                      child: Text(
+                        fallbackLetter,
+                        style: const TextStyle(
+                          fontSize: 100,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              )
+            : Center(
+                child: Text(
+                  fallbackLetter,
+                  style: const TextStyle(
+                    fontSize: 100,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
+              );
+
+        return Dialog(
+          backgroundColor: Colors.white,
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          insetPadding:
+              const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  color: Colors.black,
+                  width: double.infinity,
+                  height: 320,
+                  alignment: Alignment.center,
+                  child: photoContent,
+                ),
+                Container(
+                  width: double.infinity,
+                  color: Colors.white,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  child: Center(
+                    child: TextButton(
+                      style: TextButton.styleFrom(
+                        backgroundColor: Colors.white,
+                        foregroundColor: Theme.of(context).primaryColor,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      onPressed: () => Navigator.of(dialogContext).pop(),
+                      child: const Padding(
+                        padding:
+                            EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+                        child: Text('Close'),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _showUserListDialog({
+    required String title,
+    required List<String> userIds,
+    required String emptyMessage,
+  }) async {
+    final parentContext = context;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        final maxHeight = MediaQuery.of(dialogContext).size.height * 0.6;
+        return AlertDialog(
+          backgroundColor: Colors.white,
+          title: Text(title),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxHeight: maxHeight),
+              child: FutureBuilder<List<UserProfile>>(
+                future: _fetchProfiles(userIds),
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+                  final profiles = snapshot.data ?? [];
+                  if (profiles.isEmpty) {
+                    return Center(
+                      child: Text(
+                        emptyMessage,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.grey[600]),
+                      ),
+                    );
+                  }
+                  return ListView.separated(
+                    itemCount: profiles.length,
+                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    itemBuilder: (_, index) {
+                      final profile = profiles[index];
+                      final bool hasDisplayName =
+                          profile.displayName?.isNotEmpty ?? false;
+                      final bool hasUsername =
+                          profile.username?.isNotEmpty ?? false;
+                      final String titleText = hasDisplayName
+                          ? profile.displayName!
+                          : (hasUsername
+                              ? '@${profile.username!}'
+                              : 'Plendy user');
+                      final String? subtitleText = hasDisplayName && hasUsername
+                          ? '@${profile.username!}'
+                          : null;
+                      return ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: _buildProfileAvatar(profile),
+                        title: Text(titleText),
+                        subtitle:
+                            subtitleText != null ? Text(subtitleText) : null,
+                        onTap: () {
+                          Navigator.of(dialogContext).pop();
+                          Navigator.of(parentContext).push(
+                            MaterialPageRoute(
+                              builder: (_) =>
+                                  PublicProfileScreen(userId: profile.id),
+                            ),
+                          );
+                        },
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Close'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _openFollowingDialog() async {
+    await _showUserListDialog(
+      title: 'Following',
+      userIds: _followingIds,
+      emptyMessage: 'Not following anyone yet.',
+    );
+  }
+
+  Future<void> _openFollowersDialog() async {
+    await _showUserListDialog(
+      title: 'Followers',
+      userIds: _followerIds,
+      emptyMessage: 'No one follows this profile yet.',
     );
   }
 
@@ -222,6 +467,8 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final profile = _profile;
+    final bool viewingOwnProfile =
+        _currentUserId != null && _currentUserId == widget.userId;
 
     Widget content;
     if (_isLoading) {
@@ -232,15 +479,18 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
       final bool hasDisplayName = profile.displayName?.isNotEmpty ?? false;
       final bool hasUsername = profile.username?.isNotEmpty ?? false;
       content = SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _buildAvatar(profile),
-                const SizedBox(width: 16),
+                GestureDetector(
+                  onTap: () => _showProfilePhotoDialog(profile),
+                  child: _buildAvatar(profile),
+                ),
+                const SizedBox(width: 24),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -259,29 +509,23 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
                         ),
                       if (hasDisplayName || hasUsername)
                         const SizedBox(height: 12),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            vertical: 16, horizontal: 12),
-                        decoration: BoxDecoration(
-                          color: Colors.grey[100],
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceAround,
-                          children: [
-                            Expanded(
-                                child: _buildCountTile(
-                                    'Following', _followingCount)),
-                            Container(
-                              width: 1,
-                              height: 32,
-                              color: Colors.grey[300],
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _buildCountTile(
+                              label: 'Following',
+                              count: _followingCount,
+                              onTap: _openFollowingDialog,
                             ),
-                            Expanded(
-                                child: _buildCountTile(
-                                    'Followers', _followersCount)),
-                          ],
-                        ),
+                          ),
+                          Expanded(
+                            child: _buildCountTile(
+                              label: 'Followers',
+                              count: _followersCount,
+                              onTap: _openFollowersDialog,
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
@@ -307,7 +551,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
-        title: const Text('Public Profile'),
+        title: viewingOwnProfile ? const Text('Public Profile') : null,
         backgroundColor: Colors.white,
         foregroundColor: Colors.black,
         elevation: 0,
