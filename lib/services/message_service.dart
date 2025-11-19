@@ -210,6 +210,24 @@ class MessageService {
     });
   }
 
+  Future<void> updateThreadTitle({
+    required String threadId,
+    required String title,
+  }) async {
+    final trimmed = title.trim();
+    final Map<String, dynamic> updates = {
+      'updatedAt': FieldValue.serverTimestamp(),
+    };
+
+    if (trimmed.isEmpty) {
+      updates['title'] = FieldValue.delete();
+    } else {
+      updates['title'] = trimmed;
+    }
+
+    await _threads.doc(threadId).update(updates);
+  }
+
   Future<Map<String, MessageThreadParticipant>> _buildParticipantProfiles(
     List<String> userIds,
   ) async {

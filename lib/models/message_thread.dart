@@ -25,6 +25,7 @@ class MessageThread {
   final DateTime? lastMessageTimestamp;
   final DateTime? createdAt;
   final DateTime? updatedAt;
+  final String? title;
   final String participantsKey;
   final Map<String, DateTime?> lastReadTimestamps; // userId -> last read timestamp
 
@@ -38,6 +39,7 @@ class MessageThread {
     required this.participantIds,
     required this.participantProfiles,
     required this.participantsKey,
+    this.title,
     this.lastMessage,
     this.lastMessageSenderId,
     this.lastMessageTimestamp,
@@ -70,6 +72,7 @@ class MessageThread {
           List<String>.from(data['participants'] as List<dynamic>? ?? const []),
       participantProfiles: profiles,
       participantsKey: data['participantsKey'] as String? ?? '',
+      title: (data['title'] as String?)?.trim(),
       lastMessage: data['lastMessage'] as String?,
       lastMessageSenderId: data['lastMessageSenderId'] as String?,
       lastMessageTimestamp: _parseTimestamp(data['lastMessageTimestamp']),
