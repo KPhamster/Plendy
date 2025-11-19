@@ -43,7 +43,7 @@ const List<TutorialSlide> tutorialSlides = [
   ),
   TutorialSlide(
     description:
-        'There is a whole world out there to discover. Happy exploring!',
+        'There is a whole world out there to discover with good friends and company. Happy exploring!',
     imageAsset: 'assets/tutorials/full_plendy_map.png',
   ),
 ];
