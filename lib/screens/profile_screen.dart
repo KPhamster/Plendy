@@ -55,6 +55,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       MaterialPageRoute(builder: (context) => const EditProfileScreen()),
     );
     if (result == true) {
+      await _authService?.reloadCurrentUser();
       _refreshProfile();
     }
   }
