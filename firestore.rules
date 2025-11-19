@@ -39,11 +39,9 @@ service cloud.firestore {
 
       // Rules for followers subcollection
       match /followers/{followerId} {
-        // Allow reading if: 
-        // 1. The requester is the user whose followers list it is (userId).
-        // 2. The requester is the follower being checked (followerId) - useful for isFollowing/getFriendIds checks.
-        allow read: if request.auth != null && 
-                       (request.auth.uid == userId || request.auth.uid == followerId);
+        // Allow any authenticated user to read follower docs so public profiles can
+        // display accurate counts/lists (docs only contain follower IDs).
+        allow read: if request.auth != null;
         
         // Allow creating/deleting a follower document if:
         // 1. The requester is the one trying to follow (followerId = request.auth.uid)
@@ -57,11 +55,8 @@ service cloud.firestore {
 
       // Rules for following subcollection
       match /following/{followingId} {
-        // Allow reading if:
-        // 1. The requester is the user whose following list it is (userId).
-        // 2. The requester is the user being checked if they are followed (followingId) - for completeness, though less common.
-        allow read: if request.auth != null &&
-                       (request.auth.uid == userId || request.auth.uid == followingId);
+        // Allow any authenticated user to read following docs for accurate counts/lists.
+        allow read: if request.auth != null;
 
         // Allow creating/deleting a following document if:
         // 1. The requester is the one who is doing the following (userId = request.auth.uid)

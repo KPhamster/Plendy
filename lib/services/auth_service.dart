@@ -325,6 +325,14 @@ class AuthService extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> reloadCurrentUser() async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+    await user.reload();
+    _currentUser = _auth.currentUser;
+    notifyListeners();
+  }
+
   Future<void> _setupFcmForUser(String userId) async {
     if (kIsWeb) return; // FCM setup for web is different, skipping for now
 

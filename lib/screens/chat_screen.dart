@@ -14,6 +14,7 @@ import '../services/experience_service.dart';
 import '../services/message_service.dart';
 import '../widgets/shared_media_preview_modal.dart';
 import 'experience_page_screen.dart';
+import 'public_profile_screen.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({
@@ -135,6 +136,18 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _handleBackPressed() {
     Navigator.of(context).pop();
+  }
+
+  void _openPublicProfile(String userId) {
+    if (!mounted || userId.isEmpty) {
+      return;
+    }
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => PublicProfileScreen(userId: userId),
+      ),
+    );
   }
 
   void _startEditingTitle(String title) {
@@ -463,6 +476,7 @@ class _ChatScreenState extends State<ChatScreen> {
           _buildParticipantAvatar(
             avatarParticipant,
             size: 34,
+            onTap: () => _openPublicProfile(avatarParticipant.id),
           ),
           const SizedBox(width: 8),
           Flexible(child: bubbleWithConstraints),
@@ -783,7 +797,11 @@ class _ChatScreenState extends State<ChatScreen> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          _buildParticipantAvatar(avatarParticipant, size: 34),
+          _buildParticipantAvatar(
+            avatarParticipant,
+            size: 34,
+            onTap: () => _openPublicProfile(avatarParticipant.id),
+          ),
           const SizedBox(width: 8),
           Flexible(child: card),
         ],
@@ -930,6 +948,10 @@ class _ChatScreenState extends State<ChatScreen> {
                     subtitle: username != null && username != displayName
                         ? Text(username)
                         : null,
+                    onTap: () {
+                      Navigator.of(dialogContext).pop();
+                      _openPublicProfile(participant.id);
+                    },
                   );
                 },
               ),
@@ -949,13 +971,17 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget _buildParticipantAvatar(
     MessageThreadParticipant participant, {
     double size = 40,
+    VoidCallback? onTap,
   }) {
     final photoUrl = participant.photoUrl;
     final radius = size / 2;
     if (photoUrl != null && photoUrl.isNotEmpty) {
-      return CircleAvatar(
-        radius: radius,
-        backgroundImage: NetworkImage(photoUrl),
+      return _wrapAvatar(
+        CircleAvatar(
+          radius: radius,
+          backgroundImage: NetworkImage(photoUrl),
+        ),
+        onTap,
       );
     }
 
@@ -965,19 +991,35 @@ class _ChatScreenState extends State<ChatScreen> {
     final initial =
         initialSource.isNotEmpty ? initialSource[0].toUpperCase() : '?';
 
-    return CircleAvatar(
-      radius: radius,
-      backgroundColor: Colors.grey.shade300,
-      child: Text(
-        initial,
-        style: TextStyle(
-          fontWeight: FontWeight.w600,
-          color: Colors.black,
-          fontSize: radius * 0.9,
+    return _wrapAvatar(
+      CircleAvatar(
+        radius: radius,
+        backgroundColor: Colors.grey.shade300,
+        child: Text(
+          initial,
+          style: TextStyle(
+            fontWeight: FontWeight.w600,
+            color: Colors.black,
+            fontSize: radius * 0.9,
+          ),
         ),
       ),
+      onTap,
     );
   }
+
+  Widget _wrapAvatar(Widget avatar, VoidCallback? onTap) {
+    if (onTap == null) {
+      return avatar;
+    }
+
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: avatar,
+    );
+  }
+
   Future<void> _showMediaPreviewModal({
     required String experienceName,
     required String? mediaUrl,
