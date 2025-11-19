@@ -20,6 +20,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   final _userService = UserService();
   final _nameController = TextEditingController();
   final _usernameController = TextEditingController();
+  final _bioController = TextEditingController();
   File? _imageFile;
   bool _isLoading = false;
   String? _usernameError;
@@ -32,6 +33,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   void initState() {
     super.initState();
     _loadCurrentData();
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _usernameController.dispose();
+    _bioController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadCurrentData() async {
@@ -47,6 +56,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           _isPrivateProfile =
               userProfileDoc?.isPrivate ?? false; // Load privacy setting
           _initialIsPrivateProfile = _isPrivateProfile; // Store initial value
+          _bioController.text = userProfileDoc?.bio ?? '';
         });
       }
     }
@@ -160,6 +170,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         await user.updatePhotoURL(photoURL);
       }
 
+      final String bioText = _bioController.text.trim();
+
       Map<String, dynamic> firestoreUpdateData = {
         'displayName': _nameController.text,
         'isPrivate': _isPrivateProfile,
@@ -175,6 +187,12 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       } else if (_initialUsername != null && _initialUsername!.isNotEmpty) {
         firestoreUpdateData['username'] = FieldValue.delete();
         firestoreUpdateData['lowercaseUsername'] = FieldValue.delete();
+      }
+
+      if (bioText.isNotEmpty) {
+        firestoreUpdateData['bio'] = bioText;
+      } else {
+        firestoreUpdateData['bio'] = FieldValue.delete();
       }
 
       await _userService.updateUserCoreData(user.uid, firestoreUpdateData);
@@ -278,6 +296,16 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                       labelText: 'Display Name',
                       hintText: 'Enter your name',
                     ),
+                  ),
+                  const SizedBox(height: 16),
+                  TextFormField(
+                    controller: _bioController,
+                    decoration: const InputDecoration(
+                      labelText: 'About You',
+                      hintText: 'Share a short description',
+                      alignLabelWithHint: true,
+                    ),
+                    maxLines: 4,
                   ),
                   const SizedBox(height: 24), // Added const & more space
                   const Text('Profile Visibility',
