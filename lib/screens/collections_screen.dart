@@ -9071,7 +9071,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
       if (isInitialLoad) {
         ownedExperiences = await _experienceService.getExperiencesByUser(
           userId,
-          limit: 500, // Load all owned (usually smaller set)
+          limit: 0, // No limit - load all owned experiences
         );
       }
 

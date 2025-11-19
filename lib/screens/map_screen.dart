@@ -358,7 +358,7 @@ class _MapScreenState extends State<MapScreen> {
         .map((followeeId) async {
           try {
             final experiences = await _experienceService
-                .getExperiencesByUser(followeeId, limit: 500);
+                .getExperiencesByUser(followeeId, limit: 0); // No limit - load all followee experiences
             final List<Experience> publicExperiences = experiences
                 .where((exp) => !_isExperienceEffectivelyPrivate(exp))
                 .toList();
@@ -661,7 +661,7 @@ class _MapScreenState extends State<MapScreen> {
       final ownedResults = await Future.wait([
         _experienceService.getUserCategories(includeSharedEditable: true),
         _experienceService.getUserColorCategories(includeSharedEditable: true),
-        _experienceService.getExperiencesByUser(userId),
+        _experienceService.getExperiencesByUser(userId, limit: 0), // No limit - load all owned experiences
       ]);
 
       _categories = ownedResults[0] as List<UserCategory>;
@@ -2036,64 +2036,6 @@ class _MapScreenState extends State<MapScreen> {
                         );
                       }), // This creates List<CheckboxListTile>
                       const SizedBox(height: 16),
-                      const Text('By People You Follow:',
-                          style: TextStyle(fontWeight: FontWeight.bold)),
-                      if (_followingUsers.isEmpty)
-                        const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 8),
-                          child: Text(
-                            'Follow friends to filter their public experiences.',
-                            style: TextStyle(color: Colors.black54),
-                          ),
-                        )
-                      else
-                        ..._followingUsers.map((profile) {
-                          final String displayName =
-                              _getUserDisplayName(profile);
-                          final List<String> icons =
-                              _followeeCategoryIcons[profile.id] ??
-                                  const <String>[];
-                          return CheckboxListTile(
-                            controlAffinity: ListTileControlAffinity.leading,
-                            contentPadding: EdgeInsets.zero,
-                            title: Text(
-                              displayName,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            subtitle: icons.isEmpty
-                                ? const Text(
-                                    'No public experiences yet',
-                                    style: TextStyle(
-                                        fontSize: 12, color: Colors.black54),
-                                  )
-                                : Wrap(
-                                    spacing: 8,
-                                    runSpacing: 4,
-                                    children: icons
-                                        .take(12)
-                                        .map(
-                                          (icon) => Text(
-                                            icon,
-                                            style:
-                                                const TextStyle(fontSize: 18),
-                                          ),
-                                        )
-                                        .toList(),
-                                  ),
-                            value: tempSelectedFolloweeIds
-                                .contains(profile.id),
-                            onChanged: (bool? selected) {
-                              setStateDialog(() {
-                                if (selected == true) {
-                                  tempSelectedFolloweeIds.add(profile.id);
-                                } else {
-                                  tempSelectedFolloweeIds.remove(profile.id);
-                                }
-                              });
-                            },
-                          );
-                        }),
-                      const SizedBox(height: 16),
                       const Text('By Color:',
                           style: TextStyle(fontWeight: FontWeight.bold)),
                       // FIX: Correctly use map().toList() to generate CheckboxListTiles
@@ -2159,6 +2101,84 @@ class _MapScreenState extends State<MapScreen> {
                           },
                         );
                       }),
+                      const SizedBox(height: 16),
+                      const Text('By People You Follow:',
+                          style: TextStyle(fontWeight: FontWeight.bold)),
+                      if (_followingUsers.isEmpty)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 8),
+                          child: Text(
+                            'Follow friends to filter their public experiences.',
+                            style: TextStyle(color: Colors.black54),
+                          ),
+                        )
+                      else
+                        ..._followingUsers.map((profile) {
+                          final String displayName =
+                              _getUserDisplayName(profile);
+                          final int experienceCount =
+                              _followeePublicExperiences[profile.id]?.length ??
+                              0;
+                          final Widget leadingAvatar;
+                          if (profile.photoURL != null &&
+                              profile.photoURL!.trim().isNotEmpty) {
+                            leadingAvatar = CircleAvatar(
+                              radius: 20,
+                              backgroundImage:
+                                  NetworkImage(profile.photoURL!.trim()),
+                              backgroundColor: Colors.grey[200],
+                            );
+                          } else {
+                            final String initial = displayName.isNotEmpty
+                                ? displayName.substring(0, 1).toUpperCase()
+                                : profile.id.substring(0, 1).toUpperCase();
+                            leadingAvatar = CircleAvatar(
+                              radius: 20,
+                              backgroundColor: Colors.grey[300],
+                              child: Text(
+                                initial,
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.white),
+                              ),
+                            );
+                          }
+
+                          return CheckboxListTile(
+                            controlAffinity: ListTileControlAffinity.leading,
+                            contentPadding: EdgeInsets.zero,
+                            title: Row(
+                              children: [
+                                leadingAvatar,
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Text(
+                                    displayName,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            subtitle: Text(
+                              experienceCount > 0
+                                  ? '$experienceCount experiences'
+                                  : 'No public experiences yet',
+                              style: const TextStyle(
+                                  fontSize: 12, color: Colors.black54),
+                            ),
+                            value: tempSelectedFolloweeIds
+                                .contains(profile.id),
+                            onChanged: (bool? selected) {
+                              setStateDialog(() {
+                                if (selected == true) {
+                                  tempSelectedFolloweeIds.add(profile.id);
+                                } else {
+                                  tempSelectedFolloweeIds.remove(profile.id);
+                                }
+                              });
+                            },
+                          );
+                        }),
                     ],
                   ),
                 );
