@@ -14,6 +14,7 @@ import '../services/experience_service.dart';
 import '../services/message_service.dart';
 import '../widgets/shared_media_preview_modal.dart';
 import 'experience_page_screen.dart';
+import 'public_profile_screen.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({
@@ -39,7 +40,7 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _sending = false;
   bool _isEditingTitle = false;
   bool _isSavingTitle = false;
-  
+
   List<UserCategory> _userCategories = [];
   List<ColorCategory> _userColorCategories = [];
   Future<void>? _userCollectionsFuture;
@@ -49,7 +50,7 @@ class _ChatScreenState extends State<ChatScreen> {
     super.initState();
     _messageService = MessageService();
     _experienceService = ExperienceService();
-    
+
     // Mark thread as read when opened
     _messageService.markThreadAsRead(widget.thread.id, widget.currentUserId);
   }
@@ -179,9 +180,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
     final bool isUnchangedCustom =
         currentCustomTitle != null && newTitle == currentCustomTitle;
-    final bool isNoOpDefault =
-        currentCustomTitle == null &&
-            (newTitle.isEmpty || newTitle == defaultTitle);
+    final bool isNoOpDefault = currentCustomTitle == null &&
+        (newTitle.isEmpty || newTitle == defaultTitle);
 
     if (isUnchangedCustom || isNoOpDefault) {
       _stopEditingTitle();
@@ -476,7 +476,7 @@ class _ChatScreenState extends State<ChatScreen> {
   ) {
     final alignment = isMine ? Alignment.centerRight : Alignment.centerLeft;
     final snapshot = message.experienceSnapshot;
-    
+
     if (snapshot == null) {
       // Fallback if snapshot is missing
       return Align(
@@ -495,14 +495,17 @@ class _ChatScreenState extends State<ChatScreen> {
 
     final experienceName = snapshot['name'] as String? ?? 'Experience';
     final locationData = snapshot['location'] as Map<String, dynamic>?;
-    
+
     // Check if this is a discovery preview share (has highlightedMediaUrl)
     final highlightedMediaUrl = snapshot['highlightedMediaUrl'] as String?;
-    final isDiscoveryPreview = highlightedMediaUrl != null && highlightedMediaUrl.isNotEmpty;
-    
+    final isDiscoveryPreview =
+        highlightedMediaUrl != null && highlightedMediaUrl.isNotEmpty;
+
     // Use highlighted media URL for discovery shares, otherwise use the main image
-    final imageUrl = isDiscoveryPreview ? highlightedMediaUrl : (snapshot['image'] as String?);
-    
+    final imageUrl = isDiscoveryPreview
+        ? highlightedMediaUrl
+        : (snapshot['image'] as String?);
+
     // Build location subtitle
     final List<String> locationParts = [];
     if (locationData != null) {
@@ -545,7 +548,8 @@ class _ChatScreenState extends State<ChatScreen> {
                     if (isDiscoveryPreview) ...[
                       const SizedBox(width: 4),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 2),
                         decoration: BoxDecoration(
                           color: Colors.purple.shade100,
                           borderRadius: BorderRadius.circular(8),
@@ -565,7 +569,9 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
             Card(
               elevation: 2,
-              color: isMine ? Theme.of(context).primaryColor : Colors.grey.shade300,
+              color: isMine
+                  ? Theme.of(context).primaryColor
+                  : Colors.grey.shade300,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
               ),
@@ -583,34 +589,50 @@ class _ChatScreenState extends State<ChatScreen> {
                       } else {
                         // Full experience share: open experience directly
                         final experience = Experience(
-                          id: snapshot['id'] as String? ?? 'preview_${DateTime.now().millisecondsSinceEpoch}',
+                          id: snapshot['id'] as String? ??
+                              'preview_${DateTime.now().millisecondsSinceEpoch}',
                           name: experienceName,
                           description: snapshot['description'] as String? ?? '',
-                          location: Location.fromMap(snapshot['location'] as Map<String, dynamic>? ?? {}),
+                          location: Location.fromMap(
+                              snapshot['location'] as Map<String, dynamic>? ??
+                                  {}),
                           createdAt: DateTime.now(),
                           updatedAt: DateTime.now(),
-                          editorUserIds: (snapshot['editorUserIds'] as List<dynamic>?)?.map((e) => e.toString()).toList() ?? [],
+                          editorUserIds:
+                              (snapshot['editorUserIds'] as List<dynamic>?)
+                                      ?.map((e) => e.toString())
+                                      .toList() ??
+                                  [],
                           createdBy: snapshot['createdBy'] as String?,
-                          sharedMediaItemIds: (snapshot['sharedMediaItemIds'] as List<dynamic>?)?.cast<String>() ?? [],
+                          sharedMediaItemIds:
+                              (snapshot['sharedMediaItemIds'] as List<dynamic>?)
+                                      ?.cast<String>() ??
+                                  [],
                         );
-                        
+
                         // Build media items from mediaUrls in snapshot for public content
-                        final mediaUrls = (snapshot['mediaUrls'] as List<dynamic>?)?.cast<String>() ?? [];
-                        final List<SharedMediaItem> fullExperienceMediaItems = [];
-                        
+                        final mediaUrls =
+                            (snapshot['mediaUrls'] as List<dynamic>?)
+                                    ?.cast<String>() ??
+                                [];
+                        final List<SharedMediaItem> fullExperienceMediaItems =
+                            [];
+
                         if (mediaUrls.isNotEmpty) {
                           for (int i = 0; i < mediaUrls.length; i++) {
                             fullExperienceMediaItems.add(SharedMediaItem(
                               id: 'preview_${experience.id}_$i',
                               path: mediaUrls[i],
-                              createdAt: DateTime.now().subtract(Duration(seconds: mediaUrls.length - i)),
+                              createdAt: DateTime.now().subtract(
+                                  Duration(seconds: mediaUrls.length - i)),
                               ownerUserId: 'public_discovery',
                               experienceIds: [],
                             ));
                           }
                         }
-                        
-                        await _handleViewExperience(experience, snapshot, fullExperienceMediaItems);
+
+                        await _handleViewExperience(
+                            experience, snapshot, fullExperienceMediaItems);
                       }
                     },
                     borderRadius: BorderRadius.circular(12),
@@ -689,7 +711,9 @@ class _ChatScreenState extends State<ChatScreen> {
                                       style: TextStyle(
                                         fontSize: 16,
                                         fontWeight: FontWeight.w600,
-                                        color: isMine ? Colors.white : Colors.black,
+                                        color: isMine
+                                            ? Colors.white
+                                            : Colors.black,
                                       ),
                                       maxLines: 2,
                                       overflow: TextOverflow.ellipsis,
@@ -703,35 +727,38 @@ class _ChatScreenState extends State<ChatScreen> {
                                   ),
                                 ],
                               ),
-                          if (locationText.isNotEmpty) ...[
-                            const SizedBox(height: 4),
-                            Row(
-                              children: [
-                                Icon(
-                                  Icons.place_outlined,
-                                  size: 14,
-                                  color: isMine ? Colors.white : Colors.grey,
-                                ),
-                                const SizedBox(width: 4),
-                                Expanded(
-                                  child: Text(
-                                    locationText,
-                                    style: TextStyle(
-                                      fontSize: 13,
-                                      color: isMine ? Colors.white : Colors.grey.shade700,
+                              if (locationText.isNotEmpty) ...[
+                                const SizedBox(height: 4),
+                                Row(
+                                  children: [
+                                    Icon(
+                                      Icons.place_outlined,
+                                      size: 14,
+                                      color:
+                                          isMine ? Colors.white : Colors.grey,
                                     ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
+                                    const SizedBox(width: 4),
+                                    Expanded(
+                                      child: Text(
+                                        locationText,
+                                        style: TextStyle(
+                                          fontSize: 13,
+                                          color: isMine
+                                              ? Colors.white
+                                              : Colors.grey.shade700,
+                                        ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ],
-                            ),
-                          ],
-                        ],
-                      ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
-                  ],
-                ),
                   ),
                   // Play button positioned on the bottom-right (only for discovery previews)
                   if (isDiscoveryPreview)
@@ -748,12 +775,16 @@ class _ChatScreenState extends State<ChatScreen> {
                           width: 48,
                           height: 48,
                           decoration: BoxDecoration(
-                            color: isMine ? Colors.white : Theme.of(context).primaryColor,
+                            color: isMine
+                                ? Colors.white
+                                : Theme.of(context).primaryColor,
                             shape: BoxShape.circle,
                           ),
                           child: Icon(
                             Icons.play_arrow,
-                            color: isMine ? Theme.of(context).primaryColor : Colors.white,
+                            color: isMine
+                                ? Theme.of(context).primaryColor
+                                : Colors.white,
                             size: 28,
                           ),
                         ),
@@ -885,6 +916,7 @@ class _ChatScreenState extends State<ChatScreen> {
           (id) => thread.participant(id) ?? MessageThreadParticipant(id: id),
         )
         .toList();
+    final parentContext = context;
 
     await showDialog<void>(
       context: context,
@@ -903,9 +935,10 @@ class _ChatScreenState extends State<ChatScreen> {
                 separatorBuilder: (_, __) => const Divider(height: 1),
                 itemBuilder: (context, index) {
                   final participant = participants[index];
-                  final displayName = participant.displayName?.isNotEmpty == true
-                      ? participant.displayName!
-                      : participant.displayLabel(fallback: 'Friend');
+                  final displayName =
+                      participant.displayName?.isNotEmpty == true
+                          ? participant.displayName!
+                          : participant.displayLabel(fallback: 'Friend');
                   final username = participant.username?.isNotEmpty == true
                       ? '@${participant.username!}'
                       : null;
@@ -916,6 +949,15 @@ class _ChatScreenState extends State<ChatScreen> {
                     subtitle: username != null && username != displayName
                         ? Text(username)
                         : null,
+                    onTap: () {
+                      Navigator.of(dialogContext).pop();
+                      Navigator.of(parentContext).push(
+                        MaterialPageRoute(
+                          builder: (_) =>
+                              PublicProfileScreen(userId: participant.id),
+                        ),
+                      );
+                    },
                   );
                 },
               ),
@@ -981,35 +1023,43 @@ class _ChatScreenState extends State<ChatScreen> {
     final currentUserId = widget.currentUserId;
     final createdBy = experienceSnapshot['createdBy'] as String?;
     final editorUserIds = experienceSnapshot['editorUserIds'] as List<dynamic>?;
-    
+
     final bool hasAccess = createdBy == currentUserId ||
         (editorUserIds != null && editorUserIds.contains(currentUserId));
 
     // Create a minimal Experience object for the preview modal
     final experience = Experience(
-      id: experienceSnapshot['id'] as String? ?? 'preview_${DateTime.now().millisecondsSinceEpoch}',
+      id: experienceSnapshot['id'] as String? ??
+          'preview_${DateTime.now().millisecondsSinceEpoch}',
       name: experienceName,
       description: experienceSnapshot['description'] as String? ?? '',
-      location: Location.fromMap(experienceSnapshot['location'] as Map<String, dynamic>? ?? {}),
+      location: Location.fromMap(
+          experienceSnapshot['location'] as Map<String, dynamic>? ?? {}),
       createdAt: DateTime.now(),
       updatedAt: DateTime.now(),
       editorUserIds: editorUserIds?.map((e) => e.toString()).toList() ?? [],
       createdBy: createdBy,
-      sharedMediaItemIds: (experienceSnapshot['sharedMediaItemIds'] as List<dynamic>?)?.cast<String>() ?? [],
+      sharedMediaItemIds:
+          (experienceSnapshot['sharedMediaItemIds'] as List<dynamic>?)
+                  ?.cast<String>() ??
+              [],
     );
 
     // Build media items from the snapshot
     // For discovery previews, use mediaUrls from the snapshot
-    final mediaUrls = (experienceSnapshot['mediaUrls'] as List<dynamic>?)?.cast<String>() ?? [];
+    final mediaUrls =
+        (experienceSnapshot['mediaUrls'] as List<dynamic>?)?.cast<String>() ??
+            [];
     final List<SharedMediaItem> mediaItems = [];
-    
+
     if (mediaUrls.isNotEmpty) {
       // Build SharedMediaItems from the URLs in the snapshot
       for (int i = 0; i < mediaUrls.length; i++) {
         mediaItems.add(SharedMediaItem(
           id: 'preview_${experience.id}_$i',
           path: mediaUrls[i],
-          createdAt: DateTime.now().subtract(Duration(seconds: mediaUrls.length - i)),
+          createdAt:
+              DateTime.now().subtract(Duration(seconds: mediaUrls.length - i)),
           ownerUserId: 'public_discovery',
           experienceIds: [],
         ));
@@ -1024,7 +1074,7 @@ class _ChatScreenState extends State<ChatScreen> {
         experienceIds: [],
       ));
     }
-    
+
     // Find the media item that matches the highlighted URL
     final mediaItem = mediaItems.firstWhere(
       (item) => item.path == mediaUrl,
@@ -1047,29 +1097,31 @@ class _ChatScreenState extends State<ChatScreen> {
           category: null,
           userColorCategories: const [],
           showSavedDate: hasAccess, // Only show saved date if user has access
-          onViewExperience: () => _handleViewExperience(experience, experienceSnapshot, mediaItems),
+          onViewExperience: () =>
+              _handleViewExperience(experience, experienceSnapshot, mediaItems),
         );
       },
     );
   }
 
   Future<void> _handleViewExperience(
-    Experience experience, 
+    Experience experience,
     Map<String, dynamic> snapshot,
     List<SharedMediaItem> mediaItems,
   ) async {
     // Extract place ID from snapshot
     final locationData = snapshot['location'] as Map<String, dynamic>?;
     final String? placeId = locationData?['placeId'] as String?;
-    
+
     // Try to find if user has an editable experience at this place
     Experience? editableExperience;
     if (placeId != null && placeId.isNotEmpty) {
-      editableExperience = await _experienceService.findEditableExperienceByPlaceId(placeId);
+      editableExperience =
+          await _experienceService.findEditableExperienceByPlaceId(placeId);
     }
-    
+
     if (!mounted) return;
-    
+
     if (editableExperience != null) {
       // User has an editable experience at this place
       await _openEditableExperience(editableExperience);
@@ -1098,7 +1150,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _openReadOnlyExperience(
-    Experience experience, 
+    Experience experience,
     Map<String, dynamic> snapshot,
     List<SharedMediaItem> mediaItems,
   ) async {
@@ -1111,8 +1163,10 @@ class _ChatScreenState extends State<ChatScreen> {
     );
 
     // Get sharedMediaItemIds from the snapshot
-    final sharedMediaItemIds = (snapshot['sharedMediaItemIds'] as List<dynamic>?)?.cast<String>() ?? [];
-    
+    final sharedMediaItemIds =
+        (snapshot['sharedMediaItemIds'] as List<dynamic>?)?.cast<String>() ??
+            [];
+
     // Create an experience with the sharedMediaItemIds so the content tab can load them
     final experienceWithMedia = experience.copyWith(
       sharedMediaItemIds: sharedMediaItemIds,
@@ -1124,7 +1178,9 @@ class _ChatScreenState extends State<ChatScreen> {
           experience: experienceWithMedia,
           category: readOnlyCategory,
           userColorCategories: const <ColorCategory>[],
-          initialMediaItems: mediaItems.isNotEmpty ? mediaItems : null, // Pass media items for public content
+          initialMediaItems: mediaItems.isNotEmpty
+              ? mediaItems
+              : null, // Pass media items for public content
           readOnlyPreview: true,
         ),
       ),
@@ -1184,7 +1240,8 @@ class _ChatScreenState extends State<ChatScreen> {
     if (url.contains('tiktok.com')) return FontAwesomeIcons.tiktok;
     if (url.contains('instagram.com')) return FontAwesomeIcons.instagram;
     if (url.contains('facebook.com')) return FontAwesomeIcons.facebook;
-    if (url.contains('youtube.com') || url.contains('youtu.be')) return FontAwesomeIcons.youtube;
+    if (url.contains('youtube.com') || url.contains('youtu.be'))
+      return FontAwesomeIcons.youtube;
     return Icons.link;
   }
 
@@ -1192,15 +1249,19 @@ class _ChatScreenState extends State<ChatScreen> {
     if (url.contains('tiktok.com')) return 'TikTok';
     if (url.contains('instagram.com')) return 'Instagram';
     if (url.contains('facebook.com')) return 'Facebook';
-    if (url.contains('youtube.com') || url.contains('youtu.be')) return 'YouTube';
+    if (url.contains('youtube.com') || url.contains('youtu.be'))
+      return 'YouTube';
     return 'Browser';
   }
 
   Color _getMediaIconColor(String url) {
     if (url.contains('tiktok.com')) return const Color(0xFF000000); // Black
-    if (url.contains('instagram.com')) return const Color(0xFFE4405F); // Instagram gradient (using primary pink)
-    if (url.contains('facebook.com')) return const Color(0xFF1877F2); // Facebook blue
-    if (url.contains('youtube.com') || url.contains('youtu.be')) return const Color(0xFFFF0000); // YouTube red
+    if (url.contains('instagram.com'))
+      return const Color(0xFFE4405F); // Instagram gradient (using primary pink)
+    if (url.contains('facebook.com'))
+      return const Color(0xFF1877F2); // Facebook blue
+    if (url.contains('youtube.com') || url.contains('youtu.be'))
+      return const Color(0xFFFF0000); // YouTube red
     return Colors.grey.shade600; // Generic link color
   }
 
