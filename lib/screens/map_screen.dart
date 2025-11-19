@@ -1956,6 +1956,11 @@ class _MapScreenState extends State<MapScreen> {
         Set.from(_selectedColorCategoryIds);
     Set<String> tempSelectedFolloweeIds = Set.from(_selectedFolloweeIds);
 
+    String? activeFolloweeId;
+    UserProfile? activeFolloweeProfile;
+
+    final ScrollController dialogScrollController = ScrollController();
+
     await showDialog(
       context: context,
       builder: (BuildContext context) {
@@ -1972,7 +1977,175 @@ class _MapScreenState extends State<MapScreen> {
               child: StatefulBuilder(
               // Use StatefulBuilder to manage state within the dialog
               builder: (BuildContext context, StateSetter setStateDialog) {
+                if (activeFolloweeId != null) {
+                  final String followeeId = activeFolloweeId!;
+                  final UserProfile? followeeProfile =
+                      activeFolloweeProfile ??
+                          _followingUsers.firstWhere(
+                              (profile) => profile.id == followeeId,
+                              orElse: () => UserProfile(id: followeeId));
+                  final String displayName =
+                      _getUserDisplayName(followeeProfile!);
+                  final List<UserCategory> detailCategories =
+                      (_followeeCategories[followeeId]?.values ??
+                              const Iterable<UserCategory>.empty())
+                          .where((category) =>
+                              _canAccessFolloweeCategory(followeeId,
+                                  category.id))
+                          .toList()
+                        ..sort((a, b) => a.name.compareTo(b.name));
+                  final List<ColorCategory> detailColors =
+                      (_followeeColorCategories[followeeId]?.values ??
+                              const Iterable<ColorCategory>.empty())
+                          .where((colorCategory) =>
+                              _canAccessFolloweeColorCategory(
+                                  followeeId, colorCategory.id))
+                          .toList()
+                        ..sort((a, b) => a.name.compareTo(b.name));
+                  final int experienceCount =
+                      _followeePublicExperiences[followeeId]?.length ?? 0;
+
+                  return SingleChildScrollView(
+                    controller: dialogScrollController,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.arrow_back),
+                              tooltip: 'Back',
+                              onPressed: () {
+                                setStateDialog(() {
+                                  activeFolloweeId = null;
+                                  activeFolloweeProfile = null;
+                                });
+                              },
+                            ),
+                            Expanded(
+                              child: Text(
+                                'Filters for $displayName',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          experienceCount > 0
+                              ? '$experienceCount experiences available'
+                              : 'No public experiences yet',
+                          style: const TextStyle(
+                              fontSize: 13, color: Colors.black54),
+                        ),
+                        const SizedBox(height: 16),
+                        const Text('By Category:',
+                            style: TextStyle(fontWeight: FontWeight.bold)),
+                        if (detailCategories.isEmpty)
+                          const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 8),
+                            child: Text(
+                              'No categories available.',
+                              style: TextStyle(color: Colors.black54),
+                            ),
+                          )
+                        else
+                          ...detailCategories.map((category) {
+                            return CheckboxListTile(
+                              controlAffinity: ListTileControlAffinity.leading,
+                              contentPadding: EdgeInsets.zero,
+                              title: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  SizedBox(
+                                    width: 16,
+                                    child: Center(child: Text(category.icon)),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Text(
+                                      category.name,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              value: tempSelectedCategoryIds
+                                  .contains(category.id),
+                              onChanged: (bool? selected) {
+                                setStateDialog(() {
+                                  if (selected == true) {
+                                    tempSelectedCategoryIds.add(category.id);
+                                  } else {
+                                    tempSelectedCategoryIds.remove(category.id);
+                                  }
+                                });
+                              },
+                            );
+                          }),
+                        const SizedBox(height: 16),
+                        const Text('By Color:',
+                            style: TextStyle(fontWeight: FontWeight.bold)),
+                        if (detailColors.isEmpty)
+                          const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 8),
+                            child: Text(
+                              'No color categories available.',
+                              style: TextStyle(color: Colors.black54),
+                            ),
+                          )
+                        else
+                          ...detailColors.map((colorCategory) {
+                            return CheckboxListTile(
+                              controlAffinity: ListTileControlAffinity.leading,
+                              contentPadding: EdgeInsets.zero,
+                              title: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Container(
+                                    width: 16,
+                                    height: 16,
+                                    decoration: BoxDecoration(
+                                      color: _parseColor(
+                                          colorCategory.colorHex),
+                                      shape: BoxShape.circle,
+                                      border: Border.all(color: Colors.grey),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Text(
+                                      colorCategory.name,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              value: tempSelectedColorCategoryIds
+                                  .contains(colorCategory.id),
+                              onChanged: (bool? selected) {
+                                setStateDialog(() {
+                                  if (selected == true) {
+                                    tempSelectedColorCategoryIds
+                                        .add(colorCategory.id);
+                                  } else {
+                                    tempSelectedColorCategoryIds
+                                        .remove(colorCategory.id);
+                                  }
+                                });
+                              },
+                            );
+                          }),
+                      ],
+                    ),
+                  );
+                }
+
                 return SingleChildScrollView(
+                  controller: dialogScrollController,
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -2144,39 +2317,80 @@ class _MapScreenState extends State<MapScreen> {
                             );
                           }
 
-                          return CheckboxListTile(
-                            controlAffinity: ListTileControlAffinity.leading,
-                            contentPadding: EdgeInsets.zero,
-                            title: Row(
+                          final bool isSelected = tempSelectedFolloweeIds
+                              .contains(profile.id);
+
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                leadingAvatar,
-                                const SizedBox(width: 12),
+                                Checkbox(
+                                  value: isSelected,
+                                  onChanged: (bool? selected) {
+                                    setStateDialog(() {
+                                      if (selected == true) {
+                                        tempSelectedFolloweeIds.add(profile.id);
+                                      } else {
+                                        tempSelectedFolloweeIds
+                                            .remove(profile.id);
+                                      }
+                                    });
+                                  },
+                                ),
+                                const SizedBox(width: 8),
                                 Expanded(
-                                  child: Text(
-                                    displayName,
-                                    overflow: TextOverflow.ellipsis,
+                                  child: GestureDetector(
+                                    behavior: HitTestBehavior.opaque,
+                                    onTap: () {
+                                      setStateDialog(() {
+                                        activeFolloweeId = profile.id;
+                                        activeFolloweeProfile = profile;
+                                      });
+                                      dialogScrollController.animateTo(
+                                        0,
+                                        duration:
+                                            const Duration(milliseconds: 200),
+                                        curve: Curves.easeOut,
+                                      );
+                                    },
+                                    child: Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        leadingAvatar,
+                                        const SizedBox(width: 12),
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                displayName,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: const TextStyle(
+                                                    fontWeight:
+                                                        FontWeight.w600),
+                                              ),
+                                              const SizedBox(height: 4),
+                                              Text(
+                                                experienceCount > 0
+                                                    ? '$experienceCount experiences'
+                                                    : 'No public experiences yet',
+                                                style: const TextStyle(
+                                                    fontSize: 12,
+                                                    color: Colors.black54),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                        const Icon(Icons.chevron_right),
+                                      ],
+                                    ),
                                   ),
                                 ),
                               ],
                             ),
-                            subtitle: Text(
-                              experienceCount > 0
-                                  ? '$experienceCount experiences'
-                                  : 'No public experiences yet',
-                              style: const TextStyle(
-                                  fontSize: 12, color: Colors.black54),
-                            ),
-                            value: tempSelectedFolloweeIds
-                                .contains(profile.id),
-                            onChanged: (bool? selected) {
-                              setStateDialog(() {
-                                if (selected == true) {
-                                  tempSelectedFolloweeIds.add(profile.id);
-                                } else {
-                                  tempSelectedFolloweeIds.remove(profile.id);
-                                }
-                              });
-                            },
                           );
                         }),
                     ],
@@ -2184,7 +2398,8 @@ class _MapScreenState extends State<MapScreen> {
                 );
               },
             ),
-          )),
+          ),
+        ),
           actions: <Widget>[
             // ADDED: Show All Button
             TextButton(
@@ -2240,6 +2455,7 @@ class _MapScreenState extends State<MapScreen> {
         );
       },
     );
+    dialogScrollController.dispose();
   }
   // --- END Filter Dialog ---
 
