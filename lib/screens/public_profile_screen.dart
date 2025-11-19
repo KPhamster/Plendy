@@ -478,6 +478,9 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
     } else {
       final bool hasDisplayName = profile.displayName?.isNotEmpty ?? false;
       final bool hasUsername = profile.username?.isNotEmpty ?? false;
+      final String? bioText = profile.bio?.trim();
+      final bool hasBio = bioText?.isNotEmpty ?? false;
+      final bool hasIdentityText = hasDisplayName || hasUsername;
       content = SingleChildScrollView(
         padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 0),
         child: Column(
@@ -507,8 +510,8 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
                           '@${profile.username!}',
                           style: TextStyle(color: Colors.grey[700]),
                         ),
-                      if (hasDisplayName || hasUsername)
-                        const SizedBox(height: 12),
+                      if (hasIdentityText) const SizedBox(height: 8),
+                      if (hasIdentityText) const SizedBox(height: 12),
                       Row(
                         children: [
                           Expanded(
@@ -532,17 +535,15 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
                 ),
               ],
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 10),
             _buildFollowButton(),
-            if (_currentUserId == widget.userId)
-              Padding(
-                padding: const EdgeInsets.only(top: 24),
-                child: Text(
-                  'This is how other users see your public profile.',
-                  style: TextStyle(color: theme.hintColor),
-                  textAlign: TextAlign.center,
-                ),
+            if (hasBio) ...[
+              const SizedBox(height: 24),
+              Text(
+                bioText!,
+                style: const TextStyle(fontSize: 16),
               ),
+            ],
           ],
         ),
       );

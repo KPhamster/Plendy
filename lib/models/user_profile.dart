@@ -3,6 +3,7 @@ class UserProfile {
   final String? username;
   final String? displayName;
   final String? photoURL;
+  final String? bio;
   final bool isPrivate;
 
   UserProfile({
@@ -10,6 +11,7 @@ class UserProfile {
     this.username,
     this.displayName,
     this.photoURL,
+    this.bio,
     this.isPrivate = false,
   });
 
@@ -19,7 +21,8 @@ class UserProfile {
       username: data['username'] as String?,
       displayName: data['displayName'] as String?,
       photoURL: data['photoURL'] as String?,
+      bio: data['bio'] as String?,
       isPrivate: data['isPrivate'] as bool? ?? false,
     );
   }
-} 
+}
