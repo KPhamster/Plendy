@@ -69,6 +69,7 @@ class ExperiencePageScreen extends StatefulWidget {
   final Experience experience;
   final UserCategory category;
   final List<ColorCategory> userColorCategories;
+  final List<UserCategory> additionalUserCategories;
   final List<SharedMediaItem>? initialMediaItems; // Optional media for previews
   final bool readOnlyPreview; // Hide actions when true
   final String?
@@ -91,6 +92,7 @@ class ExperiencePageScreen extends StatefulWidget {
     this.shareAccessMode,
     this.focusMapOnPop = false,
     this.publicExperienceId,
+    this.additionalUserCategories = const <UserCategory>[],
   });
 
   @override
@@ -705,36 +707,39 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       }
     }
 
-    try {
-      // Fetch categories only if user ID was obtained (or handle public categories)
-      // Include shared editable categories so we can display shared category names correctly
-      if (_currentUserId != null) {
-        final categories = await _experienceService.getUserCategories(
+    List<UserCategory> fetchedCategories = [];
+    if (_currentUserId != null) {
+      try {
+        fetchedCategories = await _experienceService.getUserCategories(
           includeSharedEditable: true,
         );
-        if (mounted) {
-          setState(() {
-            _userCategories = categories;
-            _isLoadingCategories = false;
-          });
-        }
-      } else {
-        // Handle case where user ID is null (e.g., fetch public categories or leave empty)
-        if (mounted) {
-          setState(() {
-            _isLoadingCategories = false;
-          });
-        }
-      }
-    } catch (e) {
-      print("Error loading user categories: $e");
-      if (mounted) {
-        setState(() {
-          _isLoadingCategories = false; // Stop loading even on error
-        });
-        // Optionally show error
+      } catch (e) {
+        print("Error loading user categories: $e");
       }
     }
+    if (mounted) {
+      setState(() {
+        _userCategories =
+            _mergeAdditionalUserCategories(fetchedCategories);
+        _isLoadingCategories = false;
+      });
+    }
+  }
+
+  List<UserCategory> _mergeAdditionalUserCategories(
+      List<UserCategory> baseCategories) {
+    if (widget.additionalUserCategories.isEmpty) {
+      return baseCategories;
+    }
+    final Map<String, UserCategory> merged = {
+      for (final category in baseCategories) category.id: category,
+    };
+    for (final extra in widget.additionalUserCategories) {
+      if (extra.id.isNotEmpty) {
+        merged[extra.id] = extra;
+      }
+    }
+    return merged.values.toList();
   }
 
   // ADDED: Helper to determine if the current user can edit

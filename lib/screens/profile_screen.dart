@@ -11,6 +11,7 @@ import 'browser_signin_screen.dart';
 import 'messages_screen.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'tutorials_screen.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 
 class ProfileScreen extends StatefulWidget {
   final Future<void> Function()? onRequestDiscoveryRefresh;
@@ -150,15 +151,27 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            CircleAvatar(
-                              radius: 50,
-                              backgroundImage: user?.photoURL != null
-                                  ? NetworkImage(user!.photoURL!)
-                                  : null,
-                              child: user?.photoURL == null
-                                  ? const Icon(Icons.person, size: 50)
-                                  : null,
-                            ),
+                            user?.photoURL != null
+                                ? ClipOval(
+                                    child: CachedNetworkImage(
+                                      imageUrl: user!.photoURL!,
+                                      width: 100,
+                                      height: 100,
+                                      fit: BoxFit.cover,
+                                      placeholder: (context, url) => const CircleAvatar(
+                                        radius: 50,
+                                        child: Icon(Icons.person, size: 50),
+                                      ),
+                                      errorWidget: (context, url, error) => const CircleAvatar(
+                                        radius: 50,
+                                        child: Icon(Icons.person, size: 50),
+                                      ),
+                                    ),
+                                  )
+                                : const CircleAvatar(
+                                    radius: 50,
+                                    child: Icon(Icons.person, size: 50),
+                                  ),
                             const SizedBox(height: 16),
                             if (user?.displayName?.isNotEmpty ?? false)
                               Text(
