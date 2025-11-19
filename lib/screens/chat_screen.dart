@@ -138,6 +138,18 @@ class _ChatScreenState extends State<ChatScreen> {
     Navigator.of(context).pop();
   }
 
+  void _handleParticipantAvatarTap(MessageThreadParticipant participant) {
+    if (!mounted || participant.id.isEmpty) {
+      return;
+    }
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => PublicProfileScreen(userId: participant.id),
+      ),
+    );
+  }
+
   void _startEditingTitle(String title) {
     if (_isSavingTitle) {
       return;
@@ -461,7 +473,11 @@ class _ChatScreenState extends State<ChatScreen> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          _buildParticipantAvatar(avatarParticipant, size: 34),
+          _buildParticipantAvatar(
+            avatarParticipant,
+            size: 34,
+            onTap: () => _handleParticipantAvatarTap(avatarParticipant),
+          ),
           const SizedBox(width: 8),
           Flexible(child: bubbleWithConstraints),
         ],
@@ -916,7 +932,6 @@ class _ChatScreenState extends State<ChatScreen> {
           (id) => thread.participant(id) ?? MessageThreadParticipant(id: id),
         )
         .toList();
-    final parentContext = context;
 
     await showDialog<void>(
       context: context,
@@ -951,12 +966,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         : null,
                     onTap: () {
                       Navigator.of(dialogContext).pop();
-                      Navigator.of(parentContext).push(
-                        MaterialPageRoute(
-                          builder: (_) =>
-                              PublicProfileScreen(userId: participant.id),
-                        ),
-                      );
+                      _handleParticipantAvatarTap(participant);
                     },
                   );
                 },
@@ -977,34 +987,46 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget _buildParticipantAvatar(
     MessageThreadParticipant participant, {
     double size = 40,
+    VoidCallback? onTap,
   }) {
     final photoUrl = participant.photoUrl;
     final radius = size / 2;
+    Widget avatar;
     if (photoUrl != null && photoUrl.isNotEmpty) {
-      return CircleAvatar(
+      avatar = CircleAvatar(
         radius: radius,
         backgroundImage: NetworkImage(photoUrl),
       );
+    } else {
+      final label = participant.displayLabel(fallback: 'Friend').trim();
+      final sanitized = label.replaceAll('@', '').trim();
+      final initialSource = sanitized.isNotEmpty ? sanitized : label;
+      final initial =
+          initialSource.isNotEmpty ? initialSource[0].toUpperCase() : '?';
+
+      avatar = CircleAvatar(
+        radius: radius,
+        backgroundColor: Colors.grey.shade300,
+        child: Text(
+          initial,
+          style: TextStyle(
+            fontWeight: FontWeight.w600,
+            color: Colors.black,
+            fontSize: radius * 0.9,
+          ),
+        ),
+      );
     }
 
-    final label = participant.displayLabel(fallback: 'Friend').trim();
-    final sanitized = label.replaceAll('@', '').trim();
-    final initialSource = sanitized.isNotEmpty ? sanitized : label;
-    final initial =
-        initialSource.isNotEmpty ? initialSource[0].toUpperCase() : '?';
+    if (onTap != null) {
+      avatar = GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: avatar,
+      );
+    }
 
-    return CircleAvatar(
-      radius: radius,
-      backgroundColor: Colors.grey.shade300,
-      child: Text(
-        initial,
-        style: TextStyle(
-          fontWeight: FontWeight.w600,
-          color: Colors.black,
-          fontSize: radius * 0.9,
-        ),
-      ),
-    );
+    return avatar;
   }
 
   Future<void> _showMediaPreviewModal({

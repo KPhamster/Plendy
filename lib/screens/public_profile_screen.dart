@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -7,8 +9,13 @@ import '../models/experience.dart';
 import '../models/user_category.dart';
 import '../models/user_profile.dart';
 import '../models/color_category.dart';
+import '../models/shared_media_item.dart';
 import '../services/auth_service.dart';
 import '../services/user_service.dart';
+import '../services/experience_service.dart';
+import '../widgets/shared_media_preview_modal.dart';
+import 'experience_page_screen.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 // Helper function to parse hex color string
 Color _parseColor(String hexColor) {
@@ -38,6 +45,7 @@ class PublicProfileScreen extends StatefulWidget {
 class _PublicProfileScreenState extends State<PublicProfileScreen>
     with SingleTickerProviderStateMixin {
   final UserService _userService = UserService();
+  final ExperienceService _experienceService = ExperienceService();
 
   UserProfile? _profile;
   int _followersCount = 0;
@@ -57,6 +65,10 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
   bool _initialized = false;
   late final TabController _tabController;
   UserCategory? _selectedCategory;
+  
+  // Media cache for experience content previews
+  final Map<String, List<SharedMediaItem>> _experienceMediaCache = {};
+  final Set<String> _mediaPrefetchInFlight = {};
 
   @override
   void initState() {
@@ -271,6 +283,156 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
         setState(() {
           _isProcessingFollow = false;
         });
+      }
+    }
+  }
+
+  Future<void> _prefetchExperienceMedia(Experience experience) async {
+    if (experience.sharedMediaItemIds.isEmpty) {
+      return;
+    }
+    if (_experienceMediaCache.containsKey(experience.id)) {
+      return;
+    }
+    if (_mediaPrefetchInFlight.contains(experience.id)) {
+      return;
+    }
+    _mediaPrefetchInFlight.add(experience.id);
+    try {
+      final items = await _experienceService
+          .getSharedMediaItems(experience.sharedMediaItemIds);
+      items.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      if (!mounted) return;
+      setState(() {
+        _experienceMediaCache[experience.id] = items;
+      });
+    } catch (e) {
+      debugPrint('Error prefetching media for ${experience.name}: $e');
+    } finally {
+      _mediaPrefetchInFlight.remove(experience.id);
+    }
+  }
+
+  Future<void> _navigateToExperience(
+      Experience experience, UserCategory category) async {
+    // Navigate to experience page in read-only mode
+    final result = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ExperiencePageScreen(
+          experience: experience,
+          category: category,
+          userColorCategories: _publicColorCategories,
+          readOnlyPreview: true,
+        ),
+      ),
+    );
+    
+    if (result == true && mounted) {
+      // Reload data if changes were made
+      await _loadPublicCollections();
+    }
+  }
+
+  Future<void> _showMediaPreview(
+      Experience experience, UserCategory category) async {
+    final List<SharedMediaItem>? cachedItems =
+        _experienceMediaCache[experience.id];
+    late final List<SharedMediaItem> resolvedItems;
+
+    if (cachedItems == null) {
+      if (experience.sharedMediaItemIds.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+                content:
+                    Text('No saved content available yet for this experience.')),
+          );
+        }
+        return;
+      }
+      try {
+        final fetched = await _experienceService
+            .getSharedMediaItems(experience.sharedMediaItemIds);
+        fetched.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+        resolvedItems = fetched;
+        if (mounted) {
+          setState(() {
+            _experienceMediaCache[experience.id] = fetched;
+          });
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Could not load content preview: $e')),
+          );
+        }
+        return;
+      }
+    } else {
+      resolvedItems = cachedItems;
+    }
+
+    if (resolvedItems.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content:
+                  Text('No saved content available yet for this experience.')),
+        );
+      }
+      return;
+    }
+
+    if (!mounted) return;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      useRootNavigator: true,
+      builder: (modalContext) {
+        return SharedMediaPreviewModal(
+          experience: experience,
+          mediaItem: resolvedItems.first,
+          mediaItems: resolvedItems,
+          onLaunchUrl: _launchUrl,
+          category: category,
+          userColorCategories: _publicColorCategories,
+        );
+      },
+    );
+  }
+
+  Future<void> _launchUrl(String urlString) async {
+    // Skip invalid URLs
+    if (urlString.isEmpty ||
+        urlString == 'about:blank' ||
+        urlString == 'https://about:blank') {
+      return;
+    }
+
+    // Ensure URL starts with http/https
+    String launchableUrl = urlString;
+    if (!launchableUrl.startsWith('http://') &&
+        !launchableUrl.startsWith('https://')) {
+      launchableUrl = 'https://$launchableUrl';
+    }
+
+    try {
+      final Uri uri = Uri.parse(launchableUrl);
+      if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Could not open link: $urlString')),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Invalid URL: $urlString')),
+        );
       }
     }
   }
@@ -1056,49 +1218,59 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
                   ),
                   if (contentCount > 0) ...[
                     const SizedBox(width: 12),
-                    Stack(
-                      clipBehavior: Clip.none,
-                      children: [
-                        Container(
-                          width: playButtonDiameter,
-                          height: playButtonDiameter,
-                          decoration: BoxDecoration(
-                            color: Theme.of(context).primaryColor,
-                            shape: BoxShape.circle,
-                          ),
-                          child: const Icon(
-                            Icons.play_arrow,
-                            color: Colors.white,
-                            size: playIconSize,
-                          ),
-                        ),
-                        Positioned(
-                          bottom: badgeOffset,
-                          right: badgeOffset,
-                          child: Container(
-                            width: badgeDiameter,
-                            height: badgeDiameter,
+                    GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () async {
+                        // Prefetch media if not cached, then show preview
+                        if (!_experienceMediaCache.containsKey(experience.id)) {
+                          await _prefetchExperienceMedia(experience);
+                        }
+                        await _showMediaPreview(experience, category);
+                      },
+                      child: Stack(
+                        clipBehavior: Clip.none,
+                        children: [
+                          Container(
+                            width: playButtonDiameter,
+                            height: playButtonDiameter,
                             decoration: BoxDecoration(
-                              color: Colors.white,
+                              color: Theme.of(context).primaryColor,
                               shape: BoxShape.circle,
-                              border: Border.all(
-                                color: Theme.of(context).primaryColor,
-                                width: badgeBorderWidth,
-                              ),
                             ),
-                            child: Center(
-                              child: Text(
-                                contentCount.toString(),
-                                style: TextStyle(
+                            child: const Icon(
+                              Icons.play_arrow,
+                              color: Colors.white,
+                              size: playIconSize,
+                            ),
+                          ),
+                          Positioned(
+                            bottom: badgeOffset,
+                            right: badgeOffset,
+                            child: Container(
+                              width: badgeDiameter,
+                              height: badgeDiameter,
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                shape: BoxShape.circle,
+                                border: Border.all(
                                   color: Theme.of(context).primaryColor,
-                                  fontSize: badgeFontSize,
-                                  fontWeight: FontWeight.w600,
+                                  width: badgeBorderWidth,
+                                ),
+                              ),
+                              child: Center(
+                                child: Text(
+                                  contentCount.toString(),
+                                  style: TextStyle(
+                                    color: Theme.of(context).primaryColor,
+                                    fontSize: badgeFontSize,
+                                    fontWeight: FontWeight.w600,
+                                  ),
                                 ),
                               ),
                             ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ],
                 ],
@@ -1106,6 +1278,14 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
             ),
         ],
       ),
+      onTap: () async {
+        // Prefetch media in background for faster loading
+        if (contentCount > 0 &&
+            !_experienceMediaCache.containsKey(experience.id)) {
+          unawaited(_prefetchExperienceMedia(experience));
+        }
+        await _navigateToExperience(experience, category);
+      },
     );
   }
 
