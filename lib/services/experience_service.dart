@@ -141,10 +141,10 @@ class ExperienceService {
     }
 
     try {
+      // Fetch BOTH view and edit permissions so users can see categories shared with them regardless of access level
       final snapshot = await _sharePermissionsCollection
           .where('sharedWithUserId', isEqualTo: currentUserId)
           .where('itemType', isEqualTo: ShareableItemType.category.name)
-          .where('accessLevel', isEqualTo: ShareAccessLevel.edit.name)
           .get();
 
       return snapshot.docs
