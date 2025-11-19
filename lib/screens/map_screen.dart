@@ -7,6 +7,7 @@ import 'package:google_maps_flutter/google_maps_flutter.dart'; // Add Google Map
 import 'package:url_launcher/url_launcher.dart'; // ADDED: Import url_launcher
 import 'package:cloud_firestore/cloud_firestore.dart'; // ADDED: For pagination cursors
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import '../services/sharing_service.dart'; // RESTORED: Fallback path
 import '../models/enums/share_enums.dart'; // RESTORED: Fallback path
 import '../widgets/google_maps_widget.dart';
@@ -85,8 +86,11 @@ class _MapScreenState extends State<MapScreen> {
   Map<String, List<Experience>> _followeePublicExperiences = {};
   Map<String, Map<String, UserCategory>> _followeeCategories = {};
   Map<String, Map<String, ColorCategory>> _followeeColorCategories = {};
+  final Map<String, Set<String>> _followeeCategorySelections = {};
+  final Map<String, Set<String>> _followeeColorSelections = {};
   final Set<String> _sharedCategoryPermissionKeys = {};
-  bool _sharedCategoryPermissionsLoaded = false;
+  final Set<String> _sharedExperiencePermissionKeys = {};
+  bool _sharedPermissionsLoaded = false;
   bool get _hasActiveFilters =>
       _selectedCategoryIds.isNotEmpty ||
       _selectedColorCategoryIds.isNotEmpty ||
@@ -255,9 +259,9 @@ class _MapScreenState extends State<MapScreen> {
     }
   }
 
-  Future<void> _loadCategorySharePermissions(String userId,
+  Future<void> _loadSharePermissions(String userId,
       {bool forceRefresh = false}) async {
-    if (_sharedCategoryPermissionsLoaded && !forceRefresh) {
+    if (_sharedPermissionsLoaded && !forceRefresh) {
       return;
     }
     try {
@@ -267,18 +271,25 @@ class _MapScreenState extends State<MapScreen> {
           .where((perm) => perm.itemType == ShareableItemType.category)
           .map((perm) => _sharePermissionKey(perm.ownerUserId, perm.itemId))
           .toSet();
+      final Set<String> experienceKeys = permissions
+          .where((perm) => perm.itemType == ShareableItemType.experience)
+          .map((perm) => _sharePermissionKey(perm.ownerUserId, perm.itemId))
+          .toSet();
       if (mounted) {
         setState(() {
           _sharedCategoryPermissionKeys
             ..clear()
             ..addAll(categoryKeys);
+          _sharedExperiencePermissionKeys
+            ..clear()
+            ..addAll(experienceKeys);
         });
         _rebuildFolloweeCategoryIcons();
       }
-      _sharedCategoryPermissionsLoaded = true;
+      _sharedPermissionsLoaded = true;
     } catch (e) {
       print(
-          "🗺️ MAP SCREEN: Failed to load category share permissions for $userId: $e");
+          "🗺️ MAP SCREEN: Failed to load share permissions for $userId: $e");
     }
   }
 
@@ -360,7 +371,7 @@ class _MapScreenState extends State<MapScreen> {
             final experiences = await _experienceService
                 .getExperiencesByUser(followeeId, limit: 0); // No limit - load all followee experiences
             final List<Experience> publicExperiences = experiences
-                .where((exp) => !_isExperienceEffectivelyPrivate(exp))
+                .where((exp) => _canViewFolloweeExperience(exp))
                 .toList();
             return MapEntry(followeeId, publicExperiences);
           } catch (e) {
@@ -401,6 +412,12 @@ class _MapScreenState extends State<MapScreen> {
           }
           missingCategoryIds.add(categoryId);
         }
+        for (final otherId in experiences.expand((exp) => exp.otherCategories)) {
+          if (otherId.isEmpty || ownerCategories.containsKey(otherId)) {
+            continue;
+          }
+          missingCategoryIds.add(otherId);
+        }
         for (final experience in experiences) {
           final String? colorId = experience.colorCategoryId;
           if (colorId == null ||
@@ -409,6 +426,13 @@ class _MapScreenState extends State<MapScreen> {
             continue;
           }
           missingColorIds.add(colorId);
+        }
+        for (final otherColorId
+            in experiences.expand((exp) => exp.otherColorCategoryIds)) {
+          if (otherColorId.isEmpty || ownerColors.containsKey(otherColorId)) {
+            continue;
+          }
+          missingColorIds.add(otherColorId);
         }
         if (missingCategoryIds.isNotEmpty) {
           try {
@@ -506,21 +530,31 @@ class _MapScreenState extends State<MapScreen> {
 
   String? _getCategoryIconForExperience(Experience experience) {
     final String? ownerId = experience.createdBy;
-    final String? categoryId = experience.categoryId;
     final String? currentUserId = _authService.currentUser?.uid;
+    final String? categoryId = experience.categoryId;
     final bool isFolloweeExperience = ownerId != null &&
         ownerId.isNotEmpty &&
         ownerId != currentUserId;
 
-    if (isFolloweeExperience &&
-        !_canAccessFolloweeCategory(ownerId!, categoryId)) {
-      return null;
+    final UserCategory? accessibleCategory =
+        _getAccessibleUserCategory(ownerId, categoryId);
+    if (accessibleCategory != null &&
+        accessibleCategory.icon.isNotEmpty) {
+      return accessibleCategory.icon;
+    }
+
+    if (isFolloweeExperience && categoryId != null) {
+      final bool hasAccess = _canAccessFolloweeCategory(ownerId!, categoryId);
+      if (!hasAccess) {
+        return null;
+      }
     }
 
     if (experience.categoryIconDenorm != null &&
         experience.categoryIconDenorm!.isNotEmpty) {
       return experience.categoryIconDenorm;
     }
+
     if (categoryId == null || categoryId.isEmpty) {
       return null;
     }
@@ -571,12 +605,168 @@ class _MapScreenState extends State<MapScreen> {
     return 'Friend';
   }
 
+  UserCategory? _getAccessibleUserCategory(
+      String? ownerId, String? categoryId) {
+    if (categoryId == null || categoryId.isEmpty) {
+      return null;
+    }
+    final String? currentUserId = _authService.currentUser?.uid;
+    if (ownerId == null || ownerId.isEmpty || ownerId == currentUserId) {
+      try {
+        return _categories.firstWhere((cat) => cat.id == categoryId);
+      } catch (_) {
+        return null;
+      }
+    }
+    return _followeeCategories[ownerId]?[categoryId];
+  }
+
+  ColorCategory? _getAccessibleColorCategory(
+      String? ownerId, String? colorCategoryId) {
+    if (colorCategoryId == null || colorCategoryId.isEmpty) {
+      return null;
+    }
+    final String? currentUserId = _authService.currentUser?.uid;
+    if (ownerId == null || ownerId.isEmpty || ownerId == currentUserId) {
+      try {
+        return _colorCategories.firstWhere((cc) => cc.id == colorCategoryId);
+      } catch (_) {
+        return null;
+      }
+    }
+    return _followeeColorCategories[ownerId]?[colorCategoryId];
+  }
+
+  Set<String> _getFolloweeAccessibleCategoryIds(String? ownerId) {
+    if (ownerId == null || ownerId.isEmpty) {
+      return const <String>{};
+    }
+    final String? currentUserId = _authService.currentUser?.uid;
+    if (ownerId == currentUserId) {
+      return _categories.map((c) => c.id).toSet();
+    }
+    final Iterable<UserCategory> categories =
+        _followeeCategories[ownerId]?.values ??
+            const Iterable<UserCategory>.empty();
+    return categories
+        .where((category) => _canAccessFolloweeCategory(ownerId, category.id))
+        .map((category) => category.id)
+        .toSet();
+  }
+
+  Set<String> _getFolloweeAccessibleColorCategoryIds(String? ownerId) {
+    if (ownerId == null || ownerId.isEmpty) {
+      return const <String>{};
+    }
+    final String? currentUserId = _authService.currentUser?.uid;
+    if (ownerId == currentUserId) {
+      return _colorCategories.map((c) => c.id).toSet();
+    }
+    final Iterable<ColorCategory> colors =
+        _followeeColorCategories[ownerId]?.values ??
+            const Iterable<ColorCategory>.empty();
+    return colors
+        .where((color) => _canAccessFolloweeColorCategory(ownerId, color.id))
+        .map((color) => color.id)
+        .toSet();
+  }
+
+  bool _hasSelectedCategoriesForFollowee(String ownerId) {
+    return _followeeCategorySelections[ownerId]?.isNotEmpty ?? false;
+  }
+
+  bool _hasSelectedColorCategoriesForFollowee(String ownerId) {
+    return _followeeColorSelections[ownerId]?.isNotEmpty ?? false;
+  }
+
+  List<UserCategory> _collectAccessibleCategoriesForExperience(
+      Experience experience) {
+    if (!_canDisplayFolloweeMetadata(experience)) {
+      return const <UserCategory>[];
+    }
+    final String? ownerId = experience.createdBy;
+    final Map<String, UserCategory> collected = {};
+
+    void addCategory(String? categoryId) {
+      final UserCategory? category =
+          _getAccessibleUserCategory(ownerId, categoryId);
+      if (category != null && category.id.isNotEmpty) {
+        collected[category.id] = category;
+      }
+    }
+
+    addCategory(experience.categoryId);
+    for (final otherId in experience.otherCategories) {
+      addCategory(otherId);
+    }
+    return collected.values.toList();
+  }
+
+  List<ColorCategory> _collectAccessibleColorCategoriesForExperience(
+      Experience experience) {
+    if (!_canDisplayFolloweeMetadata(experience)) {
+      return const <ColorCategory>[];
+    }
+    final String? ownerId = experience.createdBy;
+    final Map<String, ColorCategory> collected = {};
+
+    void addColor(String? colorId) {
+      final ColorCategory? color =
+          _getAccessibleColorCategory(ownerId, colorId);
+      if (color != null && color.id.isNotEmpty) {
+        collected[color.id] = color;
+      }
+    }
+
+    addColor(experience.colorCategoryId);
+    for (final otherId in experience.otherColorCategoryIds) {
+      addColor(otherId);
+    }
+    return collected.values.toList();
+  }
+
+  List<ColorCategory> _buildColorCategoryListForExperience(
+      Experience experience) {
+    if (!_canDisplayFolloweeMetadata(experience)) {
+      return _colorCategories;
+    }
+    final Map<String, ColorCategory> merged = {
+      for (final color in _colorCategories) color.id: color,
+    };
+    for (final color in _collectAccessibleColorCategoriesForExperience(
+        experience)) {
+      merged[color.id] = color;
+    }
+    return merged.values.toList();
+  }
+
   String _sharePermissionKey(String ownerId, String itemId) =>
       '$ownerId|$itemId';
 
   bool _hasCategorySharePermission(String ownerId, String itemId) {
     return _sharedCategoryPermissionKeys
         .contains(_sharePermissionKey(ownerId, itemId));
+  }
+
+  bool _hasExperienceSharePermission(String ownerId, String itemId) {
+    return _sharedExperiencePermissionKeys
+        .contains(_sharePermissionKey(ownerId, itemId));
+  }
+
+  bool _canViewFolloweeExperience(Experience experience) {
+    final String? ownerId = experience.createdBy;
+    final String? currentUserId = _authService.currentUser?.uid;
+    if (ownerId == null || ownerId.isEmpty || ownerId == currentUserId) {
+      return true;
+    }
+    if (!_isExperienceEffectivelyPrivate(experience)) {
+      return true;
+    }
+    return _hasExperienceSharePermission(ownerId, experience.id);
+  }
+
+  bool _canDisplayFolloweeMetadata(Experience experience) {
+    return _canViewFolloweeExperience(experience);
   }
 
   bool _canAccessFolloweeCategory(String ownerId, String? categoryId) {
@@ -653,7 +843,7 @@ class _MapScreenState extends State<MapScreen> {
         return;
       }
 
-      await _loadCategorySharePermissions(userId);
+      await _loadSharePermissions(userId);
 
       unawaited(_loadFollowingUsers(userId));
 
@@ -1317,6 +1507,10 @@ class _MapScreenState extends State<MapScreen> {
   Future<void> _navigateToExperience(
       Experience experience, UserCategory category) async {
     print("🗺️ MAP SCREEN: Navigating to experience: ${experience.name}");
+    final List<UserCategory> additionalCategories =
+        _collectAccessibleCategoriesForExperience(experience);
+    final List<ColorCategory> mergedColorCategories =
+        _buildColorCategoryListForExperience(experience);
     // Clear the temporary tapped marker when navigating away
     setState(() {
       _tappedLocationMarker = null;
@@ -1335,7 +1529,8 @@ class _MapScreenState extends State<MapScreen> {
         builder: (context) => ExperiencePageScreen(
           experience: experience,
           category: category,
-          userColorCategories: _colorCategories,
+          userColorCategories: mergedColorCategories,
+          additionalUserCategories: additionalCategories,
         ),
       ),
     );
@@ -1584,10 +1779,10 @@ class _MapScreenState extends State<MapScreen> {
   UserCategory _resolveCategoryForExperience(Experience experience) {
     final String? categoryId = experience.categoryId;
     if (categoryId != null) {
-      try {
-        return _categories.firstWhere((cat) => cat.id == categoryId);
-      } catch (_) {
-        // Fall through to placeholder if category was not preloaded.
+      final UserCategory? accessibleCategory = _getAccessibleUserCategory(
+          experience.createdBy, categoryId);
+      if (accessibleCategory != null) {
+        return accessibleCategory;
       }
     }
     final String fallbackIcon = (experience.categoryIconDenorm != null &&
@@ -1885,23 +2080,61 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   bool _experienceMatchesActiveFilters(Experience exp) {
-    final bool categoryMatch = _selectedCategoryIds.isEmpty ||
-        (exp.categoryId != null &&
-            _selectedCategoryIds.contains(exp.categoryId)) ||
-        (exp.otherCategories.any((catId) => _selectedCategoryIds.contains(catId)));
+    final String? ownerId = exp.createdBy;
+    final bool followeeSelected =
+        ownerId != null && _selectedFolloweeIds.contains(ownerId);
+    final bool followeeCategoryFiltersActive = followeeSelected &&
+        ownerId != null &&
+        _hasSelectedCategoriesForFollowee(ownerId);
+    final bool followeeColorFiltersActive = followeeSelected &&
+        ownerId != null &&
+        _hasSelectedColorCategoriesForFollowee(ownerId);
+    final Set<String> followeeCategorySelection =
+        ownerId != null && followeeCategoryFiltersActive
+            ? (_followeeCategorySelections[ownerId] ?? const <String>{})
+            : const <String>{};
+    final Set<String> followeeColorSelection =
+        ownerId != null && followeeColorFiltersActive
+            ? (_followeeColorSelections[ownerId] ?? const <String>{})
+            : const <String>{};
 
-    final bool colorMatch = _selectedColorCategoryIds.isEmpty ||
-        (exp.colorCategoryId != null &&
-            _selectedColorCategoryIds.contains(exp.colorCategoryId)) ||
-        exp.otherColorCategoryIds
-            .any((colorId) => _selectedColorCategoryIds.contains(colorId));
+    final bool categoryMatch = (!followeeSelected ||
+            followeeCategoryFiltersActive)
+        ? (_selectedCategoryIds.isEmpty ||
+            (exp.categoryId != null &&
+                _selectedCategoryIds.contains(exp.categoryId)) ||
+            exp.otherCategories.any(
+                (catId) => _selectedCategoryIds.contains(catId)))
+        : true;
+
+    final bool colorMatch = (!followeeSelected || followeeColorFiltersActive)
+        ? (_selectedColorCategoryIds.isEmpty ||
+            (exp.colorCategoryId != null &&
+                _selectedColorCategoryIds.contains(exp.colorCategoryId)) ||
+            exp.otherColorCategoryIds
+                .any((colorId) => _selectedColorCategoryIds.contains(colorId)))
+        : true;
+    final bool followeeCategoryMatch = followeeCategoryFiltersActive
+        ? ((exp.categoryId != null &&
+                followeeCategorySelection.contains(exp.categoryId)) ||
+            exp.otherCategories
+                .any((catId) => followeeCategorySelection.contains(catId)))
+        : true;
+    final bool followeeColorMatch = followeeColorFiltersActive
+        ? ((exp.colorCategoryId != null &&
+                followeeColorSelection.contains(exp.colorCategoryId)) ||
+            exp.otherColorCategoryIds
+                .any((colorId) => followeeColorSelection.contains(colorId)))
+        : true;
 
     final bool followeeMatch = _selectedFolloweeIds.isEmpty ||
-        (exp.createdBy != null &&
-            _selectedFolloweeIds.contains(exp.createdBy) &&
-            !_isExperienceEffectivelyPrivate(exp));
+        (followeeSelected && _canViewFolloweeExperience(exp));
 
-    return categoryMatch && colorMatch && followeeMatch;
+    return categoryMatch &&
+        colorMatch &&
+        followeeCategoryMatch &&
+        followeeColorMatch &&
+        followeeMatch;
   }
 
   Future<void> _persistFilterSelections(Set<String> categoryIds,
@@ -1955,6 +2188,14 @@ class _MapScreenState extends State<MapScreen> {
     Set<String> tempSelectedColorCategoryIds =
         Set.from(_selectedColorCategoryIds);
     Set<String> tempSelectedFolloweeIds = Set.from(_selectedFolloweeIds);
+    final Map<String, Set<String>> tempFolloweeCategorySelections = {
+      for (final entry in _followeeCategorySelections.entries)
+        entry.key: Set<String>.from(entry.value),
+    };
+    final Map<String, Set<String>> tempFolloweeColorSelections = {
+      for (final entry in _followeeColorSelections.entries)
+        entry.key: Set<String>.from(entry.value),
+    };
 
     String? activeFolloweeId;
     UserProfile? activeFolloweeProfile;
@@ -1964,20 +2205,26 @@ class _MapScreenState extends State<MapScreen> {
     await showDialog(
       context: context,
       builder: (BuildContext context) {
-        return AlertDialog(
-          backgroundColor: Colors.white,
-          title: const Text('Filter Experiences'),
-          insetPadding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 24.0),
-          content: SizedBox(
-            width: MediaQuery.of(context).size.width * 0.85,
-            child: ConstrainedBox(
-              constraints: BoxConstraints(
-                maxHeight: MediaQuery.of(context).size.height * 0.6,
-              ),
-              child: StatefulBuilder(
-              // Use StatefulBuilder to manage state within the dialog
-              builder: (BuildContext context, StateSetter setStateDialog) {
-                if (activeFolloweeId != null) {
+        return StatefulBuilder(
+          builder: (BuildContext context, StateSetter setStateOuter) {
+            return AlertDialog(
+              backgroundColor: Colors.white,
+              title: const Text('Filter Experiences'),
+              insetPadding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 24.0),
+              content: SizedBox(
+                width: MediaQuery.of(context).size.width * 0.85,
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxHeight: MediaQuery.of(context).size.height * 0.6,
+                  ),
+                  child: StatefulBuilder(
+                  // Use StatefulBuilder to manage state within the dialog
+                  builder: (BuildContext context, StateSetter setStateDialog) {
+                    void updateDialogState(VoidCallback fn) {
+                      setStateDialog(fn);
+                      setStateOuter(() {});
+                    }
+                    if (activeFolloweeId != null) {
                   final String followeeId = activeFolloweeId!;
                   final UserProfile? followeeProfile =
                       activeFolloweeProfile ??
@@ -2016,7 +2263,7 @@ class _MapScreenState extends State<MapScreen> {
                               icon: const Icon(Icons.arrow_back),
                               tooltip: 'Back',
                               onPressed: () {
-                                setStateDialog(() {
+                                updateDialogState(() {
                                   activeFolloweeId = null;
                                   activeFolloweeProfile = null;
                                 });
@@ -2073,14 +2320,25 @@ class _MapScreenState extends State<MapScreen> {
                                   ),
                                 ],
                               ),
-                              value: tempSelectedCategoryIds
-                                  .contains(category.id),
+                              value: tempFolloweeCategorySelections[followeeId]
+                                      ?.contains(category.id) ??
+                                  false,
                               onChanged: (bool? selected) {
-                                setStateDialog(() {
+                                updateDialogState(() {
                                   if (selected == true) {
-                                    tempSelectedCategoryIds.add(category.id);
+                                    tempFolloweeCategorySelections
+                                        .putIfAbsent(followeeId, () => <String>{})
+                                        .add(category.id);
+                                    tempSelectedFolloweeIds.add(followeeId);
                                   } else {
-                                    tempSelectedCategoryIds.remove(category.id);
+                                    tempFolloweeCategorySelections[followeeId]
+                                        ?.remove(category.id);
+                                    if (tempFolloweeCategorySelections[followeeId]
+                                            ?.isEmpty ??
+                                        false) {
+                                      tempFolloweeCategorySelections
+                                          .remove(followeeId);
+                                    }
                                   }
                                 });
                               },
@@ -2124,16 +2382,25 @@ class _MapScreenState extends State<MapScreen> {
                                   ),
                                 ],
                               ),
-                              value: tempSelectedColorCategoryIds
-                                  .contains(colorCategory.id),
+                              value: tempFolloweeColorSelections[followeeId]
+                                      ?.contains(colorCategory.id) ??
+                                  false,
                               onChanged: (bool? selected) {
-                                setStateDialog(() {
+                                updateDialogState(() {
                                   if (selected == true) {
-                                    tempSelectedColorCategoryIds
+                                    tempFolloweeColorSelections
+                                        .putIfAbsent(followeeId, () => <String>{})
                                         .add(colorCategory.id);
+                                    tempSelectedFolloweeIds.add(followeeId);
                                   } else {
-                                    tempSelectedColorCategoryIds
-                                        .remove(colorCategory.id);
+                                    tempFolloweeColorSelections[followeeId]
+                                        ?.remove(colorCategory.id);
+                                    if (tempFolloweeColorSelections[followeeId]
+                                            ?.isEmpty ??
+                                        false) {
+                                      tempFolloweeColorSelections
+                                          .remove(followeeId);
+                                    }
                                   }
                                 });
                               },
@@ -2198,7 +2465,7 @@ class _MapScreenState extends State<MapScreen> {
                           subtitle: null,
                           value: tempSelectedCategoryIds.contains(category.id),
                           onChanged: (bool? selected) {
-                            setStateDialog(() {
+                            updateDialogState(() {
                               if (selected == true) {
                                 tempSelectedCategoryIds.add(category.id);
                               } else {
@@ -2262,7 +2529,7 @@ class _MapScreenState extends State<MapScreen> {
                           value: tempSelectedColorCategoryIds
                               .contains(colorCategory.id),
                           onChanged: (bool? selected) {
-                            setStateDialog(() {
+                            updateDialogState(() {
                               if (selected == true) {
                                 tempSelectedColorCategoryIds
                                     .add(colorCategory.id);
@@ -2295,11 +2562,33 @@ class _MapScreenState extends State<MapScreen> {
                           final Widget leadingAvatar;
                           if (profile.photoURL != null &&
                               profile.photoURL!.trim().isNotEmpty) {
-                            leadingAvatar = CircleAvatar(
-                              radius: 20,
-                              backgroundImage:
-                                  NetworkImage(profile.photoURL!.trim()),
-                              backgroundColor: Colors.grey[200],
+                            leadingAvatar = ClipOval(
+                              child: CachedNetworkImage(
+                                imageUrl: profile.photoURL!.trim(),
+                                width: 40,
+                                height: 40,
+                                fit: BoxFit.cover,
+                                placeholder: (context, url) => CircleAvatar(
+                                  radius: 20,
+                                  backgroundColor: Colors.grey[200],
+                                  child: const SizedBox.shrink(),
+                                ),
+                                errorWidget: (context, url, error) {
+                                  final String initial = displayName.isNotEmpty
+                                      ? displayName.substring(0, 1).toUpperCase()
+                                      : profile.id.substring(0, 1).toUpperCase();
+                                  return CircleAvatar(
+                                    radius: 20,
+                                    backgroundColor: Colors.grey[300],
+                                    child: Text(
+                                      initial,
+                                      style: const TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          color: Colors.white),
+                                    ),
+                                  );
+                                },
+                              ),
                             );
                           } else {
                             final String initial = displayName.isNotEmpty
@@ -2319,6 +2608,10 @@ class _MapScreenState extends State<MapScreen> {
 
                           final bool isSelected = tempSelectedFolloweeIds
                               .contains(profile.id);
+                          final Set<String> followeeCategoryIds =
+                              _getFolloweeAccessibleCategoryIds(profile.id);
+                          final Set<String> followeeColorIds =
+                              _getFolloweeAccessibleColorCategoryIds(profile.id);
 
                           return Padding(
                             padding: const EdgeInsets.symmetric(vertical: 4),
@@ -2328,12 +2621,17 @@ class _MapScreenState extends State<MapScreen> {
                                 Checkbox(
                                   value: isSelected,
                                   onChanged: (bool? selected) {
-                                    setStateDialog(() {
+                                    updateDialogState(() {
                                       if (selected == true) {
                                         tempSelectedFolloweeIds.add(profile.id);
                                       } else {
                                         tempSelectedFolloweeIds
                                             .remove(profile.id);
+                                        tempSelectedCategoryIds.removeWhere(
+                                            followeeCategoryIds.contains);
+                                        tempSelectedColorCategoryIds
+                                            .removeWhere(
+                                                followeeColorIds.contains);
                                       }
                                     });
                                   },
@@ -2343,7 +2641,7 @@ class _MapScreenState extends State<MapScreen> {
                                   child: GestureDetector(
                                     behavior: HitTestBehavior.opaque,
                                     onTap: () {
-                                      setStateDialog(() {
+                                      updateDialogState(() {
                                         activeFolloweeId = profile.id;
                                         activeFolloweeProfile = profile;
                                       });
@@ -2401,32 +2699,39 @@ class _MapScreenState extends State<MapScreen> {
           ),
         ),
           actions: <Widget>[
-            // ADDED: Show All Button
-            TextButton(
-              child: const Text('Show All'),
-              onPressed: () {
-                // Clear temporary selections
-                tempSelectedCategoryIds.clear();
-                tempSelectedColorCategoryIds.clear();
-                tempSelectedFolloweeIds.clear();
+            if (activeFolloweeId == null)
+              TextButton(
+                child: const Text('Show All'),
+                onPressed: () {
+                  tempSelectedCategoryIds.clear();
+                  tempSelectedColorCategoryIds.clear();
+                  tempSelectedFolloweeIds.clear();
+                  tempFolloweeCategorySelections.clear();
+                  tempFolloweeColorSelections.clear();
 
-                // Apply the cleared filters directly to the main state
-                setState(() {
-                  _selectedCategoryIds = tempSelectedCategoryIds; // Now empty
-                  _selectedColorCategoryIds =
-                      tempSelectedColorCategoryIds; // Now empty
-                  _selectedFolloweeIds = tempSelectedFolloweeIds;
-                });
-                unawaited(_persistFilterSelections(
-                  _selectedCategoryIds,
-                  _selectedColorCategoryIds,
-                  _selectedFolloweeIds,
-                ));
+                  setState(() {
+                    _selectedCategoryIds =
+                        tempSelectedCategoryIds; // Now empty
+                    _selectedColorCategoryIds =
+                        tempSelectedColorCategoryIds; // Now empty
+                    _selectedFolloweeIds = tempSelectedFolloweeIds;
+                    _followeeCategorySelections
+                      ..clear()
+                      ..addAll(tempFolloweeCategorySelections);
+                    _followeeColorSelections
+                      ..clear()
+                      ..addAll(tempFolloweeColorSelections);
+                  });
+                  unawaited(_persistFilterSelections(
+                    _selectedCategoryIds,
+                    _selectedColorCategoryIds,
+                    _selectedFolloweeIds,
+                  ));
 
-                Navigator.of(context).pop(); // Close the dialog
-                _applyFiltersAndUpdateMarkers(); // Apply filters (which are now empty) and update map
-              },
-            ),
+                  Navigator.of(context).pop();
+                  _applyFiltersAndUpdateMarkers();
+                },
+              ),
             TextButton(
               child: const Text('Cancel'),
               onPressed: () {
@@ -2441,6 +2746,12 @@ class _MapScreenState extends State<MapScreen> {
                   _selectedCategoryIds = tempSelectedCategoryIds;
                   _selectedColorCategoryIds = tempSelectedColorCategoryIds;
                   _selectedFolloweeIds = tempSelectedFolloweeIds;
+                  _followeeCategorySelections
+                    ..clear()
+                    ..addAll(tempFolloweeCategorySelections);
+                  _followeeColorSelections
+                    ..clear()
+                    ..addAll(tempFolloweeColorSelections);
                 });
                 unawaited(_persistFilterSelections(
                   _selectedCategoryIds,
@@ -2452,6 +2763,8 @@ class _MapScreenState extends State<MapScreen> {
               },
             ),
           ],
+        );
+          },
         );
       },
     );
@@ -3452,20 +3765,20 @@ class _MapScreenState extends State<MapScreen> {
 
   // ADDED: Helper to build the "Other Categories" display
   Widget _buildOtherCategoriesWidget() {
-    if (_tappedExperience == null || _tappedExperience!.otherCategories.isEmpty) {
+    if (_tappedExperience == null ||
+        _tappedExperience!.otherCategories.isEmpty) {
+      return const SizedBox.shrink(); // Return empty space if no other categories
+    }
+
+    if (!_canDisplayFolloweeMetadata(_tappedExperience!)) {
       return const SizedBox.shrink(); // Return empty space if no other categories
     }
 
     // Get the full UserCategory objects from the IDs
+    final String? ownerId = _tappedExperience!.createdBy;
     final otherCategoryObjects = _tappedExperience!.otherCategories
-        .map((id) {
-          try {
-            return _categories.firstWhere((cat) => cat.id == id);
-          } catch (e) {
-            return null; // Category not found
-          }
-        })
-        .whereType<UserCategory>() // Filter out nulls
+        .map((id) => _getAccessibleUserCategory(ownerId, id))
+        .whereType<UserCategory>()
         .toList();
 
     if (otherCategoryObjects.isEmpty) {
@@ -3492,26 +3805,18 @@ class _MapScreenState extends State<MapScreen> {
     }
 
     final experience = _tappedExperience!;
-    ColorCategory? primaryColorCategory;
-    if (experience.colorCategoryId != null) {
-      try {
-        primaryColorCategory = _colorCategories
-            .firstWhere((cc) => cc.id == experience.colorCategoryId);
-      } catch (_) {
-        primaryColorCategory = null;
-      }
+    if (!_canDisplayFolloweeMetadata(experience)) {
+      return const SizedBox.shrink();
     }
+    final String? ownerId = experience.createdBy;
+    ColorCategory? primaryColorCategory =
+        _getAccessibleColorCategory(ownerId, experience.colorCategoryId);
 
-    final List<ColorCategory> otherColorCategories = experience.otherColorCategoryIds
-        .map((id) {
-          try {
-            return _colorCategories.firstWhere((cc) => cc.id == id);
-          } catch (_) {
-            return null;
-          }
-        })
-        .whereType<ColorCategory>()
-        .toList();
+    final List<ColorCategory> otherColorCategories =
+        experience.otherColorCategoryIds
+            .map((id) => _getAccessibleColorCategory(ownerId, id))
+            .whereType<ColorCategory>()
+            .toList();
 
     if (primaryColorCategory == null && otherColorCategories.isEmpty) {
       return const SizedBox.shrink();

@@ -1569,11 +1569,45 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
               child: Image.asset(
                 'assets/icon/icon.png',
                 fit: BoxFit.contain,
-                width: 360,
-                height: 360,
+                width: 450,
+                height: 450,
               ),
             ),
           ),
+        SafeArea(
+          child: Align(
+            alignment: Alignment.topRight,
+            child: Padding(
+              padding: const EdgeInsets.only(top: 16, right: 16),
+              child: Tooltip(
+                message: 'View Map',
+                child: TextButton.icon(
+                  style: TextButton.styleFrom(foregroundColor: Colors.white),
+                  icon: const Icon(
+                    Icons.map_outlined,
+                    color: Colors.white,
+                    size: 28,
+                  ),
+                  label: const Text(
+                    'Map',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (context) => const MapScreen(),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
+          ),
+        ),
         SafeArea(
           child: Center(
             child: Padding(
