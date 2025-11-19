@@ -65,6 +65,8 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
   bool _initialized = false;
   late final TabController _tabController;
   UserCategory? _selectedCategory;
+  ColorCategory? _selectedColorCategory;
+  bool _showingColorCategories = false;
   
   // Media cache for experience content previews
   final Map<String, List<SharedMediaItem>> _experienceMediaCache = {};
@@ -102,8 +104,24 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
 
     try {
       final profile = await _userService.getUserProfile(widget.userId);
-      final followers = await _userService.getFollowerIds(widget.userId);
-      final following = await _userService.getFollowingIds(widget.userId);
+      
+      // Try to load followers/following, but handle permission errors gracefully
+      List<String> followers = [];
+      List<String> following = [];
+      
+      try {
+        followers = await _userService.getFollowerIds(widget.userId);
+      } catch (e) {
+        debugPrint('Error getting follower IDs: $e');
+        // Continue with empty list
+      }
+      
+      try {
+        following = await _userService.getFollowingIds(widget.userId);
+      } catch (e) {
+        debugPrint('Error getting following IDs: $e');
+        // Continue with empty list
+      }
 
       bool isFollowing = false;
       bool ownerFollowsViewer = false;
@@ -111,11 +129,25 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
       final viewerId = _currentUserId;
 
       if (viewerId != null && viewerId != widget.userId) {
-        isFollowing = await _userService.isFollowing(viewerId, widget.userId);
-        ownerFollowsViewer =
-            await _userService.isFollowing(widget.userId, viewerId);
-        hasPendingRequest =
-            await _userService.hasPendingRequest(viewerId, widget.userId);
+        try {
+          isFollowing = await _userService.isFollowing(viewerId, widget.userId);
+        } catch (e) {
+          debugPrint('Error checking if following: $e');
+        }
+        
+        try {
+          ownerFollowsViewer =
+              await _userService.isFollowing(widget.userId, viewerId);
+        } catch (e) {
+          debugPrint('Error checking if owner follows viewer: $e');
+        }
+        
+        try {
+          hasPendingRequest =
+              await _userService.hasPendingRequest(viewerId, widget.userId);
+        } catch (e) {
+          debugPrint('Error checking pending request: $e');
+        }
       }
 
       if (!mounted) return;
@@ -180,31 +212,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
         return a.name.toLowerCase().compareTo(b.name.toLowerCase());
       });
 
-      // Try to load color categories, but continue if permission denied
-      final List<ColorCategory> colorCategories = [];
-      try {
-        final colorCategoriesSnapshot = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(widget.userId)
-            .collection('colorCategories')
-            .get();
-
-        for (final doc in colorCategoriesSnapshot.docs) {
-          try {
-            final colorCategory = ColorCategory.fromFirestore(doc);
-            if (colorCategory.isPrivate) continue;
-            colorCategories.add(colorCategory);
-          } catch (e) {
-            debugPrint(
-                'PublicProfileScreen: skipping invalid color category ${doc.id} - $e');
-          }
-        }
-      } catch (e) {
-        // Permission denied or other error - just skip color categories
-        debugPrint(
-            'PublicProfileScreen: Could not load color categories (likely permission denied) - $e');
-      }
-
+      // Parse experiences first
       final List<Experience> experiences = [];
       for (final doc in experiencesSnapshot.docs) {
         try {
@@ -214,6 +222,45 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
         } catch (e) {
           debugPrint(
               'PublicProfileScreen: skipping invalid experience ${doc.id} - $e');
+        }
+      }
+
+      // Build color categories list from public experiences (avoid permission issues)
+      final Set<String> colorCategoryIds = {};
+      for (final experience in experiences) {
+        if (experience.colorCategoryId != null &&
+            experience.colorCategoryId!.isNotEmpty) {
+          colorCategoryIds.add(experience.colorCategoryId!);
+        }
+        // Also collect from other color categories
+        for (final colorId in experience.otherColorCategoryIds) {
+          if (colorId.isNotEmpty) {
+            colorCategoryIds.add(colorId);
+          }
+        }
+      }
+
+      // Fetch only the color categories that are actually used by public experiences
+      final List<ColorCategory> colorCategories = [];
+      if (colorCategoryIds.isNotEmpty) {
+        try {
+          // Fetch color categories from their owner using the service
+          final fetchedColors = await _experienceService
+              .getColorCategoriesByOwnerAndIds(
+                  widget.userId, colorCategoryIds.toList());
+          
+          // Only include non-private color categories
+          for (final colorCategory in fetchedColors) {
+            if (!colorCategory.isPrivate) {
+              colorCategories.add(colorCategory);
+            }
+          }
+          
+          debugPrint(
+              'PublicProfileScreen: Loaded ${colorCategories.length} public color categories from experiences');
+        } catch (e) {
+          debugPrint(
+              'PublicProfileScreen: Could not load color categories - $e');
         }
       }
 
@@ -233,11 +280,26 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
         }
       }
 
+      // Also build color category -> experiences map
+      final Map<String, List<Experience>> colorCatExperiences = {
+        for (final colorCategory in colorCategories) colorCategory.id: []
+      };
+      final validColorCategoryIds = colorCatExperiences.keys.toSet();
+
+      for (final experience in experiences) {
+        final String? colorCategoryId = experience.colorCategoryId;
+        if (colorCategoryId != null && validColorCategoryIds.contains(colorCategoryId)) {
+          colorCatExperiences[colorCategoryId]!.add(experience);
+        }
+      }
+
       if (!mounted) return;
       setState(() {
         _publicCategories = categories;
         _publicColorCategories = colorCategories;
         _categoryExperiences = catExperiences;
+        // Store color category experiences in the same map for consistency
+        _categoryExperiences.addAll(colorCatExperiences);
         _isLoadingCollections = false;
       });
     } catch (e) {
@@ -913,9 +975,77 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
   }
 
   Widget _buildCollectionTab() {
-    // Show either categories list OR selected category's experiences
+    return Column(
+      children: [
+        // Toggle button row
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 7.0, vertical: 8.0),
+          child: Row(
+            children: [
+              const Expanded(child: SizedBox()),
+              Flexible(
+                child: Builder(
+                  builder: (context) {
+                    final IconData toggleIcon = _showingColorCategories
+                        ? Icons.category_outlined
+                        : Icons.color_lens_outlined;
+                    final String toggleLabel = _showingColorCategories
+                        ? 'Categories'
+                        : 'Color Categories';
+                    
+                    void onToggle() {
+                      setState(() {
+                        _showingColorCategories = !_showingColorCategories;
+                        _selectedCategory = null;
+                        _selectedColorCategory = null;
+                      });
+                    }
+
+                    return Align(
+                      alignment: Alignment.centerRight,
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: TextButton.icon(
+                          style: TextButton.styleFrom(
+                            visualDensity: const VisualDensity(
+                                horizontal: -2, vertical: -2),
+                            padding:
+                                const EdgeInsets.symmetric(horizontal: 8.0),
+                          ),
+                          icon: Icon(toggleIcon),
+                          label: Text(toggleLabel),
+                          onPressed: onToggle,
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+        // Main content area
+        Expanded(
+          child: _buildCollectionContent(),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCollectionContent() {
+    // Show selected category's experiences
     if (_selectedCategory != null) {
       return _buildSelectedCategoryExperiencesView();
+    }
+    
+    // Show selected color category's experiences
+    if (_selectedColorCategory != null) {
+      return _buildSelectedColorCategoryExperiencesView();
+    }
+
+    // Show color categories list or regular categories list
+    if (_showingColorCategories) {
+      return _buildPublicColorCategoriesList();
     }
 
     return _buildPublicCategoriesList();
@@ -1289,6 +1419,158 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
     );
   }
 
+  Widget _buildPublicColorCategoriesList() {
+    if (_isLoadingCollections) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (_publicColorCategories.isEmpty) {
+      return const Center(child: Text('No public color categories to share yet.'));
+    }
+
+    final bool isDesktopWeb = MediaQuery.of(context).size.width > 600;
+
+    if (isDesktopWeb) {
+      // Desktop: Grid view
+      final screenWidth = MediaQuery.of(context).size.width;
+      const double contentMaxWidth = 1200.0;
+      const double defaultPadding = 12.0;
+
+      double horizontalPadding;
+      if (screenWidth > contentMaxWidth) {
+        horizontalPadding = (screenWidth - contentMaxWidth) / 2;
+      } else {
+        horizontalPadding = defaultPadding;
+      }
+
+      return GridView.builder(
+        padding: EdgeInsets.fromLTRB(
+            horizontalPadding, defaultPadding, horizontalPadding, defaultPadding),
+        itemCount: _publicColorCategories.length,
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 5,
+          mainAxisSpacing: 10.0,
+          crossAxisSpacing: 10.0,
+          childAspectRatio: 3 / 3.5,
+        ),
+        itemBuilder: (context, index) {
+          final colorCategory = _publicColorCategories[index];
+          final experiences = _categoryExperiences[colorCategory.id] ?? [];
+          final bool isSelected = _selectedColorCategory?.id == colorCategory.id;
+
+          return Card(
+            key: ValueKey('color_category_grid_${colorCategory.id}'),
+            clipBehavior: Clip.antiAlias,
+            elevation: 2.0,
+            color: isSelected ? Theme.of(context).primaryColor.withOpacity(0.1) : null,
+            shape: isSelected
+                ? RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(4.0),
+                    side: BorderSide(
+                      color: Theme.of(context).primaryColor,
+                      width: 2,
+                    ),
+                  )
+                : null,
+            child: InkWell(
+              onTap: () {
+                setState(() {
+                  if (isSelected) {
+                    _selectedColorCategory = null;
+                  } else {
+                    _selectedColorCategory = colorCategory;
+                    _showingColorCategories = true;
+                    _selectedCategory = null;
+                  }
+                });
+              },
+              child: Padding(
+                padding: const EdgeInsets.all(8.0),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: <Widget>[
+                    Container(
+                      width: 28,
+                      height: 28,
+                      decoration: BoxDecoration(
+                        color: colorCategory.color,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      colorCategory.name,
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleSmall
+                          ?.copyWith(fontWeight: FontWeight.bold),
+                      textAlign: TextAlign.center,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${experiences.length} ${experiences.length == 1 ? "exp" : "exps"}',
+                      style: Theme.of(context).textTheme.bodySmall,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      );
+    } else {
+      // Mobile: List view
+      return ListView.separated(
+        itemCount: _publicColorCategories.length,
+        separatorBuilder: (_, __) => const Divider(height: 1),
+        itemBuilder: (context, index) {
+          final colorCategory = _publicColorCategories[index];
+          final experiences = _categoryExperiences[colorCategory.id] ?? [];
+          final bool isSelected = _selectedColorCategory?.id == colorCategory.id;
+
+          return ListTile(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+            leading: Padding(
+              padding: const EdgeInsets.only(left: 9.0),
+              child: Container(
+                width: 24,
+                height: 24,
+                decoration: BoxDecoration(
+                  color: colorCategory.color,
+                  shape: BoxShape.circle,
+                ),
+              ),
+            ),
+            title: Text(colorCategory.name),
+            subtitle: Text(
+              '${experiences.length} ${experiences.length == 1 ? 'experience' : 'experiences'}',
+            ),
+            trailing: isSelected
+                ? Icon(Icons.check_circle, color: Theme.of(context).primaryColor)
+                : null,
+            selected: isSelected,
+            onTap: () {
+              setState(() {
+                if (isSelected) {
+                  _selectedColorCategory = null;
+                } else {
+                  _selectedColorCategory = colorCategory;
+                  _showingColorCategories = true;
+                  _selectedCategory = null;
+                }
+              });
+            },
+          );
+        },
+      );
+    }
+  }
+
   Widget _buildSelectedCategoryExperiencesView() {
     final category = _selectedCategory!;
     final experiences = _categoryExperiences[category.id] ?? <Experience>[];
@@ -1347,6 +1629,86 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
                   itemCount: experiences.length,
                   itemBuilder: (context, index) {
                     final experience = experiences[index];
+                    return _buildExperienceListItem(experience, category);
+                  },
+                ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSelectedColorCategoryExperiencesView() {
+    final colorCategory = _selectedColorCategory!;
+    final experiences = _categoryExperiences[colorCategory.id] ?? <Experience>[];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Header row with back button and color category name
+        Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: Row(
+            children: [
+              IconButton(
+                icon: const Icon(Icons.arrow_back),
+                tooltip: 'Back to Color Categories',
+                onPressed: () {
+                  setState(() {
+                    _selectedColorCategory = null;
+                  });
+                },
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 16,
+                      height: 16,
+                      decoration: BoxDecoration(
+                        color: colorCategory.color,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.grey),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        colorCategory.name,
+                        style: Theme.of(context).textTheme.titleLarge,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        const Divider(height: 1),
+        // List of experiences for this color category
+        Expanded(
+          child: experiences.isEmpty
+              ? Center(
+                  child: Text(
+                    'No public experiences with "${colorCategory.name}" yet.',
+                    style: const TextStyle(color: Colors.grey),
+                  ),
+                )
+              : ListView.builder(
+                  itemCount: experiences.length,
+                  itemBuilder: (context, index) {
+                    final experience = experiences[index];
+                    // Use fallback category for navigation
+                    final category = _publicCategories.firstWhereOrNull(
+                      (cat) => cat.id == experience.categoryId,
+                    ) ?? UserCategory(
+                      id: experience.categoryId ?? '',
+                      name: 'Uncategorized',
+                      icon: '?',
+                      ownerUserId: widget.userId,
+                    );
                     return _buildExperienceListItem(experience, category);
                   },
                 ),

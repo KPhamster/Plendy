@@ -7,9 +7,10 @@ import '../services/notification_state_service.dart'; // Import NotificationStat
 import '../widgets/user_list_tab.dart';
 // Import the search delegate
 import '../widgets/notification_dot.dart'; // Import NotificationDot
-import '../models/user_profile.dart';      // Import UserProfile for search result type
+import '../models/user_profile.dart'; // Import UserProfile for search result type
 // Reusing for action button logic for now
 import 'follow_requests_screen.dart'; // Import FollowRequestsScreen
+import 'public_profile_screen.dart';
 
 class MyPeopleScreen extends StatefulWidget {
   const MyPeopleScreen({super.key});
@@ -134,6 +135,18 @@ class _MyPeopleScreenState extends State<MyPeopleScreen>
         _subscribeToRequestCount();
       }
     }
+  }
+
+  void _openPublicProfile(String userId) {
+    if (!mounted || userId.isEmpty) {
+      return;
+    }
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => PublicProfileScreen(userId: userId),
+      ),
+    );
   }
 
   void _subscribeToRequestCount() {
@@ -388,7 +401,7 @@ class _MyPeopleScreenState extends State<MyPeopleScreen>
                                         onPressed: () => _toggleFollowSearchResult(userProfile.id, isFollowing),
                                         child: Text(isFollowing ? 'Unfollow' : 'Follow'),
                                       ),
-                              // TODO: onTap to navigate to user profile
+                              onTap: isSelf ? null : () => _openPublicProfile(userProfile.id),
                             );
                           },
                         ),
@@ -450,6 +463,7 @@ class _MyPeopleScreenState extends State<MyPeopleScreen>
                     emptyListMessage: "No friends yet. Find and follow users to make friends!",
                     listType: "friends",
                     onActionCompleted: _loadSocialCounts,
+                    onUserTap: _openPublicProfile,
                   ),
                   UserListTab(
                     userIds: _followerIds,
@@ -457,6 +471,7 @@ class _MyPeopleScreenState extends State<MyPeopleScreen>
                     emptyListMessage: "You don't have any followers yet.",
                     listType: "followers",
                     onActionCompleted: _loadSocialCounts,
+                    onUserTap: _openPublicProfile,
                   ),
                   UserListTab(
                     userIds: _followingIds,
@@ -464,6 +479,7 @@ class _MyPeopleScreenState extends State<MyPeopleScreen>
                     emptyListMessage: "You are not following anyone yet.",
                     listType: "following",
                     onActionCompleted: _loadSocialCounts,
+                    onUserTap: _openPublicProfile,
                   ),
                 ],
               ),

@@ -12,6 +12,7 @@ class UserListTab extends StatefulWidget {
   final String emptyListMessage;
   final String listType;
   final VoidCallback? onActionCompleted;
+  final void Function(String userId)? onUserTap;
 
   const UserListTab({
     super.key,
@@ -20,6 +21,7 @@ class UserListTab extends StatefulWidget {
     this.emptyListMessage = "No users found.",
     required this.listType,
     this.onActionCompleted,
+    this.onUserTap,
   });
 
   @override
@@ -238,6 +240,7 @@ class _UserListTabState extends State<UserListTab> {
               title: Text(displayName),
               subtitle: showUsernameAsSubtitle ? Text(username) : null,
               trailing: _buildActionButton(userProfile),
+              onTap: () => widget.onUserTap?.call(userProfile.id),
             );
           },
         );
