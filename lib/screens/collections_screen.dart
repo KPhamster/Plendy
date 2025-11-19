@@ -1939,6 +1939,16 @@ class CollectionsScreenState extends State<CollectionsScreen>
             ..clear()
             ..addAll(experiencePermissionMap);
           _sharedExperiences = filteredSharedExperiences;
+          // Update owned shared IDs for "Shared" label display
+          _ownedSharedCategoryIds
+            ..clear()
+            ..addAll(ownedSharedCategoryIds);
+          _ownedSharedColorCategoryIds
+            ..clear()
+            ..addAll(ownedSharedColorCategoryIds);
+          _ownedSharedExperienceIds
+            ..clear()
+            ..addAll(ownedSharedExperienceIds);
           final List<Experience> combinedExperienceList =
               _combineExperiencesWithShared(_experiences);
           _experiences = _filterExperiencesWithAssignments(
