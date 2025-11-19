@@ -293,6 +293,7 @@ class Experience {
   final String? sharedMediaType; // Added for shared content
   final String? additionalNotes; // Added for user notes
   final bool isPrivate; // Controls whether the experience is private
+  final bool hasExplicitPrivacy; // Indicates whether Firestore stored the privacy flag
 
   // --- ADDED ---
   final String? colorCategoryId; // ID linking to the selected ColorCategory
@@ -340,6 +341,7 @@ class Experience {
     this.additionalNotes,
     required this.editorUserIds,
     this.isPrivate = false,
+    this.hasExplicitPrivacy = true,
     this.colorCategoryId,
     this.otherColorCategoryIds = const [],
     this.otherCategories = const [], // Default to empty list
@@ -351,6 +353,8 @@ class Experience {
   /// Creates an Experience from a Firestore document
   factory Experience.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
+    final bool hasPrivacyFlag = data.containsKey('isPrivate');
+    final bool isPrivateValue = data['isPrivate'] == true;
 
     return Experience(
       id: doc.id,
@@ -381,7 +385,8 @@ class Experience {
       sharedMediaType: data['sharedMediaType'],
       additionalNotes: data['additionalNotes'],
       editorUserIds: _parseStringList(data['editorUserIds']),
-      isPrivate: data['isPrivate'] == true,
+      isPrivate: isPrivateValue,
+      hasExplicitPrivacy: hasPrivacyFlag,
       colorCategoryId: data['colorCategoryId'] as String?,
       otherColorCategoryIds:
           _parseStringList(data['otherColorCategoryIds']), // ADDED
@@ -463,6 +468,7 @@ class Experience {
     String? additionalNotes,
     List<String>? editorUserIds,
     bool? isPrivate,
+    bool? hasExplicitPrivacy,
     String? colorCategoryId,
     List<String>? otherColorCategoryIds,
     List<String>? otherCategories,
@@ -501,6 +507,7 @@ class Experience {
       additionalNotes: additionalNotes,
       editorUserIds: editorUserIds ?? this.editorUserIds,
       isPrivate: isPrivate ?? this.isPrivate,
+      hasExplicitPrivacy: hasExplicitPrivacy ?? this.hasExplicitPrivacy,
       colorCategoryId: colorCategoryId ?? this.colorCategoryId,
       otherColorCategoryIds:
           otherColorCategoryIds ?? this.otherColorCategoryIds,

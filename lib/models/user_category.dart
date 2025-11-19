@@ -10,6 +10,7 @@ class UserCategory extends Equatable {
   final String? sharedOwnerDisplayName; // Display name of owner when shared
   final Timestamp? lastUsedTimestamp;
   final int? orderIndex;
+  final bool isPrivate;
 
   const UserCategory({
     required this.id,
@@ -19,6 +20,7 @@ class UserCategory extends Equatable {
     this.sharedOwnerDisplayName,
     this.lastUsedTimestamp,
     this.orderIndex,
+    this.isPrivate = false,
   });
 
   @override
@@ -29,7 +31,8 @@ class UserCategory extends Equatable {
         ownerUserId,
         sharedOwnerDisplayName,
         lastUsedTimestamp,
-        orderIndex
+        orderIndex,
+        isPrivate,
       ]; // Add ownerUserId to props
 
   /// Creates a UserCategory from a Firestore document.
@@ -59,6 +62,7 @@ class UserCategory extends Equatable {
       sharedOwnerDisplayName: null,
       lastUsedTimestamp: data['lastUsedTimestamp'] as Timestamp?,
       orderIndex: data['orderIndex'] as int?,
+      isPrivate: data['isPrivate'] == true,
     );
   }
 
@@ -70,6 +74,7 @@ class UserCategory extends Equatable {
       'ownerUserId': ownerUserId, // Add ownerUserId to map
       'lastUsedTimestamp': lastUsedTimestamp,
       'orderIndex': orderIndex,
+      'isPrivate': isPrivate,
       // sharedOwnerDisplayName is derived metadata; don't persist to Firestore.
       // Consider adding 'createdAt', 'updatedAt' timestamps if needed for management.
     };
@@ -86,6 +91,7 @@ class UserCategory extends Equatable {
     bool setLastUsedTimestampNull = false,
     int? orderIndex,
     bool setOrderIndexNull = false,
+    bool? isPrivate,
   }) {
     return UserCategory(
       id: id ?? this.id,
@@ -98,6 +104,7 @@ class UserCategory extends Equatable {
           ? null
           : lastUsedTimestamp ?? this.lastUsedTimestamp,
       orderIndex: setOrderIndexNull ? null : orderIndex ?? this.orderIndex,
+      isPrivate: isPrivate ?? this.isPrivate,
     );
   }
 
@@ -128,6 +135,7 @@ class UserCategory extends Equatable {
         sharedOwnerDisplayName: null,
         lastUsedTimestamp: null,
         orderIndex: null,
+        isPrivate: false,
       );
     }).toList();
   }

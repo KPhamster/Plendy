@@ -12,15 +12,14 @@ import '../models/enums/share_enums.dart'; // RESTORED: Fallback path
 import '../widgets/google_maps_widget.dart';
 import '../services/experience_service.dart'; // Import ExperienceService
 import '../services/auth_service.dart'; // Import AuthService
+import '../services/user_service.dart';
 import '../services/google_maps_service.dart'; // Import GoogleMapsService
 import '../models/shared_media_item.dart';
 import '../widgets/shared_media_preview_modal.dart';
-// import '../services/sharing_service.dart'; // REMOVED: no longer used with paged shared fetch
-// import '../models/enums/share_enums.dart'; // REMOVED: no longer used
-// import '../models/user_profile.dart'; // REMOVED: no longer used
 import '../models/experience.dart'; // Import Experience model (includes Location)
 import '../models/user_category.dart'; // Import UserCategory model
 import '../models/color_category.dart'; // Import ColorCategory model
+import '../models/user_profile.dart';
 import 'experience_page_screen.dart'; // Import ExperiencePageScreen for navigation
 import '../models/public_experience.dart';
 import '../config/app_constants.dart';
@@ -57,6 +56,7 @@ class MapScreen extends StatefulWidget {
 class _MapScreenState extends State<MapScreen> {
   final ExperienceService _experienceService = ExperienceService();
   final AuthService _authService = AuthService();
+  final UserService _userService = UserService();
   final GoogleMapsService _mapsService =
       GoogleMapsService(); // ADDED: Maps Service
   final Map<String, Marker> _markers = {}; // Use String keys for marker IDs
@@ -64,6 +64,7 @@ class _MapScreenState extends State<MapScreen> {
   List<Experience> _experiences = [];
   List<UserCategory> _categories = [];
   List<ColorCategory> _colorCategories = [];
+  List<UserProfile> _followingUsers = [];
   // ADDED: Cache of owner display names for shared categories
   final Map<String, String> _ownerNameByUserId = {};
   final Completer<GoogleMapController> _mapControllerCompleter =
@@ -77,8 +78,16 @@ class _MapScreenState extends State<MapScreen> {
   // ADDED: State for selected filters
   Set<String> _selectedCategoryIds = {}; // Empty set means no filter
   Set<String> _selectedColorCategoryIds = {}; // Empty set means no filter
+  Set<String> _selectedFolloweeIds = {};
+  Set<String> _followingUserIds = {};
+  Map<String, List<String>> _followeeCategoryIcons = {};
+  Map<String, List<Experience>> _followeePublicExperiences = {};
+  Map<String, Map<String, UserCategory>> _followeeCategories = {};
+  Map<String, Map<String, ColorCategory>> _followeeColorCategories = {};
   bool get _hasActiveFilters =>
-      _selectedCategoryIds.isNotEmpty || _selectedColorCategoryIds.isNotEmpty;
+      _selectedCategoryIds.isNotEmpty ||
+      _selectedColorCategoryIds.isNotEmpty ||
+      _selectedFolloweeIds.isNotEmpty;
 
   // ADDED: State for tapped location
   Marker? _tappedLocationMarker;
@@ -226,16 +235,311 @@ class _MapScreenState extends State<MapScreen> {
           prefs.getStringList(AppConstants.mapFilterCategoryIdsKey);
       final savedColorIds =
           prefs.getStringList(AppConstants.mapFilterColorIdsKey);
+      final savedFolloweeIds =
+          prefs.getStringList(AppConstants.mapFilterFolloweeIdsKey);
       if (!mounted) return;
-      if (savedCategoryIds != null || savedColorIds != null) {
+      if (savedCategoryIds != null ||
+          savedColorIds != null ||
+          savedFolloweeIds != null) {
         setState(() {
           _selectedCategoryIds = savedCategoryIds?.toSet() ?? {};
           _selectedColorCategoryIds = savedColorIds?.toSet() ?? {};
+          _selectedFolloweeIds = savedFolloweeIds?.toSet() ?? {};
         });
       }
     } catch (e) {
       print("🗺️ MAP SCREEN: Failed to load saved filter selections: $e");
     }
+  }
+
+  Future<void> _loadFollowingUsers(String userId) async {
+    try {
+      final List<String> followingIds =
+          await _userService.getFollowingIds(userId);
+      if (!mounted) {
+        return;
+      }
+
+      if (followingIds.isEmpty) {
+        setState(() {
+          _followingUsers = [];
+          _followingUserIds = {};
+          _selectedFolloweeIds.clear();
+          _followeeCategoryIcons = {};
+          _followeeCategories = {};
+          _followeeColorCategories = {};
+          _followeePublicExperiences = {};
+        });
+        return;
+      }
+
+      final List<UserProfile> loadedProfiles = await Future.wait(
+        followingIds.map((id) async {
+          try {
+            final profile = await _userService.getUserProfile(id);
+            return profile ?? UserProfile(id: id);
+          } catch (e) {
+            print(
+                "🗺️ MAP SCREEN: Failed to load profile for followee $id: $e");
+            return UserProfile(id: id);
+          }
+        }),
+      );
+
+      loadedProfiles.sort(_compareProfilesByName);
+      final Set<String> resolvedIds =
+          loadedProfiles.map((profile) => profile.id).toSet();
+
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _followingUsers = loadedProfiles;
+        _followingUserIds = resolvedIds;
+        _selectedFolloweeIds
+            .removeWhere((id) => !_followingUserIds.contains(id));
+        if (_followingUserIds.isEmpty) {
+          _followeePublicExperiences = {};
+          _followeeCategories = {};
+          _followeeColorCategories = {};
+        }
+      });
+      await _fetchFolloweePublicExperiences(_followingUserIds);
+    } catch (e) {
+      print("🗺️ MAP SCREEN: Failed to load following users: $e");
+    }
+  }
+
+  Future<void> _fetchFolloweePublicExperiences(Set<String> followeeIds) async {
+    if (!mounted) {
+      return;
+    }
+    if (followeeIds.isEmpty) {
+      setState(() {
+        _followeePublicExperiences = {};
+        _followeeCategories = {};
+        _followeeColorCategories = {};
+      });
+      _rebuildFolloweeCategoryIcons();
+      return;
+    }
+
+    final List<Future<MapEntry<String, List<Experience>>>> tasks = followeeIds
+        .map((followeeId) async {
+          try {
+            final experiences = await _experienceService
+                .getExperiencesByUser(followeeId, limit: 500);
+            final List<Experience> publicExperiences = experiences
+                .where((exp) => !_isExperienceEffectivelyPrivate(exp))
+                .toList();
+            return MapEntry(followeeId, publicExperiences);
+          } catch (e) {
+            print(
+                "🗺️ MAP SCREEN: Failed to load experiences for followee $followeeId: $e");
+            return MapEntry(followeeId, <Experience>[]);
+          }
+        })
+        .toList();
+
+    try {
+      final results = await Future.wait(tasks);
+      if (!mounted) {
+        return;
+      }
+      final Map<String, List<Experience>> newFolloweeExperiences = {};
+      final Map<String, Map<String, UserCategory>> newFolloweeCategories = {};
+      final Map<String, Map<String, ColorCategory>> newFolloweeColorCategories = {};
+      for (final entry in results) {
+        final String followeeId = entry.key;
+        final List<Experience> experiences = entry.value;
+        newFolloweeExperiences[followeeId] = experiences;
+
+        final Map<String, UserCategory> ownerCategories =
+            Map<String, UserCategory>.from(
+                _followeeCategories[followeeId] ?? {});
+        final Map<String, ColorCategory> ownerColors =
+            Map<String, ColorCategory>.from(
+                _followeeColorCategories[followeeId] ?? {});
+        final Set<String> missingCategoryIds = {};
+        final Set<String> missingColorIds = {};
+        for (final experience in experiences) {
+          if (experience.categoryIconDenorm != null &&
+              experience.categoryIconDenorm!.isNotEmpty) {
+            continue;
+          }
+          final String? categoryId = experience.categoryId;
+          if (categoryId == null ||
+              categoryId.isEmpty ||
+              ownerCategories.containsKey(categoryId)) {
+            continue;
+          }
+          missingCategoryIds.add(categoryId);
+        }
+        for (final experience in experiences) {
+          final String? colorId = experience.colorCategoryId;
+          if (colorId == null ||
+              colorId.isEmpty ||
+              ownerColors.containsKey(colorId)) {
+            continue;
+          }
+          missingColorIds.add(colorId);
+        }
+        if (missingCategoryIds.isNotEmpty) {
+          try {
+            final fetchedCategories = await _experienceService
+                .getUserCategoriesByOwnerAndIds(
+                    followeeId, missingCategoryIds.toList());
+            for (final category in fetchedCategories) {
+              ownerCategories[category.id] = category;
+            }
+          } catch (e) {
+            print(
+                "🗺️ MAP SCREEN: Failed to fetch category metadata for followee $followeeId: $e");
+          }
+        }
+        if (missingColorIds.isNotEmpty) {
+          try {
+            final fetchedColors = await _experienceService
+                .getColorCategoriesByOwnerAndIds(
+                    followeeId, missingColorIds.toList());
+            for (final color in fetchedColors) {
+              ownerColors[color.id] = color;
+            }
+          } catch (e) {
+            print(
+                "🗺️ MAP SCREEN: Failed to fetch color metadata for followee $followeeId: $e");
+          }
+        }
+        newFolloweeCategories[followeeId] = ownerCategories;
+        newFolloweeColorCategories[followeeId] = ownerColors;
+      }
+      setState(() {
+        _followeePublicExperiences = newFolloweeExperiences;
+        _followeeCategories = newFolloweeCategories;
+        _followeeColorCategories = newFolloweeColorCategories;
+      });
+      _rebuildFolloweeCategoryIcons();
+      if (_selectedFolloweeIds.isNotEmpty) {
+        unawaited(_applyFiltersAndUpdateMarkers());
+      }
+    } catch (e) {
+      print("🗺️ MAP SCREEN: Error fetching followee experiences: $e");
+    }
+  }
+
+  void _rebuildFolloweeCategoryIcons() {
+    if (!mounted) {
+      return;
+    }
+    final bool hasAnyExperiences = _experiences.isNotEmpty ||
+        _followeePublicExperiences.values
+            .any((experiences) => experiences.isNotEmpty);
+    if (_followingUserIds.isEmpty || !hasAnyExperiences) {
+      setState(() {
+        _followeeCategoryIcons = {};
+      });
+      return;
+    }
+
+    final Map<String, Set<String>> iconsByUser = {};
+
+    void addIconsFromExperience(Experience experience) {
+      final String? ownerId = experience.createdBy;
+      if (ownerId == null ||
+          ownerId.isEmpty ||
+          !_followingUserIds.contains(ownerId) ||
+          _isExperienceEffectivelyPrivate(experience)) {
+        return;
+      }
+      final String? icon = _getCategoryIconForExperience(experience);
+      if (icon == null || icon.isEmpty) {
+        return;
+      }
+      iconsByUser.putIfAbsent(ownerId, () => <String>{}).add(icon);
+    }
+
+    for (final experience in _experiences) {
+      addIconsFromExperience(experience);
+    }
+    _followeePublicExperiences.forEach((_, experiences) {
+      for (final experience in experiences) {
+        addIconsFromExperience(experience);
+      }
+    });
+
+    final Map<String, List<String>> normalized = {};
+    iconsByUser.forEach((userId, icons) {
+      final List<String> sortedIcons = icons.toList()..sort();
+      normalized[userId] = List<String>.unmodifiable(sortedIcons);
+    });
+
+    setState(() {
+      _followeeCategoryIcons = normalized;
+    });
+  }
+
+  String? _getCategoryIconForExperience(Experience experience) {
+    if (experience.categoryIconDenorm != null &&
+        experience.categoryIconDenorm!.isNotEmpty) {
+      return experience.categoryIconDenorm;
+    }
+    final String? categoryId = experience.categoryId;
+    if (categoryId == null || categoryId.isEmpty) {
+      return null;
+    }
+    try {
+      final UserCategory category =
+          _categories.firstWhere((cat) => cat.id == categoryId);
+      return category.icon;
+    } catch (_) {
+      final String? ownerId = experience.createdBy;
+      if (ownerId != null &&
+          ownerId.isNotEmpty &&
+          _followeeCategories.containsKey(ownerId)) {
+        final UserCategory? followeeCategory =
+            _followeeCategories[ownerId]?[categoryId];
+        if (followeeCategory != null &&
+            followeeCategory.icon.isNotEmpty) {
+          return followeeCategory.icon;
+        }
+      }
+      return null;
+    }
+  }
+
+  int _compareProfilesByName(UserProfile a, UserProfile b) {
+    final String aValue = _normalizeUserSortValue(a);
+    final String bValue = _normalizeUserSortValue(b);
+    return aValue.compareTo(bValue);
+  }
+
+  String _normalizeUserSortValue(UserProfile profile) {
+    if (profile.displayName != null &&
+        profile.displayName!.trim().isNotEmpty) {
+      return profile.displayName!.trim().toLowerCase();
+    }
+    if (profile.username != null && profile.username!.trim().isNotEmpty) {
+      return profile.username!.trim().toLowerCase();
+    }
+    return profile.id.toLowerCase();
+  }
+
+  String _getUserDisplayName(UserProfile profile) {
+    if (profile.displayName != null &&
+        profile.displayName!.trim().isNotEmpty) {
+      return profile.displayName!.trim();
+    }
+    if (profile.username != null && profile.username!.trim().isNotEmpty) {
+      return profile.username!.trim();
+    }
+    return 'Friend';
+  }
+
+  bool _isExperienceEffectivelyPrivate(Experience experience) {
+    if (!experience.hasExplicitPrivacy) {
+      return false;
+    }
+    return experience.isPrivate;
   }
 
   Future<void> _loadDataAndGenerateMarkers() async {
@@ -266,6 +570,8 @@ class _MapScreenState extends State<MapScreen> {
         return;
       }
 
+      unawaited(_loadFollowingUsers(userId));
+
       // Fetch owned data in parallel (categories, color categories, owned experiences)
       final ownedResults = await Future.wait([
         _experienceService.getUserCategories(includeSharedEditable: true),
@@ -278,6 +584,7 @@ class _MapScreenState extends State<MapScreen> {
       _experiences = ownedResults[2] as List<Experience>;
       print(
           "🗺️ MAP SCREEN: Loaded ${_experiences.length} owned experiences and ${_categories.length}/${_colorCategories.length} categories.");
+      _rebuildFolloweeCategoryIcons();
 
       // Render markers immediately, respecting any saved filters
       await _generateMarkersFromExperiences(_filterExperiences(_experiences));
@@ -466,6 +773,7 @@ class _MapScreenState extends State<MapScreen> {
           _experiences = combined.values.toList();
         });
       }
+      _rebuildFolloweeCategoryIcons();
 
       // IMPORTANT: Regenerate markers after merging to pick up newly fetched category/color data
       await _generateMarkersFromExperiences(_filterExperiences(_experiences));
@@ -1503,11 +1811,16 @@ class _MapScreenState extends State<MapScreen> {
         exp.otherColorCategoryIds
             .any((colorId) => _selectedColorCategoryIds.contains(colorId));
 
-    return categoryMatch && colorMatch;
+    final bool followeeMatch = _selectedFolloweeIds.isEmpty ||
+        (exp.createdBy != null &&
+            _selectedFolloweeIds.contains(exp.createdBy) &&
+            !_isExperienceEffectivelyPrivate(exp));
+
+    return categoryMatch && colorMatch && followeeMatch;
   }
 
-  Future<void> _persistFilterSelections(
-      Set<String> categoryIds, Set<String> colorCategoryIds) async {
+  Future<void> _persistFilterSelections(Set<String> categoryIds,
+      Set<String> colorCategoryIds, Set<String> followeeIds) async {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setStringList(
@@ -1517,6 +1830,10 @@ class _MapScreenState extends State<MapScreen> {
       await prefs.setStringList(
         AppConstants.mapFilterColorIdsKey,
         colorCategoryIds.toList(),
+      );
+      await prefs.setStringList(
+        AppConstants.mapFilterFolloweeIdsKey,
+        followeeIds.toList(),
       );
     } catch (e) {
       print("🗺️ MAP SCREEN: Failed to persist filter selections: $e");
@@ -1552,6 +1869,7 @@ class _MapScreenState extends State<MapScreen> {
     Set<String> tempSelectedCategoryIds = Set.from(_selectedCategoryIds);
     Set<String> tempSelectedColorCategoryIds =
         Set.from(_selectedColorCategoryIds);
+    Set<String> tempSelectedFolloweeIds = Set.from(_selectedFolloweeIds);
 
     await showDialog(
       context: context,
@@ -1633,6 +1951,64 @@ class _MapScreenState extends State<MapScreen> {
                         );
                       }), // This creates List<CheckboxListTile>
                       const SizedBox(height: 16),
+                      const Text('By People You Follow:',
+                          style: TextStyle(fontWeight: FontWeight.bold)),
+                      if (_followingUsers.isEmpty)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 8),
+                          child: Text(
+                            'Follow friends to filter their public experiences.',
+                            style: TextStyle(color: Colors.black54),
+                          ),
+                        )
+                      else
+                        ..._followingUsers.map((profile) {
+                          final String displayName =
+                              _getUserDisplayName(profile);
+                          final List<String> icons =
+                              _followeeCategoryIcons[profile.id] ??
+                                  const <String>[];
+                          return CheckboxListTile(
+                            controlAffinity: ListTileControlAffinity.leading,
+                            contentPadding: EdgeInsets.zero,
+                            title: Text(
+                              displayName,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            subtitle: icons.isEmpty
+                                ? const Text(
+                                    'No public experiences yet',
+                                    style: TextStyle(
+                                        fontSize: 12, color: Colors.black54),
+                                  )
+                                : Wrap(
+                                    spacing: 8,
+                                    runSpacing: 4,
+                                    children: icons
+                                        .take(12)
+                                        .map(
+                                          (icon) => Text(
+                                            icon,
+                                            style:
+                                                const TextStyle(fontSize: 18),
+                                          ),
+                                        )
+                                        .toList(),
+                                  ),
+                            value: tempSelectedFolloweeIds
+                                .contains(profile.id),
+                            onChanged: (bool? selected) {
+                              setStateDialog(() {
+                                if (selected == true) {
+                                  tempSelectedFolloweeIds.add(profile.id);
+                                } else {
+                                  tempSelectedFolloweeIds.remove(profile.id);
+                                }
+                              });
+                            },
+                          );
+                        }),
+                      const SizedBox(height: 16),
                       const Text('By Color:',
                           style: TextStyle(fontWeight: FontWeight.bold)),
                       // FIX: Correctly use map().toList() to generate CheckboxListTiles
@@ -1712,16 +2088,19 @@ class _MapScreenState extends State<MapScreen> {
                 // Clear temporary selections
                 tempSelectedCategoryIds.clear();
                 tempSelectedColorCategoryIds.clear();
+                tempSelectedFolloweeIds.clear();
 
                 // Apply the cleared filters directly to the main state
                 setState(() {
                   _selectedCategoryIds = tempSelectedCategoryIds; // Now empty
                   _selectedColorCategoryIds =
                       tempSelectedColorCategoryIds; // Now empty
+                  _selectedFolloweeIds = tempSelectedFolloweeIds;
                 });
                 unawaited(_persistFilterSelections(
                   _selectedCategoryIds,
                   _selectedColorCategoryIds,
+                  _selectedFolloweeIds,
                 ));
 
                 Navigator.of(context).pop(); // Close the dialog
@@ -1741,10 +2120,12 @@ class _MapScreenState extends State<MapScreen> {
                 setState(() {
                   _selectedCategoryIds = tempSelectedCategoryIds;
                   _selectedColorCategoryIds = tempSelectedColorCategoryIds;
+                  _selectedFolloweeIds = tempSelectedFolloweeIds;
                 });
                 unawaited(_persistFilterSelections(
                   _selectedCategoryIds,
                   _selectedColorCategoryIds,
+                  _selectedFolloweeIds,
                 ));
                 Navigator.of(context).pop(); // Close the dialog
                 _applyFiltersAndUpdateMarkers(); // Apply filters and update map
@@ -1766,10 +2147,24 @@ class _MapScreenState extends State<MapScreen> {
 
     try {
       // Filter experiences based on selected IDs
-      final filteredExperiences = _filterExperiences(_experiences);
+      final List<Experience> workingExperiences = List<Experience>.from(_experiences);
+      if (_selectedFolloweeIds.isNotEmpty) {
+        for (final followeeId in _selectedFolloweeIds) {
+          final List<Experience>? followeeExperiences =
+              _followeePublicExperiences[followeeId];
+          if (followeeExperiences != null && followeeExperiences.isNotEmpty) {
+            workingExperiences.addAll(followeeExperiences);
+          }
+        }
+      }
+      final Map<String, Experience> deduped = {
+        for (final experience in workingExperiences) experience.id: experience
+      };
+      final filteredExperiences =
+          _filterExperiences(deduped.values.toList());
 
       print(
-          "🗺️ MAP SCREEN: Filtered ${_experiences.length} experiences down to ${filteredExperiences.length}");
+          "🗺️ MAP SCREEN: Filtered ${deduped.length} experiences down to ${filteredExperiences.length}");
 
       // Regenerate markers from the filtered list
       _generateMarkersFromExperiences(filteredExperiences);
@@ -1819,12 +2214,28 @@ class _MapScreenState extends State<MapScreen> {
         continue; // Skip markers with default/invalid coordinates
       }
 
-      // MODIFIED: Find category using categoryId
-      final category = _categories.firstWhere(
-        (cat) => cat.id == experience.categoryId, // Use categoryId for matching
-        orElse: () =>
-            UserCategory(id: '', name: 'Uncategorized', icon: '❓', ownerUserId: ''), // Updated fallback
-      );
+      // Resolve category metadata, preferring denormalized icon and falling back to owner categories
+      UserCategory? resolvedCategory;
+      if (experience.categoryId != null && experience.categoryId!.isNotEmpty) {
+        try {
+          resolvedCategory = _categories.firstWhere(
+            (cat) => cat.id == experience.categoryId,
+          );
+        } catch (_) {
+          final String? ownerId = experience.createdBy;
+          if (ownerId != null &&
+              ownerId.isNotEmpty &&
+              _followeeCategories.containsKey(ownerId)) {
+            resolvedCategory = _followeeCategories[ownerId]?[experience.categoryId];
+          }
+        }
+      }
+      final String iconText =
+          (experience.categoryIconDenorm != null && experience.categoryIconDenorm!.isNotEmpty)
+              ? experience.categoryIconDenorm!
+              : ((resolvedCategory != null && resolvedCategory.icon.isNotEmpty)
+                  ? resolvedCategory.icon
+                  : '❓');
 
       // Find the corresponding color category *based on the experience's property*
       ColorCategory? colorCategory;
@@ -1841,7 +2252,14 @@ class _MapScreenState extends State<MapScreen> {
           // print(
           //     "🗺️ MAP SCREEN: Found ColorCategory '${colorCategory.name}' with color ${colorCategory.colorHex}");
         } catch (e) {
-          colorCategory = null; // Not found
+          colorCategory = null; // Not found locally
+          final String? ownerId = experience.createdBy;
+          if (ownerId != null &&
+              ownerId.isNotEmpty &&
+              _followeeColorCategories.containsKey(ownerId)) {
+            colorCategory =
+                _followeeColorCategories[ownerId]?[experienceColorCategoryId];
+          }
           // print(
           //     "🗺️ MAP SCREEN: No ColorCategory found matching ID '${experienceColorCategoryId}'. Using default color.");
         }
@@ -1859,10 +2277,6 @@ class _MapScreenState extends State<MapScreen> {
       }
 
       // Generate a unique cache key including the color and the *icon*
-      // Prefer denormalized icon when available, fallback to category icon
-      final String iconText = (experience.categoryIconDenorm != null && experience.categoryIconDenorm!.isNotEmpty)
-          ? experience.categoryIconDenorm!
-        : category.icon;
       final String cacheKey = '${iconText}_${markerBackgroundColor.value}';
 
       BitmapDescriptor categoryIconBitmap =
@@ -1905,7 +2319,7 @@ class _MapScreenState extends State<MapScreen> {
         markerId: markerId,
         position: position,
         infoWindow: InfoWindow(
-          title: '${category.icon} ${experience.name}',
+          title: '$iconText ${experience.name}',
         ),
         icon: categoryIconBitmap,
         // MODIFIED: Experience marker onTap shows location details panel
@@ -1922,9 +2336,9 @@ class _MapScreenState extends State<MapScreen> {
             }
           } catch (e) { /* Use default grey color */ }
 
-          final String selectedIconText = (_tappedExperience?.categoryIconDenorm != null && _tappedExperience!.categoryIconDenorm!.isNotEmpty)
-              ? _tappedExperience!.categoryIconDenorm!
-              : category.icon;
+          final String selectedIconText = (experience.categoryIconDenorm != null && experience.categoryIconDenorm!.isNotEmpty)
+              ? experience.categoryIconDenorm!
+              : (resolvedCategory?.icon ?? '❓');
           final selectedIcon = await _bitmapDescriptorFromText(
             selectedIconText,
             backgroundColor: markerBackgroundColor,
@@ -1939,7 +2353,7 @@ class _MapScreenState extends State<MapScreen> {
             markerId: tappedMarkerId,
             position: position,
             infoWindow: InfoWindow(
-              title: '${category.icon} ${experience.name}',
+              title: '$selectedIconText ${experience.name}',
             ),
             icon: selectedIcon, // Use the new enlarged icon
             zIndex: 1.0,
@@ -1964,7 +2378,7 @@ class _MapScreenState extends State<MapScreen> {
             _tappedLocationDetails = experience.location;
             _tappedLocationMarker = tappedMarker;
             _tappedExperience = experience; // Set associated experience
-            _tappedExperienceCategory = category; // Set associated category
+            _tappedExperienceCategory = resolvedCategory; // Set associated category
             _tappedLocationBusinessStatus = businessStatus; // Set business status
             _tappedLocationOpenNow = openNow; // Set open-now status
             _searchController.clear();

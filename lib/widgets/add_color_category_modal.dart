@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:plendy/models/color_category.dart';
+import 'package:plendy/screens/receive_share/widgets/privacy_tooltip_icon.dart';
 import 'package:plendy/services/experience_service.dart';
+import 'package:plendy/widgets/privacy_toggle_button.dart';
 import 'package:flutter_colorpicker/flutter_colorpicker.dart';
 
 class AddColorCategoryModal extends StatefulWidget {
@@ -17,6 +19,7 @@ class _AddColorCategoryModalState extends State<AddColorCategoryModal> {
   final _nameController = TextEditingController();
   final ExperienceService _experienceService = ExperienceService();
   bool _isLoading = false;
+  bool _isPrivate = false;
 
   // State for color picker
   Color _selectedColor = Colors.blue; // Default color
@@ -28,6 +31,7 @@ class _AddColorCategoryModalState extends State<AddColorCategoryModal> {
     super.initState();
     if (_isEditing) {
       _nameController.text = widget.categoryToEdit!.name;
+      _isPrivate = widget.categoryToEdit!.isPrivate;
       // Initialize color from hex string
       try {
         _selectedColor = widget.categoryToEdit!.color;
@@ -35,6 +39,8 @@ class _AddColorCategoryModalState extends State<AddColorCategoryModal> {
         print("Error parsing initial color: $e, defaulting to blue.");
         _selectedColor = Colors.blue;
       }
+    } else {
+      _isPrivate = false;
     }
   }
 
@@ -97,6 +103,7 @@ class _AddColorCategoryModalState extends State<AddColorCategoryModal> {
           final updatedCategory = widget.categoryToEdit!.copyWith(
             name: name,
             colorHex: colorHex,
+            isPrivate: _isPrivate,
           );
           print(
               "🎨 ADD_COLOR_MODAL: Attempting to update category ID: ${updatedCategory.id}");
@@ -108,8 +115,11 @@ class _AddColorCategoryModalState extends State<AddColorCategoryModal> {
         } else {
           print(
               "🎨 ADD_COLOR_MODAL: Attempting to add new category with Name: $name, ColorHex: $colorHex");
-          resultCategory =
-              await _experienceService.addColorCategory(name, colorHex);
+          resultCategory = await _experienceService.addColorCategory(
+            name,
+            colorHex,
+            isPrivate: _isPrivate,
+          );
           print("Color category added: ${resultCategory.name}");
         }
 
@@ -156,96 +166,125 @@ class _AddColorCategoryModalState extends State<AddColorCategoryModal> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
                     _isEditing
                         ? 'Edit Color Category'
                         : 'Create a New Color Category',
-                    style: Theme.of(context).textTheme.titleLarge),
-                IconButton(
-                  icon: const Icon(Icons.close),
-                  onPressed: () => Navigator.of(context).pop(),
-                  tooltip: 'Cancel',
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            TextFormField(
-              controller: _nameController,
-              decoration: InputDecoration(
-                labelText: _isEditing
-                    ? 'Edit category name'
-                    : 'Name your new color category',
-                border: OutlineInputBorder(),
-                filled: true,
-                fillColor: Colors.white,
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.of(context).pop(),
+                    tooltip: 'Cancel',
+                  ),
+                ],
               ),
-              textCapitalization: TextCapitalization.sentences,
-              validator: (value) {
-                if (value == null || value.trim().isEmpty) {
-                  return 'Please enter a category name';
-                }
-                // Optional: Add validation to check if name already exists (might need service call)
-                return null;
-              },
-            ),
-            const SizedBox(height: 16),
-            Text('Select Color',
-                style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 8),
-            GestureDetector(
-              onTap: () => _pickColor(context),
-              child: Container(
-                height: 50,
-                decoration: BoxDecoration(
-                  color: _selectedColor,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.grey.shade400, width: 1),
+              const SizedBox(height: 12),
+              Align(
+                alignment: Alignment.centerRight,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    PrivacyToggleButton(
+                      isPrivate: _isPrivate,
+                      onPressed: () {
+                        setState(() {
+                          _isPrivate = !_isPrivate;
+                        });
+                      },
+                    ),
+                    const SizedBox(width: 6),
+                    const PrivacyTooltipIcon(
+                      message:
+                          'Private color categories are only visible to you. Public ones may be shown wherever your shared experiences reference them.',
+                    ),
+                  ],
                 ),
-                child: Center(
-                  child: Text(
-                    'Tap to change color',
-                    style: TextStyle(
-                      color: ThemeData.estimateBrightnessForColor(
-                                  _selectedColor) ==
-                              Brightness.dark
-                          ? Colors.white
-                          : Colors.black,
-                      fontWeight: FontWeight.bold,
+              ),
+              const SizedBox(height: 8),
+              TextFormField(
+                controller: _nameController,
+                decoration: InputDecoration(
+                  labelText: _isEditing
+                      ? 'Edit category name'
+                      : 'Name your new color category',
+                  border: const OutlineInputBorder(),
+                  filled: true,
+                  fillColor: Colors.white,
+                ),
+                textCapitalization: TextCapitalization.sentences,
+                validator: (value) {
+                  if (value == null || value.trim().isEmpty) {
+                    return 'Please enter a category name';
+                  }
+                  // Optional: Add validation to check if name already exists (might need service call)
+                  return null;
+                },
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Select Color',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 8),
+              GestureDetector(
+                onTap: () => _pickColor(context),
+                child: Container(
+                  height: 50,
+                  decoration: BoxDecoration(
+                    color: _selectedColor,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.grey.shade400, width: 1),
+                  ),
+                  child: Center(
+                    child: Text(
+                      'Tap to change color',
+                      style: TextStyle(
+                        color: ThemeData.estimateBrightnessForColor(
+                                    _selectedColor) ==
+                                Brightness.dark
+                            ? Colors.white
+                            : Colors.black,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
-            const SizedBox(height: 20),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                icon: _isLoading
-                    ? Container(
-                        width: 20,
-                        height: 20,
-                        padding: const EdgeInsets.all(2.0),
-                        child: const CircularProgressIndicator(
-                            strokeWidth: 3, color: Colors.white),
-                      )
-                    : const Icon(Icons.save),
-                label: Text(_isLoading
-                    ? 'Saving...'
-                    : _isEditing
-                        ? 'Update Category'
-                        : 'Save Category'),
-                onPressed: _isLoading ? null : _saveCategory,
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 12),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  icon: _isLoading
+                      ? Container(
+                          width: 20,
+                          height: 20,
+                          padding: const EdgeInsets.all(2.0),
+                          child: const CircularProgressIndicator(
+                            strokeWidth: 3,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Icon(Icons.save),
+                  label: Text(
+                    _isLoading
+                        ? 'Saving...'
+                        : _isEditing
+                            ? 'Update Category'
+                            : 'Save Category',
+                  ),
+                  onPressed: _isLoading ? null : _saveCategory,
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
-    ),
-  );
+    );
   }
 }

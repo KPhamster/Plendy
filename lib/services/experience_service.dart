@@ -484,7 +484,11 @@ class ExperienceService {
   }
 
   /// Adds a new custom category for the current user.
-  Future<UserCategory> addUserCategory(String name, String icon) async {
+  Future<UserCategory> addUserCategory(
+    String name,
+    String icon, {
+    bool isPrivate = false,
+  }) async {
     final userId = _currentUserId;
     if (userId == null) {
       throw Exception('User not authenticated');
@@ -525,7 +529,8 @@ class ExperienceService {
       'icon': icon,
       'ownerUserId': userId, // Ensure owner ID is stored
       'orderIndex': nextOrderIndex, // Set the order index
-      'lastUsedTimestamp': null // Explicitly null initially
+      'lastUsedTimestamp': null, // Explicitly null initially
+      'isPrivate': isPrivate,
     };
     final docRef = await categoryRef.add(data);
     return UserCategory(
@@ -534,7 +539,8 @@ class ExperienceService {
         icon: icon,
         ownerUserId: userId,
         orderIndex: nextOrderIndex, // Return with index
-        lastUsedTimestamp: null);
+        lastUsedTimestamp: null,
+        isPrivate: isPrivate);
   }
 
   /// Updates an existing custom category for the current user.
@@ -2057,9 +2063,12 @@ class ExperienceService {
   /// Get experiences created by a specific user
   Future<List<Experience>> getExperiencesByUser(String userId,
       {int limit = 50, GetOptions? options}) async {
-    final query = _experiencesCollection
+    Query query = _experiencesCollection
         .where('createdBy', isEqualTo: userId)
         .orderBy('createdAt', descending: true);
+    if (limit > 0) {
+      query = query.limit(limit);
+    }
 
     final snapshot = await query.get(options);
 
@@ -2888,7 +2897,11 @@ class ExperienceService {
   }
 
   /// Adds a new custom color category for the current user.
-  Future<ColorCategory> addColorCategory(String name, String colorHex) async {
+  Future<ColorCategory> addColorCategory(
+    String name,
+    String colorHex, {
+    bool isPrivate = false,
+  }) async {
     final userId = _currentUserId;
     if (userId == null) {
       throw Exception('User not authenticated');
@@ -2945,7 +2958,8 @@ class ExperienceService {
       'colorHex': colorHex,
       'ownerUserId': userId, // Ensure owner ID is stored
       'orderIndex': nextOrderIndex,
-      'lastUsedTimestamp': null
+      'lastUsedTimestamp': null,
+      'isPrivate': isPrivate,
     };
     final docRef = await categoryRef.add(data);
     return ColorCategory(
@@ -2954,7 +2968,8 @@ class ExperienceService {
         colorHex: colorHex,
         ownerUserId: userId,
         orderIndex: nextOrderIndex,
-        lastUsedTimestamp: null);
+        lastUsedTimestamp: null,
+        isPrivate: isPrivate);
   }
 
   /// Updates an existing custom color category for the current user.

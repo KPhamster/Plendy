@@ -2759,6 +2759,113 @@ class CollectionsScreenState extends State<CollectionsScreen>
         .length;
   }
 
+  bool _canModifyPrivacy(String ownerUserId) {
+    final String? currentUserId = _authService.currentUser?.uid;
+    return currentUserId != null && currentUserId == ownerUserId;
+  }
+
+  Widget _buildPrivacyIconToggle({
+    required bool isPrivate,
+    required bool isEnabled,
+    required VoidCallback onToggle,
+    required String subjectLabel,
+  }) {
+    final IconData iconData = isPrivate ? Icons.lock : Icons.public;
+    final Color iconColor =
+        isPrivate ? Colors.grey.shade600 : Colors.black87;
+    final String tooltip = isEnabled
+        ? 'Make $subjectLabel ${isPrivate ? 'public' : 'private'}'
+        : 'Only the owner can change privacy';
+    final Widget icon = Padding(
+      padding: const EdgeInsets.all(6.0),
+      child: Icon(
+        iconData,
+        color: iconColor,
+        size: 22,
+      ),
+    );
+    if (!isEnabled) {
+      return Tooltip(message: tooltip, child: icon);
+    }
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: onToggle,
+        child: icon,
+      ),
+    );
+  }
+
+  Future<void> _toggleCategoryPrivacy(UserCategory category) async {
+    if (!_canModifyPrivacy(category.ownerUserId)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('Only the owner can change this category privacy.')),
+        );
+      }
+      return;
+    }
+    final UserCategory updated =
+        category.copyWith(isPrivate: !category.isPrivate);
+    try {
+      await _experienceService.updateUserCategory(updated);
+      if (!mounted) return;
+      setState(() {
+        final int index =
+            _categories.indexWhere((element) => element.id == category.id);
+        if (index != -1) {
+          _categories[index] = updated;
+        }
+        if (_selectedCategory?.id == category.id) {
+          _selectedCategory = updated;
+        }
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not update privacy: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _toggleColorCategoryPrivacy(ColorCategory category) async {
+    if (!_canModifyPrivacy(category.ownerUserId)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content:
+                  Text('Only the owner can change this color category privacy.')),
+        );
+      }
+      return;
+    }
+    final ColorCategory updated =
+        category.copyWith(isPrivate: !category.isPrivate);
+    try {
+      await _experienceService.updateColorCategory(updated);
+      if (!mounted) return;
+      setState(() {
+        final int index =
+            _colorCategories.indexWhere((element) => element.id == category.id);
+        if (index != -1) {
+          _colorCategories[index] = updated;
+        }
+        if (_selectedColorCategory?.id == category.id) {
+          _selectedColorCategory = updated;
+        }
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not update privacy: $e')),
+        );
+      }
+    }
+  }
+
   // ADDED: Widget builder for a Category Grid Item (for web)
   Widget _buildCategoryGridItem(UserCategory category) {
     final count = _getExperienceCountForCategory(category);
@@ -2775,6 +2882,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
           )
         : (isOwnerShared ? 'Shared' : null);
     final bool isSelected = _selectedCategoryIds.contains(category.id);
+    final bool canTogglePrivacy = _canModifyPrivacy(category.ownerUserId);
     return Card(
       key: ValueKey('category_grid_${category.id}'),
       clipBehavior: Clip.antiAlias,
@@ -2841,10 +2949,20 @@ class CollectionsScreenState extends State<CollectionsScreen>
                     ),
                 ],
               ),
-            ),
           ),
-          if (_isSelectingCategories)
-            Positioned(
+        ),
+        Positioned(
+          top: 0,
+          right: 0,
+          child: _buildPrivacyIconToggle(
+            isPrivate: category.isPrivate,
+            isEnabled: canTogglePrivacy,
+            onToggle: () => _toggleCategoryPrivacy(category),
+            subjectLabel: 'category',
+          ),
+        ),
+        if (_isSelectingCategories)
+          Positioned(
               top: 4,
               left: 4,
               child: Checkbox(
@@ -2924,6 +3042,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                 )
               : (isOwnerShared ? 'Shared' : null);
           final bool isSelected = _selectedCategoryIds.contains(category.id);
+          final bool canTogglePrivacy = _canModifyPrivacy(category.ownerUserId);
 
           final Widget iconWidget = Padding(
             padding: const EdgeInsets.only(left: 8.0),
@@ -2971,81 +3090,93 @@ class CollectionsScreenState extends State<CollectionsScreen>
                 )
               : Text('$count ${count == 1 ? "experience" : "experiences"}');
 
+          final Widget popupMenu = PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert),
+            tooltip: 'Category Options',
+            color: Colors.white,
+            onSelected: (String result) {
+              switch (result) {
+                case 'edit':
+                  _showEditSingleCategoryModal(category);
+                  break;
+                case 'share':
+                  _showShareCategoryBottomSheet(category);
+                  break;
+                case 'remove':
+                  if (permission != null) {
+                    _showRemoveSharedUserCategoryConfirmation(
+                        category, permission);
+                  }
+                  break;
+                case 'delete':
+                  _showDeleteCategoryConfirmation(category);
+                  break;
+              }
+            },
+            itemBuilder: (BuildContext context) {
+              final List<PopupMenuEntry<String>> items = [
+                PopupMenuItem<String>(
+                  value: 'edit',
+                  enabled: canEditCategory,
+                  child: const ListTile(
+                    leading: Icon(Icons.edit_outlined),
+                    title: Text('Edit'),
+                  ),
+                ),
+                PopupMenuItem<String>(
+                  value: 'share',
+                  enabled: canManageCategory,
+                  child: const ListTile(
+                    leading: Icon(Icons.ios_share),
+                    title: Text('Share'),
+                  ),
+                ),
+              ];
+              if (isShared && permission != null) {
+                items.add(
+                  const PopupMenuItem<String>(
+                    value: 'remove',
+                    child: ListTile(
+                      leading: Icon(Icons.remove_circle_outline,
+                          color: Colors.red),
+                      title: Text('Remove', style: TextStyle(color: Colors.red)),
+                    ),
+                  ),
+                );
+              } else {
+                items.add(
+                  PopupMenuItem<String>(
+                    value: 'delete',
+                    enabled: canManageCategory,
+                    child: const ListTile(
+                      leading: Icon(Icons.delete_outline, color: Colors.red),
+                      title: Text('Delete', style: TextStyle(color: Colors.red)),
+                    ),
+                  ),
+                );
+              }
+              return items;
+            },
+          );
+
           final listTile = ListTile(
             contentPadding: const EdgeInsets.symmetric(horizontal: 7.0),
             minLeadingWidth: 24,
             leading: leadingWidget,
             title: Text(category.name),
             subtitle: subtitleWidget,
-            trailing: PopupMenuButton<String>(
-              icon: const Icon(Icons.more_vert),
-              tooltip: 'Category Options',
-              color: Colors.white,
-              onSelected: (String result) {
-                switch (result) {
-                  case 'edit':
-                    _showEditSingleCategoryModal(category);
-                    break;
-                  case 'share':
-                    _showShareCategoryBottomSheet(category);
-                    break;
-                  case 'remove':
-                    if (permission != null) {
-                      _showRemoveSharedUserCategoryConfirmation(
-                          category, permission);
-                    }
-                    break;
-                  case 'delete':
-                    _showDeleteCategoryConfirmation(category);
-                    break;
-                }
-              },
-              itemBuilder: (BuildContext context) {
-                final List<PopupMenuEntry<String>> items = [
-                  PopupMenuItem<String>(
-                    value: 'edit',
-                    enabled: canEditCategory,
-                    child: const ListTile(
-                      leading: Icon(Icons.edit_outlined),
-                      title: Text('Edit'),
-                    ),
-                  ),
-                  PopupMenuItem<String>(
-                    value: 'share',
-                    enabled: canManageCategory,
-                    child: const ListTile(
-                      leading: Icon(Icons.ios_share),
-                      title: Text('Share'),
-                    ),
-                  ),
-                ];
-                if (isShared && permission != null) {
-                  items.add(
-                    const PopupMenuItem<String>(
-                      value: 'remove',
-                      child: ListTile(
-                        leading: Icon(Icons.remove_circle_outline,
-                            color: Colors.red),
-                        title:
-                            Text('Remove', style: TextStyle(color: Colors.red)),
-                      ),
-                    ),
-                  );
-                } else {
-                  items.add(
-                    PopupMenuItem<String>(
-                      value: 'delete',
-                      enabled: canManageCategory,
-                      child: const ListTile(
-                        leading: Icon(Icons.delete_outline, color: Colors.red),
-                        title:
-                            Text('Delete', style: TextStyle(color: Colors.red)),
-                      ),
-                    ),
-                  );
-                }
-                return items;
-              },
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _buildPrivacyIconToggle(
+                  isPrivate: category.isPrivate,
+                  isEnabled: canTogglePrivacy,
+                  onToggle: () => _toggleCategoryPrivacy(category),
+                  subjectLabel: 'category',
+                ),
+                const SizedBox(width: 4),
+                popupMenu,
+              ],
             ),
             onTap: () {
               setState(() {
@@ -4386,6 +4517,14 @@ class CollectionsScreenState extends State<CollectionsScreen>
                 onTap: () async {
                   Navigator.of(ctx).pop();
                   await _showAddCategoryModal();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.palette_outlined),
+                title: const Text('Add Color Category'),
+                onTap: () async {
+                  Navigator.of(ctx).pop();
+                  await _showAddColorCategoryModal();
                 },
               ),
               ListTile(
@@ -6897,6 +7036,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
           )
         : (isOwnerShared ? 'Shared' : null);
     final bool isSelected = _selectedColorCategoryIds.contains(category.id);
+    final bool canTogglePrivacy = _canModifyPrivacy(category.ownerUserId);
     return Card(
       key: ValueKey('color_category_grid_${category.id}'),
       clipBehavior: Clip.antiAlias,
@@ -6967,10 +7107,20 @@ class CollectionsScreenState extends State<CollectionsScreen>
                     ),
                 ],
               ),
-            ),
           ),
-          if (_isSelectingCategories)
-            Positioned(
+        ),
+        Positioned(
+          top: 0,
+          right: 0,
+          child: _buildPrivacyIconToggle(
+            isPrivate: category.isPrivate,
+            isEnabled: canTogglePrivacy,
+            onToggle: () => _toggleColorCategoryPrivacy(category),
+            subjectLabel: 'color category',
+          ),
+        ),
+        if (_isSelectingCategories)
+          Positioned(
               top: 4,
               left: 4,
               child: Checkbox(
@@ -7042,6 +7192,8 @@ class CollectionsScreenState extends State<CollectionsScreen>
               : (isOwnerShared ? 'Shared' : null);
           final bool isSelected =
               _selectedColorCategoryIds.contains(category.id);
+          final bool canTogglePrivacy =
+              _canModifyPrivacy(category.ownerUserId);
 
           final Widget colorDot = Padding(
             padding: const EdgeInsets.only(left: 9.0),
@@ -7093,81 +7245,93 @@ class CollectionsScreenState extends State<CollectionsScreen>
                 )
               : Text('$count ${count == 1 ? "experience" : "experiences"}');
 
+          final Widget popupMenu = PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert),
+            tooltip: 'Color Category Options',
+            color: Colors.white,
+            onSelected: (String result) {
+              switch (result) {
+                case 'edit':
+                  _showEditSingleColorCategoryModal(category);
+                  break;
+                case 'share':
+                  _showShareColorCategoryBottomSheet(category);
+                  break;
+                case 'remove':
+                  if (permission != null) {
+                    _showRemoveSharedColorCategoryConfirmation(
+                        category, permission);
+                  }
+                  break;
+                case 'delete':
+                  _showDeleteColorCategoryConfirmation(category);
+                  break;
+              }
+            },
+            itemBuilder: (BuildContext context) {
+              final List<PopupMenuEntry<String>> items = [
+                PopupMenuItem<String>(
+                  value: 'edit',
+                  enabled: canEditCategory,
+                  child: const ListTile(
+                    leading: Icon(Icons.edit_outlined),
+                    title: Text('Edit'),
+                  ),
+                ),
+                PopupMenuItem<String>(
+                  value: 'share',
+                  enabled: canManageCategory,
+                  child: const ListTile(
+                    leading: Icon(Icons.ios_share),
+                    title: Text('Share'),
+                  ),
+                ),
+              ];
+              if (isShared && permission != null) {
+                items.add(
+                  const PopupMenuItem<String>(
+                    value: 'remove',
+                    child: ListTile(
+                      leading: Icon(Icons.remove_circle_outline,
+                          color: Colors.red),
+                      title: Text('Remove', style: TextStyle(color: Colors.red)),
+                    ),
+                  ),
+                );
+              } else {
+                items.add(
+                  PopupMenuItem<String>(
+                    value: 'delete',
+                    enabled: canManageCategory,
+                    child: const ListTile(
+                      leading: Icon(Icons.delete_outline, color: Colors.red),
+                      title: Text('Delete', style: TextStyle(color: Colors.red)),
+                    ),
+                  ),
+                );
+              }
+              return items;
+            },
+          );
+
           final listTile = ListTile(
             contentPadding: const EdgeInsets.symmetric(horizontal: 7.0),
             minLeadingWidth: 24,
             leading: leadingWidget,
             title: Text(category.name),
             subtitle: subtitleWidget,
-            trailing: PopupMenuButton<String>(
-              icon: const Icon(Icons.more_vert),
-              tooltip: 'Color Category Options',
-              color: Colors.white,
-              onSelected: (String result) {
-                switch (result) {
-                  case 'edit':
-                    _showEditSingleColorCategoryModal(category);
-                    break;
-                  case 'share':
-                    _showShareColorCategoryBottomSheet(category);
-                    break;
-                  case 'remove':
-                    if (permission != null) {
-                      _showRemoveSharedColorCategoryConfirmation(
-                          category, permission);
-                    }
-                    break;
-                  case 'delete':
-                    _showDeleteColorCategoryConfirmation(category);
-                    break;
-                }
-              },
-              itemBuilder: (BuildContext context) {
-                final List<PopupMenuEntry<String>> items = [
-                  PopupMenuItem<String>(
-                    value: 'edit',
-                    enabled: canEditCategory,
-                    child: const ListTile(
-                      leading: Icon(Icons.edit_outlined),
-                      title: Text('Edit'),
-                    ),
-                  ),
-                  PopupMenuItem<String>(
-                    value: 'share',
-                    enabled: canManageCategory,
-                    child: const ListTile(
-                      leading: Icon(Icons.ios_share),
-                      title: Text('Share'),
-                    ),
-                  ),
-                ];
-                if (isShared && permission != null) {
-                  items.add(
-                    const PopupMenuItem<String>(
-                      value: 'remove',
-                      child: ListTile(
-                        leading: Icon(Icons.remove_circle_outline,
-                            color: Colors.red),
-                        title:
-                            Text('Remove', style: TextStyle(color: Colors.red)),
-                      ),
-                    ),
-                  );
-                } else {
-                  items.add(
-                    PopupMenuItem<String>(
-                      value: 'delete',
-                      enabled: canManageCategory,
-                      child: const ListTile(
-                        leading: Icon(Icons.delete_outline, color: Colors.red),
-                        title:
-                            Text('Delete', style: TextStyle(color: Colors.red)),
-                      ),
-                    ),
-                  );
-                }
-                return items;
-              },
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _buildPrivacyIconToggle(
+                  isPrivate: category.isPrivate,
+                  isEnabled: canTogglePrivacy,
+                  onToggle: () => _toggleColorCategoryPrivacy(category),
+                  subjectLabel: 'color category',
+                ),
+                const SizedBox(width: 4),
+                popupMenu,
+              ],
             ),
             onTap: () {
               setState(() {
