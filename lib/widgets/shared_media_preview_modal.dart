@@ -128,6 +128,37 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
     return clampedHeight.toDouble();
   }
 
+  double _getMinimumPreviewHeightForItem(SharedMediaItem item) {
+    final String url = item.path;
+    if (url.isEmpty) {
+      return 0;
+    }
+    final _MediaType type = _classifyUrl(url);
+    switch (type) {
+      case _MediaType.tiktok:
+        return 700.0;
+      case _MediaType.instagram:
+        return 640.0;
+      case _MediaType.facebook:
+        return 500.0;
+      case _MediaType.youtube:
+        return 600.0;
+      case _MediaType.yelp:
+        return 520.0;
+      case _MediaType.maps:
+        return 520.0;
+      case _MediaType.image:
+      case _MediaType.generic:
+        return 0;
+    }
+  }
+
+  double _getEffectivePreviewHeight(BuildContext context, SharedMediaItem item) {
+    final double baseHeight = _getPreviewHeight(context);
+    final double minimumHeight = _getMinimumPreviewHeightForItem(item);
+    return baseHeight >= minimumHeight ? baseHeight : minimumHeight;
+  }
+
   void _togglePreviewExpansion() {
     setState(() {
       _isPreviewExpanded = !_isPreviewExpanded;
@@ -237,7 +268,7 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
     final media = _activeItem;
     final experience = widget.experience;
     final multipleItems = widget.mediaItems.length > 1;
-    final double previewHeight = _getPreviewHeight(context);
+    final double previewHeight = _getEffectivePreviewHeight(context, media);
     final double? previewHeightOverride =
         _isPreviewExpanded ? previewHeight : null;
 

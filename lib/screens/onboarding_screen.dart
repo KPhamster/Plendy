@@ -5,7 +5,7 @@ import 'package:video_player/video_player.dart';
 
 import '../models/tutorial_slide.dart';
 import '../services/user_service.dart';
-import 'browser_signin_screen.dart';
+import '../widgets/social_browser_dialog.dart';
 
 class OnboardingScreen extends StatefulWidget {
   final VoidCallback? onFinishedFlow;
@@ -18,10 +18,20 @@ class OnboardingScreen extends StatefulWidget {
 
 class _OnboardingScreenState extends State<OnboardingScreen> {
   static const int _tutorialStartIndex = 2;
+  static const String _defaultSocialUrl = 'https://instagram.com';
+  static const List<String> _tutorialHeadings = [
+    'Share and save content to Plendy',
+    'Find and select the location',
+    'Categorize the way you want',
+    'Save and check out your experience',
+    'Enjoy amazing experiences!',
+  ];
 
   final PageController _pageController = PageController();
   final TextEditingController _displayNameController = TextEditingController();
   final TextEditingController _usernameController = TextEditingController();
+  final TextEditingController _socialUrlInputController =
+      TextEditingController();
   final FocusNode _displayNameFocus = FocusNode();
   final FocusNode _usernameFocus = FocusNode();
   final UserService _userService = UserService();
@@ -61,6 +71,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         List<Future<void>?>.filled(tutorialSlides.length, null);
     _displayNameController.addListener(_handleProfileFieldChange);
     _usernameController.addListener(_handleProfileFieldChange);
+    _socialUrlInputController.text = _defaultSocialUrl;
     _prefillExistingValues();
   }
 
@@ -109,6 +120,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     _usernameController
       ..removeListener(_handleProfileFieldChange)
       ..dispose();
+    _socialUrlInputController.dispose();
     _displayNameFocus.dispose();
     _usernameFocus.dispose();
     for (final controller in _tutorialControllers) {
@@ -331,7 +343,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Get set up',
+                    _isOnTutorialStep ? 'Tutorial' : 'Get set up',
                     style: theme.textTheme.headlineSmall
                         ?.copyWith(fontWeight: FontWeight.w600),
                   ),
@@ -486,34 +498,34 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           ),
           const SizedBox(height: 8),
           const Text(
-            'For the best experience, sign into Instagram, TikTok, Facebook, or YouTube using the secure in-app browser. '
-            'This helps Plendy load the content you save from those apps. This step is optional — '
-            'you can skip it and sign in later from your profile.',
+            'Open a secure browser window to sign into Instagram, TikTok, Facebook, or YouTube. '
+            'This helps Plendy load the content you save from those apps. '
+            'This step is optional — you can skip it and sign in later from your profile.',
           ),
           const SizedBox(height: 24),
           Wrap(
             spacing: 12,
             runSpacing: 12,
             children: [
-              _buildSocialButton(
+              _buildSocialQuickLinkButton(
                 theme: theme,
                 icon: FontAwesomeIcons.instagram,
                 label: 'Instagram',
                 url: 'https://instagram.com',
               ),
-              _buildSocialButton(
+              _buildSocialQuickLinkButton(
                 theme: theme,
                 icon: FontAwesomeIcons.tiktok,
                 label: 'TikTok',
                 url: 'https://tiktok.com',
               ),
-              _buildSocialButton(
+              _buildSocialQuickLinkButton(
                 theme: theme,
                 icon: FontAwesomeIcons.facebook,
                 label: 'Facebook',
                 url: 'https://facebook.com',
               ),
-              _buildSocialButton(
+              _buildSocialQuickLinkButton(
                 theme: theme,
                 icon: FontAwesomeIcons.youtube,
                 label: 'YouTube',
@@ -521,18 +533,28 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               ),
             ],
           ),
-          const SizedBox(height: 24),
-          ElevatedButton.icon(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: theme.primaryColor,
-              foregroundColor: Colors.white,
-              minimumSize: const Size.fromHeight(48),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _socialUrlInputController,
+            keyboardType: TextInputType.url,
+            autocorrect: false,
+            enableSuggestions: false,
+            decoration: InputDecoration(
+              labelText: 'Enter a URL',
+              hintText: 'https://instagram.com',
+              suffixIcon: IconButton(
+                icon: const Icon(Icons.open_in_new),
+                onPressed: _handleSocialUrlSubmit,
+              ),
             ),
-            onPressed: () => _openBrowserScreen(),
-            icon: const Icon(Icons.open_in_new),
-            label: const Text('Open social browser'),
+            onSubmitted: (_) => _handleSocialUrlSubmit(),
           ),
           const SizedBox(height: 8),
+          Text(
+            'Tap a quick link or enter a URL, and a full-screen secure browser will open so you can sign in.',
+            style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey[600]),
+          ),
+          const SizedBox(height: 24),
           Align(
             alignment: Alignment.centerRight,
             child: TextButton(
@@ -548,21 +570,20 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   Widget _buildTutorialStep(ThemeData theme, int slideIndex) {
     final slide = tutorialSlides[slideIndex];
     final controller = _tutorialControllers[slideIndex];
+    final heading = slideIndex < _tutorialHeadings.length
+        ? _tutorialHeadings[slideIndex]
+        : 'Tutorial';
 
     Widget media;
     if (slide.hasVideo) {
-      if (controller == null) {
-        media = const AspectRatio(
-          aspectRatio: 16 / 9,
-          child: Center(child: CircularProgressIndicator()),
-        );
-      } else if (!controller.value.isInitialized) {
-        media = const AspectRatio(
+      Widget videoContent;
+      if (controller == null || !controller.value.isInitialized) {
+        videoContent = const AspectRatio(
           aspectRatio: 16 / 9,
           child: Center(child: CircularProgressIndicator()),
         );
       } else {
-        media = AspectRatio(
+        videoContent = AspectRatio(
           aspectRatio: _tutorialAspectRatio(slideIndex),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(16),
@@ -570,9 +591,29 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           ),
         );
       }
+
+      media = Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          videoContent,
+          if (controller != null && controller.value.isInitialized) ...[
+            const SizedBox(height: 8),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: VideoProgressIndicator(
+                controller!,
+                allowScrubbing: true,
+                padding: EdgeInsets.zero,
+              ),
+            ),
+          ],
+        ],
+      );
     } else {
+      final imageAspectRatio =
+          slideIndex == tutorialSlides.length - 1 ? 5 / 6 : 16 / 9;
       media = AspectRatio(
-        aspectRatio: 16 / 9,
+        aspectRatio: imageAspectRatio,
         child: ClipRRect(
           borderRadius: BorderRadius.circular(16),
           child: Image.asset(
@@ -589,7 +630,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Saving content to Plendy',
+            heading,
             style: theme.textTheme.titleLarge
                 ?.copyWith(fontWeight: FontWeight.w600),
           ),
@@ -625,7 +666,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     );
   }
 
-  Widget _buildSocialButton({
+  Widget _buildSocialQuickLinkButton({
     required ThemeData theme,
     required IconData icon,
     required String label,
@@ -637,19 +678,48 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         foregroundColor: Colors.white,
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
       ),
-      onPressed: () => _openBrowserScreen(initialUrl: url),
+      onPressed: () => _handleSocialQuickLinkTap(url),
       icon: Icon(icon, size: 18),
       label: Text(label),
     );
   }
 
-  Future<void> _openBrowserScreen({String? initialUrl}) async {
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => BrowserSignInScreen(
-          initialUrl: initialUrl ?? 'https://instagram.com',
-        ),
-      ),
+  void _handleSocialQuickLinkTap(String url) {
+    _socialUrlInputController.text = url;
+    _openSocialBrowserModal(url);
+  }
+
+  void _handleSocialUrlSubmit() {
+    _openSocialBrowserModal(_socialUrlInputController.text);
+  }
+
+  Future<void> _openSocialBrowserModal(String url) async {
+    final normalizedUrl = _normalizeSocialUrl(url);
+    if (normalizedUrl == null) return;
+
+    FocusScope.of(context).unfocus();
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => SocialBrowserDialog(initialUrl: normalizedUrl),
     );
+  }
+
+  String? _normalizeSocialUrl(String rawUrl) {
+    final trimmed = rawUrl.trim();
+    if (trimmed.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Enter a URL to open the secure browser.'),
+        ),
+      );
+      return null;
+    }
+
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+      return trimmed;
+    }
+
+    return 'https://$trimmed';
   }
 }

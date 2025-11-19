@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
-import 'package:webview_flutter/webview_flutter.dart';
+
+import '../widgets/social_browser_dialog.dart';
 
 class BrowserSignInScreen extends StatefulWidget {
   final String initialUrl;
@@ -15,77 +16,59 @@ class BrowserSignInScreen extends StatefulWidget {
 }
 
 class _BrowserSignInScreenState extends State<BrowserSignInScreen> {
-  late final WebViewController _controller;
   final TextEditingController _urlController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
-    final initialUrl = widget.initialUrl;
-    _urlController.text = initialUrl;
-
-    _controller = WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setNavigationDelegate(
-        NavigationDelegate(
-          onNavigationRequest: (NavigationRequest request) {
-            // Handle custom URL schemes (like TikTok's snssdk://)
-            final url = request.url;
-
-            // List of custom schemes to block
-            final customSchemes = [
-              'snssdk',
-              'fb',
-              'instagram',
-              'tiktok',
-              'intent'
-            ];
-            final uri = Uri.tryParse(url);
-
-            if (uri != null &&
-                customSchemes.any((scheme) => url.startsWith('$scheme:'))) {
-              // Extract the original URL from params if available
-              if (uri.queryParameters.containsKey('params_url')) {
-                final originalUrl =
-                    Uri.decodeComponent(uri.queryParameters['params_url']!);
-                _controller.loadRequest(Uri.parse(originalUrl));
-              }
-              // Block the custom scheme navigation
-              return NavigationDecision.prevent;
-            }
-
-            // Allow regular http/https URLs
-            if (url.startsWith('http://') || url.startsWith('https://')) {
-              return NavigationDecision.navigate;
-            }
-
-            // Block any other non-standard URLs
-            return NavigationDecision.prevent;
-          },
-          onPageFinished: (String url) {
-            if (mounted) {
-              setState(() {
-                _urlController.text = url;
-              });
-            }
-          },
-        ),
-      )
-      ..loadRequest(Uri.parse(initialUrl));
+    _urlController.text = widget.initialUrl.isNotEmpty
+        ? widget.initialUrl
+        : 'https://instagram.com';
   }
 
-  void _loadUrlFromTextField() {
-    var url = _urlController.text;
-    if (!url.startsWith('http://') && !url.startsWith('https://')) {
-      url = 'https://$url';
-    }
-    _controller.loadRequest(Uri.parse(url));
-    FocusScope.of(context).unfocus(); // Hide keyboard
+  @override
+  void dispose() {
+    _urlController.dispose();
+    super.dispose();
   }
 
-  void _loadPresetUrl(String url) {
+  void _handleQuickLinkTap(String url) {
     _urlController.text = url;
-    _controller.loadRequest(Uri.parse(url));
+    _openBrowserModal(url);
+  }
+
+  void _handleUrlSubmit() {
+    _openBrowserModal(_urlController.text);
+  }
+
+  Future<void> _openBrowserModal(String url) async {
+    final normalizedUrl = _normalizeUrl(url);
+    if (normalizedUrl == null) return;
+
+    FocusScope.of(context).unfocus();
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => SocialBrowserDialog(initialUrl: normalizedUrl),
+    );
+  }
+
+  String? _normalizeUrl(String rawUrl) {
+    final trimmed = rawUrl.trim();
+    if (trimmed.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Enter a URL to open the secure browser.'),
+        ),
+      );
+      return null;
+    }
+
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+      return trimmed;
+    }
+
+    return 'https://$trimmed';
   }
 
   Widget _buildQuickLinkButton({
@@ -93,15 +76,22 @@ class _BrowserSignInScreenState extends State<BrowserSignInScreen> {
     required String label,
     required String url,
   }) {
+    final theme = Theme.of(context);
     return ElevatedButton.icon(
-      onPressed: () => _loadPresetUrl(url),
-      icon: Icon(icon),
+      style: ElevatedButton.styleFrom(
+        backgroundColor: theme.primaryColor,
+        foregroundColor: Colors.white,
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+      ),
+      onPressed: () => _handleQuickLinkTap(url),
+      icon: Icon(icon, size: 18),
       label: Text(label),
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return WillPopScope(
       onWillPop: () async {
         Navigator.of(context).pop(true);
@@ -118,21 +108,25 @@ class _BrowserSignInScreenState extends State<BrowserSignInScreen> {
             onPressed: () => Navigator.of(context).pop(true),
           ),
         ),
-        body: Column(
-          children: [
-            const Padding(
-              padding: EdgeInsets.all(16.0),
-              child: Text(
-                'Plendy uses a web browser view to display content from Instagram, TikTok, Facebook, YouTube, and other sites. For the best experience, use the browser window below to sign into any accounts you wish to save to Plendy from. This ensures all content you save displays correctly. Plendy does not save any data from the web browser view.',
-                textAlign: TextAlign.center,
+        body: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Sign into your socials',
+                style: theme.textTheme.titleLarge
+                    ?.copyWith(fontWeight: FontWeight.w600),
               ),
-            ),
-            Padding(
-              padding: const EdgeInsets.all(8.0),
-              child: Wrap(
-                alignment: WrapAlignment.center,
+              const SizedBox(height: 8),
+              const Text(
+                'Use the secure browser to sign into Instagram, TikTok, Facebook, or YouTube. '
+                'Tap a quick link below or enter any URL to launch the browser when you are ready.',
+              ),
+              const SizedBox(height: 24),
+              Wrap(
                 spacing: 12,
-                runSpacing: 8,
+                runSpacing: 12,
                 children: [
                   _buildQuickLinkButton(
                     icon: FontAwesomeIcons.instagram,
@@ -156,29 +150,44 @@ class _BrowserSignInScreenState extends State<BrowserSignInScreen> {
                   ),
                 ],
               ),
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8.0),
-              child: TextField(
+              const SizedBox(height: 16),
+              TextField(
                 controller: _urlController,
                 keyboardType: TextInputType.url,
                 autocorrect: false,
                 enableSuggestions: false,
                 decoration: InputDecoration(
-                  hintText: 'Enter URL',
+                  labelText: 'Enter a URL',
+                  hintText: 'https://instagram.com',
                   suffixIcon: IconButton(
-                    icon: const Icon(Icons.arrow_forward),
-                    onPressed: _loadUrlFromTextField,
+                    icon: const Icon(Icons.open_in_new),
+                    onPressed: _handleUrlSubmit,
                   ),
                 ),
-                onSubmitted: (_) => _loadUrlFromTextField(),
+                onSubmitted: (_) => _handleUrlSubmit(),
               ),
-            ),
-            const SizedBox(height: 8),
-            Expanded(
-              child: WebViewWidget(controller: _controller),
-            ),
-          ],
+              const SizedBox(height: 8),
+              Text(
+                'A full-screen secure browser opens so you can sign in. Close it when you are done to return here.',
+                style: theme.textTheme.bodySmall
+                    ?.copyWith(color: Colors.grey[600]),
+              ),
+              const SizedBox(height: 24),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: theme.primaryColor,
+                    foregroundColor: Colors.white,
+                    minimumSize: const Size.fromHeight(48),
+                  ),
+                  onPressed: _handleUrlSubmit,
+                  icon: const Icon(Icons.open_in_new),
+                  label: const Text('Open secure browser'),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
