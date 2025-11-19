@@ -57,6 +57,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
   Map<String, List<Experience>> _categoryExperiences = {};
   bool _isLoading = true;
   bool _isLoadingCollections = true;
+  int _publicExperienceCount = 0;
   bool _isProcessingFollow = false;
   bool _isFollowing = false;
   bool _ownerFollowsViewer = false;
@@ -225,6 +226,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
         final bName = (b.name ?? '').toLowerCase();
         return aName.compareTo(bName);
       });
+      final int totalPublicExperiences = experiences.length;
 
       // Build color categories list from public experiences (avoid permission issues)
       final Set<String> colorCategoryIds = {};
@@ -307,6 +309,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
         _publicCategories = categories;
         _publicColorCategories = colorCategories;
         _categoryExperiences = catExperiences;
+        _publicExperienceCount = totalPublicExperiences;
         // Store color category experiences in the same map for consistency
         _categoryExperiences.addAll(colorCatExperiences);
         _isLoadingCollections = false;
@@ -319,6 +322,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
         _publicColorCategories = [];
         _categoryExperiences = {};
         _isLoadingCollections = false;
+        _publicExperienceCount = 0;
       });
     }
   }
@@ -1072,9 +1076,9 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
     }
 
     final bool isDesktopWeb = MediaQuery.of(context).size.width > 600;
+    final bool showCountHeader = _publicExperienceCount > 0;
 
     if (isDesktopWeb) {
-      // Desktop: Grid view
       final screenWidth = MediaQuery.of(context).size.width;
       const double contentMaxWidth = 1200.0;
       const double defaultPadding = 12.0;
@@ -1086,120 +1090,135 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
         horizontalPadding = defaultPadding;
       }
 
-      return GridView.builder(
-        padding: EdgeInsets.fromLTRB(
-            horizontalPadding, defaultPadding, horizontalPadding, defaultPadding),
-        itemCount: _publicCategories.length,
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 5,
-          mainAxisSpacing: 10.0,
-          crossAxisSpacing: 10.0,
-          childAspectRatio: 3 / 3.5,
-        ),
-        itemBuilder: (context, index) {
-          final category = _publicCategories[index];
-          final experiences = _categoryExperiences[category.id] ?? [];
-          final bool isSelected = _selectedCategory?.id == category.id;
+      return CustomScrollView(
+        slivers: [
+          if (showCountHeader)
+            SliverToBoxAdapter(
+                child: _buildExperienceCountHeader(_publicExperienceCount)),
+          SliverPadding(
+            padding: EdgeInsets.fromLTRB(horizontalPadding, defaultPadding,
+                horizontalPadding, defaultPadding),
+            sliver: SliverGrid(
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 5,
+                mainAxisSpacing: 10.0,
+                crossAxisSpacing: 10.0,
+                childAspectRatio: 3 / 3.5,
+              ),
+              delegate: SliverChildBuilderDelegate(
+                (context, index) {
+                  final category = _publicCategories[index];
+                  final experiences = _categoryExperiences[category.id] ?? [];
+                  final bool isSelected = _selectedCategory?.id == category.id;
 
-          return Card(
-            key: ValueKey('category_grid_${category.id}'),
-            clipBehavior: Clip.antiAlias,
-            elevation: 2.0,
-            color: isSelected ? Theme.of(context).primaryColor.withOpacity(0.1) : null,
-            shape: isSelected
-                ? RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(4.0),
-                    side: BorderSide(
-                      color: Theme.of(context).primaryColor,
-                      width: 2,
+                  return Card(
+                    key: ValueKey('category_grid_${category.id}'),
+                    clipBehavior: Clip.antiAlias,
+                    elevation: 2.0,
+                    color: isSelected
+                        ? Theme.of(context).primaryColor.withOpacity(0.1)
+                        : null,
+                    shape: isSelected
+                        ? RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(4.0),
+                            side: BorderSide(
+                              color: Theme.of(context).primaryColor,
+                              width: 2,
+                            ),
+                          )
+                        : null,
+                    child: InkWell(
+                      onTap: () {
+                        setState(() {
+                          if (isSelected) {
+                            _selectedCategory = null;
+                          } else {
+                            _selectedCategory = category;
+                          }
+                        });
+                      },
+                      child: Padding(
+                        padding: const EdgeInsets.all(8.0),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: <Widget>[
+                            Text(
+                              category.icon,
+                              style: const TextStyle(fontSize: 32),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              category.name,
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .titleSmall
+                                  ?.copyWith(fontWeight: FontWeight.bold),
+                              textAlign: TextAlign.center,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              '${experiences.length} ${experiences.length == 1 ? "exp" : "exps"}',
+                              style: Theme.of(context).textTheme.bodySmall,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
-                  )
-                : null,
-            child: InkWell(
-              onTap: () {
-                setState(() {
-                  if (isSelected) {
-                    _selectedCategory = null;
-                  } else {
-                    _selectedCategory = category;
-                  }
-                });
-              },
-              child: Padding(
-                padding: const EdgeInsets.all(8.0),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: <Widget>[
-                    Text(
-                      category.icon,
-                      style: const TextStyle(fontSize: 32),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      category.name,
-                      style: Theme.of(context)
-                          .textTheme
-                          .titleSmall
-                          ?.copyWith(fontWeight: FontWeight.bold),
-                      textAlign: TextAlign.center,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '${experiences.length} ${experiences.length == 1 ? "exp" : "exps"}',
-                      style: Theme.of(context).textTheme.bodySmall,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
-                ),
+                  );
+                },
+                childCount: _publicCategories.length,
               ),
             ),
-          );
-        },
-      );
-    } else {
-      // Mobile: List view
-      return ListView.separated(
-        itemCount: _publicCategories.length,
-        separatorBuilder: (_, __) => const Divider(height: 1),
-        itemBuilder: (context, index) {
-          final category = _publicCategories[index];
-          final experiences = _categoryExperiences[category.id] ?? [];
-          final bool isSelected = _selectedCategory?.id == category.id;
-
-          return ListTile(
-            contentPadding: const EdgeInsets.symmetric(horizontal: 8),
-            leading: Padding(
-              padding: const EdgeInsets.only(left: 4, right: 8),
-              child: Text(
-                category.icon,
-                style: const TextStyle(fontSize: 24),
-              ),
-            ),
-            title: Text(category.name),
-            subtitle: Text(
-              '${experiences.length} ${experiences.length == 1 ? 'experience' : 'experiences'}',
-            ),
-            trailing: isSelected
-                ? Icon(Icons.check_circle, color: Theme.of(context).primaryColor)
-                : null,
-            selected: isSelected,
-            onTap: () {
-              setState(() {
-                if (isSelected) {
-                  _selectedCategory = null;
-                } else {
-                  _selectedCategory = category;
-                }
-              });
-            },
-          );
-        },
+          ),
+        ],
       );
     }
+
+    final int headerOffset = showCountHeader ? 1 : 0;
+    return ListView.builder(
+      itemCount: _publicCategories.length + headerOffset,
+      itemBuilder: (context, index) {
+        if (showCountHeader && index == 0) {
+          return _buildExperienceCountHeader(_publicExperienceCount);
+        }
+        final category = _publicCategories[index - headerOffset];
+        final experiences = _categoryExperiences[category.id] ?? [];
+        final bool isSelected = _selectedCategory?.id == category.id;
+
+        return ListTile(
+          contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+          leading: Padding(
+            padding: const EdgeInsets.only(left: 4, right: 8),
+            child: Text(
+              category.icon,
+              style: const TextStyle(fontSize: 24),
+            ),
+          ),
+          title: Text(category.name),
+          subtitle: Text(
+            '${experiences.length} ${experiences.length == 1 ? 'experience' : 'experiences'}',
+          ),
+          trailing: isSelected
+              ? Icon(Icons.check_circle, color: Theme.of(context).primaryColor)
+              : null,
+          selected: isSelected,
+          onTap: () {
+            setState(() {
+              if (isSelected) {
+                _selectedCategory = null;
+              } else {
+                _selectedCategory = category;
+              }
+            });
+          },
+        );
+      },
+    );
   }
 
   Widget _buildExperienceListItem(Experience experience, UserCategory category) {
@@ -1587,6 +1606,22 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
     }
   }
 
+  Widget _buildExperienceCountHeader(int count) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+      decoration: const BoxDecoration(color: Colors.white),
+      child: Text(
+        '$count ${count == 1 ? 'Experience' : 'Experiences'}',
+        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w400,
+              color: Colors.grey,
+            ),
+        textAlign: TextAlign.center,
+      ),
+    );
+  }
+
   Widget _buildSelectedCategoryExperiencesView() {
     final category = _selectedCategory!;
     final experiences = _categoryExperiences[category.id] ?? <Experience>[];
@@ -1642,9 +1677,12 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
                   ),
                 )
               : ListView.builder(
-                  itemCount: experiences.length,
+                  itemCount: experiences.length + 1,
                   itemBuilder: (context, index) {
-                    final experience = experiences[index];
+                    if (index == 0) {
+                      return _buildExperienceCountHeader(experiences.length);
+                    }
+                    final experience = experiences[index - 1];
                     return _buildExperienceListItem(experience, category);
                   },
                 ),
@@ -1713,18 +1751,22 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
                   ),
                 )
               : ListView.builder(
-                  itemCount: experiences.length,
+                  itemCount: experiences.length + 1,
                   itemBuilder: (context, index) {
-                    final experience = experiences[index];
+                    if (index == 0) {
+                      return _buildExperienceCountHeader(experiences.length);
+                    }
+                    final experience = experiences[index - 1];
                     // Use fallback category for navigation
                     final category = _publicCategories.firstWhereOrNull(
                       (cat) => cat.id == experience.categoryId,
-                    ) ?? UserCategory(
-                      id: experience.categoryId ?? '',
-                      name: 'Uncategorized',
-                      icon: '?',
-                      ownerUserId: widget.userId,
-                    );
+                    ) ??
+                        UserCategory(
+                          id: experience.categoryId ?? '',
+                          name: 'Uncategorized',
+                          icon: '?',
+                          ownerUserId: widget.userId,
+                        );
                     return _buildExperienceListItem(experience, category);
                   },
                 ),
