@@ -31,6 +31,7 @@ class SharedMediaPreviewModal extends StatefulWidget {
   final Future<void> Function(String url) onLaunchUrl;
   final UserCategory? category;
   final List<ColorCategory> userColorCategories;
+  final List<UserCategory> additionalUserCategories;
   final bool showSavedDate; // Whether to show the "Saved" date/time in metadata
   final VoidCallback? onViewExperience; // Custom handler for viewing the experience
 
@@ -42,6 +43,7 @@ class SharedMediaPreviewModal extends StatefulWidget {
     required this.onLaunchUrl,
     this.category,
     this.userColorCategories = const <ColorCategory>[],
+    this.additionalUserCategories = const <UserCategory>[],
     this.showSavedDate = true, // Default to showing it
     this.onViewExperience, // Optional custom handler
   });
@@ -257,6 +259,7 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
           experience: widget.experience,
           category: widget.category ?? _buildFallbackCategory(),
           userColorCategories: widget.userColorCategories,
+          additionalUserCategories: widget.additionalUserCategories,
         ),
       ),
     );

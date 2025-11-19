@@ -203,14 +203,8 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
         }
       }
 
-      categories.sort((a, b) {
-        final aIndex = a.orderIndex ?? 999999;
-        final bIndex = b.orderIndex ?? 999999;
-        if (aIndex != bIndex) {
-          return aIndex.compareTo(bIndex);
-        }
-        return a.name.toLowerCase().compareTo(b.name.toLowerCase());
-      });
+      categories.sort(
+          (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
 
       // Parse experiences first
       final List<Experience> experiences = [];
@@ -224,6 +218,13 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
               'PublicProfileScreen: skipping invalid experience ${doc.id} - $e');
         }
       }
+
+      // Sort experiences alphabetically for consistent display
+      experiences.sort((a, b) {
+        final aName = (a.name ?? '').toLowerCase();
+        final bName = (b.name ?? '').toLowerCase();
+        return aName.compareTo(bName);
+      });
 
       // Build color categories list from public experiences (avoid permission issues)
       final Set<String> colorCategoryIds = {};
@@ -287,9 +288,17 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
       final validColorCategoryIds = colorCatExperiences.keys.toSet();
 
       for (final experience in experiences) {
-        final String? colorCategoryId = experience.colorCategoryId;
-        if (colorCategoryId != null && validColorCategoryIds.contains(colorCategoryId)) {
-          colorCatExperiences[colorCategoryId]!.add(experience);
+        final Set<String> associatedColorIds = {
+          if (experience.colorCategoryId != null &&
+              experience.colorCategoryId!.isNotEmpty)
+            experience.colorCategoryId!,
+          ...experience.otherColorCategoryIds
+              .where((id) => id.isNotEmpty),
+        };
+        for (final colorId in associatedColorIds) {
+          if (validColorCategoryIds.contains(colorId)) {
+            colorCatExperiences[colorId]!.add(experience);
+          }
         }
       }
 
@@ -385,6 +394,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
           experience: experience,
           category: category,
           userColorCategories: _publicColorCategories,
+          additionalUserCategories: _publicCategories,
           readOnlyPreview: true,
         ),
       ),
@@ -461,6 +471,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
           onLaunchUrl: _launchUrl,
           category: category,
           userColorCategories: _publicColorCategories,
+          additionalUserCategories: _publicCategories,
         );
       },
     );
@@ -1192,7 +1203,12 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
   }
 
   Widget _buildExperienceListItem(Experience experience, UserCategory category) {
-    final categoryIcon = category.icon;
+    // Determine the true primary category for the experience
+    final UserCategory? primaryCategory = _publicCategories.firstWhereOrNull(
+      (cat) => cat.id == experience.categoryId,
+    );
+    final UserCategory displayCategory = primaryCategory ?? category;
+    final String categoryIcon = displayCategory.icon;
 
     // Get the full address
     final fullAddress = experience.location.address;
@@ -1355,7 +1371,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
                         if (!_experienceMediaCache.containsKey(experience.id)) {
                           await _prefetchExperienceMedia(experience);
                         }
-                        await _showMediaPreview(experience, category);
+                        await _showMediaPreview(experience, displayCategory);
                       },
                       child: Stack(
                         clipBehavior: Clip.none,
@@ -1414,7 +1430,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
             !_experienceMediaCache.containsKey(experience.id)) {
           unawaited(_prefetchExperienceMedia(experience));
         }
-        await _navigateToExperience(experience, category);
+        await _navigateToExperience(experience, displayCategory);
       },
     );
   }
