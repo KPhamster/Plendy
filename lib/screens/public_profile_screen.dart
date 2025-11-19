@@ -1464,9 +1464,10 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
     }
 
     final bool isDesktopWeb = MediaQuery.of(context).size.width > 600;
+    final bool showCountHeader = _publicExperienceCount > 0;
 
     if (isDesktopWeb) {
-      // Desktop: Grid view
+      // Desktop: Grid view with scrolling header
       final screenWidth = MediaQuery.of(context).size.width;
       const double contentMaxWidth = 1200.0;
       const double defaultPadding = 12.0;
@@ -1478,132 +1479,154 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
         horizontalPadding = defaultPadding;
       }
 
-      return GridView.builder(
-        padding: EdgeInsets.fromLTRB(
-            horizontalPadding, defaultPadding, horizontalPadding, defaultPadding),
-        itemCount: _publicColorCategories.length,
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 5,
-          mainAxisSpacing: 10.0,
-          crossAxisSpacing: 10.0,
-          childAspectRatio: 3 / 3.5,
-        ),
-        itemBuilder: (context, index) {
-          final colorCategory = _publicColorCategories[index];
-          final experiences = _categoryExperiences[colorCategory.id] ?? [];
-          final bool isSelected = _selectedColorCategory?.id == colorCategory.id;
+      return CustomScrollView(
+        slivers: [
+          if (showCountHeader)
+            SliverToBoxAdapter(
+                child: _buildExperienceCountHeader(_publicExperienceCount)),
+          SliverPadding(
+            padding: EdgeInsets.fromLTRB(horizontalPadding, defaultPadding,
+                horizontalPadding, defaultPadding),
+            sliver: SliverGrid(
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 5,
+                mainAxisSpacing: 10.0,
+                crossAxisSpacing: 10.0,
+                childAspectRatio: 3 / 3.5,
+              ),
+              delegate: SliverChildBuilderDelegate(
+                (context, index) {
+                  final colorCategory = _publicColorCategories[index];
+                  final experiences = _categoryExperiences[colorCategory.id] ?? [];
+                  final bool isSelected =
+                      _selectedColorCategory?.id == colorCategory.id;
 
-          return Card(
-            key: ValueKey('color_category_grid_${colorCategory.id}'),
-            clipBehavior: Clip.antiAlias,
-            elevation: 2.0,
-            color: isSelected ? Theme.of(context).primaryColor.withOpacity(0.1) : null,
-            shape: isSelected
-                ? RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(4.0),
-                    side: BorderSide(
-                      color: Theme.of(context).primaryColor,
-                      width: 2,
-                    ),
-                  )
-                : null,
-            child: InkWell(
-              onTap: () {
-                setState(() {
-                  if (isSelected) {
-                    _selectedColorCategory = null;
-                  } else {
-                    _selectedColorCategory = colorCategory;
-                    _showingColorCategories = true;
-                    _selectedCategory = null;
-                  }
-                });
-              },
-              child: Padding(
-                padding: const EdgeInsets.all(8.0),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: <Widget>[
-                    Container(
-                      width: 28,
-                      height: 28,
-                      decoration: BoxDecoration(
-                        color: colorCategory.color,
-                        shape: BoxShape.circle,
+                  return Card(
+                    key: ValueKey('color_category_grid_${colorCategory.id}'),
+                    clipBehavior: Clip.antiAlias,
+                    elevation: 2.0,
+                    color: isSelected
+                        ? Theme.of(context).primaryColor.withOpacity(0.1)
+                        : null,
+                    shape: isSelected
+                        ? RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(4.0),
+                            side: BorderSide(
+                              color: Theme.of(context).primaryColor,
+                              width: 2,
+                            ),
+                          )
+                        : null,
+                    child: InkWell(
+                      onTap: () {
+                        setState(() {
+                          if (isSelected) {
+                            _selectedColorCategory = null;
+                          } else {
+                            _selectedColorCategory = colorCategory;
+                            _showingColorCategories = true;
+                            _selectedCategory = null;
+                          }
+                        });
+                      },
+                      child: Padding(
+                        padding: const EdgeInsets.all(8.0),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: <Widget>[
+                            Container(
+                              width: 28,
+                              height: 28,
+                              decoration: BoxDecoration(
+                                color: colorCategory.color,
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              colorCategory.name,
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .titleSmall
+                                  ?.copyWith(fontWeight: FontWeight.bold),
+                              textAlign: TextAlign.center,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              '${experiences.length} ${experiences.length == 1 ? "exp" : "exps"}',
+                              style: Theme.of(context).textTheme.bodySmall,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
+                        ),
                       ),
                     ),
-                    const SizedBox(height: 8),
-                    Text(
-                      colorCategory.name,
-                      style: Theme.of(context)
-                          .textTheme
-                          .titleSmall
-                          ?.copyWith(fontWeight: FontWeight.bold),
-                      textAlign: TextAlign.center,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '${experiences.length} ${experiences.length == 1 ? "exp" : "exps"}',
-                      style: Theme.of(context).textTheme.bodySmall,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
-                ),
+                  );
+                },
+                childCount: _publicColorCategories.length,
               ),
             ),
-          );
-        },
-      );
-    } else {
-      // Mobile: List view
-      return ListView.separated(
-        itemCount: _publicColorCategories.length,
-        separatorBuilder: (_, __) => const Divider(height: 1),
-        itemBuilder: (context, index) {
-          final colorCategory = _publicColorCategories[index];
-          final experiences = _categoryExperiences[colorCategory.id] ?? [];
-          final bool isSelected = _selectedColorCategory?.id == colorCategory.id;
-
-          return ListTile(
-            contentPadding: const EdgeInsets.symmetric(horizontal: 8),
-            leading: Padding(
-              padding: const EdgeInsets.only(left: 9.0),
-              child: Container(
-                width: 24,
-                height: 24,
-                decoration: BoxDecoration(
-                  color: colorCategory.color,
-                  shape: BoxShape.circle,
-                ),
-              ),
-            ),
-            title: Text(colorCategory.name),
-            subtitle: Text(
-              '${experiences.length} ${experiences.length == 1 ? 'experience' : 'experiences'}',
-            ),
-            trailing: isSelected
-                ? Icon(Icons.check_circle, color: Theme.of(context).primaryColor)
-                : null,
-            selected: isSelected,
-            onTap: () {
-              setState(() {
-                if (isSelected) {
-                  _selectedColorCategory = null;
-                } else {
-                  _selectedColorCategory = colorCategory;
-                  _showingColorCategories = true;
-                  _selectedCategory = null;
-                }
-              });
-            },
-          );
-        },
+          ),
+        ],
       );
     }
+
+    final int headerOffset = showCountHeader ? 1 : 0;
+    return ListView.separated(
+      itemCount: _publicColorCategories.length + headerOffset,
+      separatorBuilder: (context, index) {
+        if (showCountHeader && index == 0) {
+          return const SizedBox.shrink();
+        }
+        return const Divider(height: 1);
+      },
+      itemBuilder: (context, index) {
+        if (showCountHeader && index == 0) {
+          return _buildExperienceCountHeader(_publicExperienceCount);
+        }
+        final colorCategory = _publicColorCategories[index - headerOffset];
+        final experiences = _categoryExperiences[colorCategory.id] ?? [];
+        final bool isSelected = _selectedColorCategory?.id == colorCategory.id;
+
+        return ListTile(
+          contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+          leading: Padding(
+            padding: const EdgeInsets.only(left: 9.0),
+            child: Container(
+              width: 24,
+              height: 24,
+              decoration: BoxDecoration(
+                color: colorCategory.color,
+                shape: BoxShape.circle,
+              ),
+            ),
+          ),
+          title: Text(colorCategory.name),
+          subtitle: Text(
+            '${experiences.length} ${experiences.length == 1 ? 'experience' : 'experiences'}',
+          ),
+          trailing: isSelected
+              ? Icon(Icons.check_circle, color: Theme.of(context).primaryColor)
+              : null,
+          selected: isSelected,
+          onTap: () {
+            setState(() {
+              if (isSelected) {
+                _selectedColorCategory = null;
+              } else {
+                _selectedColorCategory = colorCategory;
+                _showingColorCategories = true;
+                _selectedCategory = null;
+              }
+            });
+          },
+        );
+      },
+    );
   }
 
   Widget _buildExperienceCountHeader(int count) {
