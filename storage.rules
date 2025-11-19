@@ -11,6 +11,13 @@ service firebase.storage {
       allow write: if request.auth != null; // Restrict uploads to authenticated users
     }
 
+    // Profile photos for users. Allow everyone to read so avatars render,
+    // but only permit the authenticated owner to upload/delete their photo.
+    match /user_photos/{userId}/{allPaths=**} {
+      allow read: if true;
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+
     match /{allPaths=**} {
       allow read, write: if false;
     }

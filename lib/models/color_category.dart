@@ -11,6 +11,7 @@ class ColorCategory extends Equatable {
   final String? sharedOwnerDisplayName; // Display name when category is shared
   final Timestamp? lastUsedTimestamp;
   final int? orderIndex;
+  final bool isPrivate;
 
   const ColorCategory({
     required this.id,
@@ -20,6 +21,7 @@ class ColorCategory extends Equatable {
     this.sharedOwnerDisplayName,
     this.lastUsedTimestamp,
     this.orderIndex,
+    this.isPrivate = false,
   });
 
   @override
@@ -31,6 +33,7 @@ class ColorCategory extends Equatable {
         sharedOwnerDisplayName,
         lastUsedTimestamp,
         orderIndex,
+        isPrivate,
       ];
 
   /// Creates a ColorCategory from a Firestore document.
@@ -56,6 +59,7 @@ class ColorCategory extends Equatable {
       sharedOwnerDisplayName: null,
       lastUsedTimestamp: data['lastUsedTimestamp'] as Timestamp?,
       orderIndex: data['orderIndex'] as int?,
+      isPrivate: data['isPrivate'] == true,
     );
   }
 
@@ -67,6 +71,7 @@ class ColorCategory extends Equatable {
       'ownerUserId': ownerUserId,
       'lastUsedTimestamp': lastUsedTimestamp,
       'orderIndex': orderIndex,
+      'isPrivate': isPrivate,
       // sharedOwnerDisplayName is derived metadata; omit from persistence.
     };
   }
@@ -82,6 +87,7 @@ class ColorCategory extends Equatable {
     bool setLastUsedTimestampNull = false,
     int? orderIndex,
     bool setOrderIndexNull = false,
+    bool? isPrivate,
   }) {
     return ColorCategory(
       id: id ?? this.id,
@@ -94,6 +100,7 @@ class ColorCategory extends Equatable {
           ? null
           : lastUsedTimestamp ?? this.lastUsedTimestamp,
       orderIndex: setOrderIndexNull ? null : orderIndex ?? this.orderIndex,
+      isPrivate: isPrivate ?? this.isPrivate,
     );
   }
 
@@ -133,6 +140,7 @@ class ColorCategory extends Equatable {
         sharedOwnerDisplayName: null,
         lastUsedTimestamp: null,
         orderIndex: index++, // Assign initial order
+        isPrivate: false,
       );
     }).toList();
   }
