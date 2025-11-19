@@ -234,7 +234,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
 
   Widget _buildThreadTile(MessageThread thread, String currentUserId) {
     final participants = thread.otherParticipants(currentUserId);
-    final title = _buildThreadTitle(participants);
+    final title = _buildThreadTitle(thread, participants);
     final subtitle = _buildSubtitle(thread, currentUserId, participants);
     final timestamp = _formatTimestamp(context,
         thread.lastMessageTimestamp ?? thread.updatedAt ?? thread.createdAt);
@@ -295,7 +295,14 @@ class _MessagesScreenState extends State<MessagesScreen> {
     return const CircleAvatar(child: Icon(Icons.group));
   }
 
-  String _buildThreadTitle(List<MessageThreadParticipant> participants) {
+  String _buildThreadTitle(
+    MessageThread thread,
+    List<MessageThreadParticipant> participants,
+  ) {
+    final customTitle = thread.title?.trim();
+    if (customTitle != null && customTitle.isNotEmpty) {
+      return customTitle;
+    }
     if (participants.isEmpty) {
       return 'Just you';
     }

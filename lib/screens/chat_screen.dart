@@ -33,8 +33,12 @@ class _ChatScreenState extends State<ChatScreen> {
   late final MessageService _messageService;
   late final ExperienceService _experienceService;
   final TextEditingController _messageController = TextEditingController();
+  final TextEditingController _titleController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
+  final FocusNode _titleFocusNode = FocusNode();
   bool _sending = false;
+  bool _isEditingTitle = false;
+  bool _isSavingTitle = false;
   
   List<UserCategory> _userCategories = [];
   List<ColorCategory> _userColorCategories = [];
@@ -53,7 +57,9 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void dispose() {
     _messageController.dispose();
+    _titleController.dispose();
     _scrollController.dispose();
+    _titleFocusNode.dispose();
     super.dispose();
   }
 
@@ -131,6 +137,92 @@ class _ChatScreenState extends State<ChatScreen> {
     Navigator.of(context).pop();
   }
 
+  void _startEditingTitle(String title) {
+    if (_isSavingTitle) {
+      return;
+    }
+    _titleController
+      ..text = title
+      ..selection = TextSelection.fromPosition(
+        TextPosition(offset: title.length),
+      );
+    setState(() {
+      _isEditingTitle = true;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _titleFocusNode.requestFocus();
+      }
+    });
+  }
+
+  void _stopEditingTitle() {
+    if (!_isEditingTitle) {
+      return;
+    }
+    _titleFocusNode.unfocus();
+    if (mounted) {
+      setState(() {
+        _isEditingTitle = false;
+      });
+    }
+  }
+
+  Future<void> _saveThreadTitle(MessageThread thread) async {
+    if (!_isEditingTitle || _isSavingTitle) {
+      return;
+    }
+
+    final newTitle = _titleController.text.trim();
+    final currentCustomTitle = thread.title?.trim();
+    final defaultTitle = _buildDefaultTitle(thread);
+
+    final bool isUnchangedCustom =
+        currentCustomTitle != null && newTitle == currentCustomTitle;
+    final bool isNoOpDefault =
+        currentCustomTitle == null &&
+            (newTitle.isEmpty || newTitle == defaultTitle);
+
+    if (isUnchangedCustom || isNoOpDefault) {
+      _stopEditingTitle();
+      return;
+    }
+
+    setState(() {
+      _isSavingTitle = true;
+    });
+
+    if (mounted) {
+      FocusScope.of(context).unfocus();
+    }
+
+    try {
+      await _messageService.updateThreadTitle(
+        threadId: thread.id,
+        title: newTitle,
+      );
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _isSavingTitle = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not update chat name: $error')),
+        );
+      }
+      return;
+    }
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _isSavingTitle = false;
+      _isEditingTitle = false;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<MessageThread?>(
@@ -145,7 +237,86 @@ class _ChatScreenState extends State<ChatScreen> {
             backgroundColor: Colors.white,
             foregroundColor: Colors.black,
             leading: BackButton(onPressed: _handleBackPressed),
-            title: Text(title),
+            title: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 200),
+              child: _isEditingTitle
+                  ? SizedBox(
+                      key: const ValueKey('editingTitleField'),
+                      height: 40,
+                      child: Focus(
+                        onFocusChange: (hasFocus) {
+                          if (!hasFocus) {
+                            _saveThreadTitle(thread);
+                          }
+                        },
+                        child: TextField(
+                          controller: _titleController,
+                          focusNode: _titleFocusNode,
+                          autofocus: true,
+                          enabled: !_isSavingTitle,
+                          textInputAction: TextInputAction.done,
+                          decoration: const InputDecoration(
+                            border: InputBorder.none,
+                            hintText: 'Name this chat',
+                            isDense: true,
+                          ),
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w600,
+                          ),
+                          onSubmitted: (_) => _saveThreadTitle(thread),
+                        ),
+                      ),
+                    )
+                  : GestureDetector(
+                      key: const ValueKey('displayTitle'),
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () => _startEditingTitle(title),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Flexible(
+                            child: Text(
+                              title,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Icon(
+                            Icons.edit,
+                            size: 16,
+                            color: Colors.grey.shade600,
+                          ),
+                        ],
+                      ),
+                    ),
+            ),
+            actions: [
+              if (_isEditingTitle)
+                IconButton(
+                  icon: _isSavingTitle
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.check),
+                  onPressed:
+                      _isSavingTitle ? null : () => _saveThreadTitle(thread),
+                ),
+              IconButton(
+                icon: const Icon(
+                  Icons.people,
+                  color: Colors.black,
+                ),
+                tooltip: 'Chat members',
+                onPressed: () => _showParticipantsDialog(thread),
+              ),
+            ],
           ),
           body: Column(
             children: [
@@ -233,40 +404,67 @@ class _ChatScreenState extends State<ChatScreen> {
       bottomRight: Radius.circular(isMine ? 4 : 18),
     );
 
-    return Align(
-      alignment: alignment,
-      child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 4),
-        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
-        decoration: BoxDecoration(
-          color: bubbleColor,
-          borderRadius: radius,
-        ),
-        child: Column(
-          crossAxisAlignment:
-              isMine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (!isMine)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: Text(
-                  sender?.displayLabel(fallback: 'Someone') ?? 'Someone',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.black54,
-                  ),
+    final maxBubbleWidth = MediaQuery.of(context).size.width * 0.7;
+
+    final bubble = Container(
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
+      decoration: BoxDecoration(
+        color: bubbleColor,
+        borderRadius: radius,
+      ),
+      child: Column(
+        crossAxisAlignment:
+            isMine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (!isMine)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Text(
+                sender?.displayLabel(fallback: 'Someone') ?? 'Someone',
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.black54,
                 ),
               ),
-            _buildMessageText(message, textColor, isMine),
-            const SizedBox(height: 4),
-            Text(
-              _formatMessageTime(message.createdAt),
-              style: TextStyle(color: textColor.withOpacity(0.7), fontSize: 11),
             ),
-          ],
-        ),
+          _buildMessageText(message, textColor, isMine),
+          const SizedBox(height: 4),
+          Text(
+            _formatMessageTime(message.createdAt),
+            style: TextStyle(color: textColor.withOpacity(0.7), fontSize: 11),
+          ),
+        ],
+      ),
+    );
+
+    final bubbleWithConstraints = ConstrainedBox(
+      constraints: BoxConstraints(maxWidth: maxBubbleWidth),
+      child: bubble,
+    );
+
+    if (isMine) {
+      return Align(
+        alignment: alignment,
+        child: bubbleWithConstraints,
+      );
+    }
+
+    final avatarParticipant =
+        sender ?? MessageThreadParticipant(id: message.senderId);
+
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          _buildParticipantAvatar(avatarParticipant, size: 34),
+          const SizedBox(width: 8),
+          Flexible(child: bubbleWithConstraints),
+        ],
       ),
     );
   }
@@ -661,6 +859,14 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   String _buildTitle(MessageThread thread) {
+    final customTitle = thread.title?.trim();
+    if (customTitle != null && customTitle.isNotEmpty) {
+      return customTitle;
+    }
+    return _buildDefaultTitle(thread);
+  }
+
+  String _buildDefaultTitle(MessageThread thread) {
     final participants = thread.otherParticipants(widget.currentUserId);
     if (participants.isEmpty) {
       return 'Personal Notes';
@@ -671,6 +877,92 @@ class _ChatScreenState extends State<ChatScreen> {
     return participants
         .map((participant) => participant.displayLabel(fallback: 'Friend'))
         .join(', ');
+  }
+
+  Future<void> _showParticipantsDialog(MessageThread thread) async {
+    final participants = thread.participantIds
+        .map(
+          (id) => thread.participant(id) ?? MessageThreadParticipant(id: id),
+        )
+        .toList();
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        final maxHeight = MediaQuery.of(dialogContext).size.height * 0.6;
+        return AlertDialog(
+          backgroundColor: Colors.white,
+          title: const Text('Chat Members'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxHeight: maxHeight),
+              child: ListView.separated(
+                shrinkWrap: true,
+                itemCount: participants.length,
+                separatorBuilder: (_, __) => const Divider(height: 1),
+                itemBuilder: (context, index) {
+                  final participant = participants[index];
+                  final displayName = participant.displayName?.isNotEmpty == true
+                      ? participant.displayName!
+                      : participant.displayLabel(fallback: 'Friend');
+                  final username = participant.username?.isNotEmpty == true
+                      ? '@${participant.username!}'
+                      : null;
+                  return ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: _buildParticipantAvatar(participant),
+                    title: Text(displayName),
+                    subtitle: username != null && username != displayName
+                        ? Text(username)
+                        : null,
+                  );
+                },
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Close'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildParticipantAvatar(
+    MessageThreadParticipant participant, {
+    double size = 40,
+  }) {
+    final photoUrl = participant.photoUrl;
+    final radius = size / 2;
+    if (photoUrl != null && photoUrl.isNotEmpty) {
+      return CircleAvatar(
+        radius: radius,
+        backgroundImage: NetworkImage(photoUrl),
+      );
+    }
+
+    final label = participant.displayLabel(fallback: 'Friend').trim();
+    final sanitized = label.replaceAll('@', '').trim();
+    final initialSource = sanitized.isNotEmpty ? sanitized : label;
+    final initial =
+        initialSource.isNotEmpty ? initialSource[0].toUpperCase() : '?';
+
+    return CircleAvatar(
+      radius: radius,
+      backgroundColor: Colors.grey.shade300,
+      child: Text(
+        initial,
+        style: TextStyle(
+          fontWeight: FontWeight.w600,
+          color: Colors.black,
+          fontSize: radius * 0.9,
+        ),
+      ),
+    );
   }
 
   Future<void> _showMediaPreviewModal({
