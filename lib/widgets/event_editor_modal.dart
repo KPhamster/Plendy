@@ -1,14 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:collection/collection.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../models/event.dart';
 import '../models/experience.dart';
 import '../models/user_profile.dart';
 import '../models/user_category.dart';
 import '../models/color_category.dart';
+import '../models/shared_media_item.dart';
 import '../services/event_service.dart';
 import '../services/experience_service.dart';
 import '../services/auth_service.dart';
+import '../widgets/shared_media_preview_modal.dart';
 
 class EventEditorResult {
   final Event? savedEvent;
@@ -57,11 +60,13 @@ class _EventEditorModalState extends State<EventEditorModal> {
   
   // User profiles cache
   final Map<String, UserProfile> _userProfiles = {};
+  final Set<String> _manuallyEditedScheduleIds = {};
+  final Map<String, List<SharedMediaItem>> _experienceMediaCache = {};
   
   @override
   void initState() {
     super.initState();
-    _currentEvent = widget.event;
+    _currentEvent = _eventWithAutoPrimarySchedule(widget.event);
     _titleController = TextEditingController(text: _currentEvent.title);
     _descriptionController = TextEditingController(text: _currentEvent.description);
     _coverImageUrlController = TextEditingController(text: _currentEvent.coverImageUrl ?? '');
@@ -225,51 +230,49 @@ class _EventEditorModalState extends State<EventEditorModal> {
     );
   }
 
-  Future<bool> _confirmLeave() async {
-    if (!_hasUnsavedChanges) {
-      return true;
+  Future<void> _launchUrl(String urlString) async {
+    if (urlString.isEmpty ||
+        urlString == 'about:blank' ||
+        urlString == 'https://about:blank') {
+      return;
     }
 
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: Colors.white,
-        title: const Text('Discard changes?'),
-        content: const Text('You have unsaved changes. Do you want to discard them?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Discard', style: TextStyle(color: Colors.red)),
-          ),
-        ],
-      ),
-    );
+    String launchableUrl = urlString;
+    if (!launchableUrl.startsWith('http://') &&
+        !launchableUrl.startsWith('https://')) {
+      launchableUrl = 'https://$launchableUrl';
+    }
 
-    return result ?? false;
+    try {
+      final Uri uri = Uri.parse(launchableUrl);
+      if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+        throw Exception('Could not launch $launchableUrl');
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open link: $urlString')),
+        );
+      }
+    }
   }
 
   Future<void> _handleBackNavigation() async {
-    final shouldLeave = await _confirmLeave();
-    if (shouldLeave) {
-      _popWithDraftResult();
-    }
+    _popWithDraftResult();
   }
+
+  bool get _isTimeRangeValid =>
+      !_currentEvent.endDateTime.isBefore(_currentEvent.startDateTime);
 
   @override
   Widget build(BuildContext context) {
     final Duration duration = _currentEvent.endDateTime.difference(_currentEvent.startDateTime);
     final String durationText = _formatDuration(duration);
+    final bool isTimeRangeValid = _isTimeRangeValid;
 
     return WillPopScope(
       onWillPop: () async {
-        final shouldLeave = await _confirmLeave();
-        if (shouldLeave) {
-          _popWithDraftResult();
-        }
+        _popWithDraftResult();
         return false;
       },
       child: Scaffold(
@@ -305,7 +308,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
                 padding: const EdgeInsets.only(right: 8),
                 child: ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: _hasUnsavedChanges
+                    backgroundColor: isTimeRangeValid
                         ? Theme.of(context).primaryColor
                         : Colors.grey.shade300,
                     foregroundColor: Colors.white,
@@ -315,7 +318,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
                       borderRadius: BorderRadius.circular(20),
                     ),
                   ),
-                  onPressed: _hasUnsavedChanges ? _saveEvent : null,
+                  onPressed: isTimeRangeValid ? _saveEvent : null,
                   child: const Text('Save'),
                 ),
               ),
@@ -510,38 +513,33 @@ class _EventEditorModalState extends State<EventEditorModal> {
                 ),
           ),
           const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
-                child: _buildDateTimePicker(
-                  label: 'Start',
-                  dateTime: _currentEvent.startDateTime,
-                  onChanged: (newDateTime) {
-                    setState(() {
-                      _currentEvent = _currentEvent.copyWith(
-                        startDateTime: newDateTime,
-                      );
-                      _markUnsavedChanges();
-                    });
-                  },
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: _buildDateTimePicker(
-                  label: 'End',
-                  dateTime: _currentEvent.endDateTime,
-                  onChanged: (newDateTime) {
-                    setState(() {
-                      _currentEvent = _currentEvent.copyWith(
-                        endDateTime: newDateTime,
-                      );
-                      _markUnsavedChanges();
-                    });
-                  },
-                ),
-              ),
-            ],
+          _buildDateTimePicker(
+            label: 'Start',
+            dateTime: _currentEvent.startDateTime,
+            onChanged: (newDateTime) {
+              setState(() {
+                var updatedEvent = _currentEvent.copyWith(
+                  startDateTime: newDateTime,
+                );
+                updatedEvent = _eventWithAutoPrimarySchedule(updatedEvent);
+                _currentEvent = updatedEvent;
+                _markUnsavedChanges();
+              });
+            },
+          ),
+          const SizedBox(height: 16),
+          _buildDateTimePicker(
+            label: 'End',
+            dateTime: _currentEvent.endDateTime,
+            onChanged: (newDateTime) {
+              setState(() {
+                _currentEvent = _currentEvent.copyWith(
+                  endDateTime: newDateTime,
+                );
+                _markUnsavedChanges();
+              });
+            },
+            minDateTime: _currentEvent.startDateTime,
           ),
           const SizedBox(height: 8),
           Text(
@@ -559,7 +557,19 @@ class _EventEditorModalState extends State<EventEditorModal> {
     required String label,
     required DateTime dateTime,
     required ValueChanged<DateTime> onChanged,
+    DateTime? minDateTime,
+    DateTime? maxDateTime,
   }) {
+    final DateTime effectiveMinDate =
+        minDateTime ?? DateTime(2000);
+    final DateTime effectiveMaxDate =
+        maxDateTime ?? DateTime(2100);
+    final DateTime initialDate = dateTime.isBefore(effectiveMinDate)
+        ? effectiveMinDate
+        : dateTime.isAfter(effectiveMaxDate)
+            ? effectiveMaxDate
+            : dateTime;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -576,16 +586,16 @@ class _EventEditorModalState extends State<EventEditorModal> {
 
             final date = await showDatePicker(
               context: context,
-              initialDate: dateTime,
-              firstDate: DateTime(2000),
-              lastDate: DateTime(2100),
+              initialDate: initialDate,
+              firstDate: effectiveMinDate,
+              lastDate: effectiveMaxDate,
               builder: (ctx, child) => wrapPicker(child),
             );
             if (date == null || !mounted) return;
 
             final time = await showTimePicker(
               context: context,
-              initialTime: TimeOfDay.fromDateTime(dateTime),
+              initialTime: TimeOfDay.fromDateTime(initialDate),
               builder: (ctx, child) => wrapPicker(child),
             );
             if (time == null || !mounted) return;
@@ -597,6 +607,24 @@ class _EventEditorModalState extends State<EventEditorModal> {
               time.hour,
               time.minute,
             );
+            if (minDateTime != null && newDateTime.isBefore(minDateTime)) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                      '$label time must be after the start time.'),
+                ),
+              );
+              return;
+            }
+            if (maxDateTime != null && newDateTime.isAfter(maxDateTime)) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                      '$label time must be before the available range.'),
+                ),
+              );
+              return;
+            }
             onChanged(newDateTime);
           },
           child: Text(_formatDateTime(dateTime)),
@@ -694,6 +722,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
               itemCount: _currentEvent.experiences.length,
+              buildDefaultDragHandles: false,
               onReorder: (oldIndex, newIndex) {
                 setState(() {
                   if (newIndex > oldIndex) {
@@ -702,7 +731,10 @@ class _EventEditorModalState extends State<EventEditorModal> {
                   final entries = List<EventExperienceEntry>.from(_currentEvent.experiences);
                   final entry = entries.removeAt(oldIndex);
                   entries.insert(newIndex, entry);
-                  _currentEvent = _currentEvent.copyWith(experiences: entries);
+                  var updatedEvent =
+                      _currentEvent.copyWith(experiences: entries);
+                  updatedEvent = _eventWithAutoPrimarySchedule(updatedEvent);
+                  _currentEvent = updatedEvent;
                   _markUnsavedChanges();
                 });
               },
@@ -723,7 +755,11 @@ class _EventEditorModalState extends State<EventEditorModal> {
                     editorUserIds: [],
                   ),
                 );
-                return _buildItineraryEntryCard(entry, experience, index);
+                return _SlidingItineraryItem(
+                  key: ValueKey(entry.experienceId),
+                  index: index,
+                  child: _buildItineraryEntryCard(entry, experience, index),
+                );
               },
             ),
         ],
@@ -765,41 +801,113 @@ class _EventEditorModalState extends State<EventEditorModal> {
     final bool hasAddress = address != null && address.isNotEmpty;
     final bool hasOtherCategories = otherCategories.isNotEmpty;
     final bool hasOtherColorCategories = otherColorCategories.isNotEmpty;
+    final int contentCount = experience.sharedMediaItemIds.length;
+    final bool shouldShowSubRow =
+        hasOtherCategories || hasOtherColorCategories || contentCount > 0;
+    const double playButtonDiameter = 36.0;
+    const double playIconSize = 20.0;
+    const double badgeDiameter = 18.0;
+    const double badgeFontSize = 11.0;
+    const double badgeBorderWidth = 2.0;
+    const double badgeOffset = -3.0;
 
     final List<Widget> subtitleChildren = [];
     if (hasAddress) {
       subtitleChildren.add(
         Text(
-          address!,
+          address,
           style: Theme.of(context).textTheme.bodySmall,
         ),
       );
     }
-    if (hasOtherCategories || hasOtherColorCategories) {
+    if (shouldShowSubRow) {
       subtitleChildren.add(
         Padding(
           padding: EdgeInsets.only(top: hasAddress ? 2.0 : 0.0),
-          child: Wrap(
-            spacing: 6.0,
-            runSpacing: 2.0,
-            crossAxisAlignment: WrapCrossAlignment.center,
+          child: Row(
             children: [
-              ...otherCategories.map(
-                (otherCategory) => Text(
-                  otherCategory.icon,
-                  style: const TextStyle(fontSize: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (hasOtherCategories || hasOtherColorCategories)
+                      Wrap(
+                        spacing: 6.0,
+                        runSpacing: 2.0,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          ...otherCategories.map(
+                            (otherCategory) => Text(
+                              otherCategory.icon,
+                              style: const TextStyle(fontSize: 14),
+                            ),
+                          ),
+                          ...otherColorCategories.map(
+                            (otherColorCategory) => Container(
+                              width: 10,
+                              height: 10,
+                              decoration: BoxDecoration(
+                                color: otherColorCategory.color,
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                  ],
                 ),
               ),
-              ...otherColorCategories.map(
-                (otherColorCategory) => Container(
-                  width: 10,
-                  height: 10,
-                  decoration: BoxDecoration(
-                    color: otherColorCategory.color,
-                    shape: BoxShape.circle,
+              if (contentCount > 0) ...[
+                const SizedBox(width: 12),
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => _openExperienceContentPreview(experience),
+                  child: Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      Container(
+                        width: playButtonDiameter,
+                        height: playButtonDiameter,
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).primaryColor,
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.play_arrow,
+                          color: Colors.white,
+                          size: playIconSize,
+                        ),
+                      ),
+                      Positioned(
+                        bottom: badgeOffset,
+                        right: badgeOffset,
+                        child: Container(
+                          width: badgeDiameter,
+                          height: badgeDiameter,
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: Theme.of(context).primaryColor,
+                              width: badgeBorderWidth,
+                            ),
+                          ),
+                          child: Center(
+                            child: Text(
+                              contentCount.toString(),
+                              style: TextStyle(
+                                color: Theme.of(context).primaryColor,
+                                fontSize: badgeFontSize,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-              ),
+              ],
             ],
           ),
         ),
@@ -833,7 +941,16 @@ class _EventEditorModalState extends State<EventEditorModal> {
     return Card(
       key: ValueKey(entry.experienceId),
       margin: const EdgeInsets.only(bottom: 12),
+      color: Colors.grey.shade100,
       child: ExpansionTile(
+        shape: const RoundedRectangleBorder(
+          side: BorderSide(color: Colors.transparent, width: 0),
+          borderRadius: BorderRadius.zero,
+        ),
+        collapsedShape: const RoundedRectangleBorder(
+          side: BorderSide(color: Colors.transparent, width: 0),
+          borderRadius: BorderRadius.zero,
+        ),
         tilePadding: const EdgeInsets.symmetric(horizontal: 8.0),
         childrenPadding: const EdgeInsets.symmetric(horizontal: 16.0),
         leading: leadingWidget,
@@ -898,8 +1015,14 @@ class _EventEditorModalState extends State<EventEditorModal> {
                       },
                     ),
                     TextButton.icon(
-                      icon: const Icon(Icons.delete, color: Colors.red),
-                      label: const Text('Remove', style: TextStyle(color: Colors.red)),
+                      style: TextButton.styleFrom(
+                        foregroundColor: Theme.of(context).primaryColor,
+                      ),
+                      icon: Icon(Icons.delete, color: Theme.of(context).primaryColor),
+                      label: Text(
+                        'Remove',
+                        style: TextStyle(color: Theme.of(context).primaryColor),
+                      ),
                       onPressed: () => _removeExperience(index),
                     ),
                   ],
@@ -909,6 +1032,78 @@ class _EventEditorModalState extends State<EventEditorModal> {
           ),
         ],
       ),
+    );
+  }
+
+  Future<void> _openExperienceContentPreview(Experience experience) async {
+    if (experience.sharedMediaItemIds.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content:
+                Text('No saved content available yet for this experience.'),
+          ),
+        );
+      }
+      return;
+    }
+
+    final cachedItems = _experienceMediaCache[experience.id];
+    late final List<SharedMediaItem> resolvedItems;
+
+    if (cachedItems == null) {
+      try {
+        final fetched = await _experienceService
+            .getSharedMediaItems(experience.sharedMediaItemIds);
+        fetched.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+        resolvedItems = fetched;
+        _experienceMediaCache[experience.id] = fetched;
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Could not load content preview: $e')),
+          );
+        }
+        return;
+      }
+    } else {
+      resolvedItems = cachedItems;
+    }
+
+    if (resolvedItems.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content:
+                Text('No saved content available yet for this experience.'),
+          ),
+        );
+      }
+      return;
+    }
+
+    if (!mounted) return;
+
+    final UserCategory? category = widget.categories.firstWhereOrNull(
+      (cat) => cat.id == experience.categoryId,
+    );
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      useRootNavigator: true,
+      builder: (modalContext) {
+        final SharedMediaItem initialMedia = resolvedItems.first;
+        return SharedMediaPreviewModal(
+          experience: experience,
+          mediaItem: initialMedia,
+          mediaItems: resolvedItems,
+          onLaunchUrl: _launchUrl,
+          category: category,
+          userColorCategories: widget.colorCategories,
+        );
+      },
     );
   }
 
@@ -928,14 +1123,20 @@ class _EventEditorModalState extends State<EventEditorModal> {
   }
 
   Future<void> _editScheduledTime(EventExperienceEntry entry, int index) async {
-    final currentTime = entry.scheduledTime ?? _currentEvent.startDateTime;
+    final DateTime eventStart = _currentEvent.startDateTime;
+    final DateTime eventEnd = _currentEvent.endDateTime.isBefore(eventStart)
+        ? eventStart
+        : _currentEvent.endDateTime;
+    DateTime currentTime = entry.scheduledTime ?? eventStart;
+    if (currentTime.isBefore(eventStart)) currentTime = eventStart;
+    if (currentTime.isAfter(eventEnd)) currentTime = eventEnd;
     Widget wrapPicker(Widget? child) => _wrapPickerWithWhiteTheme(context, child);
     
     final date = await showDatePicker(
       context: context,
       initialDate: currentTime,
-      firstDate: DateTime(2000),
-      lastDate: DateTime(2100),
+      firstDate: eventStart,
+      lastDate: eventEnd,
       builder: (ctx, child) => wrapPicker(child),
     );
     if (date == null || !mounted) return;
@@ -955,10 +1156,25 @@ class _EventEditorModalState extends State<EventEditorModal> {
       time.minute,
     );
 
+    if (newDateTime.isBefore(eventStart) || newDateTime.isAfter(eventEnd)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content:
+                Text('Scheduled times must stay within the event timeframe.'),
+          ),
+        );
+      }
+      return;
+    }
+
     setState(() {
       final entries = List<EventExperienceEntry>.from(_currentEvent.experiences);
       entries[index] = entry.copyWith(scheduledTime: newDateTime);
-      _currentEvent = _currentEvent.copyWith(experiences: entries);
+      _manuallyEditedScheduleIds.add(entry.experienceId);
+      var updatedEvent = _currentEvent.copyWith(experiences: entries);
+      updatedEvent = _eventWithAutoPrimarySchedule(updatedEvent);
+      _currentEvent = updatedEvent;
       _markUnsavedChanges();
     });
   }
@@ -1054,10 +1270,43 @@ class _EventEditorModalState extends State<EventEditorModal> {
   void _removeExperience(int index) {
     setState(() {
       final entries = List<EventExperienceEntry>.from(_currentEvent.experiences);
-      entries.removeAt(index);
-      _currentEvent = _currentEvent.copyWith(experiences: entries);
+      final removedEntry = entries.removeAt(index);
+      _manuallyEditedScheduleIds.remove(removedEntry.experienceId);
+      var updatedEvent = _currentEvent.copyWith(experiences: entries);
+      updatedEvent = _eventWithAutoPrimarySchedule(updatedEvent);
+      _currentEvent = updatedEvent;
       _markUnsavedChanges();
     });
+  }
+
+  Event _eventWithAutoPrimarySchedule(Event event) {
+    if (event.experiences.isEmpty) return event;
+    final updatedEntries = List<EventExperienceEntry>.from(event.experiences);
+
+    // Auto-set first entry time if not manually edited
+    final firstEntry = updatedEntries.first;
+    final DateTime start = event.startDateTime;
+    final DateTime? currentTime = firstEntry.scheduledTime;
+    final bool needsUpdate =
+        !_manuallyEditedScheduleIds.contains(firstEntry.experienceId) &&
+            (currentTime == null || !currentTime.isAtSameMomentAs(start));
+    if (needsUpdate) {
+      updatedEntries[0] = firstEntry.copyWith(scheduledTime: start);
+    }
+
+    // Sort entries by scheduled time (nulls go last, preserve relative order)
+    updatedEntries.sort((a, b) {
+      final aTime = a.scheduledTime;
+      final bTime = b.scheduledTime;
+      if (aTime == null && bTime == null) return 0;
+      if (aTime == null) return 1;
+      if (bTime == null) return -1;
+      final comparison = aTime.compareTo(bTime);
+      if (comparison != 0) return comparison;
+      return 0;
+    });
+
+    return event.copyWith(experiences: updatedEntries);
   }
 
   Widget _buildPeopleSection() {
@@ -1631,7 +1880,17 @@ class _EventEditorModalState extends State<EventEditorModal> {
   }
 
   String _formatDateTime(DateTime dateTime) {
-    return '${dateTime.month}/${dateTime.day}/${dateTime.year} ${_formatTime(TimeOfDay.fromDateTime(dateTime))}';
+    const weekdayNames = [
+      'Monday',
+      'Tuesday',
+      'Wednesday',
+      'Thursday',
+      'Friday',
+      'Saturday',
+      'Sunday',
+    ];
+    final String weekday = weekdayNames[dateTime.weekday - 1];
+    return '$weekday, ${dateTime.month}/${dateTime.day}/${dateTime.year} ${_formatTime(TimeOfDay.fromDateTime(dateTime))}';
   }
 
   String _formatTime(TimeOfDay time) {
@@ -1660,5 +1919,94 @@ class _EventEditorModalState extends State<EventEditorModal> {
     if (diff.inHours > 0) return '${diff.inHours}h ago';
     if (diff.inMinutes > 0) return '${diff.inMinutes}m ago';
     return 'just now';
+  }
+}
+
+/// Widget that animates sliding when an item's position in the list changes
+class _SlidingItineraryItem extends StatefulWidget {
+  final Widget child;
+  final int index;
+
+  const _SlidingItineraryItem({
+    super.key,
+    required this.child,
+    required this.index,
+  });
+
+  @override
+  State<_SlidingItineraryItem> createState() => _SlidingItineraryItemState();
+}
+
+class _SlidingItineraryItemState extends State<_SlidingItineraryItem>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _offsetAnimation;
+  int? _previousIndex;
+  double _startOffset = 0.0;
+
+  @override
+  void initState() {
+    super.initState();
+    _previousIndex = widget.index;
+    _controller = AnimationController(
+      duration: const Duration(milliseconds: 600),
+      vsync: this,
+    );
+
+    _offsetAnimation = Tween<double>(
+      begin: 0.0,
+      end: 0.0,
+    ).animate(CurvedAnimation(
+      parent: _controller,
+      curve: Curves.easeInOutCubic,
+    ));
+
+    _controller.value = 1.0;
+  }
+
+  @override
+  void didUpdateWidget(_SlidingItineraryItem oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    
+    // Detect position change
+    if (_previousIndex != null && _previousIndex != widget.index) {
+      final indexDelta = _previousIndex! - widget.index;
+      // Each card is approximately 100 pixels (adjust based on your card height)
+      // Positive indexDelta means moved up, negative means moved down
+      _startOffset = indexDelta * 100.0;
+      
+      _offsetAnimation = Tween<double>(
+        begin: _startOffset,
+        end: 0.0,
+      ).animate(CurvedAnimation(
+        parent: _controller,
+        curve: Curves.easeInOutCubic,
+      ));
+      
+      _controller.reset();
+      _controller.forward();
+    }
+    
+    _previousIndex = widget.index;
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        return Transform.translate(
+          offset: Offset(0, _offsetAnimation.value),
+          child: child,
+        );
+      },
+      child: widget.child,
+    );
   }
 }
