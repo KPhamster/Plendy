@@ -1,16 +1,28 @@
 import 'package:flutter/material.dart';
 import 'package:collection/collection.dart';
+import 'package:geolocator/geolocator.dart';
+import 'dart:async';
 import '../models/experience.dart';
 import '../models/user_category.dart';
 import '../models/color_category.dart';
+import '../models/category_sort_type.dart';
+import '../models/experience_sort_type.dart';
 
 /// A reusable full-screen modal for selecting experiences for events.
-/// 
+///
 /// This screen provides a two-tab interface (Categories and Experiences) that allows
 /// users to browse and select experiences using checkboxes. It mirrors the functionality
 /// of the Collections screen but without the Content tab and with persistent checkboxes
 /// on all experience items.
-/// 
+///
+/// Features:
+/// - Sort categories by most recent or alphabetical
+/// - Sort color categories by most recent or alphabetical
+/// - Sort experiences by most recent, alphabetical, distance, or city
+/// - Filter experiences by category and/or color category
+/// - Pre-select experiences
+/// - Inherit initial sort states from parent screen
+///
 /// Usage:
 /// ```dart
 /// final result = await Navigator.of(context).push(
@@ -19,6 +31,11 @@ import '../models/color_category.dart';
 ///       categories: categories,
 ///       colorCategories: colorCategories,
 ///       experiences: experiences,
+///       preSelectedExperienceIds: {'exp1', 'exp2'}, // optional
+///       title: 'Custom Title', // optional
+///       initialCategorySort: CategorySortType.alphabetical, // optional
+///       initialColorCategorySort: ColorCategorySortType.mostRecent, // optional
+///       initialExperienceSort: ExperienceSortType.distanceFromMe, // optional
 ///     ),
 ///     fullscreenDialog: true,
 ///   ),
@@ -33,6 +50,9 @@ class EventExperienceSelectorScreen extends StatefulWidget {
   final List<Experience> experiences;
   final Set<String>? preSelectedExperienceIds;
   final String? title;
+  final CategorySortType? initialCategorySort;
+  final ColorCategorySortType? initialColorCategorySort;
+  final ExperienceSortType? initialExperienceSort;
 
   const EventExperienceSelectorScreen({
     super.key,
@@ -41,6 +61,9 @@ class EventExperienceSelectorScreen extends StatefulWidget {
     required this.experiences,
     this.preSelectedExperienceIds,
     this.title,
+    this.initialCategorySort,
+    this.initialColorCategorySort,
+    this.initialExperienceSort,
   });
 
   @override
@@ -58,12 +81,51 @@ class _EventExperienceSelectorScreenState
   ColorCategory? _selectedColorCategory;
   bool _showingColorCategories = false;
 
+  // Sorting state
+  late CategorySortType _categorySortType;
+  late ColorCategorySortType _colorCategorySortType;
+  late ExperienceSortType _experienceSortType;
+
+  // Filtering state
+  Set<String> _selectedCategoryIds = {};
+  Set<String> _selectedColorCategoryIds = {};
+
+  // Sorted/filtered lists
+  late List<UserCategory> _sortedCategories;
+  late List<ColorCategory> _sortedColorCategories;
+  late List<Experience> _sortedExperiences;
+  late List<Experience> _filteredExperiences;
+
+  bool _isLoading = false;
+
+  bool get _hasActiveFilters =>
+      _selectedCategoryIds.isNotEmpty || _selectedColorCategoryIds.isNotEmpty;
+
   @override
   void initState() {
     super.initState();
     _selectedExperienceIds = widget.preSelectedExperienceIds != null
         ? Set.from(widget.preSelectedExperienceIds!)
         : {};
+
+    // Initialize sort types from parent or use defaults
+    _categorySortType =
+        widget.initialCategorySort ?? CategorySortType.mostRecent;
+    _colorCategorySortType =
+        widget.initialColorCategorySort ?? ColorCategorySortType.mostRecent;
+    _experienceSortType =
+        widget.initialExperienceSort ?? ExperienceSortType.mostRecent;
+
+    // Initialize sorted lists - preserve the incoming order from parent
+    // The parent (collections_screen) has already applied any custom ordering
+    _sortedCategories = List.from(widget.categories);
+    _sortedColorCategories = List.from(widget.colorCategories);
+    _sortedExperiences = List.from(widget.experiences);
+    _filteredExperiences = List.from(widget.experiences);
+
+    // Do NOT apply sorting in initState - preserve the order from the parent screen
+    // Sorting will only be applied when user explicitly changes sort via dropdown
+
     _tabController = TabController(length: 2, vsync: this);
     _tabController.addListener(() {
       if (_tabController.indexIsChanging) {
@@ -102,6 +164,524 @@ class _EventExperienceSelectorScreenState
     return Colors.grey;
   }
 
+  // Sorting methods
+  void _applyCategorySort(CategorySortType sortType) {
+    setState(() {
+      _categorySortType = sortType;
+      _sortedCategories = List.from(widget.categories);
+
+      if (sortType == CategorySortType.alphabetical) {
+        _sortedCategories.sort(
+            (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+      } else {
+        // mostRecent
+        _sortedCategories.sort((a, b) {
+          final tsA = a.lastUsedTimestamp;
+          final tsB = b.lastUsedTimestamp;
+          if (tsA == null && tsB == null) {
+            return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+          }
+          if (tsA == null) return 1;
+          if (tsB == null) return -1;
+          return tsB.compareTo(tsA);
+        });
+      }
+    });
+  }
+
+  void _applyColorCategorySort(ColorCategorySortType sortType) {
+    setState(() {
+      _colorCategorySortType = sortType;
+      _sortedColorCategories = List.from(widget.colorCategories);
+
+      if (sortType == ColorCategorySortType.alphabetical) {
+        _sortedColorCategories.sort(
+            (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+      } else {
+        // mostRecent
+        _sortedColorCategories.sort((a, b) {
+          final tsA = a.lastUsedTimestamp;
+          final tsB = b.lastUsedTimestamp;
+          if (tsA == null && tsB == null) {
+            return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+          }
+          if (tsA == null) return 1;
+          if (tsB == null) return -1;
+          return tsB.compareTo(tsA);
+        });
+      }
+    });
+  }
+
+  Future<void> _applyExperienceSort(ExperienceSortType sortType) async {
+    setState(() {
+      _experienceSortType = sortType;
+      _isLoading = sortType == ExperienceSortType.distanceFromMe;
+    });
+
+    try {
+      if (sortType == ExperienceSortType.alphabetical) {
+        _sortedExperiences.sort(
+            (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+        _filteredExperiences.sort(
+            (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+      } else if (sortType == ExperienceSortType.mostRecent) {
+        _sortedExperiences.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+        _filteredExperiences.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+      } else if (sortType == ExperienceSortType.distanceFromMe) {
+        await _sortExperiencesByDistance(_sortedExperiences);
+        await _sortExperiencesByDistance(_filteredExperiences);
+      } else if (sortType == ExperienceSortType.city) {
+        String normalizeCity(String? city) => (city ?? '').trim().toLowerCase();
+        _sortedExperiences.sort((a, b) {
+          final ca = normalizeCity(a.location.city);
+          final cb = normalizeCity(b.location.city);
+          if (ca.isEmpty && cb.isEmpty) return 0;
+          if (ca.isEmpty) return 1;
+          if (cb.isEmpty) return -1;
+          final cmp = ca.compareTo(cb);
+          if (cmp != 0) return cmp;
+          return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+        });
+        _filteredExperiences.sort((a, b) {
+          final ca = normalizeCity(a.location.city);
+          final cb = normalizeCity(b.location.city);
+          if (ca.isEmpty && cb.isEmpty) return 0;
+          if (ca.isEmpty) return 1;
+          if (cb.isEmpty) return -1;
+          final cmp = ca.compareTo(cb);
+          if (cmp != 0) return cmp;
+          return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+        });
+      }
+
+      setState(() {
+        _isLoading = false;
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error sorting experiences: $e')),
+        );
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _sortExperiencesByDistance(
+      List<Experience> experiencesToSort) async {
+    Position? currentPosition;
+    bool locationPermissionGranted = false;
+
+    try {
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content:
+                  Text('Location services are disabled. Please enable them.')),
+        );
+        return;
+      }
+
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+                content: Text(
+                    'Location permission denied. Cannot sort by distance.')),
+          );
+        }
+        return;
+      }
+
+      locationPermissionGranted = true;
+
+      currentPosition = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.medium,
+        timeLimit: const Duration(seconds: 10),
+      );
+    } catch (e) {
+      if (mounted) {
+        String message = 'Could not get current location.';
+        if (e is TimeoutException) {
+          message = 'Could not get current location: Request timed out.';
+        } else if (!locationPermissionGranted) {
+          message = 'Location permission denied. Cannot sort by distance.';
+        } else {
+          message = 'Error getting location: ${e.toString()}';
+        }
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(message)));
+      }
+      return;
+    }
+
+    List<Map<String, dynamic>> experiencesWithDistance = [];
+    for (var exp in experiencesToSort) {
+      double? distance;
+      if (exp.location.latitude != 0.0 || exp.location.longitude != 0.0) {
+        try {
+          distance = Geolocator.distanceBetween(
+            currentPosition.latitude,
+            currentPosition.longitude,
+            exp.location.latitude,
+            exp.location.longitude,
+          );
+        } catch (e) {
+          distance = null;
+        }
+      } else {
+        distance = null;
+      }
+      experiencesWithDistance.add({'experience': exp, 'distance': distance});
+    }
+
+    experiencesWithDistance.sort((a, b) {
+      final distA = a['distance'] as double?;
+      final distB = b['distance'] as double?;
+      if (distA == null && distB == null) return 0;
+      if (distA == null) return 1;
+      if (distB == null) return -1;
+      return distA.compareTo(distB);
+    });
+
+    experiencesToSort.clear();
+    experiencesToSort.addAll(experiencesWithDistance
+        .map((item) => item['experience'] as Experience)
+        .toList());
+  }
+
+  void _applyFiltersAndUpdateLists() {
+    final filteredExperiences = _sortedExperiences.where((exp) {
+      final bool categoryMatch = _selectedCategoryIds.isEmpty ||
+          (exp.categoryId != null &&
+              _selectedCategoryIds.contains(exp.categoryId)) ||
+          (exp.otherCategories
+              .any((catId) => _selectedCategoryIds.contains(catId)));
+
+      final bool matchesPrimaryColor = exp.colorCategoryId != null &&
+          _selectedColorCategoryIds.contains(exp.colorCategoryId);
+      final bool matchesOtherColor = exp.otherColorCategoryIds
+          .any((colorId) => _selectedColorCategoryIds.contains(colorId));
+      final bool colorMatch = _selectedColorCategoryIds.isEmpty ||
+          matchesPrimaryColor ||
+          matchesOtherColor;
+
+      return categoryMatch && colorMatch;
+    }).toList();
+
+    setState(() {
+      _filteredExperiences = filteredExperiences;
+    });
+  }
+
+  Future<void> _showFilterDialog() async {
+    Set<String> tempSelectedCategoryIds = Set.from(_selectedCategoryIds);
+    Set<String> tempSelectedColorCategoryIds =
+        Set.from(_selectedColorCategoryIds);
+
+    await showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          backgroundColor: Colors.white,
+          title: const Text('Filter Items'),
+          content: StatefulBuilder(
+            builder: (BuildContext context, StateSetter setStateDialog) {
+              return SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    const Text('By Category:',
+                        style: TextStyle(fontWeight: FontWeight.bold)),
+                    if (_sortedCategories.isEmpty)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 8.0),
+                        child: Text('No categories available.'),
+                      ),
+                    ...(_sortedCategories.toList()
+                          ..sort((a, b) => a.name.compareTo(b.name)))
+                        .map((category) {
+                      return CheckboxListTile(
+                        title: Row(
+                          children: [
+                            SizedBox(
+                                width: 16,
+                                child: Center(child: Text(category.icon))),
+                            const SizedBox(width: 12),
+                            Expanded(
+                                child: Text(category.name,
+                                    overflow: TextOverflow.ellipsis)),
+                          ],
+                        ),
+                        value: tempSelectedCategoryIds.contains(category.id),
+                        controlAffinity: ListTileControlAffinity.leading,
+                        contentPadding: EdgeInsets.zero,
+                        onChanged: (bool? selected) {
+                          setStateDialog(() {
+                            if (selected == true) {
+                              tempSelectedCategoryIds.add(category.id);
+                            } else {
+                              tempSelectedCategoryIds.remove(category.id);
+                            }
+                          });
+                        },
+                      );
+                    }),
+                    const SizedBox(height: 16),
+                    const Text('By Color:',
+                        style: TextStyle(fontWeight: FontWeight.bold)),
+                    if (_sortedColorCategories.isEmpty)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 8.0),
+                        child: Text('No color categories available.'),
+                      ),
+                    ...(_sortedColorCategories.toList()
+                          ..sort((a, b) => a.name.compareTo(b.name)))
+                        .map((colorCategory) {
+                      return CheckboxListTile(
+                        controlAffinity: ListTileControlAffinity.leading,
+                        contentPadding: EdgeInsets.zero,
+                        title: Row(
+                          children: [
+                            Container(
+                              width: 16,
+                              height: 16,
+                              decoration: BoxDecoration(
+                                color: _parseColor(colorCategory.colorHex),
+                                shape: BoxShape.circle,
+                                border: Border.all(color: Colors.grey),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                                child: Text(colorCategory.name,
+                                    overflow: TextOverflow.ellipsis)),
+                          ],
+                        ),
+                        value: tempSelectedColorCategoryIds
+                            .contains(colorCategory.id),
+                        onChanged: (bool? selected) {
+                          setStateDialog(() {
+                            if (selected == true) {
+                              tempSelectedColorCategoryIds
+                                  .add(colorCategory.id);
+                            } else {
+                              tempSelectedColorCategoryIds
+                                  .remove(colorCategory.id);
+                            }
+                          });
+                        },
+                      );
+                    }),
+                  ],
+                ),
+              );
+            },
+          ),
+          actions: <Widget>[
+            TextButton(
+              child: const Text('Show All'),
+              onPressed: () {
+                tempSelectedCategoryIds.clear();
+                tempSelectedColorCategoryIds.clear();
+                setState(() {
+                  _selectedCategoryIds = tempSelectedCategoryIds;
+                  _selectedColorCategoryIds = tempSelectedColorCategoryIds;
+                });
+                Navigator.of(context).pop();
+                _applyFiltersAndUpdateLists();
+              },
+            ),
+            TextButton(
+              child: const Text('Cancel'),
+              onPressed: () {
+                Navigator.of(context).pop();
+              },
+            ),
+            TextButton(
+              child: const Text('Apply'),
+              onPressed: () {
+                setState(() {
+                  _selectedCategoryIds = tempSelectedCategoryIds;
+                  _selectedColorCategoryIds = tempSelectedColorCategoryIds;
+                });
+                Navigator.of(context).pop();
+                _applyFiltersAndUpdateLists();
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  PopupMenuItem<T> _buildPopupMenuItem<T>({
+    required T value,
+    required String text,
+    required T currentValue,
+  }) {
+    final bool isSelected = value == currentValue;
+    return PopupMenuItem<T>(
+      value: value,
+      child: Row(
+        children: [
+          Icon(
+            isSelected ? Icons.check : Icons.radio_button_off,
+            color: isSelected ? Theme.of(context).primaryColor : Colors.grey,
+            size: 20,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              text,
+              style: TextStyle(
+                fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                color: isSelected ? Theme.of(context).primaryColor : null,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTopActionRow() {
+    final actions = <Widget>[];
+    if (_currentTabIndex == 0 &&
+        _selectedCategory == null &&
+        !_showingColorCategories) {
+      actions.add(_buildCategorySortMenuButton());
+    }
+    if (_currentTabIndex == 0 &&
+        _selectedCategory == null &&
+        _showingColorCategories) {
+      actions.add(_buildColorCategorySortMenuButton());
+    }
+    if (_currentTabIndex == 1) {
+      actions.add(_buildExperienceSortMenuButton());
+      actions.add(_buildFilterActionButton());
+    }
+
+    if (actions.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    final rowChildren = <Widget>[];
+    for (var action in actions) {
+      if (rowChildren.isNotEmpty) {
+        rowChildren.add(const SizedBox(width: 8));
+      }
+      rowChildren.add(action);
+    }
+
+    return Container(
+      color: Colors.white,
+      padding: const EdgeInsets.fromLTRB(8.0, 4.0, 8.0, 4.0),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: rowChildren,
+      ),
+    );
+  }
+
+  Widget _buildCategorySortMenuButton() {
+    return PopupMenuButton<CategorySortType>(
+      icon: const Icon(Icons.sort),
+      tooltip: 'Sort Categories',
+      padding: EdgeInsets.zero,
+      color: Colors.white,
+      onSelected: (CategorySortType result) {
+        _applyCategorySort(result);
+      },
+      itemBuilder: (BuildContext context) => <PopupMenuEntry<CategorySortType>>[
+        _buildPopupMenuItem<CategorySortType>(
+          value: CategorySortType.mostRecent,
+          text: 'Sort by Most Recent',
+          currentValue: _categorySortType,
+        ),
+        _buildPopupMenuItem<CategorySortType>(
+          value: CategorySortType.alphabetical,
+          text: 'Sort Alphabetically',
+          currentValue: _categorySortType,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildColorCategorySortMenuButton() {
+    return PopupMenuButton<ColorCategorySortType>(
+      icon: const Icon(Icons.sort),
+      tooltip: 'Sort Color Categories',
+      padding: EdgeInsets.zero,
+      color: Colors.white,
+      onSelected: (ColorCategorySortType result) {
+        _applyColorCategorySort(result);
+      },
+      itemBuilder: (BuildContext context) =>
+          <PopupMenuEntry<ColorCategorySortType>>[
+        _buildPopupMenuItem<ColorCategorySortType>(
+          value: ColorCategorySortType.mostRecent,
+          text: 'Sort by Most Recent',
+          currentValue: _colorCategorySortType,
+        ),
+        _buildPopupMenuItem<ColorCategorySortType>(
+          value: ColorCategorySortType.alphabetical,
+          text: 'Sort Alphabetically',
+          currentValue: _colorCategorySortType,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildExperienceSortMenuButton() {
+    return PopupMenuButton<ExperienceSortType>(
+      icon: const Icon(Icons.sort),
+      tooltip: 'Sort Experiences',
+      padding: EdgeInsets.zero,
+      color: Colors.white,
+      onSelected: (ExperienceSortType result) {
+        _applyExperienceSort(result);
+      },
+      itemBuilder: (BuildContext context) =>
+          <PopupMenuEntry<ExperienceSortType>>[
+        _buildPopupMenuItem<ExperienceSortType>(
+          value: ExperienceSortType.mostRecent,
+          text: 'Sort by Most Recent',
+          currentValue: _experienceSortType,
+        ),
+        _buildPopupMenuItem<ExperienceSortType>(
+          value: ExperienceSortType.alphabetical,
+          text: 'Sort Alphabetically',
+          currentValue: _experienceSortType,
+        ),
+        _buildPopupMenuItem<ExperienceSortType>(
+          value: ExperienceSortType.distanceFromMe,
+          text: 'Sort by Distance',
+          currentValue: _experienceSortType,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildFilterActionButton() {
+    return IconButton(
+      icon: const Icon(Icons.filter_list),
+      tooltip: 'Filter Items',
+      onPressed: _showFilterDialog,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -134,117 +714,128 @@ class _EventExperienceSelectorScreenState
           ),
         ],
       ),
-      body: Container(
-        color: Colors.white,
-        child: Column(
-          children: [
-            Container(
+      body: _isLoading
+          ? Container(
               color: Colors.white,
-              child: TabBar(
-                controller: _tabController,
-                tabs: const [
-                  Tab(text: 'Categories'),
-                  Tab(text: 'Experiences'),
-                ],
-                labelColor: Theme.of(context).primaryColor,
-                unselectedLabelColor: Colors.grey,
-                indicatorColor: Theme.of(context).primaryColor,
+              child: const Center(
+                child: CircularProgressIndicator(color: Colors.black54),
               ),
-            ),
-            Expanded(
-              child: TabBarView(
-                controller: _tabController,
+            )
+          : Container(
+              color: Colors.white,
+              child: Column(
                 children: [
-                  // Categories Tab
+                  _buildTopActionRow(),
                   Container(
                     color: Colors.white,
-                    child: Column(
+                    child: TabBar(
+                      controller: _tabController,
+                      tabs: const [
+                        Tab(text: 'Categories'),
+                        Tab(text: 'Experiences'),
+                      ],
+                      labelColor: Theme.of(context).primaryColor,
+                      unselectedLabelColor: Colors.grey,
+                      indicatorColor: Theme.of(context).primaryColor,
+                    ),
+                  ),
+                  Expanded(
+                    child: TabBarView(
+                      controller: _tabController,
                       children: [
-                        Padding(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 7.0, vertical: 8.0),
-                          child: Row(
+                        // Categories Tab
+                        Container(
+                          color: Colors.white,
+                          child: Column(
                             children: [
-                              const Expanded(child: SizedBox()),
-                              Flexible(
-                                child: Builder(
-                                  builder: (context) {
-                                    final IconData toggleIcon =
-                                        _showingColorCategories
-                                            ? Icons.category_outlined
-                                            : Icons.color_lens_outlined;
-                                    final String toggleLabel =
-                                        _showingColorCategories
-                                            ? 'Categories'
-                                            : 'Color Categories';
-                                    void onToggle() {
-                                      setState(() {
-                                        _showingColorCategories =
-                                            !_showingColorCategories;
-                                        _selectedCategory = null;
-                                        _selectedColorCategory = null;
-                                      });
-                                    }
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 7.0, vertical: 8.0),
+                                child: Row(
+                                  children: [
+                                    const Expanded(child: SizedBox()),
+                                    Flexible(
+                                      child: Builder(
+                                        builder: (context) {
+                                          final IconData toggleIcon =
+                                              _showingColorCategories
+                                                  ? Icons.category_outlined
+                                                  : Icons.color_lens_outlined;
+                                          final String toggleLabel =
+                                              _showingColorCategories
+                                                  ? 'Categories'
+                                                  : 'Color Categories';
+                                          void onToggle() {
+                                            setState(() {
+                                              _showingColorCategories =
+                                                  !_showingColorCategories;
+                                              _selectedCategory = null;
+                                              _selectedColorCategory = null;
+                                            });
+                                          }
 
-                                    return Align(
-                                      alignment: Alignment.centerRight,
-                                      child: FittedBox(
-                                        fit: BoxFit.scaleDown,
-                                        child: TextButton.icon(
-                                          style: TextButton.styleFrom(
-                                            visualDensity: const VisualDensity(
-                                                horizontal: -2, vertical: -2),
-                                            padding: const EdgeInsets.symmetric(
-                                                horizontal: 8.0),
-                                          ),
-                                          icon: Icon(toggleIcon),
-                                          label: Text(toggleLabel),
-                                          onPressed: onToggle,
-                                        ),
+                                          return Align(
+                                            alignment: Alignment.centerRight,
+                                            child: FittedBox(
+                                              fit: BoxFit.scaleDown,
+                                              child: TextButton.icon(
+                                                style: TextButton.styleFrom(
+                                                  visualDensity:
+                                                      const VisualDensity(
+                                                          horizontal: -2,
+                                                          vertical: -2),
+                                                  padding: const EdgeInsets
+                                                      .symmetric(
+                                                      horizontal: 8.0),
+                                                ),
+                                                icon: Icon(toggleIcon),
+                                                label: Text(toggleLabel),
+                                                onPressed: onToggle,
+                                              ),
+                                            ),
+                                          );
+                                        },
                                       ),
-                                    );
-                                  },
+                                    ),
+                                  ],
                                 ),
+                              ),
+                              Expanded(
+                                child: _selectedCategory != null
+                                    ? _buildCategoryExperiencesView()
+                                    : _selectedColorCategory != null
+                                        ? _buildColorCategoryExperiencesView()
+                                        : _showingColorCategories
+                                            ? _buildColorCategoriesList()
+                                            : _buildCategoriesList(),
                               ),
                             ],
                           ),
                         ),
-                        Expanded(
-                          child: _selectedCategory != null
-                              ? _buildCategoryExperiencesView()
-                              : _selectedColorCategory != null
-                                  ? _buildColorCategoryExperiencesView()
-                                  : _showingColorCategories
-                                      ? _buildColorCategoriesList()
-                                      : _buildCategoriesList(),
+                        // Experiences Tab
+                        Container(
+                          color: Colors.white,
+                          child: _buildExperiencesListView(),
                         ),
                       ],
                     ),
                   ),
-                  // Experiences Tab
-                  Container(
-                    color: Colors.white,
-                    child: _buildExperiencesListView(),
-                  ),
                 ],
               ),
             ),
-          ],
-        ),
-      ),
     );
   }
 
   Widget _buildCategoriesList() {
-    if (widget.categories.isEmpty) {
+    if (_sortedCategories.isEmpty) {
       return const Center(child: Text('No categories found.'));
     }
 
     return ListView.builder(
       padding: const EdgeInsets.only(bottom: 80.0),
-      itemCount: widget.categories.length,
+      itemCount: _sortedCategories.length,
       itemBuilder: (context, index) {
-        final category = widget.categories[index];
+        final category = _sortedCategories[index];
         final count = widget.experiences
             .where((exp) =>
                 exp.categoryId == category.id ||
@@ -269,19 +860,18 @@ class _EventExperienceSelectorScreenState
   }
 
   Widget _buildColorCategoriesList() {
-    if (widget.colorCategories.isEmpty) {
+    if (_sortedColorCategories.isEmpty) {
       return const Center(child: Text('No color categories found.'));
     }
 
     return ListView.builder(
       padding: const EdgeInsets.only(bottom: 80.0),
-      itemCount: widget.colorCategories.length,
+      itemCount: _sortedColorCategories.length,
       itemBuilder: (context, index) {
-        final category = widget.colorCategories[index];
+        final category = _sortedColorCategories[index];
         final count = widget.experiences.where((exp) {
           final bool isPrimary = exp.colorCategoryId == category.id;
-          final bool isOther =
-              exp.otherColorCategoryIds.contains(category.id);
+          final bool isOther = exp.otherColorCategoryIds.contains(category.id);
           return isPrimary || isOther;
         }).length;
 
@@ -310,7 +900,8 @@ class _EventExperienceSelectorScreenState
   }
 
   Widget _buildCategoryExperiencesView() {
-    final categoryExperiences = widget.experiences
+    // Use sorted/filtered experiences list
+    final categoryExperiences = _sortedExperiences
         .where((exp) =>
             exp.categoryId == _selectedCategory!.id ||
             exp.otherCategories.contains(_selectedCategory!.id))
@@ -353,8 +944,7 @@ class _EventExperienceSelectorScreenState
                   padding: const EdgeInsets.only(bottom: 80.0),
                   itemCount: categoryExperiences.length,
                   itemBuilder: (context, index) {
-                    return _buildExperienceListItem(
-                        categoryExperiences[index]);
+                    return _buildExperienceListItem(categoryExperiences[index]);
                   },
                 ),
         ),
@@ -363,7 +953,8 @@ class _EventExperienceSelectorScreenState
   }
 
   Widget _buildColorCategoryExperiencesView() {
-    final categoryExperiences = widget.experiences.where((exp) {
+    // Use sorted/filtered experiences list
+    final categoryExperiences = _sortedExperiences.where((exp) {
       final bool isPrimary = exp.colorCategoryId == _selectedColorCategory!.id;
       final bool isOther =
           exp.otherColorCategoryIds.contains(_selectedColorCategory!.id);
@@ -407,8 +998,7 @@ class _EventExperienceSelectorScreenState
                   padding: const EdgeInsets.only(bottom: 80.0),
                   itemCount: categoryExperiences.length,
                   itemBuilder: (context, index) {
-                    return _buildExperienceListItem(
-                        categoryExperiences[index]);
+                    return _buildExperienceListItem(categoryExperiences[index]);
                   },
                 ),
         ),
@@ -417,26 +1007,30 @@ class _EventExperienceSelectorScreenState
   }
 
   Widget _buildExperiencesListView() {
-    if (widget.experiences.isEmpty) {
-      return const Center(child: Text('No experiences found. Add some!'));
+    if (_filteredExperiences.isEmpty) {
+      return Center(
+        child: Text(_hasActiveFilters
+            ? 'No experiences match the current filters.'
+            : 'No experiences found. Add some!'),
+      );
     }
 
     return ListView.builder(
       padding: const EdgeInsets.only(bottom: 80.0),
-      itemCount: widget.experiences.length,
+      itemCount: _filteredExperiences.length,
       itemBuilder: (context, index) {
-        return _buildExperienceListItem(widget.experiences[index]);
+        return _buildExperienceListItem(_filteredExperiences[index]);
       },
     );
   }
 
   Widget _buildExperienceListItem(Experience experience) {
-    final category = widget.categories.firstWhereOrNull(
+    final category = _sortedCategories.firstWhereOrNull(
       (cat) => cat.id == experience.categoryId,
     );
     final categoryIcon = category?.icon ?? '?';
 
-    final colorCategoryForBox = widget.colorCategories.firstWhereOrNull(
+    final colorCategoryForBox = _sortedColorCategories.firstWhereOrNull(
       (cc) => cc.id == experience.colorCategoryId,
     );
     final Color leadingBoxColor = colorCategoryForBox != null
