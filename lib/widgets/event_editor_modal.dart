@@ -1,21 +1,40 @@
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:collection/collection.dart';
 import '../models/event.dart';
 import '../models/experience.dart';
 import '../models/user_profile.dart';
+import '../models/user_category.dart';
+import '../models/color_category.dart';
 import '../services/event_service.dart';
 import '../services/experience_service.dart';
 import '../services/auth_service.dart';
+
+class EventEditorResult {
+  final Event? savedEvent;
+  final Event? draftEvent;
+  final bool wasSaved;
+
+  const EventEditorResult({
+    this.savedEvent,
+    this.draftEvent,
+    this.wasSaved = false,
+  });
+}
 
 /// Full-screen modal for editing event details
 class EventEditorModal extends StatefulWidget {
   final Event event;
   final List<Experience> experiences; // Resolved experiences for the event
+  final List<UserCategory> categories;
+  final List<ColorCategory> colorCategories;
 
   const EventEditorModal({
     super.key,
     required this.event,
     required this.experiences,
+    required this.categories,
+    required this.colorCategories,
   });
 
   @override
@@ -112,10 +131,20 @@ class _EventEditorModalState extends State<EventEditorModal> {
         updatedAt: DateTime.now(),
       );
 
-      await _eventService.updateEvent(updatedEvent);
+      final isNewEvent = _currentEvent.id.isEmpty;
+      Event savedEvent;
+      if (isNewEvent) {
+        // New event - create it
+        final eventId = await _eventService.createEvent(updatedEvent);
+        savedEvent = updatedEvent.copyWith(id: eventId);
+      } else {
+        // Existing event - update it
+        await _eventService.updateEvent(updatedEvent);
+        savedEvent = updatedEvent;
+      }
       
       setState(() {
-        _currentEvent = updatedEvent;
+        _currentEvent = savedEvent;
         _hasUnsavedChanges = false;
         _isSaving = false;
       });
@@ -124,6 +153,15 @@ class _EventEditorModalState extends State<EventEditorModal> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Event saved')),
         );
+        
+        // If this was a new event, pop and return it
+        if (isNewEvent) {
+          _popWithDraftResult(
+            wasSaved: true,
+            savedEvent: savedEvent,
+            draftOverride: savedEvent,
+          );
+        }
       }
     } catch (e) {
       setState(() {
@@ -153,7 +191,41 @@ class _EventEditorModalState extends State<EventEditorModal> {
     }
   }
 
-  Future<bool> _onWillPop() async {
+  Event _synchronizeCurrentEventFromControllers() {
+    final String titleText = _titleController.text;
+    final String descriptionText = _descriptionController.text;
+    final String coverText = _coverImageUrlController.text.trim();
+    final String capacityText = _capacityController.text.trim();
+    final int? capacityValue =
+        capacityText.isEmpty ? null : int.tryParse(capacityText);
+
+    _currentEvent = _currentEvent.copyWith(
+      title: titleText,
+      description: descriptionText,
+      coverImageUrl: coverText.isEmpty ? null : coverText,
+      capacity: capacityValue,
+    );
+    return _currentEvent;
+  }
+
+  void _popWithDraftResult({
+    bool wasSaved = false,
+    Event? savedEvent,
+    Event? draftOverride,
+  }) {
+    if (!mounted) return;
+    final Event draftEvent =
+        draftOverride ?? _synchronizeCurrentEventFromControllers();
+    Navigator.of(context).pop(
+      EventEditorResult(
+        savedEvent: wasSaved ? (savedEvent ?? draftEvent) : savedEvent,
+        draftEvent: draftEvent,
+        wasSaved: wasSaved,
+      ),
+    );
+  }
+
+  Future<bool> _confirmLeave() async {
     if (!_hasUnsavedChanges) {
       return true;
     }
@@ -180,13 +252,26 @@ class _EventEditorModalState extends State<EventEditorModal> {
     return result ?? false;
   }
 
+  Future<void> _handleBackNavigation() async {
+    final shouldLeave = await _confirmLeave();
+    if (shouldLeave) {
+      _popWithDraftResult();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final Duration duration = _currentEvent.endDateTime.difference(_currentEvent.startDateTime);
     final String durationText = _formatDuration(duration);
 
     return WillPopScope(
-      onWillPop: _onWillPop,
+      onWillPop: () async {
+        final shouldLeave = await _confirmLeave();
+        if (shouldLeave) {
+          _popWithDraftResult();
+        }
+        return false;
+      },
       child: Scaffold(
         backgroundColor: Colors.white,
         appBar: AppBar(
@@ -194,12 +279,8 @@ class _EventEditorModalState extends State<EventEditorModal> {
           foregroundColor: Colors.black,
           elevation: 0,
           leading: IconButton(
-            icon: const Icon(Icons.close),
-            onPressed: () async {
-              if (await _onWillPop()) {
-                if (mounted) Navigator.of(context).pop();
-              }
-            },
+            icon: const Icon(Icons.arrow_back),
+            onPressed: _handleBackNavigation,
           ),
           title: TextField(
             controller: _titleController,
@@ -655,18 +736,118 @@ class _EventEditorModalState extends State<EventEditorModal> {
     Experience experience,
     int index,
   ) {
+    final UserCategory? category = widget.categories.firstWhereOrNull(
+      (cat) => cat.id == experience.categoryId,
+    );
+    final ColorCategory? colorCategory = widget.colorCategories.firstWhereOrNull(
+      (color) => color.id == experience.colorCategoryId,
+    );
+    final String categoryIcon =
+        category?.icon ?? experience.categoryIconDenorm ?? '?';
+    final Color leadingBoxColor = colorCategory != null
+        ? colorCategory.color.withOpacity(0.5)
+        : experience.colorHexDenorm != null &&
+                experience.colorHexDenorm!.isNotEmpty
+            ? _parseColor(experience.colorHexDenorm!).withOpacity(0.5)
+            : Colors.white;
+    final List<UserCategory> otherCategories = experience.otherCategories
+        .map((id) =>
+            widget.categories.firstWhereOrNull((category) => category.id == id))
+        .whereType<UserCategory>()
+        .toList();
+    final List<ColorCategory> otherColorCategories = experience
+        .otherColorCategoryIds
+        .map((id) => widget.colorCategories
+            .firstWhereOrNull((colorCategory) => colorCategory.id == id))
+        .whereType<ColorCategory>()
+        .toList();
+    final String? address = experience.location.address;
+    final bool hasAddress = address != null && address.isNotEmpty;
+    final bool hasOtherCategories = otherCategories.isNotEmpty;
+    final bool hasOtherColorCategories = otherColorCategories.isNotEmpty;
+
+    final List<Widget> subtitleChildren = [];
+    if (hasAddress) {
+      subtitleChildren.add(
+        Text(
+          address!,
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+      );
+    }
+    if (hasOtherCategories || hasOtherColorCategories) {
+      subtitleChildren.add(
+        Padding(
+          padding: EdgeInsets.only(top: hasAddress ? 2.0 : 0.0),
+          child: Wrap(
+            spacing: 6.0,
+            runSpacing: 2.0,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              ...otherCategories.map(
+                (otherCategory) => Text(
+                  otherCategory.icon,
+                  style: const TextStyle(fontSize: 14),
+                ),
+              ),
+              ...otherColorCategories.map(
+                (otherColorCategory) => Container(
+                  width: 10,
+                  height: 10,
+                  decoration: BoxDecoration(
+                    color: otherColorCategory.color,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final Widget leadingWidget = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        ReorderableDragStartListener(
+          index: index,
+          child: const Icon(Icons.drag_handle),
+        ),
+        const SizedBox(width: 4),
+        Container(
+          width: 56,
+          height: 56,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: leadingBoxColor,
+            borderRadius: BorderRadius.circular(8.0),
+          ),
+          child: Text(
+            categoryIcon,
+            style: const TextStyle(fontSize: 28),
+          ),
+        ),
+      ],
+    );
+
     return Card(
       key: ValueKey(entry.experienceId),
       margin: const EdgeInsets.only(bottom: 12),
       child: ExpansionTile(
-        leading: ReorderableDragStartListener(
-          index: index,
-          child: const Icon(Icons.drag_handle),
+        tilePadding: const EdgeInsets.symmetric(horizontal: 8.0),
+        childrenPadding: const EdgeInsets.symmetric(horizontal: 16.0),
+        leading: leadingWidget,
+        title: Text(
+          experience.name,
+          overflow: TextOverflow.ellipsis,
+          maxLines: 1,
         ),
-        title: Text(experience.name),
-        subtitle: experience.location.address != null
-            ? Text(experience.location.address!)
-            : null,
+        subtitle: subtitleChildren.isEmpty
+            ? null
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: subtitleChildren,
+              ),
         children: [
           Padding(
             padding: const EdgeInsets.all(16.0),
@@ -729,6 +910,21 @@ class _EventEditorModalState extends State<EventEditorModal> {
         ],
       ),
     );
+  }
+
+  Color _parseColor(String hexColor) {
+    String normalized = hexColor.toUpperCase().replaceAll('#', '');
+    if (normalized.length == 6) {
+      normalized = 'FF$normalized';
+    }
+    if (normalized.length == 8) {
+      try {
+        return Color(int.parse('0x$normalized'));
+      } catch (_) {
+        return Colors.white;
+      }
+    }
+    return Colors.white;
   }
 
   Future<void> _editScheduledTime(EventExperienceEntry entry, int index) async {

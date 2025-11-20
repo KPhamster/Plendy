@@ -9,7 +9,6 @@ import '../models/color_category.dart';
 import '../models/category_sort_type.dart';
 import '../models/experience_sort_type.dart';
 import '../models/event.dart';
-import '../services/event_service.dart';
 import '../services/google_maps_service.dart';
 import '../services/auth_service.dart';
 import '../widgets/event_editor_modal.dart';
@@ -118,9 +117,10 @@ class _EventExperienceSelectorScreenState
   
   // Track the order in which experiences were selected
   final List<String> _selectionOrder = [];
+
+  Event? _draftEvent;
   
   // Services
-  final _eventService = EventService();
   final _authService = AuthService();
 
   bool get _hasActiveFilters =>
@@ -822,7 +822,7 @@ class _EventExperienceSelectorScreenState
               onPressed: _selectedExperienceIds.isEmpty
                   ? null
                   : () async {
-                      await _createEventAndNavigateToEditor();
+                      await _navigateToEditor();
                     },
               child: Text('Done (${_selectedExperienceIds.length})'),
             ),
@@ -1224,6 +1224,69 @@ class _EventExperienceSelectorScreenState
         ? _parseColor(colorCategoryForBox.colorHex).withOpacity(0.5)
         : Colors.white;
 
+    final List<UserCategory> otherCategories = experience.otherCategories
+        .map(
+          (categoryId) => _sortedCategories.firstWhereOrNull(
+            (cat) => cat.id == categoryId,
+          ),
+        )
+        .whereType<UserCategory>()
+        .toList();
+    final List<ColorCategory> otherColorCategories = experience
+        .otherColorCategoryIds
+        .map(
+          (colorCategoryId) => _sortedColorCategories.firstWhereOrNull(
+            (cc) => cc.id == colorCategoryId,
+          ),
+        )
+        .whereType<ColorCategory>()
+        .toList();
+
+    final String? address = experience.location.address;
+    final bool hasAddress = address != null && address.isNotEmpty;
+    final bool hasOtherCategories = otherCategories.isNotEmpty;
+    final bool hasOtherColorCategories = otherColorCategories.isNotEmpty;
+
+    final List<Widget> subtitleChildren = [];
+    if (hasAddress) {
+      subtitleChildren.add(
+        Text(
+          address!,
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+      );
+    }
+    if (hasOtherCategories || hasOtherColorCategories) {
+      subtitleChildren.add(
+        Padding(
+          padding: EdgeInsets.only(top: hasAddress ? 2.0 : 0.0),
+          child: Wrap(
+            spacing: 6.0,
+            runSpacing: 2.0,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              ...otherCategories.map(
+                (otherCategory) => Text(
+                  otherCategory.icon,
+                  style: const TextStyle(fontSize: 14),
+                ),
+              ),
+              ...otherColorCategories.map(
+                (colorCategory) => Container(
+                  width: 10,
+                  height: 10,
+                  decoration: BoxDecoration(
+                    color: _parseColor(colorCategory.colorHex),
+                    shape: BoxShape.circle,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     final bool isSelected = _selectedExperienceIds.contains(experience.id);
     final bool isFlashing = _flashingExperienceId == experience.id;
 
@@ -1275,13 +1338,12 @@ class _EventExperienceSelectorScreenState
           overflow: TextOverflow.ellipsis,
           maxLines: 1,
         ),
-        subtitle: experience.location.address != null &&
-                experience.location.address!.isNotEmpty
-            ? Text(
-                experience.location.address!,
-                style: Theme.of(context).textTheme.bodySmall,
-              )
-            : null,
+        subtitle: subtitleChildren.isEmpty
+            ? null
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: subtitleChildren,
+              ),
       onTap: () {
         setState(() {
           if (_selectedExperienceIds.contains(experience.id)) {
@@ -1300,9 +1362,99 @@ class _EventExperienceSelectorScreenState
     );
   }
 
-  Future<void> _createEventAndNavigateToEditor() async {
+  List<String> _orderedSelectedExperienceIds() {
+    final Set<String> remainingIds = Set.from(_selectedExperienceIds);
+    final List<String> orderedIds = [];
+
+    for (final expId in _selectionOrder) {
+      if (remainingIds.remove(expId)) {
+        orderedIds.add(expId);
+      }
+    }
+
+    if (remainingIds.isNotEmpty) {
+      for (final exp in widget.experiences) {
+        if (remainingIds.remove(exp.id)) {
+          orderedIds.add(exp.id);
+        }
+        if (remainingIds.isEmpty) break;
+      }
+    }
+
+    return orderedIds;
+  }
+
+  List<EventExperienceEntry> _buildEventExperienceEntries(
+      List<EventExperienceEntry> existingEntries) {
+    final Map<String, EventExperienceEntry> existingMap = {
+      for (final entry in existingEntries) entry.experienceId: entry,
+    };
+
+    final List<EventExperienceEntry> updatedEntries = [];
+    for (final experienceId in _orderedSelectedExperienceIds()) {
+      final existingEntry = existingMap[experienceId];
+      if (existingEntry != null) {
+        updatedEntries.add(existingEntry);
+      } else {
+        updatedEntries.add(EventExperienceEntry(experienceId: experienceId));
+      }
+    }
+    return updatedEntries;
+  }
+
+  String? _deriveCoverImageFromEntries(
+      List<EventExperienceEntry> experienceEntries) {
+    if (experienceEntries.isEmpty) return null;
+    final firstExpId = experienceEntries.first.experienceId;
+    final firstExp = widget.experiences
+        .firstWhereOrNull((exp) => exp.id == firstExpId);
+
+    if (firstExp == null) return null;
+
+    String? coverImageUrl;
+    final resourceName = firstExp.location.photoResourceName;
+    if (resourceName != null && resourceName.isNotEmpty) {
+      coverImageUrl = GoogleMapsService.buildPlacePhotoUrlFromResourceName(
+        resourceName,
+        maxWidthPx: 800,
+        maxHeightPx: 600,
+      );
+    }
+    coverImageUrl ??= firstExp.location.photoUrl;
+    return coverImageUrl;
+  }
+
+  Event _buildEventForEditor(String currentUserId) {
+    final DateTime now = DateTime.now();
+    final Event baseEvent = _draftEvent ??
+        Event(
+          id: '',
+          title: 'Untitled Event',
+          description: '',
+          startDateTime: now,
+          endDateTime: now.add(const Duration(hours: 2)),
+          coverImageUrl: null,
+          plannerUserId: currentUserId,
+          experiences: const [],
+          createdAt: now,
+          updatedAt: now,
+        );
+
+    final List<EventExperienceEntry> updatedEntries =
+        _buildEventExperienceEntries(baseEvent.experiences);
+    final String? coverImageUrl =
+        baseEvent.coverImageUrl ?? _deriveCoverImageFromEntries(updatedEntries);
+
+    return baseEvent.copyWith(
+      experiences: updatedEntries,
+      coverImageUrl: coverImageUrl,
+      updatedAt: DateTime.now(),
+    );
+  }
+
+  Future<void> _navigateToEditor() async {
     if (_selectedExperienceIds.isEmpty) return;
-    
+
     final currentUserId = _authService.currentUser?.uid;
     if (currentUserId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1311,87 +1463,30 @@ class _EventExperienceSelectorScreenState
       return;
     }
 
-    setState(() {
-      _isLoading = true;
-    });
+    final Event event = _buildEventForEditor(currentUserId);
 
-    try {
-      // Create EventExperienceEntry objects in selection order
-      final List<EventExperienceEntry> experienceEntries = [];
-      for (final experienceId in _selectionOrder) {
-        if (_selectedExperienceIds.contains(experienceId)) {
-          experienceEntries.add(EventExperienceEntry(experienceId: experienceId));
-        }
-      }
-
-      // Get the first experience's photo URL for cover image
-      String? coverImageUrl;
-      if (experienceEntries.isNotEmpty) {
-        final firstExpId = experienceEntries.first.experienceId;
-        final firstExp = widget.experiences.firstWhereOrNull(
-          (exp) => exp.id == firstExpId,
-        );
-        
-        if (firstExp != null) {
-          final resourceName = firstExp.location.photoResourceName;
-          if (resourceName != null && resourceName.isNotEmpty) {
-            coverImageUrl = GoogleMapsService.buildPlacePhotoUrlFromResourceName(
-              resourceName,
-              maxWidthPx: 800,
-              maxHeightPx: 600,
-            );
-          }
-          coverImageUrl ??= firstExp.location.photoUrl;
-        }
-      }
-
-      // Create the event
-      final now = DateTime.now();
-      final event = Event(
-        id: '', // Will be set by Firestore
-        title: 'Untitled Event',
-        description: '',
-        startDateTime: now,
-        endDateTime: now.add(const Duration(hours: 2)),
-        coverImageUrl: coverImageUrl,
-        plannerUserId: currentUserId,
-        experiences: experienceEntries,
-        createdAt: now,
-        updatedAt: now,
-      );
-
-      // Save to Firestore
-      final eventId = await _eventService.createEvent(event);
-      final savedEvent = event.copyWith(id: eventId);
-
-      if (!mounted) return;
-
-      // Navigate to event editor modal
-      await Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (ctx) => EventEditorModal(
-            event: savedEvent,
-            experiences: widget.experiences
-                .where((exp) => _selectedExperienceIds.contains(exp.id))
-                .toList(),
-          ),
-          fullscreenDialog: true,
+    final result = await Navigator.of(context).push<EventEditorResult>(
+      MaterialPageRoute(
+        builder: (ctx) => EventEditorModal(
+          event: event,
+          experiences: widget.experiences
+              .where((exp) => _selectedExperienceIds.contains(exp.id))
+              .toList(),
+          categories: widget.categories,
+          colorCategories: widget.colorCategories,
         ),
-      );
+        fullscreenDialog: true,
+      ),
+    );
 
-      if (!mounted) return;
+    if (!mounted || result == null) return;
 
-      // Close the selector and return the event
-      Navigator.of(context).pop(savedEvent);
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to create event: $e')),
-        );
-      }
+    if (result.wasSaved && result.savedEvent != null) {
+      Navigator.of(context).pop(result.savedEvent);
+    } else if (result.draftEvent != null) {
+      setState(() {
+        _draftEvent = result.draftEvent;
+      });
     }
   }
 }
