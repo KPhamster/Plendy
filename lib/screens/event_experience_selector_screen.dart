@@ -8,6 +8,11 @@ import '../models/user_category.dart';
 import '../models/color_category.dart';
 import '../models/category_sort_type.dart';
 import '../models/experience_sort_type.dart';
+import '../models/event.dart';
+import '../services/event_service.dart';
+import '../services/google_maps_service.dart';
+import '../services/auth_service.dart';
+import '../widgets/event_editor_modal.dart';
 
 /// A reusable full-screen modal for selecting experiences for events.
 ///
@@ -110,6 +115,13 @@ class _EventExperienceSelectorScreenState
   // Flash state for highlighting selected experience
   String? _flashingExperienceId;
   Timer? _flashTimer;
+  
+  // Track the order in which experiences were selected
+  final List<String> _selectionOrder = [];
+  
+  // Services
+  final _eventService = EventService();
+  final _authService = AuthService();
 
   bool get _hasActiveFilters =>
       _selectedCategoryIds.isNotEmpty || _selectedColorCategoryIds.isNotEmpty;
@@ -809,8 +821,8 @@ class _EventExperienceSelectorScreenState
               ),
               onPressed: _selectedExperienceIds.isEmpty
                   ? null
-                  : () {
-                      Navigator.of(context).pop(_selectedExperienceIds);
+                  : () async {
+                      await _createEventAndNavigateToEditor();
                     },
               child: Text('Done (${_selectedExperienceIds.length})'),
             ),
@@ -1226,16 +1238,21 @@ class _EventExperienceSelectorScreenState
           mainAxisSize: MainAxisSize.min,
           children: [
             Checkbox(
-              value: isSelected,
-              onChanged: (bool? value) {
-                setState(() {
-                  if (value ?? false) {
-                    _selectedExperienceIds.add(experience.id);
-                  } else {
-                    _selectedExperienceIds.remove(experience.id);
+            value: isSelected,
+            onChanged: (bool? value) {
+              setState(() {
+                if (value ?? false) {
+                  _selectedExperienceIds.add(experience.id);
+                  // Track selection order
+                  if (!_selectionOrder.contains(experience.id)) {
+                    _selectionOrder.add(experience.id);
                   }
-                });
-              },
+                } else {
+                  _selectedExperienceIds.remove(experience.id);
+                  // Don't remove from order - preserve check order
+                }
+              });
+            },
             ),
             const SizedBox(width: 4),
             Container(
@@ -1265,16 +1282,116 @@ class _EventExperienceSelectorScreenState
                 style: Theme.of(context).textTheme.bodySmall,
               )
             : null,
-        onTap: () {
-          setState(() {
-            if (_selectedExperienceIds.contains(experience.id)) {
-              _selectedExperienceIds.remove(experience.id);
-            } else {
-              _selectedExperienceIds.add(experience.id);
+      onTap: () {
+        setState(() {
+          if (_selectedExperienceIds.contains(experience.id)) {
+            _selectedExperienceIds.remove(experience.id);
+            // Don't remove from order - preserve check order
+          } else {
+            _selectedExperienceIds.add(experience.id);
+            // Track selection order
+            if (!_selectionOrder.contains(experience.id)) {
+              _selectionOrder.add(experience.id);
             }
-          });
-        },
+          }
+        });
+      },
       ),
     );
+  }
+
+  Future<void> _createEventAndNavigateToEditor() async {
+    if (_selectedExperienceIds.isEmpty) return;
+    
+    final currentUserId = _authService.currentUser?.uid;
+    if (currentUserId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('User not authenticated')),
+      );
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      // Create EventExperienceEntry objects in selection order
+      final List<EventExperienceEntry> experienceEntries = [];
+      for (final experienceId in _selectionOrder) {
+        if (_selectedExperienceIds.contains(experienceId)) {
+          experienceEntries.add(EventExperienceEntry(experienceId: experienceId));
+        }
+      }
+
+      // Get the first experience's photo URL for cover image
+      String? coverImageUrl;
+      if (experienceEntries.isNotEmpty) {
+        final firstExpId = experienceEntries.first.experienceId;
+        final firstExp = widget.experiences.firstWhereOrNull(
+          (exp) => exp.id == firstExpId,
+        );
+        
+        if (firstExp != null) {
+          final resourceName = firstExp.location.photoResourceName;
+          if (resourceName != null && resourceName.isNotEmpty) {
+            coverImageUrl = GoogleMapsService.buildPlacePhotoUrlFromResourceName(
+              resourceName,
+              maxWidthPx: 800,
+              maxHeightPx: 600,
+            );
+          }
+          coverImageUrl ??= firstExp.location.photoUrl;
+        }
+      }
+
+      // Create the event
+      final now = DateTime.now();
+      final event = Event(
+        id: '', // Will be set by Firestore
+        title: 'Untitled Event',
+        description: '',
+        startDateTime: now,
+        endDateTime: now.add(const Duration(hours: 2)),
+        coverImageUrl: coverImageUrl,
+        plannerUserId: currentUserId,
+        experiences: experienceEntries,
+        createdAt: now,
+        updatedAt: now,
+      );
+
+      // Save to Firestore
+      final eventId = await _eventService.createEvent(event);
+      final savedEvent = event.copyWith(id: eventId);
+
+      if (!mounted) return;
+
+      // Navigate to event editor modal
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (ctx) => EventEditorModal(
+            event: savedEvent,
+            experiences: widget.experiences
+                .where((exp) => _selectedExperienceIds.contains(exp.id))
+                .toList(),
+          ),
+          fullscreenDialog: true,
+        ),
+      );
+
+      if (!mounted) return;
+
+      // Close the selector and return the event
+      Navigator.of(context).pop(savedEvent);
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to create event: $e')),
+        );
+      }
+    }
   }
 }

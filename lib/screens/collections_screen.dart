@@ -4645,10 +4645,13 @@ class CollectionsScreenState extends State<CollectionsScreen>
                         fullscreenDialog: true,
                       ),
                     );
-                    // TODO: Handle selected experiences for event creation
-                    if (result != null && result is Set<String>) {
-                      // result contains the selected experience IDs
-                      print('Selected experience IDs: $result');
+                    // Event has been created and edited
+                    if (result != null) {
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Event created successfully')),
+                        );
+                      }
                     }
                   },
                   child: const Text('Create new event'),

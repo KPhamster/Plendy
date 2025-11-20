@@ -322,6 +322,41 @@ service cloud.firestore {
       // Users cannot delete reports once submitted
       allow delete: if false;
     }
+
+    match /events/{eventId} {
+      // Allow reading if user is planner, collaborator, or invited
+      allow get: if request.auth != null && (
+        resource.data.plannerUserId == request.auth.uid ||
+        (resource.data.collaboratorIds is list && request.auth.uid in resource.data.collaboratorIds) ||
+        (resource.data.invitedUserIds is list && request.auth.uid in resource.data.invitedUserIds) ||
+        // Public events can be read by anyone authenticated
+        resource.data.visibility == 'public' ||
+        // Shared link events can be read by anyone authenticated (token validation happens in app)
+        resource.data.visibility == 'sharedLink'
+      );
+
+      // Allow listing events for authenticated users
+      // Client filters by plannerUserId or collaboratorIds
+      allow list: if request.auth != null;
+
+      // Allow creating events if authenticated and user is set as planner
+      allow create: if request.auth != null &&
+        request.resource.data.plannerUserId == request.auth.uid &&
+        request.resource.data.title is string &&
+        request.resource.data.startDateTime is timestamp &&
+        request.resource.data.endDateTime is timestamp &&
+        request.resource.data.visibility in ['private', 'sharedLink', 'public'];
+
+      // Allow updating if user is planner or collaborator
+      allow update: if request.auth != null && (
+        resource.data.plannerUserId == request.auth.uid ||
+        (resource.data.collaboratorIds is list && request.auth.uid in resource.data.collaboratorIds)
+      );
+
+      // Allow deleting only if user is the planner
+      allow delete: if request.auth != null &&
+        resource.data.plannerUserId == request.auth.uid;
+    }
   }
 
   function sharedPermissionDocId(ownerId, itemType, itemId, viewerId) {
