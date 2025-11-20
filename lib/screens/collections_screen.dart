@@ -2502,6 +2502,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
+        backgroundColor: Colors.white,
         title: const Text('Delete Category?'),
         content: Text(
             'Are you sure you want to delete the "${category.name}" category? Associated experiences will NOT be deleted but will lose this category tag. This cannot be undone.'),
@@ -2511,8 +2512,10 @@ class CollectionsScreenState extends State<CollectionsScreen>
             child: const Text('Cancel'),
           ),
           TextButton(
+            style: TextButton.styleFrom(
+                foregroundColor: Theme.of(context).primaryColor),
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Delete', style: TextStyle(color: Colors.red)),
+            child: const Text('Delete'),
           ),
         ],
       ),
@@ -4554,7 +4557,57 @@ class CollectionsScreenState extends State<CollectionsScreen>
                   await _showAddContentModal();
                 },
               ),
+              ListTile(
+                leading: const Icon(Icons.event_outlined),
+                title: const Text('Add Event'),
+                onTap: () async {
+                  Navigator.of(ctx).pop();
+                  await _showAddEventOptionsDialog();
+                },
+              ),
             ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _showAddEventOptionsDialog() async {
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return Dialog(
+          backgroundColor: Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  'Add Event',
+                  style: Theme.of(context).textTheme.titleMedium,
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 16),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Theme.of(context).primaryColor,
+                    foregroundColor: Colors.white,
+                  ),
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Create new event'),
+                ),
+                const SizedBox(height: 8),
+                ElevatedButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Add to existing event'),
+                ),
+              ],
+            ),
           ),
         );
       },
