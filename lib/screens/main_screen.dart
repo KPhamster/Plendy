@@ -38,6 +38,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     _screens = [
       DiscoveryScreen(key: _discoveryKey),
       CollectionsScreen(key: _collectionsKey),
+      const EventsScreen(),
       ProfileScreen(onRequestDiscoveryRefresh: _refreshDiscovery),
     ];
     WidgetsBinding.instance.addObserver(this);
@@ -214,6 +215,10 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                 icon: Icon(Icons.collections_bookmark_outlined),
                 label: 'Collection',
               ),
+              const BottomNavigationBarItem(
+                icon: Icon(Icons.event_outlined),
+                label: 'Events',
+              ),
               BottomNavigationBarItem(
                 icon: IconNotificationDot(
                   icon: const Icon(Icons.person),
@@ -232,6 +237,15 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         },
       ),
     );
+  }
+}
+
+class EventsScreen extends StatelessWidget {
+  const EventsScreen({Key? key}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return const SizedBox.expand();
   }
 }
 
