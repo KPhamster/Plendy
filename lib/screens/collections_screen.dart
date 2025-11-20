@@ -4640,28 +4640,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                   ),
                   onPressed: () async {
                     Navigator.of(dialogContext).pop();
-                    // Open the event experience selector with current sort states
-                    final result = await Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (ctx) => EventExperienceSelectorScreen(
-                          categories: _categories,
-                          colorCategories: _colorCategories,
-                          experiences: _experiences,
-                          initialCategorySort: _categorySortType,
-                          initialColorCategorySort: _colorCategorySortType,
-                          initialExperienceSort: _experienceSortType,
-                        ),
-                        fullscreenDialog: true,
-                      ),
-                    );
-                    // Event has been created and edited
-                    if (result != null) {
-                      if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Event created successfully')),
-                        );
-                      }
-                    }
+                    await openEventExperienceSelector(context);
                   },
                   child: const Text('Create new event'),
                 ),
@@ -4676,6 +4655,39 @@ class CollectionsScreenState extends State<CollectionsScreen>
         );
       },
     );
+  }
+
+  Future<void> openEventExperienceSelector(BuildContext navContext) async {
+    if (_isLoading) {
+      ScaffoldMessenger.of(navContext).showSnackBar(
+        const SnackBar(
+          content: Text('Please wait for your collections to finish loading.'),
+        ),
+      );
+      return;
+    }
+
+    final result = await Navigator.of(navContext).push(
+      MaterialPageRoute(
+        builder: (ctx) => EventExperienceSelectorScreen(
+          categories: _categories,
+          colorCategories: _colorCategories,
+          experiences: _experiences,
+          initialCategorySort: _categorySortType,
+          initialColorCategorySort: _colorCategorySortType,
+          initialExperienceSort: _experienceSortType,
+        ),
+        fullscreenDialog: true,
+      ),
+    );
+
+    if (!mounted) return;
+
+    if (result != null) {
+      ScaffoldMessenger.of(navContext).showSnackBar(
+        const SnackBar(content: Text('Event created successfully')),
+      );
+    }
   }
 
   Future<void> _showAddContentModal() async {

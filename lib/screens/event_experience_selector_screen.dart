@@ -3,15 +3,19 @@ import 'package:collection/collection.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:flutter_typeahead/flutter_typeahead.dart';
 import 'dart:async';
+import 'package:url_launcher/url_launcher.dart';
 import '../models/experience.dart';
 import '../models/user_category.dart';
 import '../models/color_category.dart';
 import '../models/category_sort_type.dart';
 import '../models/experience_sort_type.dart';
 import '../models/event.dart';
+import '../models/shared_media_item.dart';
 import '../services/google_maps_service.dart';
 import '../services/auth_service.dart';
+import '../services/experience_service.dart';
 import '../widgets/event_editor_modal.dart';
+import '../widgets/shared_media_preview_modal.dart';
 
 /// A reusable full-screen modal for selecting experiences for events.
 ///
@@ -81,7 +85,7 @@ class _EventExperienceSelectorScreenState
     extends State<EventExperienceSelectorScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
-  int _currentTabIndex = 0;
+  int _currentTabIndex = 1;
   late Set<String> _selectedExperienceIds;
   UserCategory? _selectedCategory;
   ColorCategory? _selectedColorCategory;
@@ -122,6 +126,8 @@ class _EventExperienceSelectorScreenState
   
   // Services
   final _authService = AuthService();
+  final _experienceService = ExperienceService();
+  final Map<String, List<SharedMediaItem>> _experienceMediaCache = {};
 
   bool get _hasActiveFilters =>
       _selectedCategoryIds.isNotEmpty || _selectedColorCategoryIds.isNotEmpty;
@@ -151,7 +157,7 @@ class _EventExperienceSelectorScreenState
     // Do NOT apply sorting in initState - preserve the order from the parent screen
     // Sorting will only be applied when user explicitly changes sort via dropdown
 
-    _tabController = TabController(length: 2, vsync: this);
+    _tabController = TabController(length: 2, vsync: this, initialIndex: 1);
     _tabController.addListener(() {
       if (_tabController.indexIsChanging) {
         setState(() {
@@ -1246,41 +1252,113 @@ class _EventExperienceSelectorScreenState
     final bool hasAddress = address != null && address.isNotEmpty;
     final bool hasOtherCategories = otherCategories.isNotEmpty;
     final bool hasOtherColorCategories = otherColorCategories.isNotEmpty;
+    final int contentCount = experience.sharedMediaItemIds.length;
+    final bool shouldShowSubRow =
+        hasOtherCategories || hasOtherColorCategories || contentCount > 0;
+    const double playButtonDiameter = 36.0;
+    const double playIconSize = 20.0;
+    const double badgeDiameter = 18.0;
+    const double badgeFontSize = 11.0;
+    const double badgeBorderWidth = 2.0;
+    const double badgeOffset = -3.0;
 
     final List<Widget> subtitleChildren = [];
     if (hasAddress) {
       subtitleChildren.add(
         Text(
-          address!,
+          address,
           style: Theme.of(context).textTheme.bodySmall,
         ),
       );
     }
-    if (hasOtherCategories || hasOtherColorCategories) {
+    if (shouldShowSubRow) {
       subtitleChildren.add(
         Padding(
           padding: EdgeInsets.only(top: hasAddress ? 2.0 : 0.0),
-          child: Wrap(
-            spacing: 6.0,
-            runSpacing: 2.0,
-            crossAxisAlignment: WrapCrossAlignment.center,
+          child: Row(
             children: [
-              ...otherCategories.map(
-                (otherCategory) => Text(
-                  otherCategory.icon,
-                  style: const TextStyle(fontSize: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (hasOtherCategories || hasOtherColorCategories)
+                      Wrap(
+                        spacing: 6.0,
+                        runSpacing: 2.0,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          ...otherCategories.map(
+                            (otherCategory) => Text(
+                              otherCategory.icon,
+                              style: const TextStyle(fontSize: 14),
+                            ),
+                          ),
+                          ...otherColorCategories.map(
+                            (colorCategory) => Container(
+                              width: 10,
+                              height: 10,
+                              decoration: BoxDecoration(
+                                color: _parseColor(colorCategory.colorHex),
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                  ],
                 ),
               ),
-              ...otherColorCategories.map(
-                (colorCategory) => Container(
-                  width: 10,
-                  height: 10,
-                  decoration: BoxDecoration(
-                    color: _parseColor(colorCategory.colorHex),
-                    shape: BoxShape.circle,
+              if (contentCount > 0) ...[
+                const SizedBox(width: 12),
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => _openExperienceContentPreview(experience),
+                  child: Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      Container(
+                        width: playButtonDiameter,
+                        height: playButtonDiameter,
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).primaryColor,
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.play_arrow,
+                          color: Colors.white,
+                          size: playIconSize,
+                        ),
+                      ),
+                      Positioned(
+                        bottom: badgeOffset,
+                        right: badgeOffset,
+                        child: Container(
+                          width: badgeDiameter,
+                          height: badgeDiameter,
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: Theme.of(context).primaryColor,
+                              width: badgeBorderWidth,
+                            ),
+                          ),
+                          child: Center(
+                            child: Text(
+                              contentCount.toString(),
+                              style: TextStyle(
+                                color: Theme.of(context).primaryColor,
+                                fontSize: badgeFontSize,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-              ),
+              ],
             ],
           ),
         ),
@@ -1450,6 +1528,105 @@ class _EventExperienceSelectorScreenState
       coverImageUrl: coverImageUrl,
       updatedAt: DateTime.now(),
     );
+  }
+
+  Future<void> _openExperienceContentPreview(Experience experience) async {
+    if (experience.sharedMediaItemIds.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content:
+                Text('No saved content available yet for this experience.'),
+          ),
+        );
+      }
+      return;
+    }
+
+    final cachedItems = _experienceMediaCache[experience.id];
+    late final List<SharedMediaItem> resolvedItems;
+
+    if (cachedItems == null) {
+      try {
+        final fetched = await _experienceService
+            .getSharedMediaItems(experience.sharedMediaItemIds);
+        fetched.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+        resolvedItems = fetched;
+        _experienceMediaCache[experience.id] = fetched;
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Could not load content preview: $e')),
+          );
+        }
+        return;
+      }
+    } else {
+      resolvedItems = cachedItems;
+    }
+
+    if (resolvedItems.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content:
+                Text('No saved content available yet for this experience.'),
+          ),
+        );
+      }
+      return;
+    }
+
+    if (!mounted) return;
+
+    final UserCategory? category = widget.categories.firstWhereOrNull(
+      (cat) => cat.id == experience.categoryId,
+    );
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      useRootNavigator: true,
+      builder: (modalContext) {
+        final SharedMediaItem initialMedia = resolvedItems.first;
+        return SharedMediaPreviewModal(
+          experience: experience,
+          mediaItem: initialMedia,
+          mediaItems: resolvedItems,
+          onLaunchUrl: _launchUrl,
+          category: category,
+          userColorCategories: widget.colorCategories,
+        );
+      },
+    );
+  }
+
+  Future<void> _launchUrl(String urlString) async {
+    if (urlString.isEmpty ||
+        urlString == 'about:blank' ||
+        urlString == 'https://about:blank') {
+      return;
+    }
+
+    String launchableUrl = urlString;
+    if (!launchableUrl.startsWith('http://') &&
+        !launchableUrl.startsWith('https://')) {
+      launchableUrl = 'https://$launchableUrl';
+    }
+
+    try {
+      final Uri uri = Uri.parse(launchableUrl);
+      if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+        throw Exception('Could not launch $launchableUrl');
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open link: $urlString')),
+        );
+      }
+    }
   }
 
   Future<void> _navigateToEditor() async {
