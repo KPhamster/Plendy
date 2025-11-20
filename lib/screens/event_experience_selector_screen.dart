@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:collection/collection.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:flutter_typeahead/flutter_typeahead.dart';
 import 'dart:async';
 import '../models/experience.dart';
 import '../models/user_category.dart';
@@ -16,6 +17,7 @@ import '../models/experience_sort_type.dart';
 /// on all experience items.
 ///
 /// Features:
+/// - Search experiences with auto-scroll and highlight
 /// - Sort categories by most recent or alphabetical
 /// - Sort color categories by most recent or alphabetical
 /// - Sort experiences by most recent, alphabetical, distance, or city
@@ -97,6 +99,17 @@ class _EventExperienceSelectorScreenState
   late List<Experience> _filteredExperiences;
 
   bool _isLoading = false;
+  
+  // Search functionality
+  final TextEditingController _searchController = TextEditingController();
+  bool _clearSearchOnNextBuild = false;
+  
+  // Scroll controller for auto-scrolling to experiences
+  final ScrollController _experiencesScrollController = ScrollController();
+  
+  // Flash state for highlighting selected experience
+  String? _flashingExperienceId;
+  Timer? _flashTimer;
 
   bool get _hasActiveFilters =>
       _selectedCategoryIds.isNotEmpty || _selectedColorCategoryIds.isNotEmpty;
@@ -145,6 +158,9 @@ class _EventExperienceSelectorScreenState
   @override
   void dispose() {
     _tabController.dispose();
+    _searchController.dispose();
+    _experiencesScrollController.dispose();
+    _flashTimer?.cancel();
     super.dispose();
   }
 
@@ -556,6 +572,93 @@ class _EventExperienceSelectorScreenState
     );
   }
 
+  Future<List<Experience>> _getExperienceSuggestions(String pattern) async {
+    if (pattern.isEmpty) {
+      return [];
+    }
+    
+    // Search through all experiences (not just filtered)
+    List<Experience> suggestions = _sortedExperiences
+        .where((exp) => exp.name.toLowerCase().contains(pattern.toLowerCase()))
+        .toList();
+
+    // Sort suggestions alphabetically
+    suggestions.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    
+    return suggestions;
+  }
+
+  Future<void> _onExperienceSelectedFromSearch(Experience experience) async {
+    // Clear search
+    if (mounted) {
+      setState(() {
+        _clearSearchOnNextBuild = true;
+      });
+    }
+    _searchController.clear();
+    FocusScope.of(context).unfocus();
+
+    // Switch to Experiences tab
+    if (_currentTabIndex != 1) {
+      _tabController.animateTo(1);
+      // Wait for tab animation to complete
+      await Future.delayed(const Duration(milliseconds: 300));
+    }
+
+    if (!mounted) return;
+
+    // Find the experience in the filtered list
+    final experienceIndex = _filteredExperiences.indexWhere((exp) => exp.id == experience.id);
+    
+    if (experienceIndex == -1) {
+      // Experience not in filtered list - could be filtered out
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Experience is hidden by current filters.'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    // Move the selected experience to the top of the filtered list
+    setState(() {
+      final selectedExp = _filteredExperiences.removeAt(experienceIndex);
+      _filteredExperiences.insert(0, selectedExp);
+    });
+
+    // Wait a frame for the list to rebuild
+    await Future.delayed(const Duration(milliseconds: 50));
+    
+    // Scroll to the top of the list
+    if (_experiencesScrollController.hasClients) {
+      await _experiencesScrollController.animateTo(
+        0,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOut,
+      );
+    }
+
+    // Flash the experience tile
+    if (mounted) {
+      setState(() {
+        _flashingExperienceId = experience.id;
+      });
+
+      // Cancel any existing flash timer
+      _flashTimer?.cancel();
+      
+      // Clear flash after a brief moment
+      _flashTimer = Timer(const Duration(milliseconds: 1500), () {
+        if (mounted) {
+          setState(() {
+            _flashingExperienceId = null;
+          });
+        }
+      });
+    }
+  }
+
   Widget _buildTopActionRow() {
     final actions = <Widget>[];
     if (_currentTabIndex == 0 &&
@@ -725,6 +828,77 @@ class _EventExperienceSelectorScreenState
               color: Colors.white,
               child: Column(
                 children: [
+                  // Search Bar
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 4.0),
+                    child: Theme(
+                      data: Theme.of(context).copyWith(
+                        cardColor: Colors.white,
+                        canvasColor: Colors.white,
+                        colorScheme: Theme.of(context).colorScheme.copyWith(
+                          surface: Colors.white,
+                          background: Colors.white,
+                        ),
+                      ),
+                      child: TypeAheadField<Experience>(
+                        builder: (context, controller, focusNode) {
+                          if (_clearSearchOnNextBuild) {
+                            controller.clear();
+                            focusNode.unfocus();
+                            WidgetsBinding.instance.addPostFrameCallback((_) {
+                              if (mounted) {
+                                setState(() {
+                                  _clearSearchOnNextBuild = false;
+                                });
+                              }
+                            });
+                          }
+                          return TextField(
+                            controller: controller,
+                            focusNode: focusNode,
+                            autofocus: false,
+                            decoration: InputDecoration(
+                              labelText: 'Search experiences',
+                              prefixIcon: Icon(Icons.search,
+                                  color: Theme.of(context).primaryColor),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(25.0),
+                              ),
+                              suffixIcon: IconButton(
+                                icon: const Icon(Icons.clear),
+                                tooltip: 'Clear Search',
+                                onPressed: () {
+                                  controller.clear();
+                                  _searchController.clear();
+                                  FocusScope.of(context).unfocus();
+                                },
+                              ),
+                            ),
+                          );
+                        },
+                        suggestionsCallback: (pattern) async {
+                          return await _getExperienceSuggestions(pattern);
+                        },
+                        itemBuilder: (context, suggestion) {
+                          return Container(
+                            color: Colors.white,
+                            child: ListTile(
+                              leading: const Icon(Icons.history),
+                              title: Text(suggestion.name),
+                            ),
+                          );
+                        },
+                        onSelected: (suggestion) async {
+                          await _onExperienceSelectedFromSearch(suggestion);
+                        },
+                        emptyBuilder: (context) => const Padding(
+                          padding: EdgeInsets.all(8.0),
+                          child: Text('No experiences found.',
+                              style: TextStyle(color: Colors.grey)),
+                        ),
+                      ),
+                    ),
+                  ),
                   _buildTopActionRow(),
                   Container(
                     color: Colors.white,
@@ -1016,6 +1190,7 @@ class _EventExperienceSelectorScreenState
     }
 
     return ListView.builder(
+      controller: _experiencesScrollController,
       padding: const EdgeInsets.only(bottom: 80.0),
       itemCount: _filteredExperiences.length,
       itemBuilder: (context, index) {
@@ -1038,61 +1213,68 @@ class _EventExperienceSelectorScreenState
         : Colors.white;
 
     final bool isSelected = _selectedExperienceIds.contains(experience.id);
+    final bool isFlashing = _flashingExperienceId == experience.id;
 
-    return ListTile(
-      contentPadding: const EdgeInsets.symmetric(horizontal: 8.0),
-      leading: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Checkbox(
-            value: isSelected,
-            onChanged: (bool? value) {
-              setState(() {
-                if (value ?? false) {
-                  _selectedExperienceIds.add(experience.id);
-                } else {
-                  _selectedExperienceIds.remove(experience.id);
-                }
-              });
-            },
-          ),
-          const SizedBox(width: 4),
-          Container(
-            width: 56,
-            height: 56,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: leadingBoxColor,
-              borderRadius: BorderRadius.circular(8.0),
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 300),
+      color: isFlashing 
+          ? Theme.of(context).primaryColor.withOpacity(0.2)
+          : Colors.transparent,
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 8.0),
+        leading: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Checkbox(
+              value: isSelected,
+              onChanged: (bool? value) {
+                setState(() {
+                  if (value ?? false) {
+                    _selectedExperienceIds.add(experience.id);
+                  } else {
+                    _selectedExperienceIds.remove(experience.id);
+                  }
+                });
+              },
             ),
-            child: Text(
-              categoryIcon,
-              style: const TextStyle(fontSize: 28),
+            const SizedBox(width: 4),
+            Container(
+              width: 56,
+              height: 56,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: leadingBoxColor,
+                borderRadius: BorderRadius.circular(8.0),
+              ),
+              child: Text(
+                categoryIcon,
+                style: const TextStyle(fontSize: 28),
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
+        title: Text(
+          experience.name,
+          overflow: TextOverflow.ellipsis,
+          maxLines: 1,
+        ),
+        subtitle: experience.location.address != null &&
+                experience.location.address!.isNotEmpty
+            ? Text(
+                experience.location.address!,
+                style: Theme.of(context).textTheme.bodySmall,
+              )
+            : null,
+        onTap: () {
+          setState(() {
+            if (_selectedExperienceIds.contains(experience.id)) {
+              _selectedExperienceIds.remove(experience.id);
+            } else {
+              _selectedExperienceIds.add(experience.id);
+            }
+          });
+        },
       ),
-      title: Text(
-        experience.name,
-        overflow: TextOverflow.ellipsis,
-        maxLines: 1,
-      ),
-      subtitle: experience.location.address != null &&
-              experience.location.address!.isNotEmpty
-          ? Text(
-              experience.location.address!,
-              style: Theme.of(context).textTheme.bodySmall,
-            )
-          : null,
-      onTap: () {
-        setState(() {
-          if (_selectedExperienceIds.contains(experience.id)) {
-            _selectedExperienceIds.remove(experience.id);
-          } else {
-            _selectedExperienceIds.add(experience.id);
-          }
-        });
-      },
     );
   }
 }
