@@ -49,6 +49,7 @@ import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../widgets/web_media_preview_card.dart'; // ADDED: Import for WebMediaPreviewCard
 import '../widgets/privacy_toggle_button.dart';
+import 'event_experience_selector_screen.dart'; // ADDED: Import for EventExperienceSelectorScreen
 
 // Helper classes for shared data
 class _SharedCategoryData {
@@ -157,7 +158,9 @@ class GroupedContentItem {
 }
 
 class CollectionsScreen extends StatefulWidget {
-  const CollectionsScreen({super.key});
+  final ValueChanged<bool>? onLoadingChanged;
+
+  const CollectionsScreen({super.key, this.onLoadingChanged});
 
   @override
   State<CollectionsScreen> createState() => CollectionsScreenState();
@@ -210,6 +213,22 @@ class CollectionsScreenState extends State<CollectionsScreen>
   bool _hasMoreExperiences = true;
   bool _isLoadingMoreExperiences = false;
   final ScrollController _experiencesScrollController = ScrollController();
+
+  void _notifyLoadingChange() {
+    final callback = widget.onLoadingChanged;
+    if (callback != null) {
+      callback(_isLoading);
+    }
+  }
+
+  @override
+  void setState(VoidCallback fn) {
+    final bool previousLoading = _isLoading;
+    super.setState(fn);
+    if (_isLoading != previousLoading) {
+      _notifyLoadingChange();
+    }
+  }
 
   bool _isSharedCategory(UserCategory category) =>
       _sharedCategoryPermissions.containsKey(category.id);
@@ -866,6 +885,11 @@ class CollectionsScreenState extends State<CollectionsScreen>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _notifyLoadingChange();
+      }
+    });
     _userEmail = _authService.currentUser?.email ?? 'Guest';
     _tabController = TabController(length: 3, vsync: this);
     _tabController.addListener(() {
@@ -905,6 +929,18 @@ class CollectionsScreenState extends State<CollectionsScreen>
       _categorySaveNotifier = notifier;
       _categorySaveNotifier?.addListener(_handleCategorySaveProgress);
       _handleCategorySaveProgress();
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant CollectionsScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.onLoadingChanged != widget.onLoadingChanged) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _notifyLoadingChange();
+        }
+      });
     }
   }
 
@@ -4598,7 +4634,25 @@ class CollectionsScreenState extends State<CollectionsScreen>
                     backgroundColor: Theme.of(context).primaryColor,
                     foregroundColor: Colors.white,
                   ),
-                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  onPressed: () async {
+                    Navigator.of(dialogContext).pop();
+                    // Open the event experience selector
+                    final result = await Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (ctx) => EventExperienceSelectorScreen(
+                          categories: _categories,
+                          colorCategories: _colorCategories,
+                          experiences: _experiences,
+                        ),
+                        fullscreenDialog: true,
+                      ),
+                    );
+                    // TODO: Handle selected experiences for event creation
+                    if (result != null && result is Set<String>) {
+                      // result contains the selected experience IDs
+                      print('Selected experience IDs: $result');
+                    }
+                  },
                   child: const Text('Create new event'),
                 ),
                 const SizedBox(height: 8),

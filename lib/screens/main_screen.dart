@@ -27,6 +27,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   final GlobalKey<CollectionsScreenState> _collectionsKey =
       GlobalKey<CollectionsScreenState>();
   DiscoveryShareCoordinator? _shareCoordinator;
+  bool _isCollectionsLoading = true;
 
   // Define the screens list
   late final List<Widget> _screens;
@@ -37,7 +38,10 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     _selectedIndex = widget.initialIndex;
     _screens = [
       DiscoveryScreen(key: _discoveryKey),
-      CollectionsScreen(key: _collectionsKey),
+      CollectionsScreen(
+        key: _collectionsKey,
+        onLoadingChanged: _handleCollectionsLoadingChanged,
+      ),
       const EventsScreen(),
       ProfileScreen(onRequestDiscoveryRefresh: _refreshDiscovery),
     ];
@@ -179,6 +183,15 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     }
   }
 
+  void _handleCollectionsLoadingChanged(bool isLoading) {
+    if (!mounted || _isCollectionsLoading == isLoading) {
+      return;
+    }
+    setState(() {
+      _isCollectionsLoading = isLoading;
+    });
+  }
+
   void _handleDiscoveryShareToken() {
     final token = _shareCoordinator?.pendingToken;
     if (token == null || token.isEmpty) {
@@ -196,6 +209,33 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     });
   }
 
+  Widget _buildCollectionIcon(BuildContext context) {
+    final spinnerColor = Theme.of(context).primaryColor;
+
+    return SizedBox(
+      width: 64,
+      height: 32,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          const Icon(Icons.collections_bookmark_outlined),
+          if (_isCollectionsLoading)
+            Align(
+              alignment: Alignment.centerRight,
+              child: SizedBox(
+                width: 12,
+                height: 12,
+                child: CircularProgressIndicator(
+                  strokeWidth: 1.6,
+                  color: spinnerColor,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -211,8 +251,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                 icon: Icon(Icons.explore_outlined),
                 label: 'Discovery',
               ),
-              const BottomNavigationBarItem(
-                icon: Icon(Icons.collections_bookmark_outlined),
+              BottomNavigationBarItem(
+                icon: _buildCollectionIcon(context),
                 label: 'Collection',
               ),
               const BottomNavigationBarItem(
