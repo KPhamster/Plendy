@@ -35,6 +35,7 @@ import '../widgets/shared_media_preview_modal.dart';
 import '../models/share_permission.dart'; // ADDED Import for SharePermission
 import '../models/enums/share_enums.dart'; // ADDED Import for ShareableItemType and ShareAccessLevel
 import '../models/category_sort_type.dart';
+import '../models/experience_sort_type.dart'; // ADDED Import for shared ExperienceSortType and ContentSortType
 import 'package:collection/collection.dart'; // ADDED: Import for groupBy
 import 'map_screen.dart'; // ADDED: Import for MapScreen
 import 'package:flutter/foundation.dart'; // ADDED: Import for kIsWeb
@@ -124,12 +125,6 @@ Color _parseColor(String hexColor) {
   }
   return Colors.grey; // Default color on invalid format
 }
-
-// ADDED: Enum for experience sort types
-enum ExperienceSortType { mostRecent, alphabetical, distanceFromMe, city }
-
-// ADDED: Enum for content sort types
-enum ContentSortType { mostRecent, alphabetical, distanceFromMe, city }
 
 // ADDED: New helper class to hold grouped content
 class GroupedContentItem {
@@ -4636,13 +4631,16 @@ class CollectionsScreenState extends State<CollectionsScreen>
                   ),
                   onPressed: () async {
                     Navigator.of(dialogContext).pop();
-                    // Open the event experience selector
+                    // Open the event experience selector with current sort states
                     final result = await Navigator.of(context).push(
                       MaterialPageRoute(
                         builder: (ctx) => EventExperienceSelectorScreen(
                           categories: _categories,
                           colorCategories: _colorCategories,
                           experiences: _experiences,
+                          initialCategorySort: _categorySortType,
+                          initialColorCategorySort: _colorCategorySortType,
+                          initialExperienceSort: _experienceSortType,
                         ),
                         fullscreenDialog: true,
                       ),
