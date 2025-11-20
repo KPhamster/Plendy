@@ -60,6 +60,17 @@ class ExperienceService {
 
   // User-related operations
   String? get _currentUserId => _auth.currentUser?.uid;
+  
+  // ADDED: Cache for shared category permissions to avoid duplicate queries
+  List<SharePermission>? _cachedCategoryPermissions;
+  DateTime? _categoryPermissionsCacheTime;
+  static const Duration _cacheValidDuration = Duration(seconds: 5);
+  
+  /// Clear the permissions cache (call when user logs out or permissions change)
+  void clearCategoryPermissionsCache() {
+    _cachedCategoryPermissions = null;
+    _categoryPermissionsCacheTime = null;
+  }
 
   /// Fetch a user profile by ID
   Future<UserProfile?> getUserProfileById(String userId) async {
@@ -140,17 +151,53 @@ class ExperienceService {
       return [];
     }
 
+    // OPTIMIZED: Check cache first to avoid duplicate queries
+    final now = DateTime.now();
+    if (_cachedCategoryPermissions != null &&
+        _categoryPermissionsCacheTime != null &&
+        now.difference(_categoryPermissionsCacheTime!) < _cacheValidDuration) {
+      print(
+          '_getEditableCategoryPermissionsForCurrentUser - Using cached permissions (${_cachedCategoryPermissions!.length} items)');
+      return _cachedCategoryPermissions!;
+    }
+
     try {
+      print(
+          '_getEditableCategoryPermissionsForCurrentUser - Fetching from Firestore...');
+      final fetchSw = Stopwatch()..start();
+      
       // Fetch BOTH view and edit permissions so users can see categories shared with them regardless of access level
+      // PERFORMANCE NOTE: If this query is slow (>1s), ensure you have a composite index:
+      //   Collection: share_permissions
+      //   Fields: sharedWithUserId (ASC), itemType (ASC)
+      //   https://console.firebase.google.com/project/_/firestore/indexes
       final snapshot = await _sharePermissionsCollection
           .where('sharedWithUserId', isEqualTo: currentUserId)
           .where('itemType', isEqualTo: ShareableItemType.category.name)
           .get();
 
-      return snapshot.docs
+      final permissions = snapshot.docs
           .map((doc) => SharePermission.fromFirestore(doc))
           .where((permission) => permission.ownerUserId != currentUserId)
           .toList();
+      
+      fetchSw.stop();
+      final ms = fetchSw.elapsedMilliseconds;
+      print(
+          '_getEditableCategoryPermissionsForCurrentUser - Fetched ${permissions.length} permissions in ${ms}ms');
+      
+      // Log slow queries to help diagnose index issues
+      if (ms > 1000) {
+        print('⚠️ WARNING: Permissions query is slow (${ms}ms for ${snapshot.docs.length} docs).');
+        print('   Ensure Firestore composite index exists: sharedWithUserId + itemType');
+        print('   See: https://console.firebase.google.com/project/_/firestore/indexes');
+      }
+      
+      // Cache the results
+      _cachedCategoryPermissions = permissions;
+      _categoryPermissionsCacheTime = now;
+      
+      return permissions;
     } catch (e) {
       debugPrint(
           '_getEditableCategoryPermissionsForCurrentUser: Error fetching share permissions: $e');
@@ -2851,6 +2898,167 @@ class ExperienceService {
     print(
         "getUserColorCategories END - Returning ${finalCategories.length} color categories (owned: ${ownedCategories.length}, shared: ${sharedCategories.length}).");
     return finalCategories;
+  }
+
+  /// OPTIMIZED: Fetch both user categories and color categories with a single shared permissions query
+  /// This avoids duplicate Firestore queries when both are needed simultaneously
+  Future<({List<UserCategory> userCategories, List<ColorCategory> colorCategories})> 
+      getUserAndColorCategories({bool includeSharedEditable = false}) async {
+    final userId = _currentUserId;
+    print("getUserAndColorCategories START - User: $userId | includeSharedEditable: $includeSharedEditable");
+    
+    if (userId == null) {
+      print("getUserAndColorCategories END - No user, returning empty lists.");
+      return (userCategories: <UserCategory>[], colorCategories: <ColorCategory>[]);
+    }
+
+    final fetchSw = Stopwatch()..start();
+    
+    // OPTIMIZED: Fetch owned categories AND permissions in parallel (instead of sequentially)
+    // This saves ~1-2 seconds by overlapping network requests
+    final List<dynamic> results;
+    if (includeSharedEditable) {
+      results = await Future.wait([
+        _userCategoriesCollection(userId).orderBy('orderIndex').orderBy('name').get(),
+        _userColorCategoriesCollection(userId).orderBy('orderIndex').orderBy('name').get(),
+        _getEditableCategoryPermissionsForCurrentUser(), // Fetch in parallel!
+      ]);
+    } else {
+      results = await Future.wait([
+        _userCategoriesCollection(userId).orderBy('orderIndex').orderBy('name').get(),
+        _userColorCategoriesCollection(userId).orderBy('orderIndex').orderBy('name').get(),
+      ]);
+    }
+    
+    final userCategorySnapshot = results[0] as QuerySnapshot;
+    final colorCategorySnapshot = results[1] as QuerySnapshot;
+    
+    final List<UserCategory> ownedUserCategories = userCategorySnapshot.docs
+        .map((doc) => UserCategory.fromFirestore(doc))
+        .toList();
+    final List<ColorCategory> ownedColorCategories = colorCategorySnapshot.docs
+        .map((doc) => ColorCategory.fromFirestore(doc))
+        .toList();
+    
+    print("getUserAndColorCategories - Fetched ${ownedUserCategories.length} user categories and ${ownedColorCategories.length} color categories from Firestore");
+
+    List<UserCategory> sharedUserCategories = [];
+    List<ColorCategory> sharedColorCategories = [];
+    
+    if (includeSharedEditable) {
+      // Get permissions from parallel fetch
+      final permissions = results[2] as List<SharePermission>;
+      print("getUserAndColorCategories - Got ${permissions.length} shared category permissions (fetched in parallel)");
+      
+      // OPTIMIZED: Fast-path when no shared permissions exist
+      if (permissions.isEmpty) {
+        print("getUserAndColorCategories - No shared permissions, skipping category resolution");
+        fetchSw.stop();
+        print("getUserAndColorCategories END - Total time: ${fetchSw.elapsedMilliseconds}ms - Returning ${ownedUserCategories.length} user categories (owned: ${ownedUserCategories.length}, shared: 0) and ${ownedColorCategories.length} color categories (owned: ${ownedColorCategories.length}, shared: 0)");
+        return (userCategories: ownedUserCategories, colorCategories: ownedColorCategories);
+      }
+
+      if (permissions.isNotEmpty) {
+        final processedUserKeys = <String>{};
+        final processedColorKeys = <String>{};
+        final userCategoryFutures = <Future<UserCategory?>>[];
+        final colorCategoryFutures = <Future<ColorCategory?>>[];
+        final ownerNameCache = <String, String>{};
+
+        // Process each permission and categorize by attempting to fetch as both types
+        for (final permission in permissions) {
+          if (permission.itemId.isEmpty || permission.ownerUserId.isEmpty) {
+            continue;
+          }
+          
+          final userKey = '${permission.ownerUserId}_${permission.itemId}_user';
+          final colorKey = '${permission.ownerUserId}_${permission.itemId}_color';
+
+          // Try fetching as user category
+          if (processedUserKeys.add(userKey)) {
+            userCategoryFutures.add(() async {
+              try {
+                final doc = await _userCategoriesCollection(permission.ownerUserId)
+                    .doc(permission.itemId)
+                    .get();
+                if (!doc.exists) return null;
+                final category = UserCategory.fromFirestore(doc);
+                final ownerName = await _resolveShareOwnerDisplayName(
+                    permission.ownerUserId, ownerNameCache);
+                return category.copyWith(sharedOwnerDisplayName: ownerName);
+              } catch (e) {
+                return null;
+              }
+            }());
+          }
+
+          // Try fetching as color category
+          if (processedColorKeys.add(colorKey)) {
+            colorCategoryFutures.add(() async {
+              try {
+                final doc = await _userColorCategoriesCollection(permission.ownerUserId)
+                    .doc(permission.itemId)
+                    .get();
+                if (!doc.exists) return null;
+                final category = ColorCategory.fromFirestore(doc);
+                final ownerName = await _resolveShareOwnerDisplayName(
+                    permission.ownerUserId, ownerNameCache);
+                return category.copyWith(sharedOwnerDisplayName: ownerName);
+              } catch (e) {
+                return null;
+              }
+            }());
+          }
+        }
+
+        // Wait for all fetches to complete
+        if (userCategoryFutures.isNotEmpty || colorCategoryFutures.isNotEmpty) {
+          final resolveSw = Stopwatch()..start();
+          final fetchResults = await Future.wait([
+            Future.wait(userCategoryFutures),
+            Future.wait(colorCategoryFutures),
+          ]);
+          resolveSw.stop();
+          
+          sharedUserCategories = fetchResults[0].whereType<UserCategory>().toList();
+          sharedColorCategories = fetchResults[1].whereType<ColorCategory>().toList();
+          
+          sharedUserCategories.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+          sharedColorCategories.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+          
+          print("getUserAndColorCategories - Resolved ${sharedUserCategories.length} shared user categories and ${sharedColorCategories.length} shared color categories in ${resolveSw.elapsedMilliseconds}ms");
+        }
+      }
+    }
+
+    // Combine owned and shared categories
+    final Map<String, UserCategory> combinedUserCategories = {};
+    for (final category in ownedUserCategories) {
+      final key = '${category.ownerUserId}_${category.id}';
+      combinedUserCategories.putIfAbsent(key, () => category);
+    }
+    for (final category in sharedUserCategories) {
+      final key = '${category.ownerUserId}_${category.id}';
+      combinedUserCategories.putIfAbsent(key, () => category);
+    }
+
+    final Map<String, ColorCategory> combinedColorCategories = {};
+    for (final category in ownedColorCategories) {
+      final key = '${category.ownerUserId}_${category.id}';
+      combinedColorCategories.putIfAbsent(key, () => category);
+    }
+    for (final category in sharedColorCategories) {
+      final key = '${category.ownerUserId}_${category.id}';
+      combinedColorCategories.putIfAbsent(key, () => category);
+    }
+
+    final finalUserCategories = combinedUserCategories.values.toList(growable: false);
+    final finalColorCategories = combinedColorCategories.values.toList(growable: false);
+    
+    fetchSw.stop();
+    print("getUserAndColorCategories END - Total time: ${fetchSw.elapsedMilliseconds}ms - Returning ${finalUserCategories.length} user categories (owned: ${ownedUserCategories.length}, shared: ${sharedUserCategories.length}) and ${finalColorCategories.length} color categories (owned: ${ownedColorCategories.length}, shared: ${sharedColorCategories.length})");
+    
+    return (userCategories: finalUserCategories, colorCategories: finalColorCategories);
   }
 
   /// Initializes the default color categories for a user in Firestore.

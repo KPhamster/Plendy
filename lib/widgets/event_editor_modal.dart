@@ -220,15 +220,22 @@ class _EventEditorModalState extends State<EventEditorModal> {
                 ),
               )
             else
-              TextButton(
-                onPressed: _hasUnsavedChanges ? _saveEvent : null,
-                child: Text(
-                  'Save',
-                  style: TextStyle(
-                    color: _hasUnsavedChanges
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _hasUnsavedChanges
                         ? Theme.of(context).primaryColor
-                        : Colors.grey,
+                        : Colors.grey.shade300,
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    padding: const EdgeInsets.fromLTRB(12, 6, 16, 6),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20),
+                    ),
                   ),
+                  onPressed: _hasUnsavedChanges ? _saveEvent : null,
+                  child: const Text('Save'),
                 ),
               ),
           ],

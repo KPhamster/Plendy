@@ -31,6 +31,22 @@
         { "fieldPath": "fromUserId", "order": "ASCENDING" },
         { "fieldPath": "createdAt", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "share_permissions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "sharedWithUserId", "order": "ASCENDING" },
+        { "fieldPath": "itemType", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "share_permissions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "ownerUserId", "order": "ASCENDING" },
+        { "fieldPath": "itemType", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": [
