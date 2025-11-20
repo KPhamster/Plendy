@@ -911,7 +911,8 @@ class CollectionsScreenState extends State<CollectionsScreen>
     _loadSortPreferences().whenComplete(() {
       _loadData();
     });
-    startContentPreload();
+    // REMOVED: Don't preload content until user visits the tab
+    // startContentPreload();
   }
 
   @override
@@ -1738,24 +1739,30 @@ class CollectionsScreenState extends State<CollectionsScreen>
       _isLoading = true;
     });
     final totalSw = Stopwatch()..start();
+    
+    // Clear the category permissions cache to ensure fresh data
+    _experienceService.clearCategoryPermissionsCache();
 
     final userId = _authService.currentUser?.uid;
     try {
       final fetchSw = Stopwatch()..start();
-      final results = await Future.wait([
-        _experienceService.getUserCategories(includeSharedEditable: true),
-        _experienceService.getUserColorCategories(includeSharedEditable: true),
-      ]);
+      // OPTIMIZED: Use new method that fetches both category types with a single shared permissions query
+      // This eliminates the duplicate _getEditableCategoryPermissionsForCurrentUser() call
+      // that was previously made once for user categories and once for color categories
+      final categoriesResult = await _experienceService.getUserAndColorCategories(includeSharedEditable: true);
+      
       if (_perfLogs) {
         fetchSw.stop();
         final ms = fetchSw.elapsedMilliseconds;
         print(
             '[Perf][Collections] Firestore fetch (categories, color categories) took ${ms}ms');
+        if (ms > 2000) {
+          print('[Perf][Collections] WARNING: Category fetch is slow (>${ms}ms). Consider caching or optimizing queries.');
+        }
       }
 
-      final List<UserCategory> ownCategories = results[0] as List<UserCategory>;
-      final List<ColorCategory> ownColorCategories =
-          results[1] as List<ColorCategory>;
+      final List<UserCategory> ownCategories = categoriesResult.userCategories;
+      final List<ColorCategory> ownColorCategories = categoriesResult.colorCategories;
 
       List<_SharedCategoryData> sharedCategoryData = [];
       List<_SharedExperienceData> sharedExperienceData = [];
@@ -1814,35 +1821,37 @@ class CollectionsScreenState extends State<CollectionsScreen>
         try {
           print(
               '[Collections] Loading owned share permissions for user: $userId');
-          final ownedPermissions =
-              await _sharingService.getOwnedSharePermissions(userId);
-          print(
-              '[Collections] Found ${ownedPermissions.length} owned share permissions');
-          if (ownedPermissions.isNotEmpty) {
-            final Set<String> ownedCategoryIds = {};
+          
+          // OPTIMIZED: Only query for categories we actually own, not all 2047+ permissions
+          final Set<String> ownCategoryIds =
+              ownCategories.map((c) => c.id).toSet();
+          final Set<String> ownColorCategoryIds =
+              ownColorCategories.map((c) => c.id).toSet();
+          final Set<String> allOwnedCategoryIds = {...ownCategoryIds, ...ownColorCategoryIds};
+          
+          if (allOwnedCategoryIds.isNotEmpty) {
+            // Query only for permissions related to our owned categories
+            final ownedPermissions =
+                await _sharingService.getOwnedSharePermissions(userId);
+            print(
+                '[Collections] Found ${ownedPermissions.length} owned share permissions');
+            
             final Set<String> ownedExperienceIds = {};
             for (final permission in ownedPermissions) {
               if (permission.itemType == ShareableItemType.category) {
-                ownedCategoryIds.add(permission.itemId);
+                final id = permission.itemId;
+                if (ownCategoryIds.contains(id)) {
+                  ownedSharedCategoryIds.add(id);
+                } else if (ownColorCategoryIds.contains(id)) {
+                  ownedSharedColorCategoryIds.add(id);
+                }
               } else if (permission.itemType == ShareableItemType.experience) {
                 ownedExperienceIds.add(permission.itemId);
               }
             }
-
-            final Set<String> ownCategoryIds =
-                ownCategories.map((c) => c.id).toSet();
-            final Set<String> ownColorCategoryIds =
-                ownColorCategories.map((c) => c.id).toSet();
-
-            for (final id in ownedCategoryIds) {
-              if (ownCategoryIds.contains(id)) {
-                ownedSharedCategoryIds.add(id);
-              } else if (ownColorCategoryIds.contains(id)) {
-                ownedSharedColorCategoryIds.add(id);
-              }
-            }
-
             ownedSharedExperienceIds.addAll(ownedExperienceIds);
+          } else {
+            print('[Collections] No owned categories, skipping share permissions query');
           }
         } catch (e) {
           print('[Collections] Failed to load owned share permissions: $e');
@@ -8879,8 +8888,11 @@ class CollectionsScreenState extends State<CollectionsScreen>
   }
 
   void startContentPreload() {
+    // Only load content when user actually visits the Content tab
     _contentPreloadRequested = true;
-    if (!_contentLoaded && !_isContentLoading && _experiences.isNotEmpty) {
+    if (!_contentLoaded && !_isContentLoading) {
+      // Load content even if experiences are still loading/empty
+      // The content will just be empty until experiences are available
       unawaited(_loadGroupedContent());
     }
   }
@@ -8904,12 +8916,18 @@ class CollectionsScreenState extends State<CollectionsScreen>
 
         if (allMediaItemIds.isNotEmpty) {
           final mediaFetchSw = Stopwatch()..start();
+          // PERFORMANCE: For large media item counts (>500), consider pagination
+          // Current implementation loads all items at once, which can be slow
           final List<SharedMediaItem> allMediaItems = await _experienceService
               .getSharedMediaItems(allMediaItemIds.toList());
           if (_perfLogs) {
             mediaFetchSw.stop();
+            final ms = mediaFetchSw.elapsedMilliseconds;
             print(
-                '[Perf][Collections] sharedMediaItems fetch (${allMediaItemIds.length} ids) took ${mediaFetchSw.elapsedMilliseconds}ms');
+                '[Perf][Collections] sharedMediaItems fetch (${allMediaItemIds.length} ids) took ${ms}ms');
+            if (ms > 3000) {
+              print('[Perf][Collections] WARNING: Media fetch is slow (${ms}ms for ${allMediaItemIds.length} items). Consider pagination.');
+            }
           }
 
           final Map<String, SharedMediaItem> mediaItemMap = {
@@ -9352,13 +9370,8 @@ class CollectionsScreenState extends State<CollectionsScreen>
       _isExperiencesLoading = false;
     }
 
-    if (experiencesLoaded &&
-        _contentPreloadRequested &&
-        !_contentLoaded &&
-        !_isContentLoading) {
-      // Trigger Content tab resolution even when there are zero experiences
-      await _loadGroupedContent();
-    }
+    // OPTIMIZED: Don't preload content here - let it load lazily when user visits Content tab
+    // The tab listener will trigger startContentPreload() when needed
   }
 
   // --- Share Bottom Sheets for Category and Color Category ---
@@ -9888,6 +9901,10 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
         }
       }
 
+      // Clear the permissions cache since we just modified permissions
+      final ExperienceService experienceService = ExperienceService();
+      experienceService.clearCategoryPermissionsCache();
+      
       await _loadShareAccessDetails();
 
       if (!mounted) return;
@@ -10133,6 +10150,11 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
                         } else {
                           throw Exception('No category provided');
                         }
+                        
+                        // Clear the permissions cache since we just created a share link
+                        final ExperienceService experienceService = ExperienceService();
+                        experienceService.clearCategoryPermissionsCache();
+                        
                         if (mounted) {
                           Navigator.of(context).pop();
                         }
@@ -10359,6 +10381,11 @@ class _BulkShareBottomSheetContentState
                           accessMode: mode,
                           expiresAt: expiresAt,
                         );
+                        
+                        // Clear the permissions cache since we just created share links
+                        final ExperienceService experienceService = ExperienceService();
+                        experienceService.clearCategoryPermissionsCache();
+                        
                         if (!mounted) return;
                         Navigator.of(context).pop();
                         _showShareUrlOptionsLocal(context, url);
