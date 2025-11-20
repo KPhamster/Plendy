@@ -484,17 +484,21 @@ class _EventEditorModalState extends State<EventEditorModal> {
         const SizedBox(height: 8),
         OutlinedButton(
           onPressed: () async {
+            Widget wrapPicker(Widget? child) => _wrapPickerWithWhiteTheme(context, child);
+
             final date = await showDatePicker(
               context: context,
               initialDate: dateTime,
               firstDate: DateTime(2000),
               lastDate: DateTime(2100),
+              builder: (ctx, child) => wrapPicker(child),
             );
             if (date == null || !mounted) return;
 
             final time = await showTimePicker(
               context: context,
               initialTime: TimeOfDay.fromDateTime(dateTime),
+              builder: (ctx, child) => wrapPicker(child),
             );
             if (time == null || !mounted) return;
 
@@ -510,6 +514,69 @@ class _EventEditorModalState extends State<EventEditorModal> {
           child: Text(_formatDateTime(dateTime)),
         ),
       ],
+    );
+  }
+
+  Widget _wrapPickerWithWhiteTheme(BuildContext context, Widget? child) {
+    final theme = Theme.of(context);
+    // Create a lighter version of primary color for unselected hour/minute
+    final primaryColor = theme.colorScheme.primary;
+    final lighterPrimary = Color.lerp(primaryColor, Colors.white, 0.7) ?? primaryColor.withOpacity(0.3);
+    
+    return Theme(
+      data: theme.copyWith(
+        dialogBackgroundColor: Colors.white,
+        colorScheme: theme.colorScheme.copyWith(
+          surface: Colors.white,
+          background: Colors.white,
+          onSurface: Colors.black,
+          primary: theme.colorScheme.primary,
+          onPrimary: Colors.white,
+        ),
+        datePickerTheme: theme.datePickerTheme.copyWith(
+          backgroundColor: Colors.white,
+          headerBackgroundColor: Colors.white,
+          headerForegroundColor: Colors.black,
+          dayStyle: theme.datePickerTheme.dayStyle?.copyWith(
+            color: Colors.black,
+          ),
+          weekdayStyle: theme.datePickerTheme.weekdayStyle?.copyWith(
+            color: Colors.black87,
+          ),
+          yearStyle: theme.datePickerTheme.yearStyle?.copyWith(
+            color: Colors.black,
+          ),
+        ),
+        timePickerTheme: theme.timePickerTheme.copyWith(
+          backgroundColor: Colors.white,
+          hourMinuteColor: MaterialStateColor.resolveWith((states) {
+            if (states.contains(MaterialState.selected)) {
+              return theme.colorScheme.primary; // Selected: primary color
+            }
+            return lighterPrimary; // Unselected: lighter primary color
+          }),
+          hourMinuteTextColor: MaterialStateColor.resolveWith((states) {
+            if (states.contains(MaterialState.selected)) {
+              return Colors.white; // Selected: white text
+            }
+            return Colors.black87; // Unselected: dark text
+          }),
+          dialHandColor: theme.colorScheme.primary,
+          dayPeriodColor: MaterialStateColor.resolveWith((states) {
+            if (states.contains(MaterialState.selected)) {
+              return theme.colorScheme.primary; // Selected: primary color
+            }
+            return lighterPrimary; // Unselected: lighter primary color (same as hour/minute)
+          }),
+          dayPeriodTextColor: MaterialStateColor.resolveWith((states) {
+            if (states.contains(MaterialState.selected)) {
+              return Colors.white; // Selected: white text
+            }
+            return Colors.black87; // Unselected: dark text (same as hour/minute)
+          }),
+        ),
+      ),
+      child: child ?? const SizedBox.shrink(),
     );
   }
 
@@ -659,18 +726,21 @@ class _EventEditorModalState extends State<EventEditorModal> {
 
   Future<void> _editScheduledTime(EventExperienceEntry entry, int index) async {
     final currentTime = entry.scheduledTime ?? _currentEvent.startDateTime;
+    Widget wrapPicker(Widget? child) => _wrapPickerWithWhiteTheme(context, child);
     
     final date = await showDatePicker(
       context: context,
       initialDate: currentTime,
       firstDate: DateTime(2000),
       lastDate: DateTime(2100),
+      builder: (ctx, child) => wrapPicker(child),
     );
     if (date == null || !mounted) return;
 
     final time = await showTimePicker(
       context: context,
       initialTime: TimeOfDay.fromDateTime(currentTime),
+      builder: (ctx, child) => wrapPicker(child),
     );
     if (time == null || !mounted) return;
 
@@ -1389,4 +1459,3 @@ class _EventEditorModalState extends State<EventEditorModal> {
     return 'just now';
   }
 }
-
