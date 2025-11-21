@@ -11,7 +11,9 @@ import '../models/shared_media_item.dart';
 import '../services/event_service.dart';
 import '../services/experience_service.dart';
 import '../services/auth_service.dart';
+import '../services/google_maps_service.dart';
 import '../widgets/shared_media_preview_modal.dart';
+import 'share_experience_bottom_sheet.dart';
 
 class EventEditorResult {
   final Event? savedEvent;
@@ -48,37 +50,39 @@ class _EventEditorModalState extends State<EventEditorModal> {
   final _eventService = EventService();
   final _experienceService = ExperienceService();
   final _authService = AuthService();
-  
+
   late Event _currentEvent;
   late TextEditingController _titleController;
   late TextEditingController _descriptionController;
   late TextEditingController _coverImageUrlController;
   late TextEditingController _capacityController;
-  
+
   bool _isSaving = false;
   bool _hasUnsavedChanges = false;
-  
+
   // User profiles cache
   final Map<String, UserProfile> _userProfiles = {};
   final Set<String> _manuallyEditedScheduleIds = {};
   final Map<String, List<SharedMediaItem>> _experienceMediaCache = {};
-  
+
   @override
   void initState() {
     super.initState();
     _currentEvent = _eventWithAutoPrimarySchedule(widget.event);
     _titleController = TextEditingController(text: _currentEvent.title);
-    _descriptionController = TextEditingController(text: _currentEvent.description);
-    _coverImageUrlController = TextEditingController(text: _currentEvent.coverImageUrl ?? '');
+    _descriptionController =
+        TextEditingController(text: _currentEvent.description);
+    _coverImageUrlController =
+        TextEditingController(text: _currentEvent.coverImageUrl ?? '');
     _capacityController = TextEditingController(
       text: _currentEvent.capacity?.toString() ?? '',
     );
-    
+
     _titleController.addListener(() => _markUnsavedChanges());
     _descriptionController.addListener(() => _markUnsavedChanges());
     _coverImageUrlController.addListener(() => _markUnsavedChanges());
     _capacityController.addListener(() => _markUnsavedChanges());
-    
+
     _loadUserProfiles();
   }
 
@@ -147,7 +151,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
         await _eventService.updateEvent(updatedEvent);
         savedEvent = updatedEvent;
       }
-      
+
       setState(() {
         _currentEvent = savedEvent;
         _hasUnsavedChanges = false;
@@ -158,7 +162,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Event saved')),
         );
-        
+
         // If this was a new event, pop and return it
         if (isNewEvent) {
           _popWithDraftResult(
@@ -172,7 +176,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
       setState(() {
         _isSaving = false;
       });
-      
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Failed to save: $e')),
@@ -184,7 +188,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
   Future<void> _pickCoverImage() async {
     final ImagePicker picker = ImagePicker();
     final XFile? image = await picker.pickImage(source: ImageSource.gallery);
-    
+
     if (image != null) {
       // TODO: Upload image to Firebase Storage and get URL
       // For now, show a message
@@ -266,7 +270,8 @@ class _EventEditorModalState extends State<EventEditorModal> {
 
   @override
   Widget build(BuildContext context) {
-    final Duration duration = _currentEvent.endDateTime.difference(_currentEvent.startDateTime);
+    final Duration duration =
+        _currentEvent.endDateTime.difference(_currentEvent.startDateTime);
     final String durationText = _formatDuration(duration);
     final bool isTimeRangeValid = _isTimeRangeValid;
 
@@ -330,40 +335,40 @@ class _EventEditorModalState extends State<EventEditorModal> {
             children: [
               // Hero / Cover Image
               _buildCoverImageSection(),
-              
+
               // Schedule Section
               _buildScheduleSection(durationText),
-              
+
               const Divider(height: 1),
-              
+
               // Itinerary Section
               _buildItinerarySection(),
-              
+
               const Divider(height: 1),
-              
+
               // People Section
               _buildPeopleSection(),
-              
+
               const Divider(height: 1),
-              
+
               // Visibility & Sharing
               _buildVisibilitySection(),
-              
+
               const Divider(height: 1),
-              
+
               // Capacity & RSVPs
               _buildCapacitySection(),
-              
+
               const Divider(height: 1),
-              
+
               // Notifications
               _buildNotificationsSection(),
-              
+
               const Divider(height: 1),
-              
+
               // Comments
               _buildCommentsSection(),
-              
+
               const SizedBox(height: 80),
             ],
           ),
@@ -397,7 +402,8 @@ class _EventEditorModalState extends State<EventEditorModal> {
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Icon(Icons.add_photo_alternate, size: 48, color: Colors.grey),
+                    Icon(Icons.add_photo_alternate,
+                        size: 48, color: Colors.grey),
                     SizedBox(height: 8),
                     Text('Tap to add cover image',
                         style: TextStyle(color: Colors.grey)),
@@ -424,9 +430,25 @@ class _EventEditorModalState extends State<EventEditorModal> {
       context: context,
       backgroundColor: Colors.white,
       builder: (ctx) {
+        final theme = Theme.of(ctx);
+        final hasItineraryExperiences = _currentEvent.experiences.isNotEmpty;
         return SafeArea(
           child: Wrap(
             children: [
+              ListTile(
+                leading: const Icon(Icons.collections_bookmark),
+                title: const Text('Choose from experiences'),
+                subtitle: hasItineraryExperiences
+                    ? null
+                    : const Text('Add itinerary experiences to enable'),
+                enabled: hasItineraryExperiences,
+                onTap: hasItineraryExperiences
+                    ? () {
+                        Navigator.of(ctx).pop();
+                        _showExperienceCoverImageSelector();
+                      }
+                    : null,
+              ),
               ListTile(
                 leading: const Icon(Icons.link),
                 title: const Text('Enter image URL'),
@@ -445,9 +467,9 @@ class _EventEditorModalState extends State<EventEditorModal> {
               ),
               if (_coverImageUrlController.text.trim().isNotEmpty)
                 ListTile(
-                  leading: const Icon(Icons.delete, color: Colors.red),
-                  title: const Text('Remove image',
-                      style: TextStyle(color: Colors.red)),
+                  leading: Icon(Icons.delete, color: theme.primaryColor),
+                  title: Text('Remove image',
+                      style: TextStyle(color: theme.primaryColor)),
                   onTap: () {
                     Navigator.of(ctx).pop();
                     setState(() {
@@ -464,7 +486,8 @@ class _EventEditorModalState extends State<EventEditorModal> {
   }
 
   void _showImageUrlDialog() {
-    final controller = TextEditingController(text: _coverImageUrlController.text);
+    final controller =
+        TextEditingController(text: _coverImageUrlController.text);
     showDialog(
       context: context,
       builder: (ctx) {
@@ -495,6 +518,138 @@ class _EventEditorModalState extends State<EventEditorModal> {
               child: const Text('Save'),
             ),
           ],
+        );
+      },
+    );
+  }
+
+  String? _buildCoverImageUrlFromExperience(Experience experience) {
+    final resourceName = experience.location.photoResourceName;
+    if (resourceName != null && resourceName.isNotEmpty) {
+      return GoogleMapsService.buildPlacePhotoUrlFromResourceName(
+        resourceName,
+        maxWidthPx: 800,
+        maxHeightPx: 600,
+      );
+    }
+    final photoUrl = experience.location.photoUrl;
+    if (photoUrl != null && photoUrl.isNotEmpty) {
+      return photoUrl;
+    }
+    return null;
+  }
+
+  void _showExperienceCoverImageSelector() {
+    if (_currentEvent.experiences.isEmpty) {
+      return;
+    }
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      builder: (sheetContext) {
+        final theme = Theme.of(sheetContext);
+        final mutedTextColor =
+            theme.textTheme.bodySmall?.color?.withOpacity(0.7) ??
+                Colors.grey[600];
+        final primaryColor = theme.primaryColor;
+        final itineraryExperiences = _currentEvent.experiences
+            .map((entry) => MapEntry(
+                  entry,
+                  widget.experiences
+                      .firstWhereOrNull((exp) => exp.id == entry.experienceId),
+                ))
+            .toList();
+
+        return SafeArea(
+          child: SingleChildScrollView(
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const SizedBox(height: 12),
+                  Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'Choose from experiences',
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Use a location photo from your itinerary.',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: mutedTextColor,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  if (itineraryExperiences.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 24.0),
+                      child: Text(
+                        'No experiences available yet. Add one to your itinerary first.',
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: mutedTextColor,
+                        ),
+                      ),
+                    )
+                  else
+                    ...List.generate(itineraryExperiences.length, (index) {
+                      final experience = itineraryExperiences[index].value;
+                      final derivedUrl = experience != null
+                          ? _buildCoverImageUrlFromExperience(experience)
+                          : null;
+                      final hasDerivedImage = derivedUrl != null;
+                      final subtitle = experience?.location.getPlaceName();
+
+                      return ListTile(
+                        leading: CircleAvatar(
+                          backgroundColor: primaryColor.withOpacity(0.1),
+                          foregroundColor: primaryColor,
+                          child: Text('${index + 1}'),
+                        ),
+                        title: Text(experience?.name ?? 'Unknown experience'),
+                        subtitle: subtitle != null ? Text(subtitle) : null,
+                        trailing: hasDerivedImage
+                            ? const Icon(Icons.image, color: Colors.black54)
+                            : const Text('No image',
+                                style: TextStyle(color: Colors.grey)),
+                        onTap: experience == null
+                            ? null
+                            : () {
+                                if (!hasDerivedImage) {
+                                  if (!mounted) return;
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text(
+                                        'No image available yet for ${experience.name}.',
+                                      ),
+                                    ),
+                                  );
+                                  return;
+                                }
+                                Navigator.of(sheetContext).pop();
+                                if (!mounted) return;
+                                setState(() {
+                                  _coverImageUrlController.text = derivedUrl!;
+                                  _markUnsavedChanges();
+                                });
+                              },
+                      );
+                    }),
+                ],
+              ),
+            ),
+          ),
         );
       },
     );
@@ -560,10 +715,8 @@ class _EventEditorModalState extends State<EventEditorModal> {
     DateTime? minDateTime,
     DateTime? maxDateTime,
   }) {
-    final DateTime effectiveMinDate =
-        minDateTime ?? DateTime(2000);
-    final DateTime effectiveMaxDate =
-        maxDateTime ?? DateTime(2100);
+    final DateTime effectiveMinDate = minDateTime ?? DateTime(2000);
+    final DateTime effectiveMaxDate = maxDateTime ?? DateTime(2100);
     final DateTime initialDate = dateTime.isBefore(effectiveMinDate)
         ? effectiveMinDate
         : dateTime.isAfter(effectiveMaxDate)
@@ -582,7 +735,8 @@ class _EventEditorModalState extends State<EventEditorModal> {
         const SizedBox(height: 8),
         OutlinedButton(
           onPressed: () async {
-            Widget wrapPicker(Widget? child) => _wrapPickerWithWhiteTheme(context, child);
+            Widget wrapPicker(Widget? child) =>
+                _wrapPickerWithWhiteTheme(context, child);
 
             final date = await showDatePicker(
               context: context,
@@ -610,8 +764,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
             if (minDateTime != null && newDateTime.isBefore(minDateTime)) {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
-                  content: Text(
-                      '$label time must be after the start time.'),
+                  content: Text('$label time must be after the start time.'),
                 ),
               );
               return;
@@ -619,8 +772,8 @@ class _EventEditorModalState extends State<EventEditorModal> {
             if (maxDateTime != null && newDateTime.isAfter(maxDateTime)) {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
-                  content: Text(
-                      '$label time must be before the available range.'),
+                  content:
+                      Text('$label time must be before the available range.'),
                 ),
               );
               return;
@@ -637,8 +790,9 @@ class _EventEditorModalState extends State<EventEditorModal> {
     final theme = Theme.of(context);
     // Create a lighter version of primary color for unselected hour/minute
     final primaryColor = theme.colorScheme.primary;
-    final lighterPrimary = Color.lerp(primaryColor, Colors.white, 0.7) ?? primaryColor.withOpacity(0.3);
-    
+    final lighterPrimary = Color.lerp(primaryColor, Colors.white, 0.7) ??
+        primaryColor.withOpacity(0.3);
+
     return Theme(
       data: theme.copyWith(
         dialogBackgroundColor: Colors.white,
@@ -688,7 +842,8 @@ class _EventEditorModalState extends State<EventEditorModal> {
             if (states.contains(MaterialState.selected)) {
               return Colors.white; // Selected: white text
             }
-            return Colors.black87; // Unselected: dark text (same as hour/minute)
+            return Colors
+                .black87; // Unselected: dark text (same as hour/minute)
           }),
         ),
       ),
@@ -728,7 +883,8 @@ class _EventEditorModalState extends State<EventEditorModal> {
                   if (newIndex > oldIndex) {
                     newIndex -= 1;
                   }
-                  final entries = List<EventExperienceEntry>.from(_currentEvent.experiences);
+                  final entries = List<EventExperienceEntry>.from(
+                      _currentEvent.experiences);
                   final entry = entries.removeAt(oldIndex);
                   entries.insert(newIndex, entry);
                   var updatedEvent =
@@ -775,7 +931,8 @@ class _EventEditorModalState extends State<EventEditorModal> {
     final UserCategory? category = widget.categories.firstWhereOrNull(
       (cat) => cat.id == experience.categoryId,
     );
-    final ColorCategory? colorCategory = widget.colorCategories.firstWhereOrNull(
+    final ColorCategory? colorCategory =
+        widget.colorCategories.firstWhereOrNull(
       (color) => color.id == experience.colorCategoryId,
     );
     final String categoryIcon =
@@ -1010,7 +1167,9 @@ class _EventEditorModalState extends State<EventEditorModal> {
                       onPressed: () {
                         // TODO: Navigate to experience page
                         ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Open experience - not yet implemented')),
+                          const SnackBar(
+                              content: Text(
+                                  'Open experience - not yet implemented')),
                         );
                       },
                     ),
@@ -1018,7 +1177,8 @@ class _EventEditorModalState extends State<EventEditorModal> {
                       style: TextButton.styleFrom(
                         foregroundColor: Theme.of(context).primaryColor,
                       ),
-                      icon: Icon(Icons.delete, color: Theme.of(context).primaryColor),
+                      icon: Icon(Icons.delete,
+                          color: Theme.of(context).primaryColor),
                       label: Text(
                         'Remove',
                         style: TextStyle(color: Theme.of(context).primaryColor),
@@ -1130,8 +1290,9 @@ class _EventEditorModalState extends State<EventEditorModal> {
     DateTime currentTime = entry.scheduledTime ?? eventStart;
     if (currentTime.isBefore(eventStart)) currentTime = eventStart;
     if (currentTime.isAfter(eventEnd)) currentTime = eventEnd;
-    Widget wrapPicker(Widget? child) => _wrapPickerWithWhiteTheme(context, child);
-    
+    Widget wrapPicker(Widget? child) =>
+        _wrapPickerWithWhiteTheme(context, child);
+
     final date = await showDatePicker(
       context: context,
       initialDate: currentTime,
@@ -1169,7 +1330,8 @@ class _EventEditorModalState extends State<EventEditorModal> {
     }
 
     setState(() {
-      final entries = List<EventExperienceEntry>.from(_currentEvent.experiences);
+      final entries =
+          List<EventExperienceEntry>.from(_currentEvent.experiences);
       entries[index] = entry.copyWith(scheduledTime: newDateTime);
       _manuallyEditedScheduleIds.add(entry.experienceId);
       var updatedEvent = _currentEvent.copyWith(experiences: entries);
@@ -1181,7 +1343,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
 
   Future<void> _editTransportInfo(EventExperienceEntry entry, int index) async {
     final controller = TextEditingController(text: entry.transportInfo ?? '');
-    
+
     final result = await showDialog<String>(
       context: context,
       builder: (ctx) {
@@ -1213,7 +1375,8 @@ class _EventEditorModalState extends State<EventEditorModal> {
 
     if (result != null && mounted) {
       setState(() {
-        final entries = List<EventExperienceEntry>.from(_currentEvent.experiences);
+        final entries =
+            List<EventExperienceEntry>.from(_currentEvent.experiences);
         entries[index] = entry.copyWith(
           transportInfo: result.isEmpty ? null : result,
         );
@@ -1225,7 +1388,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
 
   Future<void> _editNote(EventExperienceEntry entry, int index) async {
     final controller = TextEditingController(text: entry.note ?? '');
-    
+
     final result = await showDialog<String>(
       context: context,
       builder: (ctx) {
@@ -1257,7 +1420,8 @@ class _EventEditorModalState extends State<EventEditorModal> {
 
     if (result != null && mounted) {
       setState(() {
-        final entries = List<EventExperienceEntry>.from(_currentEvent.experiences);
+        final entries =
+            List<EventExperienceEntry>.from(_currentEvent.experiences);
         entries[index] = entry.copyWith(
           note: result.isEmpty ? null : result,
         );
@@ -1269,7 +1433,8 @@ class _EventEditorModalState extends State<EventEditorModal> {
 
   void _removeExperience(int index) {
     setState(() {
-      final entries = List<EventExperienceEntry>.from(_currentEvent.experiences);
+      final entries =
+          List<EventExperienceEntry>.from(_currentEvent.experiences);
       final removedEntry = entries.removeAt(index);
       _manuallyEditedScheduleIds.remove(removedEntry.experienceId);
       var updatedEvent = _currentEvent.copyWith(experiences: entries);
@@ -1351,10 +1516,10 @@ class _EventEditorModalState extends State<EventEditorModal> {
                 return Chip(
                   avatar: _buildUserAvatar(profile, size: 24),
                   label: Text(profile?.displayName ?? 'User'),
-                  deleteIcon: isPlanner ? const Icon(Icons.close, size: 18) : null,
-                  onDeleted: isPlanner
-                      ? () => _removeCollaborator(userId)
-                      : null,
+                  deleteIcon:
+                      isPlanner ? const Icon(Icons.close, size: 18) : null,
+                  onDeleted:
+                      isPlanner ? () => _removeCollaborator(userId) : null,
                 );
               }).toList(),
             ),
@@ -1363,18 +1528,14 @@ class _EventEditorModalState extends State<EventEditorModal> {
           if (isPlanner)
             OutlinedButton.icon(
               icon: const Icon(Icons.person_add),
-              label: const Text('Add Collaborator'),
-              onPressed: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Add collaborator - not yet implemented')),
-                );
-              },
+              label: const Text('Add Collaborators'),
+              onPressed: _openAddCollaboratorsSheet,
             ),
           const SizedBox(height: 16),
           // Invited Users
           if (_currentEvent.invitedUserIds.isNotEmpty) ...[
             Text(
-              'Invited',
+              'Viewers',
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                     fontWeight: FontWeight.w600,
                   ),
@@ -1388,10 +1549,10 @@ class _EventEditorModalState extends State<EventEditorModal> {
                 return Chip(
                   avatar: _buildUserAvatar(profile, size: 24),
                   label: Text(profile?.displayName ?? 'User'),
-                  deleteIcon: isPlanner ? const Icon(Icons.close, size: 18) : null,
-                  onDeleted: isPlanner
-                      ? () => _removeInvitedUser(userId)
-                      : null,
+                  deleteIcon:
+                      isPlanner ? const Icon(Icons.close, size: 18) : null,
+                  onDeleted:
+                      isPlanner ? () => _removeInvitedUser(userId) : null,
                 );
               }).toList(),
             ),
@@ -1399,13 +1560,9 @@ class _EventEditorModalState extends State<EventEditorModal> {
           ],
           if (isPlanner)
             OutlinedButton.icon(
-              icon: const Icon(Icons.send),
-              label: const Text('Invite People'),
-              onPressed: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Invite people - not yet implemented')),
-                );
-              },
+              icon: const Icon(Icons.visibility_outlined),
+              label: const Text('Add Viewers'),
+              onPressed: _openInvitePeopleSheet,
             ),
         ],
       ),
@@ -1422,10 +1579,9 @@ class _EventEditorModalState extends State<EventEditorModal> {
 
     // Use first letter of display name with colored background
     final displayName = profile?.displayName ?? profile?.username ?? '?';
-    final firstLetter = displayName.isNotEmpty
-        ? displayName[0].toUpperCase()
-        : '?';
-    
+    final firstLetter =
+        displayName.isNotEmpty ? displayName[0].toUpperCase() : '?';
+
     final color = _getUserColor(profile?.id ?? '');
 
     return CircleAvatar(
@@ -1455,6 +1611,136 @@ class _EventEditorModalState extends State<EventEditorModal> {
     ];
     final hash = userId.hashCode.abs();
     return colors[hash % colors.length];
+  }
+
+  Future<void> _openAddCollaboratorsSheet() async {
+    final String titleText = _titleController.text.trim();
+    final Map<String, UserProfile> collaboratorProfiles = {
+      for (final userId in _currentEvent.collaboratorIds)
+        if (_userProfiles[userId] != null) userId: _userProfiles[userId]!,
+    };
+    final Map<String, String> disabledReasons = {
+      for (final userId in _currentEvent.invitedUserIds)
+        userId: 'Already invited to view',
+    };
+    await showShareToFriendsModal(
+      context: context,
+      onSubmit: (userIds) async {
+        await _handleCollaboratorSelection(userIds);
+      },
+      subjectLabel: titleText.isEmpty ? null : titleText,
+      titleText: 'Add collaborators with edit access',
+      actionButtonLabel: 'Add',
+      initialSelectedUserIds: _currentEvent.collaboratorIds,
+      initialSelectedProfiles: collaboratorProfiles,
+      disabledUserReasons: disabledReasons,
+    );
+  }
+
+  Future<void> _openInvitePeopleSheet() async {
+    final String titleText = _titleController.text.trim();
+    final Map<String, UserProfile> inviteeProfiles = {
+      for (final userId in _currentEvent.invitedUserIds)
+        if (_userProfiles[userId] != null) userId: _userProfiles[userId]!,
+    };
+    final Map<String, String> disabledReasons = {
+      for (final userId in _currentEvent.collaboratorIds)
+        userId: 'Already has edit access',
+    };
+
+    await showShareToFriendsModal(
+      context: context,
+      onSubmit: (userIds) async {
+        await _handleInviteSelection(userIds);
+      },
+      subjectLabel: titleText.isEmpty ? null : titleText,
+      titleText: 'Add people with view access',
+      actionButtonLabel: 'Invite',
+      initialSelectedUserIds: _currentEvent.invitedUserIds,
+      initialSelectedProfiles: inviteeProfiles,
+      disabledUserReasons: disabledReasons,
+    );
+  }
+
+  Future<void> _handleCollaboratorSelection(List<String> userIds) async {
+    if (userIds.isEmpty) return;
+    final List<String> updatedCollaborators =
+        List<String>.from(_currentEvent.collaboratorIds);
+    final List<String> newlyAdded = [];
+    for (final userId in userIds) {
+      if (userId == _currentEvent.plannerUserId) continue;
+      if (updatedCollaborators.contains(userId)) continue;
+      updatedCollaborators.add(userId);
+      newlyAdded.add(userId);
+    }
+
+    if (newlyAdded.isEmpty) return;
+
+    if (mounted) {
+      setState(() {
+        _currentEvent =
+            _currentEvent.copyWith(collaboratorIds: updatedCollaborators);
+        _markUnsavedChanges();
+      });
+    }
+
+    await _ensureUserProfilesLoaded(newlyAdded);
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(newlyAdded.length == 1
+              ? 'Collaborator added'
+              : 'Collaborators added'),
+        ),
+      );
+    }
+  }
+
+  Future<void> _handleInviteSelection(List<String> userIds) async {
+    if (userIds.isEmpty) return;
+    final List<String> updatedInvited =
+        List<String>.from(_currentEvent.invitedUserIds);
+    final List<String> newlyAdded = [];
+    for (final userId in userIds) {
+      if (userId == _currentEvent.plannerUserId) continue;
+      if (updatedInvited.contains(userId)) continue;
+      updatedInvited.add(userId);
+      newlyAdded.add(userId);
+    }
+
+    if (newlyAdded.isEmpty) return;
+
+    if (mounted) {
+      setState(() {
+        _currentEvent = _currentEvent.copyWith(invitedUserIds: updatedInvited);
+        _markUnsavedChanges();
+      });
+    }
+
+    await _ensureUserProfilesLoaded(newlyAdded);
+  }
+
+  Future<void> _ensureUserProfilesLoaded(List<String> userIds) async {
+    if (userIds.isEmpty) return;
+    final List<String> missing = userIds
+        .where((id) => !_userProfiles.containsKey(id))
+        .toList(growable: false);
+    if (missing.isEmpty) return;
+
+    final results = await Future.wait(
+      missing.map((id) => _experienceService.getUserProfileById(id)),
+    );
+
+    if (!mounted) return;
+    setState(() {
+      for (int i = 0; i < missing.length; i++) {
+        final profile = results[i];
+        if (profile != null) {
+          _userProfiles[missing[i]] = profile;
+        }
+      }
+    });
   }
 
   void _removeCollaborator(String userId) {
@@ -1501,7 +1787,8 @@ class _EventEditorModalState extends State<EventEditorModal> {
                 ? (value) {
                     if (value != null) {
                       setState(() {
-                        _currentEvent = _currentEvent.copyWith(visibility: value);
+                        _currentEvent =
+                            _currentEvent.copyWith(visibility: value);
                         _markUnsavedChanges();
                       });
                     }
@@ -1518,7 +1805,8 @@ class _EventEditorModalState extends State<EventEditorModal> {
                 ? (value) {
                     if (value != null) {
                       setState(() {
-                        _currentEvent = _currentEvent.copyWith(visibility: value);
+                        _currentEvent =
+                            _currentEvent.copyWith(visibility: value);
                         _markUnsavedChanges();
                       });
                     }
@@ -1535,7 +1823,8 @@ class _EventEditorModalState extends State<EventEditorModal> {
                 ? (value) {
                     if (value != null) {
                       setState(() {
-                        _currentEvent = _currentEvent.copyWith(visibility: value);
+                        _currentEvent =
+                            _currentEvent.copyWith(visibility: value);
                         _markUnsavedChanges();
                       });
                     }
@@ -1580,7 +1869,8 @@ class _EventEditorModalState extends State<EventEditorModal> {
               const SizedBox(height: 8),
               TextButton.icon(
                 icon: const Icon(Icons.link_off, color: Colors.red),
-                label: const Text('Revoke Link', style: TextStyle(color: Colors.red)),
+                label: const Text('Revoke Link',
+                    style: TextStyle(color: Colors.red)),
                 onPressed: _revokeShareLink,
               ),
             ],
@@ -1665,10 +1955,11 @@ class _EventEditorModalState extends State<EventEditorModal> {
                     const SizedBox(height: 8),
                     Text(
                       '${_currentEvent.rsvpCount}${_currentEvent.capacity != null ? ' / ${_currentEvent.capacity}' : ''}',
-                      style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                            fontWeight: FontWeight.bold,
-                            color: Theme.of(context).primaryColor,
-                          ),
+                      style:
+                          Theme.of(context).textTheme.headlineSmall?.copyWith(
+                                fontWeight: FontWeight.bold,
+                                color: Theme.of(context).primaryColor,
+                              ),
                     ),
                   ],
                 ),
@@ -1729,18 +2020,20 @@ class _EventEditorModalState extends State<EventEditorModal> {
               if (value != null) {
                 setState(() {
                   _currentEvent = _currentEvent.copyWith(
-                    notificationPreference: EventNotificationPreference(type: value),
+                    notificationPreference:
+                        EventNotificationPreference(type: value),
                   );
                   _markUnsavedChanges();
                 });
-                
+
                 if (value == EventNotificationType.custom) {
                   _showCustomDurationDialog();
                 }
               }
             },
           ),
-          if (_currentEvent.notificationPreference.type == EventNotificationType.custom &&
+          if (_currentEvent.notificationPreference.type ==
+                  EventNotificationType.custom &&
               _currentEvent.notificationPreference.customDuration != null)
             Padding(
               padding: const EdgeInsets.only(top: 8),
@@ -1759,7 +2052,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
   Future<void> _showCustomDurationDialog() async {
     int hours = 0;
     int minutes = 30;
-    
+
     final result = await showDialog<Duration>(
       context: context,
       builder: (ctx) {
@@ -1848,8 +2141,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
           ),
           const SizedBox(height: 16),
           if (_currentEvent.comments.isEmpty)
-            const Text('No comments yet.',
-                style: TextStyle(color: Colors.grey))
+            const Text('No comments yet.', style: TextStyle(color: Colors.grey))
           else
             ...widget.event.comments.map((comment) {
               final author = _userProfiles[comment.authorId];
@@ -1870,7 +2162,8 @@ class _EventEditorModalState extends State<EventEditorModal> {
             label: const Text('Add Comment'),
             onPressed: () {
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Add comment - not yet implemented')),
+                const SnackBar(
+                    content: Text('Add comment - not yet implemented')),
               );
             },
           ),
@@ -1908,7 +2201,8 @@ class _EventEditorModalState extends State<EventEditorModal> {
     final parts = <String>[];
     if (days > 0) parts.add('$days ${days == 1 ? 'day' : 'days'}');
     if (hours > 0) parts.add('$hours ${hours == 1 ? 'hour' : 'hours'}');
-    if (minutes > 0) parts.add('$minutes ${minutes == 1 ? 'minute' : 'minutes'}');
+    if (minutes > 0)
+      parts.add('$minutes ${minutes == 1 ? 'minute' : 'minutes'}');
 
     return parts.isEmpty ? '0 minutes' : parts.join(', ');
   }
@@ -1967,14 +2261,14 @@ class _SlidingItineraryItemState extends State<_SlidingItineraryItem>
   @override
   void didUpdateWidget(_SlidingItineraryItem oldWidget) {
     super.didUpdateWidget(oldWidget);
-    
+
     // Detect position change
     if (_previousIndex != null && _previousIndex != widget.index) {
       final indexDelta = _previousIndex! - widget.index;
       // Each card is approximately 100 pixels (adjust based on your card height)
       // Positive indexDelta means moved up, negative means moved down
       _startOffset = indexDelta * 100.0;
-      
+
       _offsetAnimation = Tween<double>(
         begin: _startOffset,
         end: 0.0,
@@ -1982,11 +2276,11 @@ class _SlidingItineraryItemState extends State<_SlidingItineraryItem>
         parent: _controller,
         curve: Curves.easeInOutCubic,
       ));
-      
+
       _controller.reset();
       _controller.forward();
     }
-    
+
     _previousIndex = widget.index;
   }
 

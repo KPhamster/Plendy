@@ -154,6 +154,11 @@ Future<bool?> showShareToFriendsModal({
   required BuildContext context,
   required ShareToFriendsSubmit onSubmit,
   String? subjectLabel,
+  String titleText = 'Share to friends',
+  String actionButtonLabel = 'Share',
+  List<String> initialSelectedUserIds = const [],
+  Map<String, UserProfile> initialSelectedProfiles = const {},
+  Map<String, String> disabledUserReasons = const {},
 }) {
   return showModalBottomSheet<bool>(
     context: context,
@@ -165,6 +170,11 @@ Future<bool?> showShareToFriendsModal({
     builder: (ctx) => ShareToFriendsSheet(
       onSubmit: onSubmit,
       subjectLabel: subjectLabel,
+      titleText: titleText,
+      actionButtonLabel: actionButtonLabel,
+      initialSelectedUserIds: initialSelectedUserIds,
+      initialSelectedProfiles: initialSelectedProfiles,
+      disabledUserReasons: disabledUserReasons,
     ),
   );
 }
@@ -174,10 +184,20 @@ class ShareToFriendsSheet extends StatefulWidget {
     super.key,
     required this.onSubmit,
     this.subjectLabel,
+    this.titleText = 'Share to friends',
+    this.actionButtonLabel = 'Share',
+    this.initialSelectedUserIds = const [],
+    this.initialSelectedProfiles = const {},
+    this.disabledUserReasons = const {},
   });
 
   final ShareToFriendsSubmit onSubmit;
   final String? subjectLabel;
+  final String titleText;
+  final String actionButtonLabel;
+  final List<String> initialSelectedUserIds;
+  final Map<String, UserProfile> initialSelectedProfiles;
+  final Map<String, String> disabledUserReasons;
 
   @override
   State<ShareToFriendsSheet> createState() => _ShareToFriendsSheetState();
@@ -199,10 +219,15 @@ class _ShareToFriendsSheetState extends State<ShareToFriendsSheet> {
   String? _initializationError;
 
   Timer? _debounce;
+  late final Set<String> _pendingInitialSelections;
 
   @override
   void initState() {
     super.initState();
+    _selectedProfiles.addAll(widget.initialSelectedProfiles);
+    _pendingInitialSelections = widget.initialSelectedUserIds
+        .where((id) => !_selectedProfiles.containsKey(id))
+        .toSet();
     _searchController.addListener(_onSearchChanged);
     _loadFriends();
   }
@@ -247,6 +272,7 @@ class _ShareToFriendsSheetState extends State<ShareToFriendsSheet> {
           ..addAll(profiles);
         _isLoading = false;
       });
+      _applyPendingInitialSelections(profiles);
     } catch (e) {
       debugPrint('ShareToFriendsSheet: Failed to load friends: $e');
       if (!mounted) return;
@@ -381,12 +407,32 @@ class _ShareToFriendsSheetState extends State<ShareToFriendsSheet> {
   }
 
   void _toggleSelection(UserProfile profile) {
+    if (widget.disabledUserReasons.containsKey(profile.id)) {
+      return;
+    }
     setState(() {
       if (_selectedProfiles.containsKey(profile.id)) {
         _selectedProfiles.remove(profile.id);
       } else {
         _selectedProfiles[profile.id] = profile;
       }
+    });
+  }
+
+  void _applyPendingInitialSelections(Iterable<UserProfile> profiles) {
+    if (_pendingInitialSelections.isEmpty || !mounted) {
+      return;
+    }
+    final Map<String, UserProfile> additions = {};
+    for (final profile in profiles) {
+      if (_pendingInitialSelections.remove(profile.id)) {
+        additions[profile.id] = profile;
+      }
+      if (_pendingInitialSelections.isEmpty) break;
+    }
+    if (additions.isEmpty) return;
+    setState(() {
+      _selectedProfiles.addAll(additions);
     });
   }
 
@@ -501,9 +547,9 @@ class _ShareToFriendsSheetState extends State<ShareToFriendsSheet> {
       padding: const EdgeInsets.fromLTRB(16, 16, 8, 8),
       child: Row(
         children: [
-          const Text(
-            'Share to friends',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+          Text(
+            widget.titleText,
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
           ),
           const Spacer(),
           IconButton(
@@ -629,7 +675,14 @@ class _ShareToFriendsSheetState extends State<ShareToFriendsSheet> {
         final bool isSelected = _selectedProfiles.containsKey(profile.id);
         final String title =
             profile.displayName ?? profile.username ?? 'Friend';
+        final String? disabledReason = widget.disabledUserReasons[profile.id];
+        final bool isDisabled = disabledReason != null;
+        final Widget? subtitle = _buildListTileSubtitle(
+          profile,
+          disabledReason: disabledReason,
+        );
         return ListTile(
+          enabled: !isDisabled,
           leading: profile.photoURL != null && profile.photoURL!.isNotEmpty
               ? CircleAvatar(
                   backgroundImage: NetworkImage(profile.photoURL!),
@@ -640,22 +693,81 @@ class _ShareToFriendsSheetState extends State<ShareToFriendsSheet> {
                   ),
                 ),
           title: Text(title),
-          subtitle: _buildSubtitle(profile) != null
-              ? Text(_buildSubtitle(profile)!)
-              : null,
-          trailing: Icon(
-            isSelected ? Icons.check_circle : Icons.radio_button_unchecked,
-            color: isSelected ? Theme.of(context).primaryColor : Colors.grey,
-          ),
-          onTap: () => _toggleSelection(profile),
+          subtitle: subtitle,
+          trailing: isDisabled
+              ? _buildDisabledIndicator(disabledReason)
+              : Icon(
+                  isSelected
+                      ? Icons.check_circle
+                      : Icons.radio_button_unchecked,
+                  color:
+                      isSelected ? Theme.of(context).primaryColor : Colors.grey,
+                ),
+          onTap: isDisabled ? null : () => _toggleSelection(profile),
         );
       },
     );
   }
 
+  Widget? _buildListTileSubtitle(
+    UserProfile profile, {
+    String? disabledReason,
+  }) {
+    final String? subtitleText = _buildSubtitle(profile);
+    if (subtitleText == null && disabledReason == null) {
+      return null;
+    }
+    final List<Widget> children = [];
+    if (subtitleText != null && subtitleText.isNotEmpty) {
+      children.add(Text(subtitleText));
+    }
+    if (disabledReason != null) {
+      children.add(Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.info_outline,
+              size: 14, color: Colors.grey.withOpacity(0.8)),
+          const SizedBox(width: 4),
+          Flexible(
+            child: Text(
+              disabledReason,
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.grey.withOpacity(0.9),
+              ),
+            ),
+          ),
+        ],
+      ));
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: children,
+    );
+  }
+
+  Widget _buildDisabledIndicator(String? reason) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.grey.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Text(
+        reason ?? 'Unavailable',
+        style: TextStyle(
+          fontSize: 11,
+          color: Colors.grey.shade700,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+
   Widget _buildShareButton(bool hasSelection) {
+    final String baseLabel = widget.actionButtonLabel;
     final String label =
-        hasSelection ? 'Share (${_selectedProfiles.length})' : 'Share';
+        hasSelection ? '$baseLabel (${_selectedProfiles.length})' : baseLabel;
     return SafeArea(
       top: false,
       child: Padding(
