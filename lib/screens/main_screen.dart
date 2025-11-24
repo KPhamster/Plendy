@@ -193,19 +193,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     });
   }
 
-  Future<void> _handleEventsFabPressed(BuildContext context) async {
-    final collectionsState = _collectionsKey.currentState;
-    if (collectionsState == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Collections are still initializing. Please try again.'),
-        ),
-      );
-      return;
-    }
-
-    await collectionsState.openEventExperienceSelector(context);
-  }
 
   void _handleDiscoveryShareToken() {
     final token = _shareCoordinator?.pendingToken;
@@ -253,23 +240,11 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    final showEventsFab = _selectedIndex == 2;
-
     return Scaffold(
       body: IndexedStack(
         index: _selectedIndex,
         children: _screens,
       ),
-      floatingActionButton: showEventsFab
-          ? FloatingActionButton(
-              onPressed: () => _handleEventsFabPressed(context),
-              tooltip: 'Add Event',
-              backgroundColor: Theme.of(context).primaryColor,
-              foregroundColor: Colors.white,
-              shape: const CircleBorder(),
-              child: const Icon(Icons.add),
-            )
-          : null,
       bottomNavigationBar: Consumer<NotificationStateService>(
         builder: (context, notificationService, child) {
           return BottomNavigationBar(
