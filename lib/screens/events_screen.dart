@@ -204,6 +204,14 @@ class _EventsScreenState extends State<EventsScreen>
 
     return Scaffold(
       backgroundColor: isDark ? const Color(0xFF1C1B1F) : Colors.white,
+      floatingActionButton: FloatingActionButton(
+        onPressed: _createNewEvent,
+        tooltip: 'Add Event',
+        backgroundColor: theme.primaryColor,
+        foregroundColor: Colors.white,
+        shape: const CircleBorder(),
+        child: const Icon(Icons.add),
+      ),
       body: SafeArea(
         child: Column(
           children: [

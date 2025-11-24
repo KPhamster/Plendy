@@ -51,6 +51,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../widgets/web_media_preview_card.dart'; // ADDED: Import for WebMediaPreviewCard
 import '../widgets/privacy_toggle_button.dart';
 import 'event_experience_selector_screen.dart'; // ADDED: Import for EventExperienceSelectorScreen
+import '../widgets/event_editor_modal.dart'; // ADDED: Import for EventEditorModal
+import '../models/event.dart'; // ADDED: Import for Event
 
 // Helper classes for shared data
 class _SharedCategoryData {
@@ -4602,7 +4604,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                 title: const Text('Add Event'),
                 onTap: () async {
                   Navigator.of(ctx).pop();
-                  await _showAddEventOptionsDialog();
+                  await _openEventEditorModal();
                 },
               ),
             ],
@@ -4612,49 +4614,57 @@ class CollectionsScreenState extends State<CollectionsScreen>
     );
   }
 
-  Future<void> _showAddEventOptionsDialog() async {
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) {
-        return Dialog(
-          backgroundColor: Colors.white,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  'Add Event',
-                  style: Theme.of(context).textTheme.titleMedium,
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 16),
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Theme.of(context).primaryColor,
-                    foregroundColor: Colors.white,
-                  ),
-                  onPressed: () async {
-                    Navigator.of(dialogContext).pop();
-                    await openEventExperienceSelector(context);
-                  },
-                  child: const Text('Create new event'),
-                ),
-                const SizedBox(height: 8),
-                ElevatedButton(
-                  onPressed: () => Navigator.of(dialogContext).pop(),
-                  child: const Text('Add to existing event'),
-                ),
-              ],
-            ),
+  Future<void> _openEventEditorModal() async {
+    final userId = _authService.currentUser?.uid;
+    if (userId == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please sign in to create an event.'),
           ),
         );
-      },
+      }
+      return;
+    }
+
+    final now = DateTime.now();
+    final defaultStart = DateTime(now.year, now.month, now.day, now.hour, 0);
+    final defaultEnd = defaultStart.add(const Duration(hours: 1));
+
+    final newEvent = Event(
+      id: '',
+      title: '',
+      description: '',
+      startDateTime: defaultStart,
+      endDateTime: defaultEnd,
+      plannerUserId: userId,
+      createdAt: now,
+      updatedAt: now,
     );
+
+    if (!mounted) return;
+
+    final result = await Navigator.of(context).push<EventEditorResult>(
+      MaterialPageRoute(
+        builder: (ctx) => EventEditorModal(
+          event: newEvent,
+          experiences: const [],
+          categories: _categories,
+          colorCategories: _colorCategories,
+        ),
+        fullscreenDialog: true,
+      ),
+    );
+
+    if (!mounted) return;
+
+    if (result != null && result.wasSaved && result.savedEvent != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Event created successfully')),
+      );
+      // Optionally reload data if needed
+      // _loadData();
+    }
   }
 
   Future<void> openEventExperienceSelector(BuildContext navContext) async {

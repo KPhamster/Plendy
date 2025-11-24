@@ -554,6 +554,47 @@ class _EventEditorModalState extends State<EventEditorModal> {
     return null;
   }
 
+  /// Automatically updates the cover image from the top-most experience if:
+  /// - Event has no cover image
+  /// - Top-most experience changed
+  void _updateCoverImageFromTopExperienceIfNeeded(
+    String? previousTopExperienceId,
+    List<EventExperienceEntry> updatedEntries,
+  ) {
+    // Check if event has no cover image
+    final bool hasNoCoverImage = _coverImageUrlController.text.trim().isEmpty;
+    if (!hasNoCoverImage) return;
+
+    // Check if top-most experience changed
+    final String? newTopExperienceId = updatedEntries.isNotEmpty
+        ? updatedEntries.first.experienceId
+        : null;
+    final bool topExperienceChanged = previousTopExperienceId != newTopExperienceId;
+    if (!topExperienceChanged || newTopExperienceId == null) return;
+
+    // Get the top-most experience and set cover image
+    final topExperience = _availableExperiences.firstWhere(
+      (exp) => exp.id == newTopExperienceId,
+      orElse: () => Experience(
+        id: newTopExperienceId,
+        name: 'Unknown Experience',
+        description: '',
+        location: const Location(
+          latitude: 0.0,
+          longitude: 0.0,
+        ),
+        createdAt: DateTime.now(),
+        updatedAt: DateTime.now(),
+        editorUserIds: [],
+      ),
+    );
+
+    final coverImageUrl = _buildCoverImageUrlFromExperience(topExperience);
+    if (coverImageUrl != null) {
+      _coverImageUrlController.text = coverImageUrl;
+    }
+  }
+
   void _showExperienceCoverImageSelector() {
     if (_currentEvent.experiences.isEmpty) {
       return;
@@ -758,11 +799,24 @@ class _EventEditorModalState extends State<EventEditorModal> {
       }
 
       final updatedEntries = _rebuildEntriesFromSelection(selectedOrder);
+      
+      // Track the previous top-most experience ID
+      final String? previousTopExperienceId = _currentEvent.experiences.isNotEmpty
+          ? _currentEvent.experiences.first.experienceId
+          : null;
+      
       setState(() {
         var updatedEvent =
             _currentEvent.copyWith(experiences: updatedEntries);
         updatedEvent = _eventWithAutoPrimarySchedule(updatedEvent);
         _currentEvent = updatedEvent;
+        
+        // Automatically update cover image from top-most experience if needed
+        _updateCoverImageFromTopExperienceIfNeeded(
+          previousTopExperienceId,
+          updatedEvent.experiences,
+        );
+        
         _markUnsavedChanges();
       });
     } catch (e) {
@@ -783,13 +837,27 @@ class _EventEditorModalState extends State<EventEditorModal> {
     final Map<String, EventExperienceEntry> existingEntries = {
       for (final entry in _currentEvent.experiences) entry.experienceId: entry,
     };
-
-    return selectedIds
-        .map(
-          (id) => existingEntries[id] ??
-              EventExperienceEntry(experienceId: id),
-        )
-        .toList();
+    
+    // Track which existing entries we've already included
+    final Set<String> includedExistingIds = {};
+    
+    // First, preserve existing entries in their current order
+    final List<EventExperienceEntry> result = [];
+    for (final entry in _currentEvent.experiences) {
+      if (selectedIds.contains(entry.experienceId)) {
+        result.add(entry);
+        includedExistingIds.add(entry.experienceId);
+      }
+    }
+    
+    // Then, append new entries (not in existing list) in selection order
+    for (final id in selectedIds) {
+      if (!includedExistingIds.contains(id)) {
+        result.add(existingEntries[id] ?? EventExperienceEntry(experienceId: id));
+      }
+    }
+    
+    return result;
   }
 
   Widget _buildScheduleSection(String durationText) {
@@ -1041,6 +1109,11 @@ class _EventEditorModalState extends State<EventEditorModal> {
               buildDefaultDragHandles: false,
               onReorder: (oldIndex, newIndex) {
                 setState(() {
+                  // Track the previous top-most experience ID
+                  final String? previousTopExperienceId = _currentEvent.experiences.isNotEmpty
+                      ? _currentEvent.experiences.first.experienceId
+                      : null;
+                  
                   if (newIndex > oldIndex) {
                     newIndex -= 1;
                   }
@@ -1052,6 +1125,13 @@ class _EventEditorModalState extends State<EventEditorModal> {
                       _currentEvent.copyWith(experiences: entries);
                   updatedEvent = _eventWithAutoPrimarySchedule(updatedEvent);
                   _currentEvent = updatedEvent;
+                  
+                  // Automatically update cover image from top-most experience if needed
+                  _updateCoverImageFromTopExperienceIfNeeded(
+                    previousTopExperienceId,
+                    updatedEvent.experiences,
+                  );
+                  
                   _markUnsavedChanges();
                 });
               },
@@ -1615,6 +1695,11 @@ class _EventEditorModalState extends State<EventEditorModal> {
 
   void _removeExperience(int index) {
     setState(() {
+      // Track the previous top-most experience ID
+      final String? previousTopExperienceId = _currentEvent.experiences.isNotEmpty
+          ? _currentEvent.experiences.first.experienceId
+          : null;
+      
       final entries =
           List<EventExperienceEntry>.from(_currentEvent.experiences);
       final removedEntry = entries.removeAt(index);
@@ -1622,6 +1707,13 @@ class _EventEditorModalState extends State<EventEditorModal> {
       var updatedEvent = _currentEvent.copyWith(experiences: entries);
       updatedEvent = _eventWithAutoPrimarySchedule(updatedEvent);
       _currentEvent = updatedEvent;
+      
+      // Automatically update cover image from top-most experience if needed
+      _updateCoverImageFromTopExperienceIfNeeded(
+        previousTopExperienceId,
+        updatedEvent.experiences,
+      );
+      
       _markUnsavedChanges();
     });
   }
