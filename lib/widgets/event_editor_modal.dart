@@ -696,7 +696,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
                                 Navigator.of(sheetContext).pop();
                                 if (!mounted) return;
                                 setState(() {
-                                  _coverImageUrlController.text = derivedUrl!;
+                                  _coverImageUrlController.text = derivedUrl;
                                   _markUnsavedChanges();
                                 });
                               },
@@ -1209,12 +1209,39 @@ class _EventEditorModalState extends State<EventEditorModal> {
     const double badgeBorderWidth = 2.0;
     const double badgeOffset = -3.0;
 
+    final bool hasNotes = (entry.note != null && entry.note!.isNotEmpty) ||
+        (entry.transportInfo != null && entry.transportInfo!.isNotEmpty);
+    
     final List<Widget> subtitleChildren = [];
     if (hasAddress) {
       subtitleChildren.add(
         Text(
           address,
           style: Theme.of(context).textTheme.bodySmall,
+        ),
+      );
+    }
+    if (hasNotes) {
+      subtitleChildren.add(
+        Padding(
+          padding: EdgeInsets.only(top: hasAddress ? 4.0 : 0.0),
+          child: Row(
+            children: [
+              Icon(
+                Icons.note_outlined,
+                size: 14,
+                color: Colors.grey[600],
+              ),
+              const SizedBox(width: 4),
+              Text(
+                'Has notes',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Colors.grey[600],
+                      fontSize: 12,
+                    ),
+              ),
+            ],
+          ),
         ),
       );
     }
@@ -1402,8 +1429,8 @@ class _EventEditorModalState extends State<EventEditorModal> {
                     ListTile(
                       contentPadding: EdgeInsets.zero,
                       leading: const Icon(Icons.directions),
-                      title: const Text('Transport'),
-                      subtitle: Text(entry.transportInfo ?? 'Not set'),
+                      title: const Text('Transportation'),
+                      subtitle: Text(entry.transportInfo ?? 'Notes on how to get here'),
                       trailing: const Icon(Icons.edit_outlined),
                       onTap: () => _editTransportInfo(entry, index),
                     ),
@@ -1411,8 +1438,8 @@ class _EventEditorModalState extends State<EventEditorModal> {
                     ListTile(
                       contentPadding: EdgeInsets.zero,
                       leading: const Icon(Icons.note),
-                      title: const Text('Note'),
-                      subtitle: Text(entry.note ?? 'Not set'),
+                      title: const Text('Notes'),
+                      subtitle: Text(entry.note ?? 'None'),
                       trailing: const Icon(Icons.edit_outlined),
                       onTap: () => _editNote(entry, index),
                     ),
@@ -1606,7 +1633,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
   Future<void> _editTransportInfo(EventExperienceEntry entry, int index) async {
     final controller = TextEditingController(text: entry.transportInfo ?? '');
 
-    final result = await showDialog<String>(
+    final result = await showDialog<(bool, String?)>(
       context: context,
       builder: (ctx) {
         return AlertDialog(
@@ -1627,7 +1654,11 @@ class _EventEditorModalState extends State<EventEditorModal> {
               child: const Text('Cancel'),
             ),
             TextButton(
-              onPressed: () => Navigator.of(ctx).pop(controller.text.trim()),
+              onPressed: () {
+                final trimmed = controller.text.trim();
+                // Return (true, value) to indicate save was pressed
+                Navigator.of(ctx).pop((true, trimmed.isEmpty ? null : trimmed));
+              },
               child: const Text('Save'),
             ),
           ],
@@ -1635,36 +1666,44 @@ class _EventEditorModalState extends State<EventEditorModal> {
       },
     );
 
+    // Only update if save was pressed (result is not null)
     if (result != null && mounted) {
-      setState(() {
-        final entries =
-            List<EventExperienceEntry>.from(_currentEvent.experiences);
-        entries[index] = entry.copyWith(
-          transportInfo: result.isEmpty ? null : result,
-        );
-        _currentEvent = _currentEvent.copyWith(experiences: entries);
-        _markUnsavedChanges();
-      });
+      final (saved, value) = result;
+      if (saved) {
+        setState(() {
+          final entries =
+              List<EventExperienceEntry>.from(_currentEvent.experiences);
+          entries[index] = entry.copyWith(
+            transportInfo: value,
+          );
+          _currentEvent = _currentEvent.copyWith(experiences: entries);
+          _markUnsavedChanges();
+        });
+      }
     }
   }
 
   Future<void> _editNote(EventExperienceEntry entry, int index) async {
     final controller = TextEditingController(text: entry.note ?? '');
 
-    final result = await showDialog<String>(
+    final result = await showDialog<(bool, String?)>(
       context: context,
       builder: (ctx) {
         return AlertDialog(
           backgroundColor: Colors.white,
-          title: const Text('Note'),
-          content: TextField(
-            controller: controller,
-            decoration: const InputDecoration(
-              hintText: 'Add a note for this stop...',
-              border: OutlineInputBorder(),
+          title: const Text('Notes'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: TextField(
+              controller: controller,
+              decoration: const InputDecoration(
+                hintText: 'Add notes and details about this stop!',
+                border: OutlineInputBorder(),
+              ),
+              minLines: 8,
+              maxLines: 15,
+              autofocus: true,
             ),
-            maxLines: 5,
-            autofocus: true,
           ),
           actions: [
             TextButton(
@@ -1672,7 +1711,11 @@ class _EventEditorModalState extends State<EventEditorModal> {
               child: const Text('Cancel'),
             ),
             TextButton(
-              onPressed: () => Navigator.of(ctx).pop(controller.text.trim()),
+              onPressed: () {
+                final trimmed = controller.text.trim();
+                // Return (true, value) to indicate save was pressed
+                Navigator.of(ctx).pop((true, trimmed.isEmpty ? null : trimmed));
+              },
               child: const Text('Save'),
             ),
           ],
@@ -1680,16 +1723,20 @@ class _EventEditorModalState extends State<EventEditorModal> {
       },
     );
 
+    // Only update if save was pressed (result is not null)
     if (result != null && mounted) {
-      setState(() {
-        final entries =
-            List<EventExperienceEntry>.from(_currentEvent.experiences);
-        entries[index] = entry.copyWith(
-          note: result.isEmpty ? null : result,
-        );
-        _currentEvent = _currentEvent.copyWith(experiences: entries);
-        _markUnsavedChanges();
-      });
+      final (saved, value) = result;
+      if (saved) {
+        setState(() {
+          final entries =
+              List<EventExperienceEntry>.from(_currentEvent.experiences);
+          entries[index] = entry.copyWith(
+            note: value,
+          );
+          _currentEvent = _currentEvent.copyWith(experiences: entries);
+          _markUnsavedChanges();
+        });
+      }
     }
   }
 
