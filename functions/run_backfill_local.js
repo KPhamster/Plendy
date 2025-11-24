@@ -55,7 +55,7 @@ function getCategoryIdsForExperience(expData) {
 
   if (Array.isArray(expData.otherColorCategoryIds)) {
     expData.otherColorCategoryIds.forEach((id) =>
-      categoryIds.add(id)
+      categoryIds.add(id),
     );
   }
 

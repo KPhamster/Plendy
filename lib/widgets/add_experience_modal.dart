@@ -519,8 +519,11 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
     }
 
     try {
-      bool launched =
-          await launchUrl(uri, mode: LaunchMode.externalApplication);
+      bool launched = await launchUrl(
+        uri,
+        mode: LaunchMode.externalApplication,
+        webOnlyWindowName: '_blank',
+      );
       if (!launched) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(

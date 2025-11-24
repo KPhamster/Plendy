@@ -374,6 +374,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   // Add a map to track TikTok photo carousel status
   final Map<String, bool> _tiktokPhotoStatus = {};
 
+  // Add debounce timer for location updates
+  Timer? _locationUpdateDebounce;
+
   // Suspend media previews (unmount WebViews) while navigating to other screens
   bool _suspendMediaPreviews = false;
 
@@ -1354,6 +1357,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
   @override
   void dispose() {
+    // Cancel any pending debounce timers
+    _locationUpdateDebounce?.cancel();
+    
     // If _saveExperience initiated navigation, prepareToNavigateAwayFromShare already handled things.
     // This call to markShareFlowAsInactive is mainly for cases where dispose is called due to
     // other reasons (like system back if not fully handled, or unexpected unmount).
@@ -2307,33 +2313,41 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     final String addressToSet = location.address ?? '';
     final String websiteToSet = location.website ?? '';
     final String? placeIdForPreviewToSet = location.placeId;
+    final String cardId = targetCard.id; // Capture card ID before timer
 
-    provider.updateCardFromShareDetails(
-      cardId: targetCard.id,
-      location: location,
-      title: titleToSet,
-      yelpUrl: yelpUrl,
-      website: websiteToSet,
-      placeIdForPreview: placeIdForPreviewToSet,
-      searchQueryText: addressToSet,
-    );
+    // Debounce the update to prevent rapid rebuilds
+    _locationUpdateDebounce?.cancel();
+    _locationUpdateDebounce = Timer(const Duration(milliseconds: 100), () {
+      if (!mounted) return;
+      provider.updateCardFromShareDetails(
+        cardId: cardId,
+        location: location,
+        title: titleToSet,
+        yelpUrl: yelpUrl,
+        website: websiteToSet,
+        placeIdForPreview: placeIdForPreviewToSet,
+        searchQueryText: addressToSet,
+      );
 
-    setState(() {
-      final String originalUrlKey = yelpUrl.trim();
-      final String? placeIdKey = location.placeId;
+      if (mounted) {
+        setState(() {
+          final String originalUrlKey = yelpUrl.trim();
+          final String? placeIdKey = location.placeId;
 
-      if (_yelpPreviewFutures.containsKey(originalUrlKey)) {
-        _yelpPreviewFutures.remove(originalUrlKey);
+          if (_yelpPreviewFutures.containsKey(originalUrlKey)) {
+            _yelpPreviewFutures.remove(originalUrlKey);
+          }
+
+          if (placeIdKey != null && placeIdKey.isNotEmpty) {
+            final Map<String, dynamic> finalData = {
+              'location': location,
+              'businessName': titleToSet,
+              'yelpUrl': yelpUrl,
+            };
+            _yelpPreviewFutures[placeIdKey] = Future.value(finalData);
+          } else {}
+        });
       }
-
-      if (placeIdKey != null && placeIdKey.isNotEmpty) {
-        final Map<String, dynamic> finalData = {
-          'location': location,
-          'businessName': titleToSet,
-          'yelpUrl': yelpUrl,
-        };
-        _yelpPreviewFutures[placeIdKey] = Future.value(finalData);
-      } else {}
     });
   }
 
@@ -2388,33 +2402,41 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     final String addressToSet = location.address ?? '';
     final String websiteToSet = websiteUrl;
     final String? placeIdForPreviewToSet = location.placeId;
+    final String cardId = firstCard.id; // Capture card ID before timer
 
-    provider.updateCardFromShareDetails(
-      cardId: firstCard.id,
-      location: location,
-      title: titleToSet,
-      mapsUrl: originalMapsUrl,
-      website: websiteToSet,
-      placeIdForPreview: placeIdForPreviewToSet,
-      searchQueryText: addressToSet,
-    );
+    // Debounce the update to prevent rapid rebuilds
+    _locationUpdateDebounce?.cancel();
+    _locationUpdateDebounce = Timer(const Duration(milliseconds: 100), () {
+      if (!mounted) return;
+      provider.updateCardFromShareDetails(
+        cardId: cardId,
+        location: location,
+        title: titleToSet,
+        mapsUrl: originalMapsUrl,
+        website: websiteToSet,
+        placeIdForPreview: placeIdForPreviewToSet,
+        searchQueryText: addressToSet,
+      );
 
-    setState(() {
-      final String? placeIdKey = location.placeId;
-      if (placeIdKey != null && placeIdKey.isNotEmpty) {
-        final String originalUrlKey = originalMapsUrl.trim();
-        if (_yelpPreviewFutures.containsKey(originalUrlKey)) {
-          _yelpPreviewFutures.remove(originalUrlKey);
-        }
+      if (mounted) {
+        setState(() {
+          final String? placeIdKey = location.placeId;
+          if (placeIdKey != null && placeIdKey.isNotEmpty) {
+            final String originalUrlKey = originalMapsUrl.trim();
+            if (_yelpPreviewFutures.containsKey(originalUrlKey)) {
+              _yelpPreviewFutures.remove(originalUrlKey);
+            }
 
-        final Map<String, dynamic> finalData = {
-          'location': location,
-          'placeName': titleToSet,
-          'website': websiteToSet,
-          'mapsUrl': originalMapsUrl,
-        };
-        _yelpPreviewFutures[placeIdKey] = Future.value(finalData);
-      } else {}
+            final Map<String, dynamic> finalData = {
+              'location': location,
+              'placeName': titleToSet,
+              'website': websiteToSet,
+              'mapsUrl': originalMapsUrl,
+            };
+            _yelpPreviewFutures[placeIdKey] = Future.value(finalData);
+          } else {}
+        });
+      }
     });
   }
 
@@ -3442,11 +3464,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           ),
         ],
       ),
-      body: Container(
-        color: Colors.white,
-        child: SafeArea(
-          child: _isSaving
-              ? const Center(
+      body: ExcludeSemantics(
+        child: Container(
+          color: Colors.white,
+          child: SafeArea(
+            child: _isSaving
+                ? const Center(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
@@ -3635,47 +3658,22 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                                     },
                                                   );
                                                 }),
-                                          Selector<ReceiveShareProvider,
-                                              List<String>>(
+                                          Selector<ReceiveShareProvider, int>(
                                             key: const ValueKey(
                                                 'experience_cards_selector'),
-                                            selector: (_, provider) {
-                                              final cards =
-                                                  provider.experienceCards;
-                                              // Build immutable signatures so Selector can detect in-place mutations
-                                              return List<String>.generate(
-                                                  cards.length, (i) {
-                                                final c = cards[i];
-                                                final id = c.id;
-                                                final title =
-                                                    c.titleController.text;
-                                                final cat =
-                                                    c.selectedCategoryId ?? '';
-                                                final colorCat =
-                                                    c.selectedColorCategoryId ??
-                                                        '';
-                                                final existingId =
-                                                    c.existingExperienceId ??
-                                                        '';
-                                                final previewId =
-                                                    c.placeIdForPreview ?? '';
-                                                final locId = c.selectedLocation
-                                                        ?.placeId ??
-                                                    '';
-                                                final search =
-                                                    c.searchController.text;
-                                                return '$id|$title|$cat|$colorCat|$existingId|$previewId|$locId|$search';
-                                              });
-                                            },
-                                            builder:
-                                                (context, _signatures, child) {
+                                            selector: (_, provider) =>
+                                                provider.experienceCards.length,
+                                            builder: (context, cardCount, _) {
                                               final selectedExperienceCards =
                                                   context
                                                       .read<
                                                           ReceiveShareProvider>()
                                                       .experienceCards;
                                               return _ExperienceCardsSection(
-                                                userCategories: _userCategories,
+                                                key: const ValueKey(
+                                                    'cards_section_stable'),
+                                                userCategories:
+                                                    _userCategories,
                                                 userColorCategories:
                                                     _userColorCategories,
                                                 userCategoriesNotifier:
@@ -3792,6 +3790,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                     }
                   },
                 ),
+          ),
         ),
       ),
     ));
