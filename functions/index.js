@@ -2,6 +2,7 @@
 const { getFirestore } = require("firebase-admin/firestore"); // For interacting with Firestore
 const { onDocumentCreated } = require("firebase-functions/v2/firestore"); // For 2nd gen Firestore triggers
 const { onRequest } = require("firebase-functions/v2/https"); // For 2nd gen HTTPS endpoints
+const { onSchedule } = require("firebase-functions/v2/scheduler"); // For 2nd gen scheduled functions
 const functions = require("firebase-functions"); // Still needed for logger, config, etc.
 const admin = require("firebase-admin");
 const nodemailer = require("nodemailer");
@@ -10,6 +11,7 @@ admin.initializeApp();
 
 const db = getFirestore(); // Use getFirestore() from firebase-admin/firestore
 const messaging = admin.messaging();
+const FieldValue = admin.firestore.FieldValue;
 
 // Import and export share permission maintenance functions
 const maintainSharedUserIds = require("./src/maintain_shared_userids");
@@ -975,3 +977,162 @@ This is an automated notification from Plendy's content moderation system.
       // The report is still saved in Firestore
     }
   });
+
+exports.processEventNotificationQueue = onSchedule({
+  schedule: "every 1 minutes",
+}, async (event) => {
+  const now = admin.firestore.Timestamp.now();
+
+  const snapshot = await db
+    .collection("event_notification_queue")
+    .where("status", "==", "pending")
+    .where("sendAt", "<=", now)
+    .limit(50)
+    .get();
+
+  if (snapshot.empty) {
+    functions.logger.log(
+      "Event reminders: no pending notifications at",
+      now.toDate(),
+    );
+    return null;
+  }
+
+  functions.logger.log(
+    "Event reminders: processing",
+    snapshot.size,
+    "notifications at",
+    now.toDate(),
+  );
+
+  for (const doc of snapshot.docs) {
+    const data = doc.data();
+    const userId = data.userId;
+    const eventId = data.eventId;
+
+    if (!userId || !eventId) {
+      await doc.ref.update({
+        status: "error",
+        errorMessage: "Missing userId or eventId",
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+      continue;
+    }
+
+    try {
+      const tokensSnapshot = await db
+        .collection("users")
+        .doc(userId)
+        .collection("fcmTokens")
+        .get();
+
+      if (tokensSnapshot.empty) {
+        functions.logger.log(
+          "Event reminders: no tokens for user",
+          userId,
+        );
+        await doc.ref.update({
+          status: "no_tokens",
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+        continue;
+      }
+
+      const tokens = tokensSnapshot.docs.map((tokenDoc) => tokenDoc.id);
+      const eventTitle = data.eventTitle || "Upcoming event";
+      const startTimestamp = data.eventStartTime;
+      let startString = "soon";
+      if (startTimestamp?.toDate) {
+        startString = startTimestamp
+          .toDate()
+          .toLocaleString("en-US", {
+            hour: "numeric",
+            minute: "2-digit",
+            month: "short",
+            day: "numeric",
+          });
+      }
+
+      const messages = tokens.map((token) => ({
+        token,
+        notification: {
+          title: "Event starting soon",
+          body: `${eventTitle} begins ${startString}.`,
+        },
+        data: {
+          type: "event_reminder",
+          eventId,
+        },
+        android: {
+          notification: {
+            channelId: "events",
+            priority: "high",
+            defaultSound: true,
+          },
+        },
+        apns: {
+          payload: {
+            aps: {
+              sound: "default",
+              category: "events",
+            },
+          },
+        },
+      }));
+
+      const response = await messaging.sendEach(messages);
+
+      const cleanup = [];
+      response.responses.forEach((result, index) => {
+        if (!result.success) {
+          const error = result.error;
+          functions.logger.error(
+            "Event reminders: failed sending to",
+            tokens[index],
+            error?.code,
+          );
+          if (
+            error?.code === "messaging/invalid-registration-token" ||
+              error?.code === "messaging/registration-token-not-registered"
+          ) {
+            cleanup.push(
+              db
+                .collection("users")
+                .doc(userId)
+                .collection("fcmTokens")
+                .doc(tokens[index])
+                .delete(),
+            );
+          }
+        }
+      });
+
+      if (cleanup.length > 0) {
+        await Promise.all(cleanup);
+      }
+
+      await doc.ref.update({
+        status: "sent",
+        sentAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+        lastResult: {
+          successCount: response.successCount,
+          failureCount: response.failureCount,
+        },
+      });
+    } catch (error) {
+      functions.logger.error(
+        "Event reminders: error processing",
+        doc.id,
+        error,
+      );
+      await doc.ref.update({
+        status: "error",
+        errorMessage: error?.message || String(error),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    }
+  }
+
+  return null;
+});

@@ -17,12 +17,18 @@ class EventService {
       throw Exception('User not authenticated');
     }
 
+    print('EventService: Creating event for user $_currentUserId');
+    print('EventService: Event title: ${event.title}');
+    print('EventService: Event start: ${event.startDateTime}');
+    print('EventService: Event planner: ${event.plannerUserId}');
+
     final now = FieldValue.serverTimestamp();
     final data = event.toMap();
     data['createdAt'] = now;
     data['updatedAt'] = now;
 
     final docRef = await _eventsCollection.add(data);
+    print('EventService: Event created with ID: ${docRef.id}');
     return docRef.id;
   }
 
@@ -58,28 +64,42 @@ class EventService {
 
   /// Get events for a user (as planner or collaborator)
   Future<List<Event>> getEventsForUser(String userId) async {
-    final plannerQuery = await _eventsCollection
-        .where('plannerUserId', isEqualTo: userId)
-        .orderBy('startDateTime', descending: true)
-        .get();
+    try {
+      // Query for events where user is the planner (without orderBy to avoid index issues)
+      final plannerQuery = await _eventsCollection
+          .where('plannerUserId', isEqualTo: userId)
+          .get();
 
-    final collaboratorQuery = await _eventsCollection
-        .where('collaboratorIds', arrayContains: userId)
-        .orderBy('startDateTime', descending: true)
-        .get();
+      // Query for events where user is a collaborator (without orderBy to avoid index issues)
+      final collaboratorQuery = await _eventsCollection
+          .where('collaboratorIds', arrayContains: userId)
+          .get();
 
-    final Set<String> seenIds = {};
-    final List<Event> events = [];
+      final Set<String> seenIds = {};
+      final List<Event> events = [];
 
-    for (final doc in [...plannerQuery.docs, ...collaboratorQuery.docs]) {
-      if (!seenIds.contains(doc.id)) {
-        seenIds.add(doc.id);
-        events.add(Event.fromMap(doc.data() as Map<String, dynamic>, id: doc.id));
+      // Combine results and deduplicate
+      for (final doc in [...plannerQuery.docs, ...collaboratorQuery.docs]) {
+        if (!seenIds.contains(doc.id)) {
+          seenIds.add(doc.id);
+          try {
+            events.add(Event.fromMap(doc.data() as Map<String, dynamic>, id: doc.id));
+          } catch (e) {
+            print('Error parsing event ${doc.id}: $e');
+          }
+        }
       }
-    }
 
-    events.sort((a, b) => b.startDateTime.compareTo(a.startDateTime));
-    return events;
+      // Sort in memory instead of in Firestore (most recent first)
+      events.sort((a, b) => b.startDateTime.compareTo(a.startDateTime));
+      
+      print('EventService: Found ${events.length} events for user $userId');
+      return events;
+    } catch (e, stackTrace) {
+      print('EventService: Error fetching events: $e');
+      print('Stack trace: $stackTrace');
+      return [];
+    }
   }
 
   /// Generate a unique share token for an event

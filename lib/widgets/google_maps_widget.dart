@@ -25,7 +25,7 @@ class GoogleMapsWidget extends StatefulWidget {
     this.showUserLocation = true,
     this.allowSelection = true, // Default to true
     this.showControls = true,
-    this.mapToolbarEnabled = true,
+    this.mapToolbarEnabled = false, // Disable to prevent duplicate semantic nodes
     this.onLocationSelected,
     this.additionalMarkers,
     this.onMapControllerCreated,
@@ -47,6 +47,8 @@ class _GoogleMapsWidgetState extends State<GoogleMapsWidget> {
   late CameraPosition _initialCameraPosition;
   // ADDED: Flag to track if initial position is determined
   bool _initialPositionDetermined = false;
+  // ADDED: Stable key for the GoogleMap widget to prevent recreation
+  final _googleMapKey = GlobalKey();
 
   @override
   void initState() {
@@ -211,6 +213,7 @@ class _GoogleMapsWidgetState extends State<GoogleMapsWidget> {
     return Stack(
       children: [
         GoogleMap(
+          key: _googleMapKey, // Use stable key to prevent recreation across rebuilds
           // Use the determined initial position
           initialCameraPosition: _initialCameraPosition,
           myLocationEnabled: widget.showUserLocation,

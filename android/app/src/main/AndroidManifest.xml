@@ -142,5 +142,18 @@
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="https" />
         </intent>
+        <!-- Yelp app deep link scheme -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="yelp" />
+        </intent>
+        <!-- Allow querying for browser apps -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="https" />
+        </intent>
+        <!-- Explicitly allow querying the Yelp app package -->
+        <package android:name="com.yelp.android" />
     </queries>
 </manifest>

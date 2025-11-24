@@ -12,6 +12,7 @@ import '../services/event_service.dart';
 import '../services/experience_service.dart';
 import '../services/auth_service.dart';
 import '../services/google_maps_service.dart';
+import '../services/event_notification_queue_service.dart';
 import '../widgets/shared_media_preview_modal.dart';
 import 'share_experience_bottom_sheet.dart';
 
@@ -50,6 +51,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
   final _eventService = EventService();
   final _experienceService = ExperienceService();
   final _authService = AuthService();
+  final _eventNotificationQueueService = EventNotificationQueueService();
 
   late Event _currentEvent;
   late TextEditingController _titleController;
@@ -150,6 +152,12 @@ class _EventEditorModalState extends State<EventEditorModal> {
         // Existing event - update it
         await _eventService.updateEvent(updatedEvent);
         savedEvent = updatedEvent;
+      }
+
+      try {
+        await _eventNotificationQueueService.queueEventNotifications(savedEvent);
+      } catch (e) {
+        debugPrint('EventEditorModal: Failed to queue notifications - $e');
       }
 
       setState(() {
@@ -363,6 +371,11 @@ class _EventEditorModalState extends State<EventEditorModal> {
 
               // Notifications
               _buildNotificationsSection(),
+
+              const Divider(height: 1),
+
+              // Description
+              _buildDescriptionSection(),
 
               const Divider(height: 1),
 
@@ -655,6 +668,10 @@ class _EventEditorModalState extends State<EventEditorModal> {
     );
   }
 
+  void _openItinerarySelector() {
+    _popWithDraftResult();
+  }
+
   Widget _buildScheduleSection(String durationText) {
     return Padding(
       padding: const EdgeInsets.all(16.0),
@@ -857,11 +874,35 @@ class _EventEditorModalState extends State<EventEditorModal> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'Itinerary (${_currentEvent.experiences.length} experiences)',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Expanded(
+                child: Text(
+                  'Itinerary (${_currentEvent.experiences.length} experiences)',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
                 ),
+              ),
+              const SizedBox(width: 8),
+              Tooltip(
+                message: 'Edit itinerary',
+                child: InkWell(
+                  onTap: _openItinerarySelector,
+                  borderRadius: BorderRadius.circular(20),
+                  child: Container(
+                    width: 32,
+                    height: 32,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Theme.of(context).primaryColor,
+                    ),
+                    child: const Icon(Icons.add, color: Colors.white, size: 18),
+                  ),
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 16),
           if (_currentEvent.experiences.isEmpty)
@@ -1095,103 +1136,124 @@ class _EventEditorModalState extends State<EventEditorModal> {
       ],
     );
 
-    return Card(
-      key: ValueKey(entry.experienceId),
-      margin: const EdgeInsets.only(bottom: 12),
-      color: Colors.grey.shade100,
-      child: ExpansionTile(
-        shape: const RoundedRectangleBorder(
-          side: BorderSide(color: Colors.transparent, width: 0),
-          borderRadius: BorderRadius.zero,
-        ),
-        collapsedShape: const RoundedRectangleBorder(
-          side: BorderSide(color: Colors.transparent, width: 0),
-          borderRadius: BorderRadius.zero,
-        ),
-        tilePadding: const EdgeInsets.symmetric(horizontal: 8.0),
-        childrenPadding: const EdgeInsets.symmetric(horizontal: 16.0),
-        leading: leadingWidget,
-        title: Text(
-          experience.name,
-          overflow: TextOverflow.ellipsis,
-          maxLines: 1,
-        ),
-        subtitle: subtitleChildren.isEmpty
-            ? null
-            : Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: subtitleChildren,
-              ),
-        children: [
+    final String? scheduledTimeLabel = entry.scheduledTime != null
+        ? _formatDateTime(entry.scheduledTime!)
+        : null;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (scheduledTimeLabel != null)
           Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                // Scheduled Time
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.schedule),
-                  title: const Text('Scheduled time'),
-                  subtitle: Text(entry.scheduledTime != null
-                      ? _formatDateTime(entry.scheduledTime!)
-                      : 'Not set'),
-                  trailing: const Icon(Icons.edit_outlined),
-                  onTap: () => _editScheduledTime(entry, index),
-                ),
-                // Transport Info
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.directions),
-                  title: const Text('Transport'),
-                  subtitle: Text(entry.transportInfo ?? 'Not set'),
-                  trailing: const Icon(Icons.edit_outlined),
-                  onTap: () => _editTransportInfo(entry, index),
-                ),
-                // Note
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.note),
-                  title: const Text('Note'),
-                  subtitle: Text(entry.note ?? 'Not set'),
-                  trailing: const Icon(Icons.edit_outlined),
-                  onTap: () => _editNote(entry, index),
-                ),
-                const Divider(),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            padding: const EdgeInsets.only(left: 8.0, bottom: 4.0),
+            child: Text(
+              scheduledTimeLabel,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Colors.grey[700],
+                    fontWeight: FontWeight.w600,
+                  ),
+            ),
+          ),
+        Card(
+          key: ValueKey(entry.experienceId),
+          margin: const EdgeInsets.only(bottom: 12),
+          color: Colors.grey.shade100,
+          child: ExpansionTile(
+            shape: const RoundedRectangleBorder(
+              side: BorderSide(color: Colors.transparent, width: 0),
+              borderRadius: BorderRadius.zero,
+            ),
+            collapsedShape: const RoundedRectangleBorder(
+              side: BorderSide(color: Colors.transparent, width: 0),
+              borderRadius: BorderRadius.zero,
+            ),
+            tilePadding: const EdgeInsets.symmetric(horizontal: 8.0),
+            childrenPadding: const EdgeInsets.symmetric(horizontal: 16.0),
+            leading: leadingWidget,
+            title: Text(
+              experience.name,
+              overflow: TextOverflow.ellipsis,
+              maxLines: 1,
+            ),
+            subtitle: subtitleChildren.isEmpty
+                ? null
+                : Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: subtitleChildren,
+                  ),
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    TextButton.icon(
-                      icon: const Icon(Icons.open_in_new),
-                      label: const Text('Open'),
-                      onPressed: () {
-                        // TODO: Navigate to experience page
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                              content: Text(
-                                  'Open experience - not yet implemented')),
-                        );
-                      },
+                    // Scheduled Time
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.schedule),
+                      title: const Text('Scheduled time'),
+                      subtitle: Text(entry.scheduledTime != null
+                          ? _formatDateTime(entry.scheduledTime!)
+                          : 'Not set'),
+                      trailing: const Icon(Icons.edit_outlined),
+                      onTap: () => _editScheduledTime(entry, index),
                     ),
-                    TextButton.icon(
-                      style: TextButton.styleFrom(
-                        foregroundColor: Theme.of(context).primaryColor,
-                      ),
-                      icon: Icon(Icons.delete,
-                          color: Theme.of(context).primaryColor),
-                      label: Text(
-                        'Remove',
-                        style: TextStyle(color: Theme.of(context).primaryColor),
-                      ),
-                      onPressed: () => _removeExperience(index),
+                    // Transport Info
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.directions),
+                      title: const Text('Transport'),
+                      subtitle: Text(entry.transportInfo ?? 'Not set'),
+                      trailing: const Icon(Icons.edit_outlined),
+                      onTap: () => _editTransportInfo(entry, index),
+                    ),
+                    // Note
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.note),
+                      title: const Text('Note'),
+                      subtitle: Text(entry.note ?? 'Not set'),
+                      trailing: const Icon(Icons.edit_outlined),
+                      onTap: () => _editNote(entry, index),
+                    ),
+                    const Divider(),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
+                        TextButton.icon(
+                          icon: const Icon(Icons.open_in_new),
+                          label: const Text('Open'),
+                          onPressed: () {
+                            // TODO: Navigate to experience page
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                  content: Text(
+                                      'Open experience - not yet implemented')),
+                            );
+                          },
+                        ),
+                        TextButton.icon(
+                          style: TextButton.styleFrom(
+                            foregroundColor: Theme.of(context).primaryColor,
+                          ),
+                          icon: Icon(Icons.delete,
+                              color: Theme.of(context).primaryColor),
+                          label: Text(
+                            'Remove',
+                            style: TextStyle(
+                                color: Theme.of(context).primaryColor),
+                          ),
+                          onPressed: () => _removeExperience(index),
+                        ),
+                      ],
                     ),
                   ],
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
@@ -1832,7 +1894,9 @@ class _EventEditorModalState extends State<EventEditorModal> {
                 : null,
           ),
           const SizedBox(height: 16),
-          if (isPlanner) ...[
+          if (isPlanner &&
+              _currentEvent.id.isNotEmpty &&
+              _currentEvent.visibility != EventVisibility.private) ...[
             if (_currentEvent.shareToken == null)
               OutlinedButton.icon(
                 icon: const Icon(Icons.link),
@@ -2044,6 +2108,34 @@ class _EventEditorModalState extends State<EventEditorModal> {
                     ),
               ),
             ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDescriptionSection() {
+    return Padding(
+      padding: const EdgeInsets.all(16.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Description',
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _descriptionController,
+            decoration: const InputDecoration(
+              hintText: 'Describe the vibe, schedule details, dress code, etc.',
+              border: OutlineInputBorder(),
+            ),
+            minLines: 4,
+            maxLines: 8,
+            textInputAction: TextInputAction.newline,
+          ),
         ],
       ),
     );

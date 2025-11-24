@@ -91,7 +91,7 @@ function getCategoryIdsForExperience(experienceData) {
 
   if (Array.isArray(experienceData.otherColorCategoryIds)) {
     experienceData.otherColorCategoryIds.forEach((id) =>
-      categoryIds.add(id)
+      categoryIds.add(id),
     );
   }
 

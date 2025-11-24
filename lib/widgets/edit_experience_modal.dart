@@ -814,8 +814,11 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
     }
 
     try {
-      bool launched =
-          await launchUrl(uri, mode: LaunchMode.externalApplication);
+      bool launched = await launchUrl(
+        uri,
+        mode: LaunchMode.externalApplication,
+        webOnlyWindowName: '_blank',
+      );
       if (!launched) {
         // print('Could not launch $uri');
         if (mounted) {

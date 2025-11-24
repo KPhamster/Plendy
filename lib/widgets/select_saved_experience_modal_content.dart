@@ -3,7 +3,6 @@ import 'package:firebase_auth/firebase_auth.dart';
 import '../models/experience.dart';
 import '../services/experience_service.dart';
 import '../models/user_category.dart';
-import '../screens/receive_share/widgets/yelp_preview_widget.dart';
 
 class SelectSavedExperienceModalContent extends StatefulWidget {
   final ScrollController? scrollController; // Optional: for DraggableScrollableSheet
@@ -36,7 +35,9 @@ class _SelectSavedExperienceModalContentState
   void _loadUserExperiences() {
     final userId = _auth.currentUser?.uid;
     if (userId != null) {
-      final experiencesFuture = _experienceService.getExperiencesByUser(userId);
+      // Fetch all of the user's experiences (no limit) so search covers everything
+      final experiencesFuture =
+          _experienceService.getExperiencesByUser(userId, limit: 0);
       final categoriesFuture = _experienceService.getUserCategories();
 
       _dataFuture = Future.wait([experiencesFuture, categoriesFuture])
@@ -205,48 +206,15 @@ class _SelectSavedExperienceModalContentState
                     itemCount: experiences.length,
                     itemBuilder: (context, index) {
                       final experience = experiences[index];
-                      final String? locationText =
-                          experience.location.getFormattedArea() ??
-                              experience.location.address;
-                      final bool hasYelpUrl =
-                          (experience.yelpUrl?.trim().isNotEmpty ?? false);
-
-                      return Card(
-                        margin: const EdgeInsets.symmetric(vertical: 6.0),
-                        elevation: 1,
-                        child: ListTile(
-                          contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 16.0, vertical: 12.0),
-                          title: Text(
-                            experience.name,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          subtitle: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                locationText ?? 'No location details',
-                                style: TextStyle(
-                                  color: Colors.grey.shade700,
-                                ),
-                              ),
-                              if (hasYelpUrl) ...[
-                                const SizedBox(height: 12),
-                                YelpPreviewWidget(
-                                  yelpUrl: experience.yelpUrl!.trim(),
-                                  padding: const EdgeInsets.all(12),
-                                ),
-                              ],
-                            ],
-                          ),
-                          onTap: () {
-                            // Return the selected experience when tapped
-                            Navigator.pop(context, experience);
-                          },
-                        ),
+                      return ListTile(
+                        title: Text(experience.name),
+                        subtitle: Text(experience.location.getFormattedArea() ??
+                            experience.location.address ??
+                            'No location details'),
+                        onTap: () {
+                          // Return the selected experience when tapped
+                          Navigator.pop(context, experience);
+                        },
                       );
                     },
                   );

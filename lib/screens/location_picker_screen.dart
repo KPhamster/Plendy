@@ -39,11 +39,15 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
   GoogleMapController? _mapController;
   final Map<String, Marker> _mapMarkers = {};
   Timer? _debounce;
+  final GlobalKey _mapKey = GlobalKey(); // Preserve map state across rebuilds
+  bool _mapInitialized = false; // Track if map has been initialized
+  Location? _initialMapLocation; // Store initial location
 
   @override
   void initState() {
     super.initState();
     _selectedLocation = widget.initialLocation;
+    _initialMapLocation = widget.initialLocation; // Store for map initialization
     _updateSelectedLocationMarker();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       FocusScope.of(context).requestFocus(_searchFocusNode);
@@ -211,30 +215,64 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
         openNow = null;
       }
 
-      setState(() {
-        _selectedLocation = location;
-        _searchController.text =
-            location.displayName ?? location.address ?? 'Selected Location';
-        _showSearchResults = false;
-        _isSearching = false;
-        _selectedLocationBusinessStatus = businessStatus; // ADDED
-        _selectedLocationOpenNow = openNow; // ADDED
-      });
+    // First update state WITHOUT markers to avoid rebuild
+    setState(() {
+      _selectedLocation = location;
+      _searchController.text =
+          location.displayName ?? location.address ?? 'Selected Location';
+      _showSearchResults = false;
+      _isSearching = false;
+      _selectedLocationBusinessStatus = businessStatus; // ADDED
+      _selectedLocationOpenNow = openNow; // ADDED
+    });
 
-      // Get reference to the GoogleMapsWidget
-      if (_mapController != null) {
-        // Animate map to the selected location using the controller
-        _mapController!.animateCamera(CameraUpdate.newLatLngZoom(
-                LatLng(location.latitude, location.longitude),
-                16.0) // Zoom in closer
-            );
+    // Animate camera FIRST, then update markers
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      
+      // Try multiple times to ensure the controller is ready and animate camera
+      bool animationSuccess = false;
+      for (int i = 0; i < 5; i++) {
+        if (_mapController != null && mounted) {
+          try {
+            await _mapController!.animateCamera(CameraUpdate.newLatLngZoom(
+                    LatLng(location.latitude, location.longitude),
+                    16.0) // Zoom in closer
+                );
+            print('📍 PICKER: Camera animated to ${location.getPlaceName()}');
+            animationSuccess = true;
+            break; // Success, exit loop
+          } catch (e) {
+            print('📍 PICKER: Camera animation attempt ${i + 1} failed: $e');
+            if (i < 4) await Future.delayed(Duration(milliseconds: 100));
+          }
+        } else {
+          await Future.delayed(Duration(milliseconds: 100));
+        }
       }
+      
+      // After camera animation completes, update markers
+      if (mounted && animationSuccess) {
+        final Map<String, Marker> newMarkers = {};
+        final markerId = MarkerId('selected_location');
+        newMarkers[markerId.value] = Marker(
+          markerId: markerId,
+          position: LatLng(location.latitude, location.longitude),
+          infoWindow: InfoWindow(
+            title: location.getPlaceName(),
+            snippet: location.address,
+          ),
+          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueViolet),
+        );
+        
+        setState(() {
+          _mapMarkers.clear();
+          _mapMarkers.addAll(newMarkers);
+        });
+      }
+    });
 
-      // Update parent with selected location
-      widget.onLocationSelected(_selectedLocation!);
-    
-      // Update the marker on the map
-      _updateSelectedLocationMarker();
+    // Don't call onLocationSelected here - only call it when user confirms with button
     } catch (e) {
       print('Error getting place details: $e');
       ScaffoldMessenger.of(context).showSnackBar(
@@ -283,6 +321,7 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
       openNow = null;
     }
 
+    // First update state WITHOUT markers to avoid rebuild
     setState(() {
       _selectedLocation = detailedLocation;
       _searchController.text = detailedLocation.displayName ??
@@ -292,14 +331,49 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
       _selectedLocationOpenNow = openNow; // ADDED
     });
 
-    // Make sure we have the location centered on the map
-    if (_mapController != null) {
-      _mapController!.animateCamera(CameraUpdate.newLatLng(
-          LatLng(detailedLocation.latitude, detailedLocation.longitude)));
-    }
-
-    // Update the marker on the map
-    _updateSelectedLocationMarker();
+    // Animate camera FIRST, then update markers
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      
+      // Try multiple times to ensure the controller is ready and animate camera
+      bool animationSuccess = false;
+      for (int i = 0; i < 5; i++) {
+        if (_mapController != null && mounted) {
+          try {
+            await _mapController!.animateCamera(CameraUpdate.newLatLng(
+                LatLng(detailedLocation.latitude, detailedLocation.longitude)));
+            print('📍 PICKER: Camera animated to map tap location');
+            animationSuccess = true;
+            break; // Success, exit loop
+          } catch (e) {
+            print('📍 PICKER: Camera animation attempt ${i + 1} failed: $e');
+            if (i < 4) await Future.delayed(Duration(milliseconds: 100));
+          }
+        } else {
+          await Future.delayed(Duration(milliseconds: 100));
+        }
+      }
+      
+      // After camera animation completes, update markers
+      if (mounted && animationSuccess) {
+        final Map<String, Marker> newMarkers = {};
+        final markerId = MarkerId('selected_location');
+        newMarkers[markerId.value] = Marker(
+          markerId: markerId,
+          position: LatLng(detailedLocation.latitude, detailedLocation.longitude),
+          infoWindow: InfoWindow(
+            title: detailedLocation.getPlaceName(),
+            snippet: detailedLocation.address,
+          ),
+          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueViolet),
+        );
+        
+        setState(() {
+          _mapMarkers.clear();
+          _mapMarkers.addAll(newMarkers);
+        });
+      }
+    });
   }
 
   // Open Google Maps with directions to the selected location
@@ -613,14 +687,18 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
                     child: Stack(
                       children: [
                         GoogleMapsWidget(
-                          initialLocation: widget.initialLocation,
+                          key: _mapKey, // Use key to preserve state
+                          initialLocation: _initialMapLocation, // Always use the original initial location
                           showUserLocation: true,
                           allowSelection: true,
                           onLocationSelected: _onLocationSelected,
-                          // Pass a *copy* of the map to ensure change detection
+                          // Pass a copy of the map - GoogleMap now has stable key so won't reset
                           additionalMarkers: Map.of(_mapMarkers),
                           onMapControllerCreated: (controller) {
                             _mapController = controller;
+                            if (!_mapInitialized) {
+                              _mapInitialized = true; // Mark as initialized only first time
+                            }
                           },
                         ),
                       ],
@@ -630,14 +708,18 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
                     child: Stack(
                       children: [
                         GoogleMapsWidget(
-                          initialLocation: widget.initialLocation,
+                          key: _mapKey, // Use key to preserve state
+                          initialLocation: _initialMapLocation, // Always use the original initial location
                           showUserLocation: true,
                           allowSelection: true,
                           onLocationSelected: _onLocationSelected,
-                          // Pass a *copy* of the map to ensure change detection
+                          // Pass a copy of the map - GoogleMap now has stable key so won't reset
                           additionalMarkers: Map.of(_mapMarkers),
                           onMapControllerCreated: (controller) {
                             _mapController = controller;
+                            if (!_mapInitialized) {
+                              _mapInitialized = true; // Mark as initialized only first time
+                            }
                           },
                         ),
                       ],

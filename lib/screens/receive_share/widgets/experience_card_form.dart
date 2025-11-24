@@ -337,14 +337,13 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
           final Uri deepLink = Uri.parse('yelp:///search?terms=$t$l');
           print('DEBUG YELP: Using deep link: $deepLink');
           try {
-            if (await canLaunchUrl(deepLink)) {
-              launched = await launchUrl(deepLink,
-                  mode: LaunchMode.externalApplication);
-              print('DEBUG YELP: Deep link launch result: $launched');
-              if (launched) {
-                print('DEBUG YELP: Successfully launched via deep link');
-                return; // Successfully launched deep link; stop here
-              }
+            // Try launching without canLaunchUrl check first
+            launched = await launchUrl(deepLink,
+                mode: LaunchMode.externalApplication);
+            print('DEBUG YELP: Deep link launch result: $launched');
+            if (launched) {
+              print('DEBUG YELP: Successfully launched via deep link');
+              return; // Successfully launched deep link; stop here
             }
           } catch (e) {
             print('DEBUG YELP: Error launching deep link: $e');
@@ -352,9 +351,13 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
         }
       }
 
-      // Fallback: Launch the HTTPS URL directly
+      // Fallback: Launch the HTTPS URL - force external browser, not in-app
       print('DEBUG YELP: Fallback to HTTPS URL: $uri');
-      launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      launched = await launchUrl(
+        uri,
+        mode: LaunchMode.externalApplication,
+        webOnlyWindowName: '_blank', // For web platform
+      );
       print('DEBUG YELP: HTTPS URL launch result: $launched');
 
       if (!launched) {

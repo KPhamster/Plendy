@@ -3033,12 +3033,11 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
           final Uri deepLink = Uri.parse(
               'yelp:///search?terms=$encodedTerms$locationParam');
           try {
-            if (await canLaunchUrl(deepLink)) {
-              launched = await launchUrl(deepLink,
-                  mode: LaunchMode.externalApplication);
-              if (launched) {
-                return;
-              }
+            // Try launching without canLaunchUrl check first
+            launched = await launchUrl(deepLink,
+                mode: LaunchMode.externalApplication);
+            if (launched) {
+              return;
             }
           } catch (e) {
             // Ignore deep link errors and fall back to HTTPS URL
@@ -3046,7 +3045,11 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
         }
       }
 
-      launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      launched = await launchUrl(
+        uri,
+        mode: LaunchMode.externalApplication,
+        webOnlyWindowName: '_blank',
+      );
       if (!launched && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Could not open Yelp link/search')),
