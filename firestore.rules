@@ -357,6 +357,25 @@ service cloud.firestore {
       allow delete: if request.auth != null &&
         resource.data.plannerUserId == request.auth.uid;
     }
+
+    match /event_notification_queue/{queueId} {
+      // Allow authenticated users to write notification queue entries
+      // Document ID format: {eventId}_{userId}
+      // Users can only create/update notifications for themselves
+      allow create, update: if request.auth != null &&
+        request.resource.data.userId == request.auth.uid &&
+        request.resource.data.eventId is string &&
+        request.resource.data.sendAt is timestamp &&
+        request.resource.data.status in ['pending', 'sent', 'no_tokens', 'error'];
+
+      // Allow users to read their own notification queue entries
+      allow read: if request.auth != null &&
+        resource.data.userId == request.auth.uid;
+
+      // Allow users to delete their own notification queue entries
+      allow delete: if request.auth != null &&
+        resource.data.userId == request.auth.uid;
+    }
   }
 
   function sharedPermissionDocId(ownerId, itemType, itemId, viewerId) {

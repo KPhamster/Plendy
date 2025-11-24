@@ -271,13 +271,6 @@ class _EventsScreenState extends State<EventsScreen>
               // TODO: Implement search
             },
           ),
-          // Menu icon
-          IconButton(
-            icon: const Icon(Icons.more_vert),
-            onPressed: () {
-              // TODO: Implement menu
-            },
-          ),
         ],
       ),
     );
