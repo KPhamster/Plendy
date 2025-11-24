@@ -111,6 +111,9 @@ class EventNotificationPreference extends Equatable {
 }
 
 /// Represents a single experience entry inside an itinerary.
+// Sentinel value to distinguish between "not provided" and "explicitly set to null"
+const _undefined = Object();
+
 class EventExperienceEntry extends Equatable {
   final String experienceId;
   final String? note;
@@ -145,15 +148,15 @@ class EventExperienceEntry extends Equatable {
 
   EventExperienceEntry copyWith({
     String? experienceId,
-    String? note,
-    DateTime? scheduledTime,
-    String? transportInfo,
+    Object? note = _undefined,
+    Object? scheduledTime = _undefined,
+    Object? transportInfo = _undefined,
   }) {
     return EventExperienceEntry(
       experienceId: experienceId ?? this.experienceId,
-      note: note ?? this.note,
-      scheduledTime: scheduledTime ?? this.scheduledTime,
-      transportInfo: transportInfo ?? this.transportInfo,
+      note: note == _undefined ? this.note : note as String?,
+      scheduledTime: scheduledTime == _undefined ? this.scheduledTime : scheduledTime as DateTime?,
+      transportInfo: transportInfo == _undefined ? this.transportInfo : transportInfo as String?,
     );
   }
 
