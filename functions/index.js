@@ -1093,7 +1093,7 @@ exports.processEventNotificationQueue = onSchedule({
           );
           if (
             error?.code === "messaging/invalid-registration-token" ||
-              error?.code === "messaging/registration-token-not-registered"
+            error?.code === "messaging/registration-token-not-registered"
           ) {
             cleanup.push(
               db

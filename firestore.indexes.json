@@ -47,6 +47,14 @@
         { "fieldPath": "ownerUserId", "order": "ASCENDING" },
         { "fieldPath": "itemType", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "event_notification_queue",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "sendAt", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": [

@@ -63,6 +63,7 @@ class EventExperienceSelectorScreen extends StatefulWidget {
   final CategorySortType? initialCategorySort;
   final ColorCategorySortType? initialColorCategorySort;
   final ExperienceSortType? initialExperienceSort;
+  final bool returnSelectionOnly;
 
   const EventExperienceSelectorScreen({
     super.key,
@@ -74,6 +75,7 @@ class EventExperienceSelectorScreen extends StatefulWidget {
     this.initialCategorySort,
     this.initialColorCategorySort,
     this.initialExperienceSort,
+    this.returnSelectionOnly = false,
   });
 
   @override
@@ -828,6 +830,11 @@ class _EventExperienceSelectorScreenState
               onPressed: _selectedExperienceIds.isEmpty
                   ? null
                   : () async {
+                      if (widget.returnSelectionOnly) {
+                        Navigator.of(context)
+                            .pop(_orderedSelectedExperienceIds());
+                        return;
+                      }
                       await _navigateToEditor();
                     },
               child: Text('Done (${_selectedExperienceIds.length})'),
@@ -1651,6 +1658,7 @@ class _EventExperienceSelectorScreenState
               .toList(),
           categories: widget.categories,
           colorCategories: widget.colorCategories,
+          returnToSelectorOnItineraryTap: true,
         ),
         fullscreenDialog: true,
       ),

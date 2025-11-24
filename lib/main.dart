@@ -218,6 +218,14 @@ Future<void> _configureLocalNotifications() async {
             await _openChatFromNotification(threadId);
             return;
           }
+        } else if (type == 'event_reminder') {
+          final eventId = data['eventId'] as String?;
+          if (eventId != null) {
+            print('Event reminder tapped - eventId: $eventId');
+            // TODO: Navigate to event details screen
+            // For now, just print the event ID
+            return;
+          }
         }
       } catch (_) {
         // Not JSON, treat as screen path
@@ -235,6 +243,48 @@ Future<void> _configureLocalNotifications() async {
   });
   
   print('Local notifications initialized: $initialized');
+  
+  // Create notification channels on Android
+  if (Platform.isAndroid) {
+    final AndroidFlutterLocalNotificationsPlugin? androidImplementation =
+        flutterLocalNotificationsPlugin.resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>();
+    
+    // Messages channel
+    await androidImplementation?.createNotificationChannel(
+      const AndroidNotificationChannel(
+        'messages',
+        'Messages',
+        description: 'Notifications for new messages',
+        importance: Importance.max,
+        playSound: true,
+      ),
+    );
+    
+    // Events channel
+    await androidImplementation?.createNotificationChannel(
+      const AndroidNotificationChannel(
+        'events',
+        'Events',
+        description: 'Notifications for event reminders',
+        importance: Importance.max,
+        playSound: true,
+      ),
+    );
+    
+    // Social channel
+    await androidImplementation?.createNotificationChannel(
+      const AndroidNotificationChannel(
+        'social',
+        'Social',
+        description: 'Notifications for followers and follow requests',
+        importance: Importance.max,
+        playSound: true,
+      ),
+    );
+    
+    print('Android notification channels created');
+  }
   
   // Check permissions on iOS
   if (Platform.isIOS) {
@@ -354,10 +404,32 @@ void main() async {
           // Prepare payload with notification data
           String? payload;
           final messageType = message.data['type'] as String?;
+          
+          // Determine channel ID based on notification type
+          String channelId = 'messages'; // default
+          String channelName = 'Messages';
+          String channelDescription = 'Notifications for new messages';
+          
           if (messageType == 'new_message') {
             if (threadId.isNotEmpty) {
               payload = jsonEncode({'type': messageType, 'threadId': threadId});
             }
+            channelId = 'messages';
+            channelName = 'Messages';
+            channelDescription = 'Notifications for new messages';
+          } else if (messageType == 'event_reminder') {
+            final eventId = message.data['eventId'] as String?;
+            if (eventId != null) {
+              payload = jsonEncode({'type': messageType, 'eventId': eventId});
+            }
+            channelId = 'events';
+            channelName = 'Events';
+            channelDescription = 'Notifications for event reminders';
+          } else if (messageType == 'follow_request' || messageType == 'new_follower') {
+            payload = message.data['screen'] as String?;
+            channelId = 'social';
+            channelName = 'Social';
+            channelDescription = 'Notifications for followers and follow requests';
           } else {
             payload = message.data['screen'] as String?;
           }
@@ -369,11 +441,11 @@ void main() async {
             notificationId,
             message.notification!.title,
             message.notification!.body,
-            const NotificationDetails(
+            NotificationDetails(
               android: AndroidNotificationDetails(
-                'plendy_messages_channel',
-                'Message Notifications',
-                channelDescription: 'Notifications for new messages.',
+                channelId,
+                channelName,
+                channelDescription: channelDescription,
                 importance: Importance.max,
                 priority: Priority.high,
                 icon: '@mipmap/ic_launcher',
@@ -381,7 +453,7 @@ void main() async {
             ),
             payload: payload,
           ).then((_) {
-            print('FCM: ✅ Local notification shown successfully');
+            print('FCM: ✅ Local notification shown successfully on channel: $channelId');
           }).catchError((e) {
             print('FCM: ❌ Error showing local notification: $e');
           });
@@ -455,6 +527,13 @@ void main() async {
                 builder: (context) => const MessagesScreen(),
               ),
             );
+          }
+        } else if (type == 'event_reminder') {
+          final eventId = message.data['eventId'] as String?;
+          print("FCM: Event reminder notification - eventId: $eventId");
+          if (eventId != null) {
+            // TODO: Navigate to event details screen
+            print("FCM: Would navigate to event details for eventId: $eventId");
           }
         }
       }

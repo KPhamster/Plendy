@@ -14,6 +14,7 @@ import '../services/auth_service.dart';
 import '../services/google_maps_service.dart';
 import '../services/event_notification_queue_service.dart';
 import '../widgets/shared_media_preview_modal.dart';
+import '../screens/event_experience_selector_screen.dart';
 import 'share_experience_bottom_sheet.dart';
 
 class EventEditorResult {
@@ -34,6 +35,7 @@ class EventEditorModal extends StatefulWidget {
   final List<Experience> experiences; // Resolved experiences for the event
   final List<UserCategory> categories;
   final List<ColorCategory> colorCategories;
+  final bool returnToSelectorOnItineraryTap;
 
   const EventEditorModal({
     super.key,
@@ -41,6 +43,7 @@ class EventEditorModal extends StatefulWidget {
     required this.experiences,
     required this.categories,
     required this.colorCategories,
+    this.returnToSelectorOnItineraryTap = false,
   });
 
   @override
@@ -54,6 +57,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
   final _eventNotificationQueueService = EventNotificationQueueService();
 
   late Event _currentEvent;
+  List<Experience> _availableExperiences = [];
   late TextEditingController _titleController;
   late TextEditingController _descriptionController;
   late TextEditingController _coverImageUrlController;
@@ -71,6 +75,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
   void initState() {
     super.initState();
     _currentEvent = _eventWithAutoPrimarySchedule(widget.event);
+    _availableExperiences = List<Experience>.from(widget.experiences);
     _titleController = TextEditingController(text: _currentEvent.title);
     _descriptionController =
         TextEditingController(text: _currentEvent.description);
@@ -171,14 +176,11 @@ class _EventEditorModalState extends State<EventEditorModal> {
           const SnackBar(content: Text('Event saved')),
         );
 
-        // If this was a new event, pop and return it
-        if (isNewEvent) {
-          _popWithDraftResult(
-            wasSaved: true,
-            savedEvent: savedEvent,
-            draftOverride: savedEvent,
-          );
-        }
+        _popWithDraftResult(
+          wasSaved: true,
+          savedEvent: savedEvent,
+          draftOverride: savedEvent,
+        );
       }
     } catch (e) {
       setState(() {
@@ -570,7 +572,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
         final itineraryExperiences = _currentEvent.experiences
             .map((entry) => MapEntry(
                   entry,
-                  widget.experiences
+                  _availableExperiences
                       .firstWhereOrNull((exp) => exp.id == entry.experienceId),
                 ))
             .toList();
@@ -668,8 +670,126 @@ class _EventEditorModalState extends State<EventEditorModal> {
     );
   }
 
-  void _openItinerarySelector() {
-    _popWithDraftResult();
+  Future<void> _openItinerarySelector() async {
+    if (widget.returnToSelectorOnItineraryTap) {
+      _popWithDraftResult();
+      return;
+    }
+
+    final userId = _authService.currentUser?.uid;
+    if (userId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please sign in to edit the itinerary.'),
+        ),
+      );
+      return;
+    }
+
+    BuildContext? dialogContext;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        dialogContext = ctx;
+        return const Center(child: CircularProgressIndicator());
+      },
+    );
+
+    try {
+      final ownedExperiences =
+          await _experienceService.getExperiencesByUser(userId, limit: 0);
+      final sharedResult = await _experienceService.getExperiencesSharedWith(
+        userId,
+        limit: 300,
+      );
+      final sharedExperiences = sharedResult.$1;
+
+      final Map<String, Experience> experienceMap = {
+        for (final exp in _availableExperiences) exp.id: exp,
+      };
+      for (final exp in ownedExperiences) {
+        experienceMap[exp.id] = exp;
+      }
+      for (final exp in sharedExperiences) {
+        experienceMap[exp.id] = exp;
+      }
+
+      final selectedIds =
+          _currentEvent.experiences.map((e) => e.experienceId).toList();
+
+      final List<Experience> combinedExperiences = [];
+      for (final id in selectedIds) {
+        final exp = experienceMap.remove(id);
+        if (exp != null) {
+          combinedExperiences.add(exp);
+        }
+      }
+      combinedExperiences.addAll(experienceMap.values);
+
+      if (dialogContext != null) {
+        Navigator.of(dialogContext!).pop();
+        dialogContext = null;
+      }
+      if (!mounted) return;
+
+      final selectedOrder = await Navigator.of(context).push<List<String>>(
+        MaterialPageRoute(
+          builder: (ctx) => EventExperienceSelectorScreen(
+            categories: widget.categories,
+            colorCategories: widget.colorCategories,
+            experiences: combinedExperiences,
+            preSelectedExperienceIds: selectedIds.toSet(),
+            title: 'Edit itinerary',
+            returnSelectionOnly: true,
+          ),
+          fullscreenDialog: true,
+        ),
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        _availableExperiences = combinedExperiences;
+      });
+
+      if (selectedOrder == null) {
+        return;
+      }
+
+      final updatedEntries = _rebuildEntriesFromSelection(selectedOrder);
+      setState(() {
+        var updatedEvent =
+            _currentEvent.copyWith(experiences: updatedEntries);
+        updatedEvent = _eventWithAutoPrimarySchedule(updatedEvent);
+        _currentEvent = updatedEvent;
+        _markUnsavedChanges();
+      });
+    } catch (e) {
+      if (dialogContext != null) {
+        Navigator.of(dialogContext!).pop();
+        dialogContext = null;
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open itinerary: $e')),
+        );
+      }
+    }
+  }
+
+  List<EventExperienceEntry> _rebuildEntriesFromSelection(
+      List<String> selectedIds) {
+    final Map<String, EventExperienceEntry> existingEntries = {
+      for (final entry in _currentEvent.experiences) entry.experienceId: entry,
+    };
+
+    return selectedIds
+        .map(
+          (id) => existingEntries[id] ??
+              EventExperienceEntry(experienceId: id),
+        )
+        .toList();
   }
 
   Widget _buildScheduleSection(String durationText) {
@@ -937,7 +1057,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
               },
               itemBuilder: (context, index) {
                 final entry = _currentEvent.experiences[index];
-                final experience = widget.experiences.firstWhere(
+                final experience = _availableExperiences.firstWhere(
                   (exp) => exp.id == entry.experienceId,
                   orElse: () => Experience(
                     id: entry.experienceId,
