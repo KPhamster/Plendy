@@ -1439,11 +1439,9 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                 // Buttons on the right
                 // 1. Map Screen Button (View Location on App Map)
                 ActionChip(
-                  avatar: Icon(
-                    Icons.map_outlined, // Match Collections screen map icon
-                    color: Theme.of(context)
-                        .primaryColor, // Consistent with map icon
-                    size: 18,
+                  avatar: Image.asset(
+                    'assets/icon/icon-cropped.png',
+                    height: 18,
                   ),
                   label: const SizedBox.shrink(),
                   labelPadding: EdgeInsets.zero,

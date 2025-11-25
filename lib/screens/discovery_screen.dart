@@ -1583,11 +1583,17 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
                 message: 'View Map',
                 child: TextButton.icon(
                   style: TextButton.styleFrom(foregroundColor: Colors.white),
-                  icon: const Icon(
-                    Icons.map_outlined,
-                    color: Colors.white,
-                    size: 28,
-                  ),
+                  icon: _isCoverImageLoaded
+                      ? Image.asset(
+                          'assets/icon/icon-cropped.png',
+                          width: 28,
+                          height: 28,
+                        )
+                      : const Icon(
+                          Icons.map_outlined,
+                          color: Colors.white,
+                          size: 28,
+                        ),
                   label: const Text(
                     'Map',
                     style: TextStyle(

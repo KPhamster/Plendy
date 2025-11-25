@@ -3966,10 +3966,16 @@ class _MapScreenState extends State<MapScreen> {
       appBar: AppBar(
         backgroundColor: Colors.white,
         foregroundColor: Colors.black,
+        titleSpacing: 0,
         title: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text('Experiences Map'),
+            Image.asset(
+              'assets/icon/icon-cropped.png',
+              height: 28,
+            ),
+            const SizedBox(width: 8),
+            const Text('Plendy Map'),
             const SizedBox(width: 8),
             AnimatedSwitcher(
               duration: const Duration(milliseconds: 220),

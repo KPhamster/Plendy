@@ -3779,7 +3779,10 @@ class CollectionsScreenState extends State<CollectionsScreen>
             message: 'View Map',
             child: TextButton.icon(
               style: TextButton.styleFrom(foregroundColor: Colors.black),
-              icon: const Icon(Icons.map_outlined),
+              icon: Image.asset(
+                'assets/icon/icon-cropped.png',
+                height: 24,
+              ),
               label: const Text('Map'),
               onPressed: () {
                 Navigator.push(
