@@ -327,6 +327,7 @@ class Event extends Equatable {
   final DateTime updatedAt;
   final String? shareToken;
   final List<EventComment> comments;
+  final String? colorHex;
 
   const Event({
     required this.id,
@@ -347,6 +348,7 @@ class Event extends Equatable {
     this.notificationPreference = EventNotificationPreference.defaultPreference,
     this.shareToken,
     this.comments = const [],
+    this.colorHex,
   });
 
   factory Event.fromMap(Map<String, dynamic> map, {String? id}) {
@@ -371,6 +373,7 @@ class Event extends Equatable {
       updatedAt: _parseTimestamp(map['updatedAt']),
       shareToken: map['shareToken'],
       comments: _commentsFromList(map['comments']),
+      colorHex: map['colorHex'],
     );
   }
 
@@ -393,6 +396,7 @@ class Event extends Equatable {
       if (coverImageUrl != null) 'coverImageUrl': coverImageUrl,
       if (capacity != null) 'capacity': capacity,
       if (shareToken != null) 'shareToken': shareToken,
+      if (colorHex != null) 'colorHex': colorHex,
     };
   }
 
@@ -415,6 +419,7 @@ class Event extends Equatable {
     DateTime? updatedAt,
     String? shareToken,
     List<EventComment>? comments,
+    String? colorHex,
   }) {
     return Event(
       id: id ?? this.id,
@@ -436,6 +441,7 @@ class Event extends Equatable {
       updatedAt: updatedAt ?? this.updatedAt,
       shareToken: shareToken ?? this.shareToken,
       comments: comments ?? this.comments,
+      colorHex: colorHex ?? this.colorHex,
     );
   }
 
@@ -459,6 +465,7 @@ class Event extends Equatable {
         updatedAt,
         shareToken,
         comments,
+        colorHex,
       ];
 
   static List<EventExperienceEntry> _entriesFromList(dynamic data) {

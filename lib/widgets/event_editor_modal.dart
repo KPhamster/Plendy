@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:collection/collection.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:flutter_colorpicker/flutter_colorpicker.dart';
 import '../models/event.dart';
 import '../models/experience.dart';
 import '../models/user_profile.dart';
@@ -16,6 +17,8 @@ import '../services/event_notification_queue_service.dart';
 import '../widgets/shared_media_preview_modal.dart';
 import '../screens/event_experience_selector_screen.dart';
 import '../screens/location_picker_screen.dart';
+import '../screens/experience_page_screen.dart';
+import '../screens/map_screen.dart';
 import 'share_experience_bottom_sheet.dart';
 
 class EventEditorResult {
@@ -285,6 +288,9 @@ class _EventEditorModalState extends State<EventEditorModal> {
         _currentEvent.endDateTime.difference(_currentEvent.startDateTime);
     final String durationText = _formatDuration(duration);
     final bool isTimeRangeValid = _isTimeRangeValid;
+    final Color eventColor = _getEventColor(_currentEvent);
+    final bool isDarkColor = _isDarkColor(eventColor);
+    final Color foregroundColor = isDarkColor ? Colors.white : Colors.black;
 
     return WillPopScope(
       onWillPop: () async {
@@ -294,8 +300,8 @@ class _EventEditorModalState extends State<EventEditorModal> {
       child: Scaffold(
         backgroundColor: Colors.white,
         appBar: AppBar(
-          backgroundColor: Colors.white,
-          foregroundColor: Colors.black,
+          backgroundColor: eventColor,
+          foregroundColor: foregroundColor,
           elevation: 0,
           leading: IconButton(
             icon: const Icon(Icons.arrow_back),
@@ -303,20 +309,28 @@ class _EventEditorModalState extends State<EventEditorModal> {
           ),
           title: TextField(
             controller: _titleController,
-            style: Theme.of(context).textTheme.titleLarge,
-            decoration: const InputDecoration(
+            style: Theme.of(context).textTheme.titleLarge?.copyWith(
+              color: foregroundColor,
+            ),
+            decoration: InputDecoration(
               hintText: 'Untitled Event',
+              hintStyle: TextStyle(
+                color: foregroundColor.withOpacity(0.6),
+              ),
               border: InputBorder.none,
             ),
           ),
           actions: [
             if (_isSaving)
-              const Padding(
-                padding: EdgeInsets.all(16.0),
+              Padding(
+                padding: const EdgeInsets.all(16.0),
                 child: SizedBox(
                   width: 20,
                   height: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2),
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor: AlwaysStoppedAnimation<Color>(foregroundColor),
+                  ),
                 ),
               )
             else
@@ -325,13 +339,19 @@ class _EventEditorModalState extends State<EventEditorModal> {
                 child: ElevatedButton(
                   style: ElevatedButton.styleFrom(
                     backgroundColor: isTimeRangeValid
-                        ? Theme.of(context).primaryColor
-                        : Colors.grey.shade300,
-                    foregroundColor: Colors.white,
+                        ? (isDarkColor 
+                            ? Colors.white.withOpacity(0.2)
+                            : Colors.black.withOpacity(0.1))
+                        : foregroundColor.withOpacity(0.3),
+                    foregroundColor: foregroundColor,
                     elevation: 0,
                     padding: const EdgeInsets.fromLTRB(12, 6, 16, 6),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(20),
+                      side: BorderSide(
+                        color: foregroundColor.withOpacity(0.3),
+                        width: 1,
+                      ),
                     ),
                   ),
                   onPressed: isTimeRangeValid ? _saveEvent : null,
@@ -900,9 +920,11 @@ class _EventEditorModalState extends State<EventEditorModal> {
   Future<void> _createEventOnlyExperience() async {
     final TextEditingController nameController = TextEditingController();
     final TextEditingController descriptionController = TextEditingController();
+    final TextEditingController notesController = TextEditingController();
     Location? selectedLocation;
     String? selectedIcon;
     String? selectedColorCategoryId;
+    String? customColorHex;
 
     final result = await showDialog<EventExperienceEntry>(
       context: context,
@@ -912,27 +934,53 @@ class _EventEditorModalState extends State<EventEditorModal> {
             final ColorCategory? selectedColorCategory = widget.colorCategories.firstWhereOrNull(
               (color) => color.id == selectedColorCategoryId,
             );
+            
+            // Determine the display color (from category or custom)
+            Color? displayColor;
+            if (selectedColorCategory != null) {
+              displayColor = selectedColorCategory.color;
+            } else if (customColorHex != null && customColorHex!.isNotEmpty) {
+              displayColor = _parseColor(customColorHex!);
+            }
 
             return AlertDialog(
               backgroundColor: Colors.white,
-              title: const Text('Add Event-Only Experience'),
-              content: SingleChildScrollView(
-                child: SizedBox(
-                  width: double.maxFinite,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Name field
-                      TextField(
-                        controller: nameController,
-                        decoration: const InputDecoration(
-                          labelText: 'Name *',
-                          hintText: 'e.g., Lunch at Central Park',
-                          border: OutlineInputBorder(),
+              title: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('Add Event-Only Experience'),
+                  const SizedBox(height: 4),
+                  Text(
+                    'For this event only. This will not be saved in your collection of categories and experiences.',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Colors.grey[600],
                         ),
-                        autofocus: true,
-                      ),
+                  ),
+                ],
+              ),
+              content: GestureDetector(
+                onTap: () {
+                  // Dismiss keyboard when tapping outside text fields
+                  FocusScope.of(context).unfocus();
+                },
+                behavior: HitTestBehavior.opaque,
+                child: SingleChildScrollView(
+                  child: SizedBox(
+                    width: double.maxFinite,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Name field
+                        TextField(
+                          controller: nameController,
+                          decoration: const InputDecoration(
+                            labelText: 'Name *',
+                            hintText: 'e.g., Lunch at Central Park',
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
                       const SizedBox(height: 16),
                       // Description field
                       TextField(
@@ -996,26 +1044,51 @@ class _EventEditorModalState extends State<EventEditorModal> {
                       OutlinedButton.icon(
                         icon: Icon(
                           Icons.palette,
-                          color: selectedColorCategory != null
-                              ? selectedColorCategory.color
-                              : null,
+                          color: displayColor,
                         ),
                         label: Text(selectedColorCategory != null
                             ? selectedColorCategory.name
-                            : 'Select Color (Optional)'),
+                            : customColorHex != null
+                                ? 'Custom Color'
+                                : 'Select Color (Optional)'),
                         onPressed: () async {
-                          final colorCategoryId = await _pickColorCategory();
-                          if (colorCategoryId != null) {
+                          final colorResult = await _pickColorCategory(
+                            initialColorCategoryId: selectedColorCategoryId ?? 
+                                (customColorHex != null ? 'custom:$customColorHex' : null),
+                          );
+                          if (colorResult != null) {
                             setDialogState(() {
-                              selectedColorCategoryId = colorCategoryId;
+                              if (colorResult.startsWith('custom:')) {
+                                // Custom color selected
+                                selectedColorCategoryId = null;
+                                customColorHex = colorResult.substring(7); // Remove "custom:" prefix
+                              } else {
+                                // Category selected
+                                selectedColorCategoryId = colorResult;
+                                customColorHex = null;
+                              }
                             });
                           }
                         },
+                      ),
+                      const SizedBox(height: 16),
+                      // Notes field
+                      TextField(
+                        controller: notesController,
+                        decoration: const InputDecoration(
+                          labelText: 'Notes (optional)',
+                          hintText: 'Add notes and details about this stop!',
+                          border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.notes),
+                        ),
+                        minLines: 3,
+                        maxLines: null,
                       ),
                     ],
                   ),
                 ),
               ),
+                ),
               actions: [
                 TextButton(
                   onPressed: () => Navigator.of(ctx).pop(),
@@ -1044,6 +1117,9 @@ class _EventEditorModalState extends State<EventEditorModal> {
                       inlineColorHexDenorm: selectedColorCategory != null
                           ? '#${selectedColorCategory.color.value.toRadixString(16).padLeft(8, '0').substring(2)}'
                           : null,
+                      note: notesController.text.trim().isEmpty
+                          ? null
+                          : notesController.text.trim(),
                     );
 
                     Navigator.of(ctx).pop(entry);
@@ -1085,12 +1161,13 @@ class _EventEditorModalState extends State<EventEditorModal> {
     final TextEditingController nameController = TextEditingController(
       text: entry.inlineName ?? '',
     );
-    final TextEditingController descriptionController = TextEditingController(
-      text: entry.inlineDescription ?? '',
+    final TextEditingController notesController = TextEditingController(
+      text: entry.note ?? '',
     );
     Location? selectedLocation = entry.inlineLocation;
     String? selectedIcon = entry.inlineCategoryIconDenorm;
     String? selectedColorCategoryId = entry.inlineColorCategoryId;
+    String? customColorHex = entry.inlineColorHexDenorm;
 
     final result = await showDialog<EventExperienceEntry>(
       context: context,
@@ -1100,38 +1177,65 @@ class _EventEditorModalState extends State<EventEditorModal> {
             final ColorCategory? selectedColorCategory = widget.colorCategories.firstWhereOrNull(
               (color) => color.id == selectedColorCategoryId,
             );
+            
+            // Determine the display color (from category or custom)
+            Color? displayColor;
+            if (selectedColorCategory != null) {
+              displayColor = selectedColorCategory.color;
+            } else if (customColorHex != null && customColorHex!.isNotEmpty) {
+              displayColor = _parseColor(customColorHex!);
+            }
 
             return AlertDialog(
               backgroundColor: Colors.white,
-              title: const Text('Edit Event-Only Experience'),
-              content: SingleChildScrollView(
-                child: SizedBox(
-                  width: double.maxFinite,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Name field
-                      TextField(
-                        controller: nameController,
-                        decoration: const InputDecoration(
-                          labelText: 'Name *',
-                          hintText: 'e.g., Lunch at Central Park',
-                          border: OutlineInputBorder(),
+              title: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('Edit Event-Only Experience'),
+                  const SizedBox(height: 4),
+                  Text(
+                    'For this event only. This will not be saved in your collection of categories and experiences.',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Colors.grey[600],
                         ),
-                        autofocus: true,
-                      ),
+                  ),
+                ],
+              ),
+              content: GestureDetector(
+                onTap: () {
+                  // Dismiss keyboard when tapping outside text fields
+                  FocusScope.of(context).unfocus();
+                },
+                behavior: HitTestBehavior.opaque,
+                child: SingleChildScrollView(
+                  child: SizedBox(
+                    width: double.maxFinite,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Name field
+                        TextField(
+                          controller: nameController,
+                          decoration: const InputDecoration(
+                            labelText: 'Name *',
+                            hintText: 'e.g., Lunch at Central Park',
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
                       const SizedBox(height: 16),
-                      // Description field
+                      // Notes field
                       TextField(
-                        controller: descriptionController,
+                        controller: notesController,
                         decoration: const InputDecoration(
-                          labelText: 'Description',
-                          hintText: 'Optional details',
+                          labelText: 'Notes (optional)',
+                          hintText: 'Add notes and details about this stop!',
                           border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.notes),
                         ),
-                        minLines: 2,
-                        maxLines: 4,
+                        minLines: 3,
+                        maxLines: null,
                       ),
                       const SizedBox(height: 16),
                       // Location selection
@@ -1184,18 +1288,29 @@ class _EventEditorModalState extends State<EventEditorModal> {
                       OutlinedButton.icon(
                         icon: Icon(
                           Icons.palette,
-                          color: selectedColorCategory != null
-                              ? selectedColorCategory.color
-                              : null,
+                          color: displayColor,
                         ),
                         label: Text(selectedColorCategory != null
                             ? selectedColorCategory.name
-                            : 'Select Color (Optional)'),
+                            : customColorHex != null
+                                ? 'Custom Color'
+                                : 'Select Color (Optional)'),
                         onPressed: () async {
-                          final colorCategoryId = await _pickColorCategory();
-                          if (colorCategoryId != null) {
+                          final colorResult = await _pickColorCategory(
+                            initialColorCategoryId: selectedColorCategoryId ?? 
+                                (customColorHex != null ? 'custom:$customColorHex' : null),
+                          );
+                          if (colorResult != null) {
                             setDialogState(() {
-                              selectedColorCategoryId = colorCategoryId;
+                              if (colorResult.startsWith('custom:')) {
+                                // Custom color selected
+                                selectedColorCategoryId = null;
+                                customColorHex = colorResult.substring(7); // Remove "custom:" prefix
+                              } else {
+                                // Category selected
+                                selectedColorCategoryId = colorResult;
+                                customColorHex = null;
+                              }
                             });
                           }
                         },
@@ -1204,6 +1319,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
                   ),
                 ),
               ),
+                ),
               actions: [
                 TextButton(
                   onPressed: () => Navigator.of(ctx).pop(),
@@ -1221,16 +1337,17 @@ class _EventEditorModalState extends State<EventEditorModal> {
 
                     final updatedEntry = entry.copyWith(
                       inlineName: name,
-                      inlineDescription: descriptionController.text.trim().isEmpty
-                          ? null
-                          : descriptionController.text.trim(),
+                      inlineDescription: null, // Description field removed
                       inlineLocation: selectedLocation,
                       inlineCategoryId: null, // No category ID for event-only
                       inlineColorCategoryId: selectedColorCategoryId,
                       inlineCategoryIconDenorm: selectedIcon,
                       inlineColorHexDenorm: selectedColorCategory != null
                           ? '#${selectedColorCategory.color.value.toRadixString(16).padLeft(8, '0').substring(2)}'
-                          : null,
+                          : customColorHex,
+                      note: notesController.text.trim().isEmpty
+                          ? null
+                          : notesController.text.trim(),
                     );
 
                     Navigator.of(ctx).pop(updatedEntry);
@@ -1357,13 +1474,13 @@ class _EventEditorModalState extends State<EventEditorModal> {
       '🏳️‍🌈','🏴‍☠️','🏳️','🏁','🚩','🏴','🏳️‍⚧️','🏳️‍🌈',
     ];
 
+    String? selectedIcon = initialIcon;
+    
     return await showDialog<String>(
       context: context,
       builder: (ctx) {
         return StatefulBuilder(
           builder: (dialogContext, setDialogState) {
-            String? selectedIcon = initialIcon;
-            
             return AlertDialog(
               backgroundColor: Colors.white,
               title: const Text('Select Icon'),
@@ -1432,51 +1549,174 @@ class _EventEditorModalState extends State<EventEditorModal> {
     );
   }
 
-  Future<String?> _pickColorCategory() async {
+  Future<String?> _pickCustomColor({Color? initialColor}) async {
+    Color selectedColor = initialColor ?? Colors.blue;
+    
     return await showDialog<String>(
       context: context,
       builder: (ctx) {
-        return AlertDialog(
-          backgroundColor: Colors.white,
-          title: const Text('Select Color'),
-          content: SizedBox(
-            width: double.maxFinite,
-            child: Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: widget.colorCategories.map((colorCategory) {
-                return InkWell(
-                  onTap: () => Navigator.of(ctx).pop(colorCategory.id),
-                  borderRadius: BorderRadius.circular(8),
-                  child: Container(
-                    width: 60,
-                    height: 60,
-                    decoration: BoxDecoration(
-                      color: colorCategory.color,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Center(
-                      child: Text(
-                        colorCategory.name,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                    ),
+        return StatefulBuilder(
+          builder: (dialogContext, setDialogState) {
+            return AlertDialog(
+              backgroundColor: Colors.white,
+              title: const Text('Pick a color'),
+              content: SingleChildScrollView(
+                child: ColorPicker(
+                  pickerColor: selectedColor,
+                  onColorChanged: (color) {
+                    setDialogState(() {
+                      selectedColor = color;
+                    });
+                  },
+                  pickerAreaHeightPercent: 0.8,
+                  enableAlpha: false, // Disable alpha channel
+                  displayThumbColor: true,
+                  paletteType: PaletteType.hsl,
+                  pickerAreaBorderRadius: const BorderRadius.only(
+                    topLeft: Radius.circular(2.0),
+                    topRight: Radius.circular(2.0),
                   ),
-                );
-              }).toList(),
+                  hexInputBar: true,
+                ),
+              ),
+              actions: <Widget>[
+                TextButton(
+                  child: const Text('Cancel'),
+                  onPressed: () => Navigator.of(ctx).pop(),
+                ),
+                ElevatedButton(
+                  child: const Text('Select'),
+                  onPressed: () {
+                    final hexColor = '#${selectedColor.value.toRadixString(16).padLeft(8, '0').substring(2)}';
+                    Navigator.of(ctx).pop('custom:$hexColor');
+                  },
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<String?> _pickColorCategory({String? initialColorCategoryId}) async {
+    final List<ColorCategory> categoriesToShow = List.from(widget.colorCategories);
+    
+    // Check if initial selection is a custom color
+    Color? initialCustomColor;
+    if (initialColorCategoryId != null && initialColorCategoryId.startsWith('custom:')) {
+      final hexString = initialColorCategoryId.substring(7); // Remove "custom:" prefix
+      try {
+        initialCustomColor = _parseColor(hexString);
+      } catch (e) {
+        // If parsing fails, ignore
+      }
+    }
+
+    return await showDialog<String>(
+      context: context,
+      builder: (ctx) {
+        return Dialog(
+          backgroundColor: Colors.white,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16.0)),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(ctx).size.height * 0.8),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+                  child: Text(
+                    'Select Color Category',
+                    style: Theme.of(ctx).textTheme.titleLarge,
+                  ),
+                ),
+                Expanded(
+                  child: ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: categoriesToShow.length,
+                    itemBuilder: (context, index) {
+                      final category = categoriesToShow[index];
+                      final bool isSelected =
+                          category.id == initialColorCategoryId;
+                      return ListTile(
+                        leading: Container(
+                          width: 24,
+                          height: 24,
+                          decoration: BoxDecoration(
+                              color: category.color,
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                  color: Colors.grey.shade400, width: 1)),
+                        ),
+                        title: Text(category.name),
+                        trailing: isSelected
+                            ? const Icon(Icons.check, color: Colors.blue)
+                            : null,
+                        onTap: () {
+                          Navigator.pop(ctx, category.id);
+                        },
+                        visualDensity: VisualDensity.compact,
+                      );
+                    },
+                  ),
+                ),
+                const Divider(height: 1),
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 8.0, vertical: 8.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      ListTile(
+                        leading: Container(
+                          width: 24,
+                          height: 24,
+                          decoration: BoxDecoration(
+                            color: initialCustomColor ?? Colors.grey.shade300,
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                                color: Colors.grey.shade400, width: 1)),
+                        ),
+                        title: Text('Custom Color',
+                            style: TextStyle(
+                                color: initialCustomColor != null
+                                    ? Colors.blue[700]
+                                    : Colors.grey[700])),
+                        trailing: initialCustomColor != null
+                            ? const Icon(Icons.check, color: Colors.blue)
+                            : null,
+                        onTap: () async {
+                          // Show color picker as nested dialog
+                          final customColorResult = await _pickCustomColor(
+                            initialColor: initialCustomColor,
+                          );
+                          if (customColorResult != null) {
+                            // Close the category dialog and return the custom color
+                            Navigator.of(ctx).pop(customColorResult);
+                          }
+                        },
+                        visualDensity: VisualDensity.compact,
+                      ),
+                      TextButton.icon(
+                        icon: Icon(Icons.cancel_outlined,
+                            size: 20, color: Colors.grey[700]),
+                        label: Text('Cancel',
+                            style: TextStyle(color: Colors.grey[700])),
+                        onPressed: () => Navigator.of(ctx).pop(),
+                        style: TextButton.styleFrom(
+                            alignment: Alignment.centerLeft,
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 12)),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(),
-              child: const Text('Cancel'),
-            ),
-          ],
         );
       },
     );
@@ -1488,19 +1728,25 @@ class _EventEditorModalState extends State<EventEditorModal> {
       for (final entry in _currentEvent.experiences) entry.experienceId: entry,
     };
     
-    // Track which existing entries we've already included
+    // Track which existing saved experiences we've already included
     final Set<String> includedExistingIds = {};
     
-    // First, preserve existing entries in their current order
+    // Preserve original order: iterate through original entries and keep them in place
+    // Event-only experiences always stay, saved experiences only if selected
     final List<EventExperienceEntry> result = [];
     for (final entry in _currentEvent.experiences) {
-      if (selectedIds.contains(entry.experienceId)) {
+      if (entry.isEventOnly) {
+        // Always preserve event-only experiences in their original position
+        result.add(entry);
+      } else if (selectedIds.contains(entry.experienceId)) {
+        // Include saved experience if it's in the selection
         result.add(entry);
         includedExistingIds.add(entry.experienceId);
       }
+      // If saved experience is not in selectedIds, skip it (removed from selection)
     }
     
-    // Then, append new entries (not in existing list) in selection order
+    // Append new saved experiences (not in original list) at the end
     for (final id in selectedIds) {
       if (!includedExistingIds.contains(id)) {
         result.add(existingEntries[id] ?? EventExperienceEntry(experienceId: id));
@@ -1511,16 +1757,40 @@ class _EventEditorModalState extends State<EventEditorModal> {
   }
 
   Widget _buildScheduleSection(String durationText) {
+    // Get current event color (custom or default)
+    final currentColor = _getEventColor(_currentEvent);
+    
     return Padding(
       padding: const EdgeInsets.all(16.0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'Schedule',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Schedule',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
                 ),
+              ),
+              GestureDetector(
+                onTap: () => _pickEventColor(),
+                child: Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    color: currentColor,
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: Colors.grey.shade400,
+                      width: 1,
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 16),
           _buildDateTimePicker(
@@ -1818,6 +2088,42 @@ class _EventEditorModalState extends State<EventEditorModal> {
                 );
               },
             ),
+          const SizedBox(height: 16),
+          // Add Event-Only Experience button
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: _createEventOnlyExperience,
+              icon: const Icon(Icons.edit_note, size: 18, color: Colors.white),
+              label: const Text('Add Event-Only Experience', style: TextStyle(color: Colors.white)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.grey.shade600,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          // Add Saved Experiences button
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: _openItinerarySelector,
+              icon: const Icon(Icons.add, size: 18),
+              label: const Text('Add from Saved Experiences'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Theme.of(context).primaryColor,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -1893,20 +2199,19 @@ class _EventEditorModalState extends State<EventEditorModal> {
     final bool hasAddress = address != null && address.isNotEmpty;
     final bool hasOtherCategories = otherCategories.isNotEmpty;
     final bool hasOtherColorCategories = otherColorCategories.isNotEmpty;
+    final bool hasNotes = (entry.note != null && entry.note!.isNotEmpty) ||
+        (entry.transportInfo != null && entry.transportInfo!.isNotEmpty);
     
     // Event-only experiences don't have media
     final int contentCount = isEventOnly ? 0 : (experience?.sharedMediaItemIds.length ?? 0);
     final bool shouldShowSubRow =
-        hasOtherCategories || hasOtherColorCategories || contentCount > 0;
+        hasOtherCategories || hasOtherColorCategories || contentCount > 0 || isEventOnly || hasNotes;
     const double playButtonDiameter = 36.0;
     const double playIconSize = 20.0;
     const double badgeDiameter = 18.0;
     const double badgeFontSize = 11.0;
     const double badgeBorderWidth = 2.0;
     const double badgeOffset = -3.0;
-
-    final bool hasNotes = (entry.note != null && entry.note!.isNotEmpty) ||
-        (entry.transportInfo != null && entry.transportInfo!.isNotEmpty);
     
     final List<Widget> subtitleChildren = [];
     if (hasAddress) {
@@ -1917,36 +2222,33 @@ class _EventEditorModalState extends State<EventEditorModal> {
         ),
       );
     }
-    if (hasNotes) {
-      subtitleChildren.add(
-        Padding(
-          padding: EdgeInsets.only(top: hasAddress ? 4.0 : 0.0),
-          child: Row(
-            children: [
-              Icon(
-                Icons.note_outlined,
-                size: 14,
-                color: Colors.grey[600],
-              ),
-              const SizedBox(width: 4),
-              Text(
-                'Has notes',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Colors.grey[600],
-                      fontSize: 12,
-                    ),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
     if (shouldShowSubRow) {
       subtitleChildren.add(
         Padding(
           padding: EdgeInsets.only(top: hasAddress ? 2.0 : 0.0),
           child: Row(
             children: [
+              if (hasNotes) ...[
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.note_outlined,
+                      size: 14,
+                      color: Colors.grey[600],
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      'Has notes',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: Colors.grey[600],
+                            fontSize: 12,
+                          ),
+                    ),
+                  ],
+                ),
+                const SizedBox(width: 12),
+              ],
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -1978,54 +2280,169 @@ class _EventEditorModalState extends State<EventEditorModal> {
                   ],
                 ),
               ),
-              if (contentCount > 0 && experience != null) ...[
+              if (experience != null) ...[
                 const SizedBox(width: 12),
-                GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: () => _openExperienceContentPreview(experience),
-                  child: Stack(
-                    clipBehavior: Clip.none,
-                    children: [
-                      Container(
-                        width: playButtonDiameter,
-                        height: playButtonDiameter,
-                        decoration: BoxDecoration(
-                          color: Theme.of(context).primaryColor,
-                          shape: BoxShape.circle,
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Map button
+                    Tooltip(
+                      message: 'View Location on App Map',
+                      child: ActionChip(
+                        avatar: Image.asset(
+                          'assets/icon/icon-cropped.png',
+                          height: 18,
                         ),
-                        child: const Icon(
-                          Icons.play_arrow,
-                          color: Colors.white,
-                          size: playIconSize,
+                        label: const SizedBox.shrink(),
+                        labelPadding: EdgeInsets.zero,
+                        onPressed: () => _handleMapButtonPressed(experience),
+                        tooltip: 'View Location on App Map',
+                        backgroundColor: Colors.white,
+                        shape: StadiumBorder(
+                          side: BorderSide(color: Colors.grey.shade300),
                         ),
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        padding: const EdgeInsets.all(4),
                       ),
-                      Positioned(
-                        bottom: badgeOffset,
-                        right: badgeOffset,
-                        child: Container(
-                          width: badgeDiameter,
-                          height: badgeDiameter,
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            shape: BoxShape.circle,
-                            border: Border.all(
-                              color: Theme.of(context).primaryColor,
-                              width: badgeBorderWidth,
-                            ),
-                          ),
-                          child: Center(
-                            child: Text(
-                              contentCount.toString(),
-                              style: TextStyle(
+                    ),
+                    const SizedBox(width: 4),
+                    // Directions button
+                    Tooltip(
+                      message: 'Get Directions',
+                      child: ActionChip(
+                        avatar: Icon(
+                          Icons.directions_outlined,
+                          color: Theme.of(context).primaryColor,
+                          size: 18,
+                        ),
+                        label: const SizedBox.shrink(),
+                        labelPadding: EdgeInsets.zero,
+                        onPressed: () => _launchDirections(experience.location),
+                        tooltip: 'Get Directions',
+                        backgroundColor: Colors.white,
+                        shape: StadiumBorder(
+                          side: BorderSide(color: Colors.grey.shade300),
+                        ),
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        padding: const EdgeInsets.all(4),
+                      ),
+                    ),
+                    // Play button (only if content exists)
+                    if (contentCount > 0) ...[
+                      const SizedBox(width: 4),
+                      GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () => _openExperienceContentPreview(experience),
+                        child: Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            Container(
+                              width: playButtonDiameter,
+                              height: playButtonDiameter,
+                              decoration: BoxDecoration(
                                 color: Theme.of(context).primaryColor,
-                                fontSize: badgeFontSize,
-                                fontWeight: FontWeight.w600,
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(
+                                Icons.play_arrow,
+                                color: Colors.white,
+                                size: playIconSize,
                               ),
                             ),
-                          ),
+                            Positioned(
+                              bottom: badgeOffset,
+                              right: badgeOffset,
+                              child: Container(
+                                width: badgeDiameter,
+                                height: badgeDiameter,
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: Theme.of(context).primaryColor,
+                                    width: badgeBorderWidth,
+                                  ),
+                                ),
+                                child: Center(
+                                  child: Text(
+                                    contentCount.toString(),
+                                    style: TextStyle(
+                                      color: Theme.of(context).primaryColor,
+                                      fontSize: badgeFontSize,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ],
+                  ],
+                ),
+              ],
+              if (isEventOnly && entry.inlineLocation != null) ...[
+                const SizedBox(width: 12),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Map button
+                    Tooltip(
+                      message: 'View Location on App Map',
+                      child: ActionChip(
+                        avatar: Image.asset(
+                          'assets/icon/icon-cropped.png',
+                          height: 18,
+                        ),
+                        label: const SizedBox.shrink(),
+                        labelPadding: EdgeInsets.zero,
+                        onPressed: () => _handleEventOnlyMapButtonPressed(entry),
+                        tooltip: 'View Location on App Map',
+                        backgroundColor: Colors.white,
+                        shape: StadiumBorder(
+                          side: BorderSide(color: Colors.grey.shade300),
+                        ),
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    // Directions button
+                    Tooltip(
+                      message: 'Get Directions',
+                      child: ActionChip(
+                        avatar: Icon(
+                          Icons.directions_outlined,
+                          color: Theme.of(context).primaryColor,
+                          size: 18,
+                        ),
+                        label: const SizedBox.shrink(),
+                        labelPadding: EdgeInsets.zero,
+                        onPressed: () => _launchDirections(entry.inlineLocation!),
+                        tooltip: 'Get Directions',
+                        backgroundColor: Colors.white,
+                        shape: StadiumBorder(
+                          side: BorderSide(color: Colors.grey.shade300),
+                        ),
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(width: 4),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade600,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Text(
+                    'Event-only',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ),
               ],
@@ -2077,137 +2494,342 @@ class _EventEditorModalState extends State<EventEditorModal> {
                   ),
             ),
           ),
-        Card(
-          key: ValueKey(entry.experienceId),
-          margin: const EdgeInsets.only(bottom: 12),
-          color: Colors.grey.shade100,
-          child: ExpansionTile(
-            shape: const RoundedRectangleBorder(
-              side: BorderSide(color: Colors.transparent, width: 0),
-              borderRadius: BorderRadius.zero,
-            ),
-            collapsedShape: const RoundedRectangleBorder(
-              side: BorderSide(color: Colors.transparent, width: 0),
-              borderRadius: BorderRadius.zero,
-            ),
-            tilePadding: const EdgeInsets.symmetric(horizontal: 8.0),
-            childrenPadding: const EdgeInsets.symmetric(horizontal: 16.0),
-            leading: leadingWidget,
-            title: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    displayName,
-                    overflow: TextOverflow.ellipsis,
-                    maxLines: 1,
-                  ),
+        Stack(
+          clipBehavior: Clip.none,
+          children: [
+            Card(
+              key: ValueKey(entry.experienceId),
+              margin: const EdgeInsets.only(bottom: 12),
+              color: Colors.grey.shade100,
+              child: ExpansionTile(
+                shape: const RoundedRectangleBorder(
+                  side: BorderSide(color: Colors.transparent, width: 0),
+                  borderRadius: BorderRadius.zero,
                 ),
-                if (isEventOnly)
-                  Container(
-                    margin: const EdgeInsets.only(left: 8),
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: Colors.grey.shade600,
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: const Text(
-                      'Event-only',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 10,
-                        fontWeight: FontWeight.bold,
+                collapsedShape: const RoundedRectangleBorder(
+                  side: BorderSide(color: Colors.transparent, width: 0),
+                  borderRadius: BorderRadius.zero,
+                ),
+                tilePadding: const EdgeInsets.symmetric(horizontal: 8.0),
+                childrenPadding: const EdgeInsets.symmetric(horizontal: 16.0),
+                leading: leadingWidget,
+                title: Text(
+                  displayName,
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
+                ),
+                subtitle: subtitleChildren.isEmpty
+                    ? null
+                    : Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: subtitleChildren,
                       ),
-                    ),
-                  ),
-              ],
-            ),
-            subtitle: subtitleChildren.isEmpty
-                ? null
-                : Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: subtitleChildren,
-                  ),
-            children: [
-              Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    // Scheduled Time
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: const Icon(Icons.schedule),
-                      title: const Text('Scheduled time'),
-                      subtitle: Text(entry.scheduledTime != null
-                          ? _formatDateTime(entry.scheduledTime!)
-                          : 'Not set'),
-                      trailing: const Icon(Icons.edit_outlined),
-                      onTap: () => _editScheduledTime(entry, index),
-                    ),
-                    // Transport Info
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: const Icon(Icons.directions),
-                      title: const Text('Transportation'),
-                      subtitle: Text(entry.transportInfo ?? 'Notes on how to get here'),
-                      trailing: const Icon(Icons.edit_outlined),
-                      onTap: () => _editTransportInfo(entry, index),
-                    ),
-                    // Note
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: const Icon(Icons.note),
-                      title: const Text('Notes'),
-                      subtitle: Text(entry.note ?? 'None'),
-                      trailing: const Icon(Icons.edit_outlined),
-                      onTap: () => _editNote(entry, index),
-                    ),
-                    const Divider(),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        if (!isEventOnly)
-                          TextButton.icon(
-                            icon: const Icon(Icons.open_in_new),
-                            label: const Text('Open'),
-                            onPressed: () {
-                              // TODO: Navigate to experience page
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                    content: Text(
-                                        'Open experience - not yet implemented')),
-                              );
-                            },
+                        // Scheduled Time
+                        InkWell(
+                          onTap: () => _editScheduledTime(entry, index),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 8.0),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Padding(
+                                  padding: EdgeInsets.only(top: 4.0, right: 16.0),
+                                  child: Icon(Icons.schedule, size: 24),
+                                ),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      const Text(
+                                        'Scheduled time',
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.w500,
+                                          fontSize: 16,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        entry.scheduledTime != null
+                                            ? _formatDateTime(entry.scheduledTime!)
+                                            : 'Not set',
+                                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                              color: Colors.grey[700],
+                                            ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const Padding(
+                                  padding: EdgeInsets.only(top: 4.0, left: 8.0),
+                                  child: Icon(Icons.edit_outlined, size: 20),
+                                ),
+                              ],
+                            ),
                           ),
-                        if (isEventOnly)
-                          TextButton.icon(
-                            icon: const Icon(Icons.edit),
-                            label: const Text('Edit'),
-                            onPressed: () => _editEventOnlyExperience(entry, index),
+                        ),
+                        // Transport Info
+                        InkWell(
+                          onTap: () => _editTransportInfo(entry, index),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 8.0),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Padding(
+                                  padding: EdgeInsets.only(top: 4.0, right: 16.0),
+                                  child: Icon(Icons.directions, size: 24),
+                                ),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      const Text(
+                                        'Transportation',
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.w500,
+                                          fontSize: 16,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        entry.transportInfo ?? 'Notes on how to get here',
+                                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                              color: Colors.grey[700],
+                                            ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const Padding(
+                                  padding: EdgeInsets.only(top: 4.0, left: 8.0),
+                                  child: Icon(Icons.edit_outlined, size: 20),
+                                ),
+                              ],
+                            ),
                           ),
-                        TextButton.icon(
-                          style: TextButton.styleFrom(
-                            foregroundColor: Theme.of(context).primaryColor,
+                        ),
+                        // Note
+                        InkWell(
+                          onTap: () => _editNote(entry, index),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 8.0),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Padding(
+                                  padding: EdgeInsets.only(top: 4.0, right: 16.0),
+                                  child: Icon(Icons.note, size: 24),
+                                ),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      const Text(
+                                        'Notes',
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.w500,
+                                          fontSize: 16,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        entry.note ?? 'None',
+                                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                              color: Colors.grey[700],
+                                            ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const Padding(
+                                  padding: EdgeInsets.only(top: 4.0, left: 8.0),
+                                  child: Icon(Icons.edit_outlined, size: 20),
+                                ),
+                              ],
+                            ),
                           ),
-                          icon: Icon(Icons.delete,
-                              color: Theme.of(context).primaryColor),
-                          label: Text(
-                            'Remove',
-                            style: TextStyle(
-                                color: Theme.of(context).primaryColor),
-                          ),
-                          onPressed: () => _removeExperience(index),
+                        ),
+                        const Divider(),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                          children: [
+                            if (!isEventOnly)
+                              TextButton.icon(
+                                icon: const Icon(Icons.open_in_new),
+                                label: const Text('Open'),
+                                onPressed: experience != null
+                                    ? () => _openExperiencePage(experience)
+                                    : null,
+                              ),
+                            if (isEventOnly)
+                              TextButton.icon(
+                                icon: const Icon(Icons.edit),
+                                label: const Text('Edit'),
+                                onPressed: () => _editEventOnlyExperience(entry, index),
+                              ),
+                            TextButton.icon(
+                              style: TextButton.styleFrom(
+                                foregroundColor: Theme.of(context).primaryColor,
+                              ),
+                              icon: Icon(Icons.delete,
+                                  color: Theme.of(context).primaryColor),
+                              label: Text(
+                                'Remove',
+                                style: TextStyle(
+                                    color: Theme.of(context).primaryColor),
+                              ),
+                              onPressed: () => _removeExperience(index),
+                            ),
+                          ],
                         ),
                       ],
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
-            ],
-          ),
+            ),
+            Positioned(
+              top: 6,
+              left: 6,
+              child: _buildExperienceIndexBadge(index),
+            ),
+          ],
         ),
       ],
     );
+  }
+
+  Widget _buildExperienceIndexBadge(int index) {
+    final Color badgeColor = Colors.grey.shade600;
+    return Container(
+      width: 13,
+      height: 13,
+      decoration: BoxDecoration(
+        color: badgeColor,
+        shape: BoxShape.circle,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.08),
+            blurRadius: 4,
+            offset: const Offset(0, 1),
+          ),
+        ],
+      ),
+      child: Center(
+        child: Text(
+          '${index + 1}',
+          style: const TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.bold,
+            fontSize: 9,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openExperiencePage(Experience experience) async {
+    if (!mounted) return;
+
+    // Find the category for the experience
+    final UserCategory? category = widget.categories.firstWhereOrNull(
+      (cat) => cat.id == experience.categoryId,
+    );
+
+    // Build additional categories list
+    final List<UserCategory> additionalCategories = experience.otherCategories
+        .map((id) => widget.categories.firstWhereOrNull((cat) => cat.id == id))
+        .whereType<UserCategory>()
+        .toList();
+
+    // Use fallback category if not found
+    final UserCategory displayCategory = category ??
+        UserCategory(
+          id: 'unknown',
+          name: 'Unknown',
+          icon: '📍',
+          ownerUserId: '',
+        );
+
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ExperiencePageScreen(
+          experience: experience,
+          category: displayCategory,
+          userColorCategories: widget.colorCategories,
+          additionalUserCategories: additionalCategories,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _handleMapButtonPressed(Experience experience) async {
+    if (!mounted) return;
+
+    final Location locationForMap = _buildLocationForMapNavigation(experience);
+
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => MapScreen(
+          initialExperienceLocation: locationForMap,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _handleEventOnlyMapButtonPressed(EventExperienceEntry entry) async {
+    if (!mounted || entry.inlineLocation == null) return;
+
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => MapScreen(
+          initialExperienceLocation: entry.inlineLocation!,
+        ),
+      ),
+    );
+  }
+
+  Location _buildLocationForMapNavigation(Experience experience) {
+    final Location location = experience.location;
+    final String? displayName = location.displayName;
+    if (displayName != null && displayName.trim().isNotEmpty) {
+      return location;
+    }
+    final String fallbackName = experience.name.trim();
+    if (fallbackName.isEmpty) {
+      return location;
+    }
+    return location.copyWith(displayName: fallbackName);
+  }
+
+  Future<void> _launchDirections(Location location) async {
+    // Construct Google Maps directions URL (cross-platform)
+    final lat = location.latitude;
+    final lng = location.longitude;
+    // Using address as destination query if available, otherwise lat/lng
+    String query = (location.address != null && location.address!.isNotEmpty)
+        ? Uri.encodeComponent(location.address!)
+        : '$lat,$lng';
+
+    final Uri mapUri =
+        Uri.parse('https://www.google.com/maps/dir/?api=1&destination=$query');
+
+    if (!await launchUrl(mapUri, mode: LaunchMode.externalApplication)) {
+      print('Could not launch $mapUri');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open map directions.')),
+        );
+      }
+    }
   }
 
   Future<void> _openExperienceContentPreview(Experience experience) async {
@@ -2295,6 +2917,51 @@ class _EventEditorModalState extends State<EventEditorModal> {
       }
     }
     return Colors.white;
+  }
+
+  Color _getEventColor(Event event) {
+    // Use custom color if available, otherwise generate from event ID
+    if (event.colorHex != null && event.colorHex!.isNotEmpty) {
+      return _parseColor(event.colorHex!);
+    }
+    // Default color generation based on event ID
+    final colors = [
+      Colors.blue,
+      Colors.red,
+      Colors.green,
+      Colors.orange,
+      Colors.purple,
+      Colors.teal,
+      Colors.pink,
+      Colors.indigo,
+    ];
+    final hash = event.id.hashCode;
+    return colors[hash.abs() % colors.length];
+  }
+
+  bool _isDarkColor(Color color) {
+    // Calculate relative luminance (0 = dark, 1 = light)
+    // Using the formula from WCAG guidelines
+    final luminance = (0.299 * color.red + 0.587 * color.green + 0.114 * color.blue) / 255;
+    return luminance < 0.5;
+  }
+
+  Future<void> _pickEventColor() async {
+    // Get current color (custom or default)
+    final currentColor = _getEventColor(_currentEvent);
+    
+    final result = await _pickCustomColor(initialColor: currentColor);
+    if (result != null && mounted) {
+      // Remove "custom:" prefix if present
+      final colorHex = result.startsWith('custom:') 
+          ? result.substring(7) 
+          : result;
+      
+      setState(() {
+        _currentEvent = _currentEvent.copyWith(colorHex: colorHex);
+        _markUnsavedChanges();
+      });
+    }
   }
 
   Future<void> _editScheduledTime(EventExperienceEntry entry, int index) async {

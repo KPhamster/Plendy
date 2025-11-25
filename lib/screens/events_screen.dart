@@ -1067,7 +1067,11 @@ class _EventsScreenState extends State<EventsScreen>
   }
 
   Color _getEventColor(Event event) {
-    // Generate a color based on event ID for consistency
+    // Use custom color if available, otherwise generate from event ID
+    if (event.colorHex != null && event.colorHex!.isNotEmpty) {
+      return _parseColor(event.colorHex!);
+    }
+    // Default color generation based on event ID for consistency
     final colors = [
       Colors.blue,
       Colors.red,
@@ -1080,6 +1084,21 @@ class _EventsScreenState extends State<EventsScreen>
     ];
     final hash = event.id.hashCode;
     return colors[hash.abs() % colors.length];
+  }
+
+  Color _parseColor(String hexColor) {
+    String normalized = hexColor.toUpperCase().replaceAll('#', '');
+    if (normalized.length == 6) {
+      normalized = 'FF$normalized';
+    }
+    if (normalized.length == 8) {
+      try {
+        return Color(int.parse('0x$normalized'));
+      } catch (_) {
+        return Colors.blue; // Fallback to blue
+      }
+    }
+    return Colors.blue; // Fallback to blue
   }
 
   String _formatEventTime(Event event) {
