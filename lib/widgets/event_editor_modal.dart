@@ -2429,7 +2429,9 @@ class _EventEditorModalState extends State<EventEditorModal> {
                     ),
                   ],
                 ),
-                const SizedBox(width: 4),
+              ],
+              if (isEventOnly) ...[
+                SizedBox(width: entry.inlineLocation != null ? 4 : 12),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
