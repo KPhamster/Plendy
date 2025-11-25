@@ -15,6 +15,7 @@ import '../services/google_maps_service.dart';
 import '../services/event_notification_queue_service.dart';
 import '../widgets/shared_media_preview_modal.dart';
 import '../screens/event_experience_selector_screen.dart';
+import '../screens/location_picker_screen.dart';
 import 'share_experience_bottom_sheet.dart';
 
 class EventEditorResult {
@@ -566,30 +567,47 @@ class _EventEditorModalState extends State<EventEditorModal> {
     if (!hasNoCoverImage) return;
 
     // Check if top-most experience changed
-    final String? newTopExperienceId = updatedEntries.isNotEmpty
-        ? updatedEntries.first.experienceId
+    final EventExperienceEntry? newTopEntry = updatedEntries.isNotEmpty
+        ? updatedEntries.first
         : null;
+    final String? newTopExperienceId = newTopEntry?.experienceId;
     final bool topExperienceChanged = previousTopExperienceId != newTopExperienceId;
-    if (!topExperienceChanged || newTopExperienceId == null) return;
+    if (!topExperienceChanged) return;
 
-    // Get the top-most experience and set cover image
-    final topExperience = _availableExperiences.firstWhere(
-      (exp) => exp.id == newTopExperienceId,
-      orElse: () => Experience(
-        id: newTopExperienceId,
-        name: 'Unknown Experience',
-        description: '',
-        location: const Location(
-          latitude: 0.0,
-          longitude: 0.0,
-        ),
-        createdAt: DateTime.now(),
-        updatedAt: DateTime.now(),
-        editorUserIds: [],
-      ),
-    );
+    // Find the first experience with a valid cover image
+    String? coverImageUrl;
+    for (final entry in updatedEntries) {
+      if (entry.isEventOnly) {
+        // Event-only experiences: try to get image from inline location
+        final photoResourceName = entry.inlineLocation?.photoResourceName;
+        final photoUrl = entry.inlineLocation?.photoUrl;
+        if (photoResourceName != null && photoResourceName.isNotEmpty) {
+          coverImageUrl = GoogleMapsService.buildPlacePhotoUrlFromResourceName(
+            photoResourceName,
+            maxWidthPx: 800,
+            maxHeightPx: 600,
+          );
+          break;
+        } else if (photoUrl != null && photoUrl.isNotEmpty) {
+          coverImageUrl = photoUrl;
+          break;
+        }
+        // If no photo, continue to next experience
+        continue;
+      }
 
-    final coverImageUrl = _buildCoverImageUrlFromExperience(topExperience);
+      // Saved experience: get from _availableExperiences
+      final experience = _availableExperiences.firstWhereOrNull(
+        (exp) => exp.id == entry.experienceId,
+      );
+      if (experience != null) {
+        coverImageUrl = _buildCoverImageUrlFromExperience(experience);
+        if (coverImageUrl != null) {
+          break;
+        }
+      }
+    }
+
     if (coverImageUrl != null) {
       _coverImageUrlController.text = coverImageUrl;
     }
@@ -611,11 +629,16 @@ class _EventEditorModalState extends State<EventEditorModal> {
                 Colors.grey[600];
         final primaryColor = theme.primaryColor;
         final itineraryExperiences = _currentEvent.experiences
-            .map((entry) => MapEntry(
-                  entry,
-                  _availableExperiences
-                      .firstWhereOrNull((exp) => exp.id == entry.experienceId),
-                ))
+            .map((entry) {
+              if (entry.isEventOnly) {
+                return MapEntry(entry, null);
+              }
+              return MapEntry(
+                entry,
+                _availableExperiences
+                    .firstWhereOrNull((exp) => exp.id == entry.experienceId),
+              );
+            })
             .toList();
 
         return SafeArea(
@@ -660,12 +683,35 @@ class _EventEditorModalState extends State<EventEditorModal> {
                     )
                   else
                     ...List.generate(itineraryExperiences.length, (index) {
+                      final entry = itineraryExperiences[index].key;
                       final experience = itineraryExperiences[index].value;
-                      final derivedUrl = experience != null
-                          ? _buildCoverImageUrlFromExperience(experience)
-                          : null;
+                      
+                      final bool isEventOnly = entry.isEventOnly;
+                      final String displayName = isEventOnly
+                          ? (entry.inlineName ?? 'Untitled')
+                          : (experience?.name ?? 'Unknown experience');
+                      
+                      String? derivedUrl;
+                      if (isEventOnly) {
+                        final photoResourceName = entry.inlineLocation?.photoResourceName;
+                        final photoUrl = entry.inlineLocation?.photoUrl;
+                        if (photoResourceName != null && photoResourceName.isNotEmpty) {
+                          derivedUrl = GoogleMapsService.buildPlacePhotoUrlFromResourceName(
+                            photoResourceName,
+                            maxWidthPx: 800,
+                            maxHeightPx: 600,
+                          );
+                        } else if (photoUrl != null && photoUrl.isNotEmpty) {
+                          derivedUrl = photoUrl;
+                        }
+                      } else if (experience != null) {
+                        derivedUrl = _buildCoverImageUrlFromExperience(experience);
+                      }
+                      
                       final hasDerivedImage = derivedUrl != null;
-                      final subtitle = experience?.location.getPlaceName();
+                      final subtitle = isEventOnly
+                          ? entry.inlineLocation?.getPlaceName()
+                          : experience?.location.getPlaceName();
 
                       return ListTile(
                         leading: CircleAvatar(
@@ -673,33 +719,52 @@ class _EventEditorModalState extends State<EventEditorModal> {
                           foregroundColor: primaryColor,
                           child: Text('${index + 1}'),
                         ),
-                        title: Text(experience?.name ?? 'Unknown experience'),
+                        title: Row(
+                          children: [
+                            Expanded(child: Text(displayName)),
+                            if (isEventOnly)
+                              Container(
+                                margin: const EdgeInsets.only(left: 4),
+                                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: Colors.grey.shade600,
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: const Text(
+                                  'Event-only',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 8,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
                         subtitle: subtitle != null ? Text(subtitle) : null,
                         trailing: hasDerivedImage
                             ? const Icon(Icons.image, color: Colors.black54)
                             : const Text('No image',
                                 style: TextStyle(color: Colors.grey)),
-                        onTap: experience == null
-                            ? null
-                            : () {
-                                if (!hasDerivedImage) {
-                                  if (!mounted) return;
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                      content: Text(
-                                        'No image available yet for ${experience.name}.',
-                                      ),
-                                    ),
-                                  );
-                                  return;
-                                }
-                                Navigator.of(sheetContext).pop();
-                                if (!mounted) return;
-                                setState(() {
-                                  _coverImageUrlController.text = derivedUrl;
-                                  _markUnsavedChanges();
-                                });
-                              },
+                        onTap: () {
+                          if (!hasDerivedImage) {
+                            if (!mounted) return;
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  'No image available yet for $displayName.',
+                                ),
+                              ),
+                            );
+                            return;
+                          }
+                          Navigator.of(sheetContext).pop();
+                          if (!mounted) return;
+                          setState(() {
+                            _coverImageUrlController.text = derivedUrl!;
+                            _markUnsavedChanges();
+                          });
+                        },
                       );
                     }),
                 ],
@@ -830,6 +895,591 @@ class _EventEditorModalState extends State<EventEditorModal> {
         );
       }
     }
+  }
+
+  Future<void> _createEventOnlyExperience() async {
+    final TextEditingController nameController = TextEditingController();
+    final TextEditingController descriptionController = TextEditingController();
+    Location? selectedLocation;
+    String? selectedIcon;
+    String? selectedColorCategoryId;
+
+    final result = await showDialog<EventExperienceEntry>(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            final ColorCategory? selectedColorCategory = widget.colorCategories.firstWhereOrNull(
+              (color) => color.id == selectedColorCategoryId,
+            );
+
+            return AlertDialog(
+              backgroundColor: Colors.white,
+              title: const Text('Add Event-Only Experience'),
+              content: SingleChildScrollView(
+                child: SizedBox(
+                  width: double.maxFinite,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Name field
+                      TextField(
+                        controller: nameController,
+                        decoration: const InputDecoration(
+                          labelText: 'Name *',
+                          hintText: 'e.g., Lunch at Central Park',
+                          border: OutlineInputBorder(),
+                        ),
+                        autofocus: true,
+                      ),
+                      const SizedBox(height: 16),
+                      // Description field
+                      TextField(
+                        controller: descriptionController,
+                        decoration: const InputDecoration(
+                          labelText: 'Description',
+                          hintText: 'Optional details',
+                          border: OutlineInputBorder(),
+                        ),
+                        minLines: 2,
+                        maxLines: 4,
+                      ),
+                      const SizedBox(height: 16),
+                      // Location selection
+                      OutlinedButton.icon(
+                        icon: const Icon(Icons.location_on),
+                        label: Text(selectedLocation != null
+                            ? selectedLocation!.getPlaceName()
+                            : 'Select Location (Optional)'),
+                        onPressed: () async {
+                          final location = await _pickLocation();
+                          if (location != null) {
+                            setDialogState(() {
+                              selectedLocation = location;
+                            });
+                          }
+                        },
+                      ),
+                      if (selectedLocation != null) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          selectedLocation!.address ?? 'Location selected',
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                color: Colors.grey[600],
+                              ),
+                        ),
+                      ],
+                      const SizedBox(height: 16),
+                      // Icon selection
+                      OutlinedButton.icon(
+                        icon: Icon(
+                          Icons.category,
+                          color: selectedIcon != null
+                              ? Theme.of(context).primaryColor
+                              : null,
+                        ),
+                        label: Text(selectedIcon != null
+                            ? selectedIcon!
+                            : 'Select Icon (Optional)'),
+                        onPressed: () async {
+                          final icon = await _pickCategory();
+                          if (icon != null) {
+                            setDialogState(() {
+                              selectedIcon = icon;
+                            });
+                          }
+                        },
+                      ),
+                      const SizedBox(height: 16),
+                      // Color category selection
+                      OutlinedButton.icon(
+                        icon: Icon(
+                          Icons.palette,
+                          color: selectedColorCategory != null
+                              ? selectedColorCategory.color
+                              : null,
+                        ),
+                        label: Text(selectedColorCategory != null
+                            ? selectedColorCategory.name
+                            : 'Select Color (Optional)'),
+                        onPressed: () async {
+                          final colorCategoryId = await _pickColorCategory();
+                          if (colorCategoryId != null) {
+                            setDialogState(() {
+                              selectedColorCategoryId = colorCategoryId;
+                            });
+                          }
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(),
+                  child: const Text('Cancel'),
+                ),
+                TextButton(
+                  onPressed: () {
+                    final name = nameController.text.trim();
+                    if (name.isEmpty) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Name is required')),
+                      );
+                      return;
+                    }
+
+                    final entry = EventExperienceEntry(
+                      experienceId: '', // Empty for event-only
+                      inlineName: name,
+                      inlineDescription: descriptionController.text.trim().isEmpty
+                          ? null
+                          : descriptionController.text.trim(),
+                      inlineLocation: selectedLocation,
+                      inlineCategoryId: null, // No category ID for event-only
+                      inlineColorCategoryId: selectedColorCategoryId,
+                      inlineCategoryIconDenorm: selectedIcon,
+                      inlineColorHexDenorm: selectedColorCategory != null
+                          ? '#${selectedColorCategory.color.value.toRadixString(16).padLeft(8, '0').substring(2)}'
+                          : null,
+                    );
+
+                    Navigator.of(ctx).pop(entry);
+                  },
+                  child: const Text('Add'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (result != null && mounted) {
+      setState(() {
+        // Track the previous top-most experience ID
+        final String? previousTopExperienceId = _currentEvent.experiences.isNotEmpty
+            ? _currentEvent.experiences.first.experienceId
+            : null;
+
+        final entries = List<EventExperienceEntry>.from(_currentEvent.experiences);
+        entries.add(result);
+        var updatedEvent = _currentEvent.copyWith(experiences: entries);
+        updatedEvent = _eventWithAutoPrimarySchedule(updatedEvent);
+        _currentEvent = updatedEvent;
+
+        // Automatically update cover image from top-most experience if needed
+        _updateCoverImageFromTopExperienceIfNeeded(
+          previousTopExperienceId,
+          updatedEvent.experiences,
+        );
+
+        _markUnsavedChanges();
+      });
+    }
+  }
+
+  Future<void> _editEventOnlyExperience(EventExperienceEntry entry, int index) async {
+    final TextEditingController nameController = TextEditingController(
+      text: entry.inlineName ?? '',
+    );
+    final TextEditingController descriptionController = TextEditingController(
+      text: entry.inlineDescription ?? '',
+    );
+    Location? selectedLocation = entry.inlineLocation;
+    String? selectedIcon = entry.inlineCategoryIconDenorm;
+    String? selectedColorCategoryId = entry.inlineColorCategoryId;
+
+    final result = await showDialog<EventExperienceEntry>(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            final ColorCategory? selectedColorCategory = widget.colorCategories.firstWhereOrNull(
+              (color) => color.id == selectedColorCategoryId,
+            );
+
+            return AlertDialog(
+              backgroundColor: Colors.white,
+              title: const Text('Edit Event-Only Experience'),
+              content: SingleChildScrollView(
+                child: SizedBox(
+                  width: double.maxFinite,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Name field
+                      TextField(
+                        controller: nameController,
+                        decoration: const InputDecoration(
+                          labelText: 'Name *',
+                          hintText: 'e.g., Lunch at Central Park',
+                          border: OutlineInputBorder(),
+                        ),
+                        autofocus: true,
+                      ),
+                      const SizedBox(height: 16),
+                      // Description field
+                      TextField(
+                        controller: descriptionController,
+                        decoration: const InputDecoration(
+                          labelText: 'Description',
+                          hintText: 'Optional details',
+                          border: OutlineInputBorder(),
+                        ),
+                        minLines: 2,
+                        maxLines: 4,
+                      ),
+                      const SizedBox(height: 16),
+                      // Location selection
+                      OutlinedButton.icon(
+                        icon: const Icon(Icons.location_on),
+                        label: Text(selectedLocation != null
+                            ? selectedLocation!.getPlaceName()
+                            : 'Select Location (Optional)'),
+                        onPressed: () async {
+                          final location = await _pickLocation();
+                          if (location != null) {
+                            setDialogState(() {
+                              selectedLocation = location;
+                            });
+                          }
+                        },
+                      ),
+                      if (selectedLocation != null) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          selectedLocation!.address ?? 'Location selected',
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                color: Colors.grey[600],
+                              ),
+                        ),
+                      ],
+                      const SizedBox(height: 16),
+                      // Icon selection
+                      OutlinedButton.icon(
+                        icon: Icon(
+                          Icons.category,
+                          color: selectedIcon != null
+                              ? Theme.of(context).primaryColor
+                              : null,
+                        ),
+                        label: Text(selectedIcon != null
+                            ? selectedIcon!
+                            : 'Select Icon (Optional)'),
+                        onPressed: () async {
+                          final icon = await _pickCategory(initialIcon: selectedIcon);
+                          if (icon != null) {
+                            setDialogState(() {
+                              selectedIcon = icon;
+                            });
+                          }
+                        },
+                      ),
+                      const SizedBox(height: 16),
+                      // Color category selection
+                      OutlinedButton.icon(
+                        icon: Icon(
+                          Icons.palette,
+                          color: selectedColorCategory != null
+                              ? selectedColorCategory.color
+                              : null,
+                        ),
+                        label: Text(selectedColorCategory != null
+                            ? selectedColorCategory.name
+                            : 'Select Color (Optional)'),
+                        onPressed: () async {
+                          final colorCategoryId = await _pickColorCategory();
+                          if (colorCategoryId != null) {
+                            setDialogState(() {
+                              selectedColorCategoryId = colorCategoryId;
+                            });
+                          }
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(),
+                  child: const Text('Cancel'),
+                ),
+                TextButton(
+                  onPressed: () {
+                    final name = nameController.text.trim();
+                    if (name.isEmpty) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Name is required')),
+                      );
+                      return;
+                    }
+
+                    final updatedEntry = entry.copyWith(
+                      inlineName: name,
+                      inlineDescription: descriptionController.text.trim().isEmpty
+                          ? null
+                          : descriptionController.text.trim(),
+                      inlineLocation: selectedLocation,
+                      inlineCategoryId: null, // No category ID for event-only
+                      inlineColorCategoryId: selectedColorCategoryId,
+                      inlineCategoryIconDenorm: selectedIcon,
+                      inlineColorHexDenorm: selectedColorCategory != null
+                          ? '#${selectedColorCategory.color.value.toRadixString(16).padLeft(8, '0').substring(2)}'
+                          : null,
+                    );
+
+                    Navigator.of(ctx).pop(updatedEntry);
+                  },
+                  child: const Text('Save'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (result != null && mounted) {
+      setState(() {
+        final entries = List<EventExperienceEntry>.from(_currentEvent.experiences);
+        entries[index] = result;
+        _currentEvent = _currentEvent.copyWith(experiences: entries);
+        _markUnsavedChanges();
+      });
+    }
+  }
+
+  Future<Location?> _pickLocation() async {
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => LocationPickerScreen(
+          initialLocation: null,
+          onLocationSelected: (location) {},
+        ),
+      ),
+    );
+
+    if (result != null && mounted) {
+      final Location selectedLocation =
+          result is Map ? result['location'] : result as Location;
+
+      try {
+        if (selectedLocation.placeId == null ||
+            selectedLocation.placeId!.isEmpty) {
+          return selectedLocation;
+        }
+
+        // Fetch detailed location information
+        final detailedLocation = await GoogleMapsService()
+            .getPlaceDetails(selectedLocation.placeId!);
+        return detailedLocation;
+      } catch (e) {
+        print('Error getting place details for event-only location: $e');
+        return selectedLocation;
+      }
+    }
+
+    return null;
+  }
+
+  Future<String?> _pickCategory({String? initialIcon}) async {
+    // Expanded list of emojis for selection (same as add_category_modal.dart)
+    final List<String> emojiOptions = [
+      // Food & Drink
+      '🍎', '🍏', '🍐', '🍊', '🍋', '🍌', '🍉', '🍇', '🍓', '🫐', '🍈', '🍒', '🍑', '🥭',
+      '🍍', '🥥', '🥝', '🍅', '🍆', '🥑', '🥦', '🫛', '🥒', '🌶️', '🌽', '🥕', '🫑', '🥔', '🧅', '🧄', '🍄', '🥜',
+      '🌰', '🍞', '🥐', '🥯', '🥞', '🍳', '🧇', '🥓', '🥩', '🍗', '🍖', '🍤', '🍣', '🍱', '🍚', '🍛', '🍜',
+      '🍲', '🥣', '🥗', '🍝', '🍠', '🥡', '🥪', '🌭', '🍔', '🍟', '🍕', '🥫', '🥙', '🥘', '🌮', '🌯', '🥨', '🥟',
+      '🦪', '🦞', '🦐', '🦑', '🍢', '🍡', '🍧', '🍨', '🍦', '🥧', '🍰', '🎂', '🧁', '🍮', '🍭', '🍬', '🍫', '🍿', '🍩', '🍪',
+      '🍯', '🥤', '🧃', '🧉', '🧊', '🥛', '☕', '🫖', '🧋', '🍵', '🍶', '🍾', '🍷', '🍸', '🍹', '🍺', '🍻', '🥂', '🥃',
+      
+      // Utensils & Tableware
+      '🍽️', '🥢', '🍴', '🥄', '🧂',
+
+      // Places & Buildings
+      '🏠', '🏡', '🏢', '🏣', '🏤', '🏥', '🏦', '🏨', '🏩', '🏪', '🏫', '🏬', '🏭', '🏯', '🏰', '🏛️', '⛪', '🕌', '🕍',
+      '⛩️', '🕋', '⛲', '🗽', '🗼', '🏟️', '🎡', '🎢', '🎠', '⛺', '🏕️', '🏖️', '🏜️', '🏝️', '🏞️', '⛰️', '🏔️', '🗻', '🌋', '🏗️', '🛖',
+      '🛣️', '🛤️', '🗺️', '🧭', '📍', '🏘️', '🌳', '🌆', '🌇', '🌅', '🌄', '⛱️', '🛍️', '🛒', '💈', '♨️', '⭐', '🌠', '🌌', '🪐', '🌍', '🌏', '🌎', '🪨', '🪵',
+      '❄️', '☃️',
+
+      // Nature & Plants
+      '🌵', '🌲', '🌳', '🌴', '🌱', '🌿', '☘️', '🍀', '🎍', '🎋', '🍂', '🍁', '🍃', '🪴', '🏵️', '🌸', '🌹', '🌺', '🌻', '🌼', '🌷', '💐', '🥀',
+
+      // Animals
+      '🐶', '🐱', '🐭', '🐹', '🐰', '🦊', '🐻', '🐼', '🐨', '🐯', '🦁', '🐮', '🐷', '🐽', '🐸', '🐵', '🙈', '🙉', '🙊', '🐒',
+      '🦍', '🦧', '🐔', '🐧', '🐦', '🐤', '🐣', '🐥', '🦆', '🦅', '🦉', '🦇', '🐺', '🐗', '🐴', '🐝', '🪲', '🐛', '🐞', '🦋', '🐌', '🐜', '🐢', '🐍', '🦎', '🦂', '🦗', '🕷️', '🕸️', '🦟', '🐠', '🐟', '🐡', '🦈', '🐬', '🐳', '🐋', '🦭', '🦦', '🦑', '🦐', '🦞', '🦀', '🪼', '🐙', '🐊', '🐅', '🐆', '🦓', '🦒', '🐘', '🦏', '🦛', '🐪', '🐫', '🦙', '🦘', '🐃', '🐂', '🐄', '🐎', '🐖', '🐏', '🐑', '🦢', '🦩', '🦚', '🦜', '🦃', '🐓', '🦤', '🦥', '🦦', '🦨', '🦧', '🦣', '🦫', '🐇', '🦝', '🦡', '🦥', '🦬', '🦦', '🦨', '🦩', '🐉', '🐲', '🪽', '🕊️', '🐦‍⬛', '🐤', '🦢',
+
+      // Faces & People
+      '😀', '😃', '😄', '😁', '😆', '😅', '😂', '🤣', '🥲', '🥹', '😊', '😇', '🙂', '🙃', '😉', '😌', '😍', '🥰', '😘', '😗', '😙', '😚', '😋', '😛', '😜', '🤪', '😝', '🤑', '🤗', '🤭', '🫢', '🫣', '🤫', '🤔', '🫠', '🤐', '🤨', '😐', '😑', '😶', '😶‍🌫️', '😏', '😒', '🙄', '😬', '🤥', '😌', '😔', '😪', '😴', '😷', '🤒', '🤕', '🤢', '🤮', '🤧', '🥵', '🥶', '🥴', '😵', '😵‍💫', '🤯', '🤠', '🥳', '😎', '🤓', '🧐', '😕', '🫤', '😟', '🙁', '☹️', '😮', '😯', '😲', '😳', '🥺', '😦', '😧', '😨', '😰', '😥', '😢', '😭', '😱', '😖', '😣', '😞', '😓', '😩', '😫', '🥱', '😤', '😡', '😠', '🤬', '😈', '👿', '💀', '☠️', '💩', '🤡', '👹', '👺', '👻', '👽', '👾', '🤖', '👶', '🧒', '👦', '👧', '🧑', '👱', '👨', '🧔', '👨‍🦰', '👨‍🦱', '👨‍🦳', '👨‍🦲', '👩', '👩‍🦰', '👩‍🦱', '👩‍🦳', '👩‍🦲', '👱‍♀️', '👱‍♂️', '🧓', '👴', '👵', '🙍‍♂️', '🙍‍♀️', '🙎‍♂️', '🙎‍♀️', '🙅‍♂️', '🙅‍♀️', '🙆‍♂️', '🙆‍♀️', '💁‍♀️', '💁‍♂️', '🙋‍♀️', '🙋‍♂️', '🧏‍♂️', '🧏‍♀️', '🙇‍♂️', '🙇‍♀️', '🤦‍♂️', '🤦‍♀️', '🤷‍♂️', '🤷‍♀️', '🧑‍⚕️', '🧑‍🎓', '🧑‍🏫', '🧑‍⚖️', '🧑‍🌾', '🧑‍🍳', '🧑‍🔧', '🧑‍🏭', '🧑‍💼', '🧑‍🔬', '🧑‍💻', '🧑‍🎤', '🧑‍🎨', '🧑‍✈️', '🧑‍🚀', '🧑‍🚒', '👮‍♀️', '👮‍♂️', '🕵️‍♀️', '🕵️‍♂️', '💂‍♀️', '💂‍♂️', '🥷', '👷‍♀️', '👷‍♂️', '🤴', '👸', '👳‍♂️', '👳‍♀️', '👲', '🧕', '🤵', '👰', '🤰', '🤱', '🫄', '🫃', '🧑‍🍼', '👼', '🎅', '🤶', '🧑‍🎄', '🦸‍♂️', '🦸‍♀️', '🦹‍♂️', '🦹‍♀️', '🧙‍♂️', '🧙‍♀️', '🧚‍♂️', '🧚‍♀️', '🧛‍♂️', '🧛‍♀️', '🧜‍♂️', '🧜‍♀️', '🧝‍♂️', '🧝‍♀️', '🧞‍♂️', '🧞‍♀️', '🧟‍♂️', '🧟‍♀️', '🧌', '🚶‍♂️', '🚶‍♀️', '🧍‍♂️', '🧍‍♀️', '🧎‍♂️', '🧎‍♀️', '🧑‍🦯', '🧑‍🦼', '🧑‍🦽', '🏃‍♂️', '🏃‍♀️', '💃', '🕺', '🧗', '🧗‍♂️', '🧗‍♀️', '🏇', '🏂', '🏌️‍♀️', '🏌️‍♂️', '🏄‍♂️', '🏄‍♀️', '🏊‍♂️', '🏊‍♀️', '🚣‍♂️', '🚣‍♀️',
+
+      // Hand Gestures
+      '☝️', '👆', '👇', '👈', '👉', '🖖', '✋', '🤚', '🖐️', '🖑', '🤙', '🫱', '🫲', '🫳', '🫴', '👌', '🤌', '🤏', '✌️', '🤞', '🫰', '🤟', '🤘', '🤙', '👍', '👎', '✊', '👊', '🤛', '🤜', '👏', '🫶', '🙌', '👐', '🤲', '🙏', '🫂', '✍️',
+      
+      // Objects & Everyday Items
+      '💄', '💋', '💍', '💎', '⌚', '📱', '📲', '💻', '⌨️', '🖥️', '🖨️', '🖱️', '🖲️', '🧮', '🎥', '📷', '📹', '📼',
+      '☎️', '📞', '📟', '📠', '📺', '📻', '⏰', '⏱️', '⏲️', '🕰️', '🔋', '🔌', '💡', '🔦', '🕯️', '🧯', '🛢️', '🛒', '💳', '💰', '💵', '💴', '💶', '💷', '💸', '🧾', '💼', '📁', '📂', '🗂️', '📅', '📆', '🗒️', '🗓️', '📇', '📈', '📉', '📊', '📋', '📌', '📎', '🖇️', '📏', '📐', '✂️', '🗃️', '🗄️', '🗑️', '🔒', '🔓', '🔏', '🔐', '🔑', '🗝️', '🔨', '🪓', '⛏️', '⚒️', '🛠️', '🗡️', '⚔️', '🔫', '🪃', '🏹', '🛡️', '🔧', '🪛', '🔩', '⚙️', '🛞', '🧱', '⛓️', '🧲', '🪜', '⚗️', '🧪', '🧫', '🧬', '🔬', '🔭', '📡', '💉', '🩸', '💊', '🩹', '🩺',
+
+      // Clothing & Accessories
+      '👓', '🕶️', '🥽', '🥼', '🦺', '👔', '👕', '👖', '🧣', '🧤', '🧥', '🧦', '👗', '👘', '🥻', '🩱', '🩲', '🩳', '👙', '👚', '👛', '👜', '👝', '🛍️', '🎒', '🩴', '👞', '👟', '🥾', '🥿', '👠', '👡', '🩰', '👢', '👑', '👒', '🎩', '🎓', '🧢', '🪖', '⛑️', '💄', '💍', '💼', 
+      
+      // Music & Arts
+      '🎤', '🎧', '🎼', '🎵', '🎶', '🎷', '🎸', '🎹', '🥁', '🎺', '🎻', '🎬', '🎨', '🎭',
+      
+      // Celebration & Party
+      '🎂', '🎉', '🎊', '🎈', '🎇', '🎆', '✨', '🪄', '🎎', '🎏', '🪅', '🪩', '🎀', '🎁', '🪧', '🧧', '🎐', 
+      
+      // Sports & Activities
+      '⚽', '⚾', '🏀', '🏐', '🏈', '🏉', '🎱', '🎳', '🥎', '🏓', '🏸', '🏒', '🏑', '🏏', '🥅', '🥊', '🥋', '🥌', '⛳', '⛸️', '🎣', '🎽', '🎿', '🛷', '⛷️', '🏂', '🪂', '🏹', '🧗', '🧗‍♂️', '🧗‍♀️', '🚵', '🚵‍♂️', '🚵‍♀️', '🚴', '🚴‍♂️', '🚴‍♀️', '🏊', '🏊‍♂️', '🏊‍♀️', '🤽', '🤽‍♂️', '🤽‍♀️', '🏄', '🏄‍♂️', '🏄‍♀️', '🧘', '🏋️', '🏋️‍♂️', '🏋️‍♀️', '🤸', '🤸‍♂️', '🤸‍♀️', '⛹️', '⛹️‍♂️', '⛹️‍♀️', '🤼', '🤼‍♂️', '🤼‍♀️', '🤾', '🤾‍♂️', '🤾‍♀️', '🧙‍♂️', '🧙‍♀️', '🎮', '🕹️', '🎲', '🧩', '🧸', '🪁', '🪀', '🎰', '🎯', '🪃', '🛹', '🛼', '🥏', '🪃', '🎠', '🎡', '🥍', 
+      
+      // Awards & Achievement
+      '🏆', '🏅', '🥇', '🥈', '🥉', '🎫', '🎟️',
+      
+      // Science, Education & Office
+      '📖', '📚', '📓', '📒', '📔', '📕', '📗', '📘', '📙', '📚', '🧮', '🔬', '🔭', '🛰️', '🔬', '📡', '🧪', '🧫', '🧬', '📝', '✏️', '✒️', '🖋️', '🖊️', '🖌️', '🖍️', '📅', '📆', '🗓️', '📇', '📈', '📉', '📊', '📋', '📌', '📎', '🖇️', 
+      
+      // Transportation & Travel
+      '🚗', '🚕', '🚙', '🛻', '🚐', '🚚', '🚛', '🚜', '🦽', '🦼', '🛴', '🚲', '🛵', '🏍️', '🛺', '🚔', '🚓', '🚑', '🚒', '🚐', '🚚', '🚛', '🛻', '🚜', '🛴', '🛹', '🛼', '🚂', '🚃', '🚄', '🚅', '🚆', '🚇', '🚈', '🚉', '🚊', '🚝', '🚞', '🚋', '🚌', '🚍', '🚎', '🚐', '🏎️', '🚓', '⛵', '🛥️', '🚤', '🛳️', '⛴️', '🚢', '✈️', '🛩️', '🛫', '🛬', '🪂', '💺', '🚁', '🛰️', '🚀', '🛸', '🪐',
+      
+      // Shapes, Symbols, & Miscellaneous
+      '❤️', '🩷', '🧡', '💛', '💚', '💙', '🩵', '💜', '🤎', '🖤', '🤍', '🩶', '💔', '❤️‍🔥', '💕', '💞', '💓', '💗', '💖', '💘', '💝', '💟', '🔘', '🔴', '🟠', '🟡', '🟢', '🔵', '🟣', '🟤', '⚫', '⚪', '🟥', '🟧', '🟨', '🟩', '🟦', '🟪', '🟫', '⬛', '⬜', '◼️', '◻️', '◾', '◽', '▪️', '▫️', '◯', '❓', '❔', '❗', '‼️', '⁉️', '✔️', '☑️', '✅', '❌', '✖️', '➕', '➖', '➗', '✳️', '✴️', '➰', '➿', '〽️', '💲', '💯', '♠️', '♥️', '♦️', '♣️', '🃏', '🀄', '🎴', '🔔', '🔕', '🔒', '🔓', '🔏', '🔐', '🔑', '🗝️', '⚓', '🚬', '🪦', '⚖️', '♀️', '♂️', '⚧️',
+      
+      // Weather
+      '☀️', '🌤️', '⛅', '⛈️', '🌩️', '🌧️', '🌨️', '❄️', '☁️', '🌦️', '🌪️', '🌫️', '🌬️', '🌈', '☃️', '🌂', '☔', '💧', '💦', '🫧',
+      
+      // Flags
+      '🇦🇫','🇦🇱','🇩🇿','🇦🇩','🇦🇴','🇦🇬','🇦🇷','🇦🇲','🇦🇺','🇦🇹','🇦🇿','🇧🇸','🇧🇭','🇧🇩','🇧🇧','🇧🇾','🇧🇪','🇧🇿','🇧🇯','🇧🇹','🇧🇴','🇧🇦','🇧🇼','🇧🇷','🇧🇳','🇧🇬','🇧🇫','🇧🇮','🇨🇻','🇰🇭','🇨🇲','🇨🇦','🇨🇫','🇹🇩','🇨🇱','🇨🇳','🇨🇴','🇰🇲','🇨🇬','🇨🇩','🇨🇷','🇭🇷','🇨🇺','🇨🇾','🇨🇿','🇩🇰','🇩🇯','🇩🇲','🇩🇴','🇪🇨','🇪🇬','🇸🇻','🇬🇶','🇪🇷','🇪🇪','🇪🇸','🇪🇹','🇫🇲','🇫🇮','🇫🇷','🇬🇦','🇬🇲','🇬🇪','🇩🇪','🇬🇭','🇬🇷','🇬🇩','🇬🇹','🇬🇳','🇬🇼','🇬🇾','🇭🇹','🇭🇳','🇭🇺','🇮🇸','🇮🇳','🇮🇩','🇮🇷','🇮🇶','🇮🇪','🇮🇱','🇮🇹','🇯🇲','🇯🇵','🇯🇴','🇰🇿','🇰🇪','🇰🇮','🇰🇵','🇰🇷','🇽🇰','🇰🇼','🇰🇬','🇱🇦','🇱🇻','🇱🇧','🇱🇸','🇱🇷','🇱🇾','🇱🇮','🇱🇹','🇱🇺','🇲🇬','🇲🇼','🇲🇾','🇲🇻','🇲🇱','🇲🇹','🇲🇭','🇲🇷','🇲🇺','🇲🇽','🇲🇩','🇲🇨','🇲🇳','🇲🇪','🇲🇦','🇲🇿','🇲🇲','🇳🇦','🇳🇷','🇳🇵','🇳🇱','🇳🇿','🇳🇮','🇳🇪','🇳🇬','🇳🇴','🇴🇲','🇵🇰','🇵🇼','🇵🇸','🇵🇦','🇵🇬','🇵🇾','🇵🇪','🇵🇭','🇵🇱','🇵🇹','🇶🇦','🇷🇴','🇷🇺','🇷🇼','🇰🇳','🇱🇨','🇻🇨','🇼🇸','🇸🇲','🇸🇹','🇸🇦','🇸🇳','🇷🇸','🇸🇨','🇸🇱','🇸🇬','🇸🇰','🇸🇮','🇸🇧','🇸🇴','🇿🇦','🇸🇸','🇪🇸','🇱🇰','🇸🇩','🇸🇷','🇸🇪','🇨🇭','🇸🇾','🇹🇼','🇹🇯','🇹🇿','🇹🇭','🇹🇱','🇹🇬','🇹🇴','🇹🇹','🇹🇳','🇹🇷','🇹🇲','🇹🇻','🇺🇬','🇺🇦','🇦🇪','🇬🇧','🇺🇸','🇺🇾','🇺🇿','🇻🇺','🇻🇦','🇻🇪','🇻🇳','🇾🇪','🇿🇲','🇿🇼',
+      '🏳️‍🌈','🏴‍☠️','🏳️','🏁','🚩','🏴','🏳️‍⚧️','🏳️‍🌈',
+    ];
+
+    return await showDialog<String>(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (dialogContext, setDialogState) {
+            String? selectedIcon = initialIcon;
+            
+            return AlertDialog(
+              backgroundColor: Colors.white,
+              title: const Text('Select Icon'),
+              content: SizedBox(
+                width: double.maxFinite,
+                height: MediaQuery.of(context).size.height * 0.6,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Expanded(
+                      child: GridView.builder(
+                        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 6,
+                          crossAxisSpacing: 8,
+                          mainAxisSpacing: 8,
+                        ),
+                        itemCount: emojiOptions.length,
+                        itemBuilder: (context, index) {
+                          final emoji = emojiOptions[index];
+                          final isSelected = emoji == selectedIcon;
+                          return GestureDetector(
+                            onTap: () {
+                              setDialogState(() {
+                                selectedIcon = emoji;
+                              });
+                            },
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: isSelected
+                                    ? Colors.blue.shade100
+                                    : Colors.grey.shade200,
+                                borderRadius: BorderRadius.circular(8),
+                                border: isSelected
+                                    ? Border.all(color: Colors.blue, width: 2)
+                                    : null,
+                              ),
+                              alignment: Alignment.center,
+                              child: Text(
+                                emoji,
+                                style: const TextStyle(fontSize: 24),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(),
+                  child: const Text('Cancel'),
+                ),
+                TextButton(
+                  onPressed: selectedIcon != null
+                      ? () => Navigator.of(ctx).pop(selectedIcon)
+                      : null,
+                  child: const Text('Select'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<String?> _pickColorCategory() async {
+    return await showDialog<String>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          backgroundColor: Colors.white,
+          title: const Text('Select Color'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: widget.colorCategories.map((colorCategory) {
+                return InkWell(
+                  onTap: () => Navigator.of(ctx).pop(colorCategory.id),
+                  borderRadius: BorderRadius.circular(8),
+                  child: Container(
+                    width: 60,
+                    height: 60,
+                    decoration: BoxDecoration(
+                      color: colorCategory.color,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Center(
+                      child: Text(
+                        colorCategory.name,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Cancel'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   List<EventExperienceEntry> _rebuildEntriesFromSelection(
@@ -1075,7 +1725,24 @@ class _EventEditorModalState extends State<EventEditorModal> {
               ),
               const SizedBox(width: 8),
               Tooltip(
-                message: 'Edit itinerary',
+                message: 'Add event-only experience',
+                child: InkWell(
+                  onTap: _createEventOnlyExperience,
+                  borderRadius: BorderRadius.circular(20),
+                  child: Container(
+                    width: 32,
+                    height: 32,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Colors.grey.shade600,
+                    ),
+                    child: const Icon(Icons.edit_note, color: Colors.white, size: 18),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Tooltip(
+                message: 'Add from saved experiences',
                 child: InkWell(
                   onTap: _openItinerarySelector,
                   borderRadius: BorderRadius.circular(20),
@@ -1137,23 +1804,15 @@ class _EventEditorModalState extends State<EventEditorModal> {
               },
               itemBuilder: (context, index) {
                 final entry = _currentEvent.experiences[index];
-                final experience = _availableExperiences.firstWhere(
-                  (exp) => exp.id == entry.experienceId,
-                  orElse: () => Experience(
-                    id: entry.experienceId,
-                    name: 'Unknown Experience',
-                    description: '',
-                    location: const Location(
-                      latitude: 0.0,
-                      longitude: 0.0,
-                    ),
-                    createdAt: DateTime.now(),
-                    updatedAt: DateTime.now(),
-                    editorUserIds: [],
-                  ),
-                );
+                final Experience? experience = entry.isEventOnly
+                    ? null
+                    : _availableExperiences.firstWhereOrNull(
+                        (exp) => exp.id == entry.experienceId,
+                      );
                 return _SlidingItineraryItem(
-                  key: ValueKey(entry.experienceId),
+                  key: ValueKey(entry.isEventOnly 
+                      ? 'event-only-${entry.inlineName ?? 'unnamed'}-$index'
+                      : '${entry.experienceId}-$index'),
                   index: index,
                   child: _buildItineraryEntryCard(entry, experience, index),
                 );
@@ -1166,40 +1825,77 @@ class _EventEditorModalState extends State<EventEditorModal> {
 
   Widget _buildItineraryEntryCard(
     EventExperienceEntry entry,
-    Experience experience,
+    Experience? experience,
     int index,
   ) {
+    // Determine if this is an event-only experience
+    final bool isEventOnly = entry.isEventOnly;
+    
+    // Get display values from either the saved experience or inline data
+    final String displayName = isEventOnly
+        ? (entry.inlineName ?? 'Untitled')
+        : (experience?.name ?? 'Unknown Experience');
+    
+    final String? categoryId = isEventOnly
+        ? entry.inlineCategoryId
+        : experience?.categoryId;
+    
+    final String? colorCategoryId = isEventOnly
+        ? entry.inlineColorCategoryId
+        : experience?.colorCategoryId;
+    
     final UserCategory? category = widget.categories.firstWhereOrNull(
-      (cat) => cat.id == experience.categoryId,
+      (cat) => cat.id == categoryId,
     );
     final ColorCategory? colorCategory =
         widget.colorCategories.firstWhereOrNull(
-      (color) => color.id == experience.colorCategoryId,
+      (color) => color.id == colorCategoryId,
     );
-    final String categoryIcon =
-        category?.icon ?? experience.categoryIconDenorm ?? '?';
+    
+    final String categoryIcon = isEventOnly
+        ? (entry.inlineCategoryIconDenorm ?? category?.icon ?? '📍')
+        : (category?.icon ?? experience?.categoryIconDenorm ?? '?');
+    
     final Color leadingBoxColor = colorCategory != null
         ? colorCategory.color.withOpacity(0.5)
-        : experience.colorHexDenorm != null &&
-                experience.colorHexDenorm!.isNotEmpty
-            ? _parseColor(experience.colorHexDenorm!).withOpacity(0.5)
-            : Colors.white;
-    final List<UserCategory> otherCategories = experience.otherCategories
-        .map((id) =>
-            widget.categories.firstWhereOrNull((category) => category.id == id))
-        .whereType<UserCategory>()
-        .toList();
-    final List<ColorCategory> otherColorCategories = experience
-        .otherColorCategoryIds
-        .map((id) => widget.colorCategories
-            .firstWhereOrNull((colorCategory) => colorCategory.id == id))
-        .whereType<ColorCategory>()
-        .toList();
-    final String? address = experience.location.address;
+        : isEventOnly && entry.inlineColorHexDenorm != null
+            ? _parseColor(entry.inlineColorHexDenorm!).withOpacity(0.5)
+            : experience?.colorHexDenorm != null &&
+                    experience!.colorHexDenorm!.isNotEmpty
+                ? _parseColor(experience.colorHexDenorm!).withOpacity(0.5)
+                : Colors.white;
+    
+    final List<UserCategory> otherCategories = isEventOnly
+        ? entry.inlineOtherCategoryIds
+            .map((id) => widget.categories.firstWhereOrNull((cat) => cat.id == id))
+            .whereType<UserCategory>()
+            .toList()
+        : (experience?.otherCategories
+                .map((id) => widget.categories.firstWhereOrNull((cat) => cat.id == id))
+                .whereType<UserCategory>()
+                .toList() ??
+            []);
+    
+    final List<ColorCategory> otherColorCategories = isEventOnly
+        ? entry.inlineOtherColorCategoryIds
+            .map((id) => widget.colorCategories.firstWhereOrNull((color) => color.id == id))
+            .whereType<ColorCategory>()
+            .toList()
+        : (experience?.otherColorCategoryIds
+                .map((id) => widget.colorCategories.firstWhereOrNull((color) => color.id == id))
+                .whereType<ColorCategory>()
+                .toList() ??
+            []);
+    
+    final String? address = isEventOnly
+        ? entry.inlineLocation?.address
+        : experience?.location.address;
     final bool hasAddress = address != null && address.isNotEmpty;
     final bool hasOtherCategories = otherCategories.isNotEmpty;
     final bool hasOtherColorCategories = otherColorCategories.isNotEmpty;
-    final int contentCount = experience.sharedMediaItemIds.length;
+    
+    // Event-only experiences don't have media
+    final int contentCount = isEventOnly ? 0 : (experience?.sharedMediaItemIds.length ?? 0);
     final bool shouldShowSubRow =
         hasOtherCategories || hasOtherColorCategories || contentCount > 0;
     const double playButtonDiameter = 36.0;
@@ -1282,7 +1978,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
                   ],
                 ),
               ),
-              if (contentCount > 0) ...[
+              if (contentCount > 0 && experience != null) ...[
                 const SizedBox(width: 12),
                 GestureDetector(
                   behavior: HitTestBehavior.opaque,
@@ -1397,10 +2093,33 @@ class _EventEditorModalState extends State<EventEditorModal> {
             tilePadding: const EdgeInsets.symmetric(horizontal: 8.0),
             childrenPadding: const EdgeInsets.symmetric(horizontal: 16.0),
             leading: leadingWidget,
-            title: Text(
-              experience.name,
-              overflow: TextOverflow.ellipsis,
-              maxLines: 1,
+            title: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    displayName,
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
+                  ),
+                ),
+                if (isEventOnly)
+                  Container(
+                    margin: const EdgeInsets.only(left: 8),
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade600,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: const Text(
+                      'Event-only',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+              ],
             ),
             subtitle: subtitleChildren.isEmpty
                 ? null
@@ -1447,18 +2166,25 @@ class _EventEditorModalState extends State<EventEditorModal> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                       children: [
-                        TextButton.icon(
-                          icon: const Icon(Icons.open_in_new),
-                          label: const Text('Open'),
-                          onPressed: () {
-                            // TODO: Navigate to experience page
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                  content: Text(
-                                      'Open experience - not yet implemented')),
-                            );
-                          },
-                        ),
+                        if (!isEventOnly)
+                          TextButton.icon(
+                            icon: const Icon(Icons.open_in_new),
+                            label: const Text('Open'),
+                            onPressed: () {
+                              // TODO: Navigate to experience page
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                    content: Text(
+                                        'Open experience - not yet implemented')),
+                              );
+                            },
+                          ),
+                        if (isEventOnly)
+                          TextButton.icon(
+                            icon: const Icon(Icons.edit),
+                            label: const Text('Edit'),
+                            onPressed: () => _editEventOnlyExperience(entry, index),
+                          ),
                         TextButton.icon(
                           style: TextButton.styleFrom(
                             foregroundColor: Theme.of(context).primaryColor,

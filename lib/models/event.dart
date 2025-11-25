@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:equatable/equatable.dart';
+import 'experience.dart';
 
 /// The visibility options that control who can see an event.
 enum EventVisibility { private, sharedLink, public }
@@ -115,34 +116,88 @@ class EventNotificationPreference extends Equatable {
 const _undefined = Object();
 
 class EventExperienceEntry extends Equatable {
-  final String experienceId;
+  final String experienceId;  // Empty string for event-only experiences
   final String? note;
   final DateTime? scheduledTime;
   final String? transportInfo;
+  
+  // Inline experience data (only used when experienceId is empty)
+  final String? inlineName;
+  final String? inlineDescription;
+  final Location? inlineLocation;
+  final String? inlineCategoryId;
+  final String? inlineColorCategoryId;
+  final String? inlineCategoryIconDenorm;
+  final String? inlineColorHexDenorm;
+  final List<String> inlineOtherCategoryIds;
+  final List<String> inlineOtherColorCategoryIds;
 
   const EventExperienceEntry({
     required this.experienceId,
     this.note,
     this.scheduledTime,
     this.transportInfo,
+    this.inlineName,
+    this.inlineDescription,
+    this.inlineLocation,
+    this.inlineCategoryId,
+    this.inlineColorCategoryId,
+    this.inlineCategoryIconDenorm,
+    this.inlineColorHexDenorm,
+    this.inlineOtherCategoryIds = const [],
+    this.inlineOtherColorCategoryIds = const [],
   });
+  
+  /// Helper to determine if this is an event-only experience
+  bool get isEventOnly => 
+      experienceId.isEmpty && 
+      inlineName != null && 
+      inlineName!.isNotEmpty;
 
   factory EventExperienceEntry.fromMap(Map<String, dynamic> map) {
+    // Handle experienceId: Firestore might convert empty strings to null
+    final experienceIdValue = map['experienceId'];
+    final experienceId = experienceIdValue == null || experienceIdValue == '' 
+        ? '' 
+        : experienceIdValue.toString();
+    
     return EventExperienceEntry(
-      experienceId: map['experienceId'] ?? '',
+      experienceId: experienceId,
       note: map['note'],
       scheduledTime: _parseNullableTimestamp(map['scheduledTime']),
       transportInfo: map['transportInfo'],
+      inlineName: map['inlineName'],
+      inlineDescription: map['inlineDescription'],
+      inlineLocation: map['inlineLocation'] != null 
+          ? Location.fromMap(map['inlineLocation'] as Map<String, dynamic>)
+          : null,
+      inlineCategoryId: map['inlineCategoryId'],
+      inlineColorCategoryId: map['inlineColorCategoryId'],
+      inlineCategoryIconDenorm: map['inlineCategoryIconDenorm'],
+      inlineColorHexDenorm: map['inlineColorHexDenorm'],
+      inlineOtherCategoryIds: _stringList(map['inlineOtherCategoryIds']),
+      inlineOtherColorCategoryIds: _stringList(map['inlineOtherColorCategoryIds']),
     );
   }
 
   Map<String, dynamic> toMap() {
     return {
-      'experienceId': experienceId,
+      // Always include experienceId, even if empty (for event-only experiences)
+      'experienceId': experienceId.isEmpty ? '' : experienceId,
       if (note != null) 'note': note,
       if (scheduledTime != null)
         'scheduledTime': Timestamp.fromDate(scheduledTime!),
       if (transportInfo != null) 'transportInfo': transportInfo,
+      // Always include inlineName if this is an event-only experience
+      if (inlineName != null && inlineName!.isNotEmpty) 'inlineName': inlineName,
+      if (inlineDescription != null && inlineDescription!.isNotEmpty) 'inlineDescription': inlineDescription,
+      if (inlineLocation != null) 'inlineLocation': inlineLocation!.toMap(),
+      if (inlineCategoryId != null && inlineCategoryId!.isNotEmpty) 'inlineCategoryId': inlineCategoryId,
+      if (inlineColorCategoryId != null && inlineColorCategoryId!.isNotEmpty) 'inlineColorCategoryId': inlineColorCategoryId,
+      if (inlineCategoryIconDenorm != null && inlineCategoryIconDenorm!.isNotEmpty) 'inlineCategoryIconDenorm': inlineCategoryIconDenorm,
+      if (inlineColorHexDenorm != null && inlineColorHexDenorm!.isNotEmpty) 'inlineColorHexDenorm': inlineColorHexDenorm,
+      if (inlineOtherCategoryIds.isNotEmpty) 'inlineOtherCategoryIds': inlineOtherCategoryIds,
+      if (inlineOtherColorCategoryIds.isNotEmpty) 'inlineOtherColorCategoryIds': inlineOtherColorCategoryIds,
     };
   }
 
@@ -151,17 +206,49 @@ class EventExperienceEntry extends Equatable {
     Object? note = _undefined,
     Object? scheduledTime = _undefined,
     Object? transportInfo = _undefined,
+    Object? inlineName = _undefined,
+    Object? inlineDescription = _undefined,
+    Object? inlineLocation = _undefined,
+    Object? inlineCategoryId = _undefined,
+    Object? inlineColorCategoryId = _undefined,
+    Object? inlineCategoryIconDenorm = _undefined,
+    Object? inlineColorHexDenorm = _undefined,
+    List<String>? inlineOtherCategoryIds,
+    List<String>? inlineOtherColorCategoryIds,
   }) {
     return EventExperienceEntry(
       experienceId: experienceId ?? this.experienceId,
       note: note == _undefined ? this.note : note as String?,
       scheduledTime: scheduledTime == _undefined ? this.scheduledTime : scheduledTime as DateTime?,
       transportInfo: transportInfo == _undefined ? this.transportInfo : transportInfo as String?,
+      inlineName: inlineName == _undefined ? this.inlineName : inlineName as String?,
+      inlineDescription: inlineDescription == _undefined ? this.inlineDescription : inlineDescription as String?,
+      inlineLocation: inlineLocation == _undefined ? this.inlineLocation : inlineLocation as Location?,
+      inlineCategoryId: inlineCategoryId == _undefined ? this.inlineCategoryId : inlineCategoryId as String?,
+      inlineColorCategoryId: inlineColorCategoryId == _undefined ? this.inlineColorCategoryId : inlineColorCategoryId as String?,
+      inlineCategoryIconDenorm: inlineCategoryIconDenorm == _undefined ? this.inlineCategoryIconDenorm : inlineCategoryIconDenorm as String?,
+      inlineColorHexDenorm: inlineColorHexDenorm == _undefined ? this.inlineColorHexDenorm : inlineColorHexDenorm as String?,
+      inlineOtherCategoryIds: inlineOtherCategoryIds ?? this.inlineOtherCategoryIds,
+      inlineOtherColorCategoryIds: inlineOtherColorCategoryIds ?? this.inlineOtherColorCategoryIds,
     );
   }
 
   @override
-  List<Object?> get props => [experienceId, note, scheduledTime, transportInfo];
+  List<Object?> get props => [
+        experienceId,
+        note,
+        scheduledTime,
+        transportInfo,
+        inlineName,
+        inlineDescription,
+        inlineLocation,
+        inlineCategoryId,
+        inlineColorCategoryId,
+        inlineCategoryIconDenorm,
+        inlineColorHexDenorm,
+        inlineOtherCategoryIds,
+        inlineOtherColorCategoryIds,
+      ];
 }
 
 /// Represents a comment left on an event, optionally targeting a specific experience.

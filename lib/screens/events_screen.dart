@@ -1016,8 +1016,10 @@ class _EventsScreenState extends State<EventsScreen>
 
     try {
       // Fetch the experiences referenced in the event
+      // Filter out empty strings (event-only experiences have empty experienceId)
       final experienceIds = event.experiences
           .map((entry) => entry.experienceId)
+          .where((id) => id.isNotEmpty)
           .toList();
       
       final experienceService = ExperienceService();
