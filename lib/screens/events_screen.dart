@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import 'package:table_calendar/table_calendar.dart';
 import '../models/event.dart';
 import '../models/experience.dart';
+import '../models/user_category.dart';
 import '../services/event_service.dart';
 import '../services/auth_service.dart';
 import '../services/experience_service.dart';
@@ -20,6 +21,7 @@ class _EventsScreenState extends State<EventsScreen>
     with SingleTickerProviderStateMixin {
   final _eventService = EventService();
   final _authService = AuthService();
+  final _experienceService = ExperienceService();
 
   // Calendar state
   DateTime _focusedDay = DateTime.now();
@@ -33,6 +35,12 @@ class _EventsScreenState extends State<EventsScreen>
   List<Event> _allEvents = [];
   Map<DateTime, List<Event>> _eventsByDate = {};
   bool _isLoading = true;
+
+  // Categories cache for looking up icons
+  List<UserCategory> _categories = [];
+  
+  // Experiences cache: maps experienceId to Experience
+  Map<String, Experience> _experiencesCache = {};
 
   late TabController _tabController;
   late PageController _weekPageController;
@@ -63,7 +71,21 @@ class _EventsScreenState extends State<EventsScreen>
     });
     // Initialize week page controller at "current week" (middle of range)
     _weekPageController = PageController(initialPage: 52); // ~1 year range
+    _loadCategories();
     _loadEvents();
+  }
+
+  Future<void> _loadCategories() async {
+    try {
+      final categories = await _experienceService.getUserCategories();
+      if (mounted) {
+        setState(() {
+          _categories = categories;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading categories: $e');
+    }
   }
 
   @override
@@ -88,6 +110,9 @@ class _EventsScreenState extends State<EventsScreen>
           debugPrint('Event: ${event.title} - ${event.startDateTime}');
         }
         
+        // Cache experiences referenced in events
+        await _cacheExperiencesForEvents(events);
+        
         setState(() {
           _allEvents = events;
           _eventsByDate = _groupEventsByDate(events);
@@ -101,6 +126,38 @@ class _EventsScreenState extends State<EventsScreen>
       debugPrint('Error loading events: $e');
       debugPrint('Stack trace: $stackTrace');
       setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _cacheExperiencesForEvents(List<Event> events) async {
+    // Collect all unique experience IDs from all events
+    final experienceIds = <String>{};
+    for (final event in events) {
+      for (final entry in event.experiences) {
+        if (entry.experienceId.isNotEmpty) {
+          experienceIds.add(entry.experienceId);
+        }
+      }
+    }
+
+    // Fetch experiences that aren't already cached
+    final idsToFetch = experienceIds
+        .where((id) => !_experiencesCache.containsKey(id))
+        .toList();
+
+    if (idsToFetch.isNotEmpty) {
+      try {
+        final experiences = await _experienceService.getExperiencesByIds(idsToFetch);
+        if (mounted) {
+          setState(() {
+            for (final exp in experiences) {
+              _experiencesCache[exp.id] = exp;
+            }
+          });
+        }
+      } catch (e) {
+        debugPrint('Error caching experiences: $e');
+      }
     }
   }
 
@@ -970,7 +1027,7 @@ class _EventsScreenState extends State<EventsScreen>
                           overflow: TextOverflow.ellipsis,
                         ),
                       ],
-                      // Experience count
+                      // Experience count with category icons
                       if (event.experiences.isNotEmpty) ...[
                         const SizedBox(height: 8),
                         Row(
@@ -982,11 +1039,16 @@ class _EventsScreenState extends State<EventsScreen>
                             ),
                             const SizedBox(width: 4),
                             Text(
-                              '${event.experiences.length} location${event.experiences.length != 1 ? 's' : ''}',
+                              '${event.experiences.length} experience${event.experiences.length != 1 ? 's' : ''}',
                               style: theme.textTheme.bodySmall?.copyWith(
                                 color: theme.colorScheme.primary,
                                 fontWeight: FontWeight.w500,
                               ),
+                            ),
+                            const SizedBox(width: 8),
+                            // Category icons with overflow handling
+                            Flexible(
+                              child: _buildTruncatedCategoryIcons(event.experiences),
                             ),
                           ],
                         ),
@@ -1153,6 +1215,66 @@ class _EventsScreenState extends State<EventsScreen>
 
   bool isSameDay(DateTime a, DateTime b) {
     return a.year == b.year && a.month == b.month && a.day == b.day;
+  }
+
+  /// Build truncated category icons with overflow handling
+  Widget _buildTruncatedCategoryIcons(List<EventExperienceEntry> entries) {
+    final icons = entries
+        .map((entry) => _getCategoryIconForEntry(entry))
+        .where((icon) => icon != null)
+        .cast<String>()
+        .toList();
+
+    if (icons.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    // Simple approach: show icons with ellipsis
+    // This handles overflow naturally without LayoutBuilder
+    return Text(
+      icons.join(' '),
+      style: const TextStyle(fontSize: 14),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      softWrap: false,
+    );
+  }
+
+  /// Get category icon for an EventExperienceEntry
+  /// Returns null if no icon is available
+  String? _getCategoryIconForEntry(EventExperienceEntry entry) {
+    // For event-only experiences, use the denormalized icon
+    if (entry.isEventOnly) {
+      return entry.inlineCategoryIconDenorm?.isNotEmpty == true
+          ? entry.inlineCategoryIconDenorm
+          : '📍'; // Fallback icon
+    }
+
+    // For regular experiences, get from cached Experience object
+    final experience = _experiencesCache[entry.experienceId];
+    if (experience != null) {
+      // First try denormalized icon
+      if (experience.categoryIconDenorm != null &&
+          experience.categoryIconDenorm!.isNotEmpty) {
+        return experience.categoryIconDenorm;
+      }
+      
+      // Then try looking up by categoryId
+      if (experience.categoryId != null && experience.categoryId!.isNotEmpty) {
+        try {
+          final category = _categories.firstWhere(
+            (cat) => cat.id == experience.categoryId,
+          );
+          if (category.icon.isNotEmpty) {
+            return category.icon;
+          }
+        } catch (_) {
+          // Category not found in user's categories
+        }
+      }
+    }
+
+    return null; // No icon available
   }
 }
 
