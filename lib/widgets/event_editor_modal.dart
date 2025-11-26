@@ -165,7 +165,25 @@ class _EventEditorModalState extends State<EventEditorModal> {
       }
 
       try {
-        await _eventNotificationQueueService.queueEventNotifications(savedEvent);
+        // Only queue notifications if the notification time is in the future
+        final notificationDuration = savedEvent.notificationPreference.type == EventNotificationType.fiveMinutes
+            ? const Duration(minutes: 5)
+            : savedEvent.notificationPreference.type == EventNotificationType.fifteenMinutes
+                ? const Duration(minutes: 15)
+                : savedEvent.notificationPreference.type == EventNotificationType.thirtyMinutes
+                    ? const Duration(minutes: 30)
+                    : savedEvent.notificationPreference.type == EventNotificationType.oneHour
+                        ? const Duration(hours: 1)
+                        : savedEvent.notificationPreference.type == EventNotificationType.oneDay
+                            ? const Duration(days: 1)
+                            : savedEvent.notificationPreference.customDuration ?? const Duration(minutes: 30);
+        
+        final notificationTime = savedEvent.startDateTime.subtract(notificationDuration);
+        
+        // Only queue if the notification time hasn't passed yet
+        if (notificationTime.isAfter(DateTime.now())) {
+          await _eventNotificationQueueService.queueEventNotifications(savedEvent);
+        }
       } catch (e) {
         debugPrint('EventEditorModal: Failed to queue notifications - $e');
       }
