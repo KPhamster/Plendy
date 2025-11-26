@@ -168,7 +168,10 @@ class _MapScreenState extends State<MapScreen> {
   // ADDED: Event view mode state
   Event? _activeEventViewMode;
   final Map<String, Marker> _eventViewMarkers = {};
+  final Map<String, Experience?> _eventViewMarkerExperiences = {}; // Store experience for each marker
+  final Map<String, EventExperienceEntry> _eventViewMarkerEntries = {}; // Store entry for each marker
   bool get _isEventViewModeActive => _activeEventViewMode != null;
+  bool _isEventOverlayExpanded = false; // Track expanded state of event overlay
 
   // ADDED: Resolve and cache display name for owners of shared items
   Future<String> _getOwnerDisplayName(String userId) async {
@@ -2128,6 +2131,9 @@ class _MapScreenState extends State<MapScreen> {
     setState(() {
       _activeEventViewMode = event;
       _eventViewMarkers.clear();
+      _eventViewMarkerExperiences.clear();
+      _eventViewMarkerEntries.clear();
+      _isEventOverlayExpanded = false; // Start collapsed
       // Clear any existing tapped location
       _tappedLocationMarker = null;
       _tappedLocationDetails = null;
@@ -2177,7 +2183,9 @@ class _MapScreenState extends State<MapScreen> {
         continue;
       }
       
-      final position = LatLng(location.latitude, location.longitude);
+      // Capture location as non-null for use in closure
+      final validLocation = location;
+      final position = LatLng(validLocation.latitude, validLocation.longitude);
       positions.add(position);
       
       // Generate numbered marker icon
@@ -2189,6 +2197,15 @@ class _MapScreenState extends State<MapScreen> {
       );
       
       final markerId = MarkerId('event_view_$i');
+      
+      // Store experience/entry data for this marker
+      Experience? markerExperience;
+      if (!entry.isEventOnly && entry.experienceId.isNotEmpty) {
+        markerExperience = _eventExperiencesCache[entry.experienceId];
+      }
+      _eventViewMarkerExperiences[markerId.value] = markerExperience;
+      _eventViewMarkerEntries[markerId.value] = entry;
+      
       final marker = Marker(
         markerId: markerId,
         position: position,
@@ -2197,11 +2214,19 @@ class _MapScreenState extends State<MapScreen> {
         infoWindow: InfoWindow(
           title: entry.isEventOnly 
               ? '$positionNumber. ${entry.inlineName ?? 'Stop $positionNumber'}'
-              : '$positionNumber. ${_eventExperiencesCache[entry.experienceId]?.name ?? 'Experience'}',
+              : '$positionNumber. ${markerExperience?.name ?? 'Experience'}',
         ),
-        onTap: () {
+        onTap: () async {
           print("🗺️ MAP SCREEN: Event view marker $positionNumber tapped");
-          _showMarkerInfoWindow(markerId);
+          FocusScope.of(context).unfocus();
+          
+          // If this is a saved experience, show the experience details bottom sheet
+          if (markerExperience != null) {
+            await _handleEventViewMarkerTap(markerExperience, validLocation, markerBackgroundColor, positionNumber);
+          } else {
+            // Event-only experience - show location details
+            await _handleEventOnlyMarkerTap(entry, validLocation, positionNumber);
+          }
         },
       );
       
@@ -2350,12 +2375,416 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
+  // ADDED: Handle tap on event view marker for saved experience
+  Future<void> _handleEventViewMarkerTap(
+    Experience experience,
+    Location location,
+    Color markerBackgroundColor,
+    int positionNumber,
+  ) async {
+    print("🗺️ MAP SCREEN: Handling tap on saved experience in event view: '${experience.name}'");
+    
+    // Get category for the experience
+    UserCategory? resolvedCategory;
+    final String? categoryId = experience.categoryId;
+    if (categoryId != null && categoryId.isNotEmpty) {
+      try {
+        resolvedCategory = _categories.firstWhere((cat) => cat.id == categoryId);
+      } catch (_) {
+        final String? ownerId = experience.createdBy;
+        if (ownerId != null && ownerId.isNotEmpty && _followeeCategories.containsKey(ownerId)) {
+          resolvedCategory = _followeeCategories[ownerId]?[categoryId];
+        }
+      }
+    }
+    if (resolvedCategory == null) {
+      resolvedCategory = _resolveCategoryForExperience(experience);
+    }
+    
+    // Generate selected icon with number badge for event view mode
+    final String selectedIconText = _getCategoryIconForExperience(experience) ?? '❓';
+    final selectedIcon = await _bitmapDescriptorFromNumberedIcon(
+      number: positionNumber,
+      iconText: selectedIconText,
+      backgroundColor: markerBackgroundColor,
+      size: 100,
+    );
+    
+    // Create selected marker
+    final tappedMarkerId = MarkerId('selected_experience_location');
+    final tappedMarker = Marker(
+      markerId: tappedMarkerId,
+      position: LatLng(location.latitude, location.longitude),
+      infoWindow: InfoWindow(
+        title: '$selectedIconText ${experience.name}',
+      ),
+      icon: selectedIcon,
+      zIndex: 1.0,
+    );
+    
+    // Fetch business status
+    String? businessStatus;
+    bool? openNow;
+    try {
+      if (location.placeId != null && location.placeId!.isNotEmpty) {
+        final detailsMap = await _mapsService.fetchPlaceDetailsData(location.placeId!);
+        businessStatus = detailsMap?['businessStatus'] as String?;
+        openNow = (detailsMap?['currentOpeningHours']?['openNow']) as bool?;
+      }
+    } catch (e) {
+      businessStatus = null;
+      openNow = null;
+    }
+    
+    if (!mounted) return;
+    
+    setState(() {
+      _mapWidgetInitialLocation = location;
+      _tappedLocationDetails = location;
+      _tappedLocationMarker = tappedMarker;
+      _tappedExperience = experience;
+      _tappedExperienceCategory = resolvedCategory;
+      _tappedLocationBusinessStatus = businessStatus;
+      _tappedLocationOpenNow = openNow;
+      _searchController.clear();
+      _searchResults = [];
+      _showSearchResults = false;
+    });
+    
+    _showMarkerInfoWindow(tappedMarkerId);
+    unawaited(_prefetchExperienceMedia(experience));
+  }
+
+  // ADDED: Handle tap on event-only marker (no saved experience)
+  Future<void> _handleEventOnlyMarkerTap(
+    EventExperienceEntry entry,
+    Location location,
+    int positionNumber,
+  ) async {
+    print("🗺️ MAP SCREEN: Handling tap on event-only experience: '${entry.inlineName}'");
+    
+    // Create a simple marker for event-only experiences
+    final tappedMarkerId = MarkerId('selected_location');
+    final tappedMarker = Marker(
+      markerId: tappedMarkerId,
+      position: LatLng(location.latitude, location.longitude),
+      infoWindow: InfoWindow(
+        title: entry.inlineName ?? 'Stop $positionNumber',
+      ),
+      icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueViolet),
+      zIndex: 1.0,
+    );
+    
+    // Fetch business status
+    String? businessStatus;
+    bool? openNow;
+    try {
+      if (location.placeId != null && location.placeId!.isNotEmpty) {
+        final detailsMap = await _mapsService.fetchPlaceDetailsData(location.placeId!);
+        businessStatus = detailsMap?['businessStatus'] as String?;
+        openNow = (detailsMap?['currentOpeningHours']?['openNow']) as bool?;
+      }
+    } catch (e) {
+      businessStatus = null;
+      openNow = null;
+    }
+    
+    if (!mounted) return;
+    
+    setState(() {
+      _mapWidgetInitialLocation = location;
+      _tappedLocationDetails = location;
+      _tappedLocationMarker = tappedMarker;
+      _tappedExperience = null; // No saved experience
+      _tappedExperienceCategory = null;
+      _tappedLocationBusinessStatus = businessStatus;
+      _tappedLocationOpenNow = openNow;
+      _publicReadOnlyExperience = null;
+      _publicReadOnlyExperienceId = null;
+      _searchController.clear();
+      _searchResults = [];
+      _showSearchResults = false;
+    });
+    
+    _showMarkerInfoWindow(tappedMarkerId);
+  }
+
+  // ADDED: Build event itinerary list for overlay
+  Widget _buildEventItineraryList() {
+    if (_activeEventViewMode == null || _activeEventViewMode!.experiences.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.all(16.0),
+        child: Center(
+          child: Text(
+            'No experiences in itinerary',
+            style: TextStyle(color: Colors.grey),
+          ),
+        ),
+      );
+    }
+
+    return ListView.builder(
+      shrinkWrap: true,
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      itemCount: _activeEventViewMode!.experiences.length,
+      itemBuilder: (context, index) {
+        final entry = _activeEventViewMode!.experiences[index];
+        Experience? experience;
+        if (!entry.isEventOnly && entry.experienceId.isNotEmpty) {
+          // Find experience from cache or marker experiences map
+          experience = _eventExperiencesCache[entry.experienceId];
+          if (experience == null) {
+            // Try to find from marker experiences map
+            for (final exp in _eventViewMarkerExperiences.values) {
+              if (exp?.id == entry.experienceId) {
+                experience = exp;
+                break;
+              }
+            }
+          }
+        }
+        return _buildEventItineraryItem(entry, experience, index);
+      },
+    );
+  }
+
+  // ADDED: Build individual itinerary item for overlay
+  Widget _buildEventItineraryItem(
+    EventExperienceEntry entry,
+    Experience? experience,
+    int index,
+  ) {
+    final bool isEventOnly = entry.isEventOnly;
+    final String displayName = isEventOnly
+        ? (entry.inlineName ?? 'Untitled')
+        : (experience?.name ?? 'Unknown Experience');
+    
+    final String? colorCategoryId = isEventOnly
+        ? entry.inlineColorCategoryId
+        : experience?.colorCategoryId;
+    
+    // Get category icon
+    String categoryIcon = '📍';
+    if (isEventOnly) {
+      categoryIcon = entry.inlineCategoryIconDenorm ?? '📍';
+    } else if (experience != null) {
+      categoryIcon = _getCategoryIconForExperience(experience) ?? '📍';
+    }
+    
+    // Get color
+    Color leadingBoxColor = Colors.grey.shade200;
+    if (colorCategoryId != null) {
+      try {
+        final colorCat = _colorCategories.firstWhere((cc) => cc.id == colorCategoryId);
+        leadingBoxColor = _parseColor(colorCat.colorHex).withOpacity(0.5);
+      } catch (_) {
+        if (isEventOnly && entry.inlineColorHexDenorm != null) {
+          leadingBoxColor = _parseColor(entry.inlineColorHexDenorm!).withOpacity(0.5);
+        } else if (experience?.colorHexDenorm != null && experience!.colorHexDenorm!.isNotEmpty) {
+          leadingBoxColor = _parseColor(experience.colorHexDenorm!).withOpacity(0.5);
+        }
+      }
+    } else if (isEventOnly && entry.inlineColorHexDenorm != null) {
+      leadingBoxColor = _parseColor(entry.inlineColorHexDenorm!).withOpacity(0.5);
+    } else if (experience?.colorHexDenorm != null && experience!.colorHexDenorm!.isNotEmpty) {
+      leadingBoxColor = _parseColor(experience.colorHexDenorm!).withOpacity(0.5);
+    }
+    
+    final String? address = isEventOnly
+        ? entry.inlineLocation?.address
+        : experience?.location.address;
+    
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () => _focusEventItineraryItem(entry, experience, index),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Number badge
+              Container(
+                width: 24,
+                height: 24,
+                decoration: BoxDecoration(
+                  color: _getEventColor(_activeEventViewMode!),
+                  shape: BoxShape.circle,
+                ),
+                child: Center(
+                  child: Text(
+                    '${index + 1}',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              // Icon box
+              Container(
+                width: 48,
+                height: 48,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: leadingBoxColor,
+                  borderRadius: BorderRadius.circular(8.0),
+                ),
+                child: Text(
+                  categoryIcon,
+                  style: const TextStyle(fontSize: 24),
+                ),
+              ),
+              const SizedBox(width: 12),
+              // Content
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            displayName,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w600,
+                              fontSize: 15,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        if (isEventOnly)
+                          Container(
+                            margin: const EdgeInsets.only(left: 8),
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.grey.shade600,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: const Text(
+                              'Event-only',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 9,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                    if (address != null && address.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        address,
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Colors.grey[600],
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ADDED: Focus map on itinerary item
+  Future<void> _focusEventItineraryItem(
+    EventExperienceEntry entry,
+    Experience? experience,
+    int index,
+  ) async {
+    Location? location;
+    Color markerBackgroundColor = _getEventColor(_activeEventViewMode!);
+    
+    if (entry.isEventOnly) {
+      location = entry.inlineLocation;
+    } else if (experience != null) {
+      location = experience.location;
+      // Get marker color from experience
+      if (experience.colorHexDenorm != null && experience.colorHexDenorm!.isNotEmpty) {
+        markerBackgroundColor = _parseColor(experience.colorHexDenorm!);
+      } else if (experience.colorCategoryId != null) {
+        try {
+          final colorCat = _colorCategories.firstWhere((cc) => cc.id == experience.colorCategoryId);
+          markerBackgroundColor = _parseColor(colorCat.colorHex);
+        } catch (_) {}
+      }
+    }
+    
+    if (location == null || (location.latitude == 0.0 && location.longitude == 0.0)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No valid location for this experience')),
+        );
+      }
+      return;
+    }
+    
+    final position = LatLng(location.latitude, location.longitude);
+    _mapController ??= await _mapControllerCompleter.future;
+    
+    // Animate camera first
+    await _mapController!.animateCamera(
+      CameraUpdate.newLatLngZoom(position, 16.0),
+    );
+    
+    // Then show the bottom sheet by calling the appropriate handler
+    if (experience != null) {
+      // Saved experience - show full experience details bottom sheet
+      await _handleEventViewMarkerTap(experience, location, markerBackgroundColor, index + 1);
+    } else {
+      // Event-only experience - show location details bottom sheet
+      await _handleEventOnlyMarkerTap(entry, location, index + 1);
+    }
+  }
+
+  // ADDED: Confirm exit event view mode with dialog
+  Future<void> _confirmExitEventViewMode() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          backgroundColor: Colors.white,
+          title: const Text('Leave Event View?'),
+          content: const Text('Are you sure you want to leave the event view?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('Yes'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed == true && mounted) {
+      _exitEventViewMode();
+    }
+  }
+
   // ADDED: Exit event view mode
   void _exitEventViewMode() {
     print("🗺️ MAP SCREEN: Exiting event view mode");
     setState(() {
       _activeEventViewMode = null;
       _eventViewMarkers.clear();
+      _eventViewMarkerExperiences.clear();
+      _eventViewMarkerEntries.clear();
+      _isEventOverlayExpanded = false;
     });
   }
 
@@ -4895,6 +5324,7 @@ class _MapScreenState extends State<MapScreen> {
       appBar: AppBar(
         backgroundColor: Colors.white,
         foregroundColor: Colors.black,
+        elevation: 0,
         titleSpacing: 0,
         title: Row(
           mainAxisSize: MainAxisSize.min,
@@ -4942,7 +5372,7 @@ class _MapScreenState extends State<MapScreen> {
             child: IconButton(
               icon: Icon(
                 Icons.event_outlined,
-                color: _isCalendarToggleActive ? Colors.black : Colors.grey,
+                color: _isEventViewModeActive ? Colors.black : Colors.grey,
               ),
               tooltip: 'Toggle calendar view',
               onPressed: _handleCalendarToggle,
@@ -5239,7 +5669,7 @@ class _MapScreenState extends State<MapScreen> {
                     initialLocation: _mapWidgetInitialLocation, // Use the dynamic initial location
                     showUserLocation: true,
                     allowSelection: true,
-                    onLocationSelected: _isEventViewModeActive ? null : _handleLocationSelected,
+                    onLocationSelected: _handleLocationSelected,
                     showControls: true,
                     mapToolbarEnabled: !_canOpenSelectedExperience && !_isEventViewModeActive,
                     additionalMarkers: allMarkers,
@@ -5251,81 +5681,140 @@ class _MapScreenState extends State<MapScreen> {
                       top: 16,
                       left: 16,
                       right: 16,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(12),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.15),
-                              blurRadius: 10,
-                              offset: const Offset(0, 2),
-                            ),
-                          ],
-                        ),
-                        child: Row(
-                          children: [
-                            Container(
-                              width: 4,
-                              height: 40,
-                              decoration: BoxDecoration(
-                                color: _getEventColor(_activeEventViewMode!),
-                                borderRadius: BorderRadius.circular(2),
+                      child: GestureDetector(
+                        onTap: () async {
+                          // Fit camera to show all itinerary experiences
+                          final positions = _eventViewMarkers.values
+                              .map((marker) => marker.position)
+                              .toList();
+                          if (positions.isNotEmpty) {
+                            await _fitCameraToBounds(positions);
+                          }
+                        },
+                        child: Container(
+                          constraints: _isEventOverlayExpanded
+                              ? BoxConstraints(
+                                  maxHeight: MediaQuery.of(context).size.height * 0.6,
+                                )
+                              : const BoxConstraints(),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(12),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.15),
+                                blurRadius: 10,
+                                offset: const Offset(0, 2),
                               ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                mainAxisSize: MainAxisSize.min,
+                            ],
+                          ),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                            // Header row
+                            Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                              child: Row(
                                 children: [
-                                  Text(
-                                    _activeEventViewMode!.title.isEmpty 
-                                        ? 'Untitled Event' 
-                                        : _activeEventViewMode!.title,
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.w600,
-                                      fontSize: 16,
+                                  Container(
+                                    width: 4,
+                                    height: 40,
+                                    decoration: BoxDecoration(
+                                      color: _getEventColor(_activeEventViewMode!),
+                                      borderRadius: BorderRadius.circular(2),
                                     ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
                                   ),
-                                  const SizedBox(height: 2),
-                                  Text(
-                                    '${_eventViewMarkers.length} stop${_eventViewMarkers.length != 1 ? 's' : ''} on map',
-                                    style: TextStyle(
-                                      fontSize: 13,
-                                      color: Colors.grey[600],
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Text(
+                                          _activeEventViewMode!.title.isEmpty 
+                                              ? 'Untitled Event' 
+                                              : _activeEventViewMode!.title,
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.w600,
+                                            fontSize: 16,
+                                          ),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          '${_eventViewMarkers.length} stop${_eventViewMarkers.length != 1 ? 's' : ''} on map',
+                                          style: TextStyle(
+                                            fontSize: 13,
+                                            color: Colors.grey[600],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  // List icon button
+                                  Material(
+                                    color: Colors.transparent,
+                                    child: InkWell(
+                                      onTap: () {
+                                        setState(() {
+                                          _isEventOverlayExpanded = !_isEventOverlayExpanded;
+                                        });
+                                      },
+                                      borderRadius: BorderRadius.circular(20),
+                                      child: Container(
+                                        padding: const EdgeInsets.all(8),
+                                        decoration: BoxDecoration(
+                                          color: _getEventColor(_activeEventViewMode!).withOpacity(
+                                            _isEventOverlayExpanded ? 0.8 : 0.6
+                                          ),
+                                          shape: BoxShape.circle,
+                                        ),
+                                        child: Icon(
+                                          Icons.list,
+                                          size: 20,
+                                          color: Colors.white,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 4),
+                                  // Close button
+                                  Material(
+                                    color: Colors.transparent,
+                                    child: InkWell(
+                                      onTap: _confirmExitEventViewMode,
+                                      borderRadius: BorderRadius.circular(20),
+                                      child: Container(
+                                        padding: const EdgeInsets.all(8),
+                                        decoration: BoxDecoration(
+                                          color: Colors.grey[100],
+                                          shape: BoxShape.circle,
+                                        ),
+                                        child: const Icon(
+                                          Icons.close,
+                                          size: 20,
+                                          color: Colors.black54,
+                                        ),
+                                      ),
                                     ),
                                   ),
                                 ],
                               ),
                             ),
-                            const SizedBox(width: 8),
-                            Material(
-                              color: Colors.transparent,
-                              child: InkWell(
-                                onTap: _exitEventViewMode,
-                                borderRadius: BorderRadius.circular(20),
-                                child: Container(
-                                  padding: const EdgeInsets.all(8),
-                                  decoration: BoxDecoration(
-                                    color: Colors.grey[100],
-                                    shape: BoxShape.circle,
-                                  ),
-                                  child: const Icon(
-                                    Icons.close,
-                                    size: 20,
-                                    color: Colors.black54,
-                                  ),
-                                ),
+                            // Expanded itinerary list
+                            if (_isEventOverlayExpanded)
+                              Divider(height: 1, thickness: 1),
+                            if (_isEventOverlayExpanded)
+                              Flexible(
+                                child: _buildEventItineraryList(),
                               ),
-                            ),
                           ],
                         ),
                       ),
                     ),
+                  ),
                 ],
               ),
             ),
@@ -5391,7 +5880,7 @@ class _MapScreenState extends State<MapScreen> {
                             SizedBox(height: 12),
                           ],
                           Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+                            crossAxisAlignment: CrossAxisAlignment.center,
                             children: [
                               Expanded(
                                 child: Text(
@@ -5402,8 +5891,61 @@ class _MapScreenState extends State<MapScreen> {
                                   ),
                                 ),
                               ),
-                              // Add spacing to prevent title from overlapping with the action buttons in the Stack
-                              const SizedBox(width: 96),
+                              Transform.translate(
+                                offset: const Offset(16, 0),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Transform.translate(
+                                      offset: const Offset(-6, 0),
+                                      child: IconButton(
+                                        onPressed: () {
+                                          if (_tappedLocationDetails != null) {
+                                            _launchMapLocation(_tappedLocationDetails!);
+                                          }
+                                        },
+                                        icon: Icon(Icons.map_outlined, color: Colors.green[700], size: 28),
+                                        tooltip: 'Open in map app',
+                                        padding: EdgeInsets.zero,
+                                        constraints: const BoxConstraints(),
+                                      ),
+                                    ),
+                                    Transform.translate(
+                                      offset: const Offset(-12, 0),
+                                      child: IconButton(
+                                        onPressed: () {
+                                          if (_tappedLocationDetails != null) {
+                                            _openDirectionsForLocation(_tappedLocationDetails!);
+                                          }
+                                        },
+                                        icon: Icon(Icons.directions, color: Colors.blue, size: 28),
+                                        tooltip: 'Get Directions',
+                                        padding: EdgeInsets.zero,
+                                        constraints: const BoxConstraints(),
+                                      ),
+                                    ),
+                                    Transform.translate(
+                                      offset: const Offset(-18, 0),
+                                      child: IconButton(
+                                        onPressed: () {
+                                          setState(() {
+                                            _tappedLocationMarker = null;
+                                            _tappedLocationDetails = null;
+                                            _tappedExperience = null;
+                                            _tappedExperienceCategory = null;
+                                            _tappedLocationBusinessStatus = null;
+                                            _tappedLocationOpenNow = null;
+                                          });
+                                        },
+                                        icon: Icon(Icons.close, color: Colors.grey[600], size: 28),
+                                        tooltip: 'Close',
+                                        padding: EdgeInsets.zero,
+                                        constraints: const BoxConstraints(),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
                             ],
                           ),
                           SizedBox(height: 8),
@@ -5521,38 +6063,6 @@ class _MapScreenState extends State<MapScreen> {
                         ],
                         ),
                       ),
-                    Positioned(
-                      top: -8,
-                      right: -8,
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min, 
-                        children: [
-                          IconButton(
-                            onPressed: () {
-                              if (_tappedLocationDetails != null) {
-                                _launchMapLocation(_tappedLocationDetails!);
-                              }
-                            },
-                            icon: Icon(Icons.map_outlined, color: Colors.green[700], size: 28),
-                            tooltip: 'Open in map app',
-                            padding: const EdgeInsets.all(8),
-                            constraints: const BoxConstraints(),
-                          ),
-                          const SizedBox(width: 4),
-                          IconButton(
-                            onPressed: () {
-                              if (_tappedLocationDetails != null) {
-                                _openDirectionsForLocation(_tappedLocationDetails!);
-                              }
-                            },
-                            icon: Icon(Icons.directions, color: Colors.blue, size: 28),
-                            tooltip: 'Get Directions',
-                            padding: const EdgeInsets.all(8),
-                            constraints: const BoxConstraints(), 
-                          ),
-                        ],
-                      ),
-                    ),
                   ],
                 ),
               ),
