@@ -1324,74 +1324,6 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
 
                       SizedBox(height: 16),
 
-                      // --- ADDED: Color Category Selection Button wrapped in ValueListenableBuilder ---
-                      Text('Color Category',
-                          style: Theme.of(context)
-                              .textTheme
-                              .bodyMedium
-                              ?.copyWith(color: Colors.grey[600])),
-                      const SizedBox(height: 4),
-                      ValueListenableBuilder<List<ColorCategory>>(
-                        valueListenable: widget.userColorCategoriesNotifier,
-                        builder: (context, currentColorCategoryList, child) {
-                          // Note: currentColorCategoryList is available if needed, but button display
-                          // mainly depends on _getSelectedColorCategoryObject() and widget.cardData.selectedColorCategoryId
-                          return OutlinedButton(
-                            onPressed:
-                                _showColorCategorySelectionDialog, // Call the new dialog function
-                            style: OutlinedButton.styleFrom(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 12, vertical: 15),
-                              shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(8.0)),
-                              side: BorderSide(color: Colors.grey),
-                              alignment: Alignment.centerLeft,
-                            ),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Row(
-                                  children: [
-                                    // Display selected category color circle
-                                    Container(
-                                      width: 18,
-                                      height: 18,
-                                      decoration: BoxDecoration(
-                                          color:
-                                              _getColorForSelectedCategory(), // Use helper
-                                          shape: BoxShape.circle,
-                                          border: Border.all(
-                                              color: Colors.grey.shade400,
-                                              width: 1)),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Text(
-                                      _getSelectedColorCategoryObject()?.name ??
-                                          'Select Color Category',
-                                      style: TextStyle(
-                                        color: widget.cardData
-                                                    .selectedColorCategoryId !=
-                                                null
-                                            ? Theme.of(context)
-                                                .textTheme
-                                                .bodyLarge
-                                                ?.color
-                                            : Colors.grey[600],
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                const Icon(Icons.arrow_drop_down,
-                                    color: Colors.grey),
-                              ],
-                            ),
-                          );
-                        },
-                      ),
-                      // --- END ADDED (with wrapper) ---
-
-                      SizedBox(height: 16),
-
                       // --- ADDED: Other Categories Selection ---
                       Text('Other Categories',
                           style: Theme.of(context)
@@ -1483,6 +1415,74 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                         ),
                       ),
                       // --- END ADDED ---
+
+                      SizedBox(height: 16),
+
+                      // --- ADDED: Color Category Selection Button wrapped in ValueListenableBuilder ---
+                      Text('Color Category',
+                          style: Theme.of(context)
+                              .textTheme
+                              .bodyMedium
+                              ?.copyWith(color: Colors.grey[600])),
+                      const SizedBox(height: 4),
+                      ValueListenableBuilder<List<ColorCategory>>(
+                        valueListenable: widget.userColorCategoriesNotifier,
+                        builder: (context, currentColorCategoryList, child) {
+                          // Note: currentColorCategoryList is available if needed, but button display
+                          // mainly depends on _getSelectedColorCategoryObject() and widget.cardData.selectedColorCategoryId
+                          return OutlinedButton(
+                            onPressed:
+                                _showColorCategorySelectionDialog, // Call the new dialog function
+                            style: OutlinedButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 12, vertical: 15),
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(8.0)),
+                              side: BorderSide(color: Colors.grey),
+                              alignment: Alignment.centerLeft,
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Row(
+                                  children: [
+                                    // Display selected category color circle
+                                    Container(
+                                      width: 18,
+                                      height: 18,
+                                      decoration: BoxDecoration(
+                                          color:
+                                              _getColorForSelectedCategory(), // Use helper
+                                          shape: BoxShape.circle,
+                                          border: Border.all(
+                                              color: Colors.grey.shade400,
+                                              width: 1)),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      _getSelectedColorCategoryObject()?.name ??
+                                          'Select Color Category',
+                                      style: TextStyle(
+                                        color: widget.cardData
+                                                    .selectedColorCategoryId !=
+                                                null
+                                            ? Theme.of(context)
+                                                .textTheme
+                                                .bodyLarge
+                                                ?.color
+                                            : Colors.grey[600],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const Icon(Icons.arrow_drop_down,
+                                    color: Colors.grey),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                      // --- END ADDED (with wrapper) ---
 
                       SizedBox(height: 16),
 

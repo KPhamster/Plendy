@@ -1,9 +1,12 @@
 // functions/index.js
-const { getFirestore } = require("firebase-admin/firestore"); // For interacting with Firestore
-const { onDocumentCreated } = require("firebase-functions/v2/firestore"); // For 2nd gen Firestore triggers
-const { onRequest } = require("firebase-functions/v2/https"); // For 2nd gen HTTPS endpoints
-const { onSchedule } = require("firebase-functions/v2/scheduler"); // For 2nd gen scheduled functions
-const functions = require("firebase-functions"); // Still needed for logger, config, etc.
+const { getFirestore } = require("firebase-admin/firestore");
+const {
+  onDocumentCreated,
+  onDocumentUpdated,
+} = require("firebase-functions/v2/firestore");
+const { onRequest } = require("firebase-functions/v2/https");
+const { onSchedule } = require("firebase-functions/v2/scheduler");
+const functions = require("firebase-functions");
 const admin = require("firebase-admin");
 const nodemailer = require("nodemailer");
 
@@ -1140,3 +1143,420 @@ exports.processEventNotificationQueue = onSchedule("every 1 minutes", async (eve
 
   return null;
 });
+
+/**
+ * Sends invite notifications when a new event is created with invited users (2nd Gen).
+ */
+exports.sendEventInviteNotificationsOnCreate = onDocumentCreated(
+  "events/{eventId}",
+  async (event) => {
+    const snapshot = event.data;
+    if (!snapshot) {
+      functions.logger.log("No data associated with the event");
+      return;
+    }
+
+    const eventId = event.params.eventId;
+    const eventData = snapshot.data();
+    const collaboratorIds = eventData.collaboratorIds || [];
+    const invitedUserIds = eventData.invitedUserIds || [];
+
+    // Combine collaborators and viewers - anyone added to the event
+    const allAddedUsers = [...new Set([...collaboratorIds, ...invitedUserIds])];
+
+    if (allAddedUsers.length === 0) {
+      functions.logger.log(`Event ${eventId}: No added users on create`);
+      return;
+    }
+
+    functions.logger.log(
+      `Event ${eventId}: Sending notifications to ${allAddedUsers.length} users ` +
+      `(${collaboratorIds.length} collaborators, ${invitedUserIds.length} viewers)`,
+    );
+
+    await sendEventInviteNotifications(eventId, eventData, allAddedUsers);
+  });
+
+/**
+ * Sends invite notifications to newly invited users when an event is updated (2nd Gen).
+ * Also sends role change notifications when users are moved between collaborator/viewer.
+ */
+exports.sendEventInviteNotificationsOnUpdate = onDocumentUpdated(
+  "events/{eventId}",
+  async (event) => {
+    const beforeSnapshot = event.data.before;
+    const afterSnapshot = event.data.after;
+
+    if (!beforeSnapshot || !afterSnapshot) {
+      functions.logger.log("Missing before or after snapshot");
+      return;
+    }
+
+    const eventId = event.params.eventId;
+    const beforeData = beforeSnapshot.data();
+    const afterData = afterSnapshot.data();
+
+    // Track all users who were in the event before
+    const beforeCollaborators = new Set(beforeData.collaboratorIds || []);
+    const beforeInvited = new Set(beforeData.invitedUserIds || []);
+    const beforeAllUsers = new Set([...beforeCollaborators, ...beforeInvited]);
+
+    // Get all users in the event after
+    const afterCollaboratorsSet = new Set(afterData.collaboratorIds || []);
+    const afterInvitedSet = new Set(afterData.invitedUserIds || []);
+    const afterCollaborators = afterData.collaboratorIds || [];
+    const afterInvited = afterData.invitedUserIds || [];
+
+    // Find newly added users (in after but not in before) - both collaborators and viewers
+    const newlyAddedUsers = [
+      ...afterCollaborators.filter((id) => !beforeAllUsers.has(id)),
+      ...afterInvited.filter((id) => !beforeAllUsers.has(id)),
+    ];
+
+    // Dedupe in case someone appears in both lists
+    const uniqueNewlyAdded = [...new Set(newlyAddedUsers)];
+
+    // Find users whose role changed (were in event before, still in event, but different role)
+    // Collaborator -> Viewer: was in beforeCollaborators, now in afterInvited (not in afterCollaborators)
+    const demotedToViewer = [...beforeCollaborators].filter(
+      (id) => afterInvitedSet.has(id) && !afterCollaboratorsSet.has(id),
+    );
+
+    // Viewer -> Collaborator: was in beforeInvited, now in afterCollaborators (not in afterInvited)
+    const promotedToCollaborator = [...beforeInvited].filter(
+      (id) => afterCollaboratorsSet.has(id) && !afterInvitedSet.has(id),
+    );
+
+    // Send invite notifications to newly added users
+    if (uniqueNewlyAdded.length > 0) {
+      functions.logger.log(
+        `Event ${eventId}: Sending invite notifications to ` +
+        `${uniqueNewlyAdded.length} newly added users`,
+      );
+      await sendEventInviteNotifications(eventId, afterData, uniqueNewlyAdded);
+    }
+
+    // Send role change notifications
+    if (demotedToViewer.length > 0) {
+      functions.logger.log(
+        `Event ${eventId}: Sending role change notifications to ` +
+        `${demotedToViewer.length} users demoted to viewer`,
+      );
+      await sendRoleChangeNotifications(
+        eventId, afterData, demotedToViewer, "viewer",
+      );
+    }
+
+    if (promotedToCollaborator.length > 0) {
+      functions.logger.log(
+        `Event ${eventId}: Sending role change notifications to ` +
+        `${promotedToCollaborator.length} users promoted to collaborator`,
+      );
+      await sendRoleChangeNotifications(
+        eventId, afterData, promotedToCollaborator, "collaborator",
+      );
+    }
+
+    if (uniqueNewlyAdded.length === 0 &&
+        demotedToViewer.length === 0 &&
+        promotedToCollaborator.length === 0) {
+      functions.logger.log(`Event ${eventId}: No notification-worthy changes`);
+    }
+  });
+
+/**
+ * Helper function to send event invite notifications to a list of user IDs.
+ */
+async function sendEventInviteNotifications(eventId, eventData, userIds) {
+  const eventTitle = eventData.title || "Untitled Event";
+  const startTimestamp = eventData.startDateTime;
+  const plannerUserId = eventData.plannerUserId;
+  // The user who made this change - they shouldn't get notified
+  const lastModifiedByUserId = eventData.lastModifiedByUserId;
+
+  functions.logger.log(
+    `Event ${eventId}: userIds=${JSON.stringify(userIds)}, ` +
+    `plannerUserId=${plannerUserId}, lastModifiedByUserId=${lastModifiedByUserId}`,
+  );
+
+  // Filter out both the planner AND the user who made the change
+  const excludedIds = new Set([plannerUserId, lastModifiedByUserId].filter(Boolean));
+  const recipientIds = userIds.filter((id) => !excludedIds.has(id));
+
+  functions.logger.log(
+    `Event ${eventId}: After filtering, recipientIds=${JSON.stringify(recipientIds)}`,
+  );
+
+  if (recipientIds.length === 0) {
+    functions.logger.log(
+      `Event ${eventId}: No recipients after filtering out planner/editor`,
+    );
+    return;
+  }
+
+  // Get planner info
+  let plannerName = "Someone";
+  try {
+    const plannerDoc = await db.collection("users").doc(plannerUserId).get();
+    if (plannerDoc.exists) {
+      const plannerProfile = plannerDoc.data();
+      plannerName = plannerProfile?.displayName ||
+        plannerProfile?.username ||
+        "Someone";
+    }
+  } catch (err) {
+    functions.logger.error("Error fetching planner profile:", err);
+  }
+
+  // Send notifications to each invited user
+  for (const userId of recipientIds) {
+    try {
+      // Get user's timezone offset from their profile
+      let timezoneOffsetMinutes = 0; // Default to UTC
+      try {
+        const userDoc = await db.collection("users").doc(userId).get();
+        if (userDoc.exists) {
+          const userData = userDoc.data();
+          // timezoneOffsetMinutes is stored as negative of JavaScript offset
+          // (positive = ahead of UTC, negative = behind UTC)
+          timezoneOffsetMinutes = userData?.timezoneOffsetMinutes || 0;
+        }
+      } catch (err) {
+        functions.logger.error("Error fetching user timezone:", err);
+      }
+
+      // Format start time in user's timezone
+      let startString = "soon";
+      if (startTimestamp?.toDate) {
+        const utcDate = startTimestamp.toDate();
+        // Apply user's timezone offset
+        const localDate = new Date(
+          utcDate.getTime() - timezoneOffsetMinutes * 60 * 1000,
+        );
+
+        startString = localDate.toLocaleString("en-US", {
+          month: "short",
+          day: "numeric",
+          hour: "numeric",
+          minute: "2-digit",
+          timeZone: "UTC", // Display as-is since we've already adjusted
+        });
+      }
+
+      const tokensSnapshot = await db
+        .collection("users")
+        .doc(userId)
+        .collection("fcmTokens")
+        .get();
+
+      if (tokensSnapshot.empty) {
+        functions.logger.log(`No FCM tokens for invited user: ${userId}`);
+        continue;
+      }
+
+      const tokens = tokensSnapshot.docs.map((doc) => doc.id);
+
+      const messages = tokens.map((token) => ({
+        token: token,
+        notification: {
+          title: "You're invited!",
+          body: `${plannerName} invited you to "${eventTitle}" on ${startString}`,
+        },
+        data: {
+          type: "event_invite",
+          eventId: eventId,
+          eventTitle: eventTitle,
+          startTimeMs: startTimestamp?.toMillis ?
+            startTimestamp.toMillis().toString() :
+            "",
+          inviterId: plannerUserId,
+          recipientUserId: userId, // Include intended recipient for client-side validation
+        },
+        android: {
+          notification: {
+            channelId: "events",
+            priority: "high",
+            defaultSound: true,
+          },
+        },
+        apns: {
+          payload: {
+            aps: {
+              category: "events",
+              sound: "default",
+            },
+          },
+        },
+      }));
+
+      const response = await messaging.sendEach(messages);
+      functions.logger.log(
+        `Event invite sent to ${userId}: ` +
+        `success=${response.successCount}, ` +
+        `failed=${response.failureCount}`,
+      );
+
+      // Clean up invalid tokens
+      const tokensToRemovePromises = [];
+      response.responses.forEach((result, index) => {
+        if (!result.success) {
+          const error = result.error;
+          functions.logger.error(`Failure sending to ${tokens[index]}:`, error);
+          if (
+            error?.code === "messaging/invalid-registration-token" ||
+            error?.code === "messaging/registration-token-not-registered"
+          ) {
+            tokensToRemovePromises.push(
+              db.collection("users")
+                .doc(userId)
+                .collection("fcmTokens")
+                .doc(tokens[index])
+                .delete(),
+            );
+          }
+        }
+      });
+      await Promise.all(tokensToRemovePromises);
+    } catch (error) {
+      functions.logger.error(
+        `Error sending invite notification to ${userId}:`,
+        error,
+      );
+    }
+  }
+}
+
+/**
+ * Helper function to send role change notifications.
+ * @param {string} eventId - The event ID
+ * @param {object} eventData - The event data
+ * @param {string[]} userIds - User IDs whose role changed
+ * @param {string} newRole - The new role ("collaborator" or "viewer")
+ */
+async function sendRoleChangeNotifications(eventId, eventData, userIds, newRole) {
+  const eventTitle = eventData.title || "Untitled Event";
+  const plannerUserId = eventData.plannerUserId;
+  const lastModifiedByUserId = eventData.lastModifiedByUserId;
+
+  // Filter out the user who made the change
+  const excludedIds = new Set(
+    [plannerUserId, lastModifiedByUserId].filter(Boolean),
+  );
+  const recipientIds = userIds.filter((id) => !excludedIds.has(id));
+
+  if (recipientIds.length === 0) {
+    functions.logger.log(
+      `Event ${eventId}: No role change recipients after filtering`,
+    );
+    return;
+  }
+
+  // Get modifier's name for the notification
+  let modifierName = "Someone";
+  if (lastModifiedByUserId) {
+    try {
+      const modifierDoc = await db
+        .collection("users")
+        .doc(lastModifiedByUserId)
+        .get();
+      if (modifierDoc.exists) {
+        const modifierProfile = modifierDoc.data();
+        modifierName = modifierProfile?.displayName ||
+          modifierProfile?.username ||
+          "Someone";
+      }
+    } catch (err) {
+      functions.logger.error("Error fetching modifier profile:", err);
+    }
+  }
+
+  // Determine notification message based on new role
+  const roleDescription = newRole === "collaborator" ?
+    "edit access" :
+    "view-only access";
+  const notificationTitle = "Your role changed";
+  const notificationBody = `${modifierName} changed your access to ` +
+    `"${eventTitle}" to ${roleDescription}`;
+
+  for (const userId of recipientIds) {
+    try {
+      const tokensSnapshot = await db
+        .collection("users")
+        .doc(userId)
+        .collection("fcmTokens")
+        .get();
+
+      if (tokensSnapshot.empty) {
+        functions.logger.log(`No FCM tokens for user: ${userId}`);
+        continue;
+      }
+
+      const tokens = tokensSnapshot.docs.map((doc) => doc.id);
+
+      const messages = tokens.map((token) => ({
+        token: token,
+        notification: {
+          title: notificationTitle,
+          body: notificationBody,
+        },
+        data: {
+          type: "event_role_change",
+          eventId: eventId,
+          eventTitle: eventTitle,
+          newRole: newRole,
+          modifierId: lastModifiedByUserId || "",
+          recipientUserId: userId,
+        },
+        android: {
+          notification: {
+            channelId: "events",
+            priority: "high",
+            defaultSound: true,
+          },
+        },
+        apns: {
+          payload: {
+            aps: {
+              category: "events",
+              sound: "default",
+            },
+          },
+        },
+      }));
+
+      const response = await messaging.sendEach(messages);
+      functions.logger.log(
+        `Role change notification sent to ${userId}: ` +
+        `success=${response.successCount}, ` +
+        `failed=${response.failureCount}`,
+      );
+
+      // Clean up invalid tokens
+      const tokensToRemovePromises = [];
+      response.responses.forEach((result, index) => {
+        if (!result.success) {
+          const error = result.error;
+          functions.logger.error(`Failure sending to ${tokens[index]}:`, error);
+          if (
+            error?.code === "messaging/invalid-registration-token" ||
+            error?.code === "messaging/registration-token-not-registered"
+          ) {
+            tokensToRemovePromises.push(
+              db.collection("users")
+                .doc(userId)
+                .collection("fcmTokens")
+                .doc(tokens[index])
+                .delete(),
+            );
+          }
+        }
+      });
+      await Promise.all(tokensToRemovePromises);
+    } catch (error) {
+      functions.logger.error(
+        `Error sending role change notification to ${userId}:`,
+        error,
+      );
+    }
+  }
+}

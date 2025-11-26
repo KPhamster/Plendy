@@ -34,6 +34,9 @@ class AuthService extends ChangeNotifier {
         // Delay FCM setup slightly to allow UI to settle
         Timer(const Duration(milliseconds: 500),
             () => _setupFcmForUser(user.uid));
+        // Update timezone if not already stored
+        Timer(const Duration(milliseconds: 500),
+            () => _ensureTimezoneStored(user.uid));
       } else {
         // Optional: If user logs out, you might want to delete their old token or handle it.
         // For simplicity, we are not deleting tokens on logout here, but it's a consideration.
@@ -45,6 +48,8 @@ class AuthService extends ChangeNotifier {
       // Delay FCM setup slightly for initial logged-in state too
       Timer(const Duration(milliseconds: 500),
           () => _setupFcmForUser(_currentUser!.uid));
+      Timer(const Duration(milliseconds: 500),
+          () => _ensureTimezoneStored(_currentUser!.uid));
     }
   }
 
@@ -65,9 +70,12 @@ class AuthService extends ChangeNotifier {
       // Save user email to Firestore
       if (credential.user != null) {
         await _userService.saveUserEmail(credential.user!.uid, email);
+        // Capture timezone on first sign up
+        final timezoneOffsetMinutes = -DateTime.now().timeZoneOffset.inMinutes;
         await _userService.updateUserCoreData(credential.user!.uid, {
           'hasCompletedOnboarding': false,
           'hasFinishedOnboardingFlow': false,
+          'timezoneOffsetMinutes': timezoneOffsetMinutes,
         });
 
         // Initialize default categories for new user
@@ -158,9 +166,12 @@ class AuthService extends ChangeNotifier {
         if (isNewUser) {
           print(
               "Attempting to initialize default categories for new Google user...");
+          // Capture timezone on first sign in
+          final timezoneOffsetMinutes = -DateTime.now().timeZoneOffset.inMinutes;
           await _userService.updateUserCoreData(userCredential.user!.uid, {
             'hasCompletedOnboarding': false,
             'hasFinishedOnboardingFlow': false,
+            'timezoneOffsetMinutes': timezoneOffsetMinutes,
           });
           // --- MODIFIED: Rethrow initialization errors --- START ---
           try {
@@ -248,9 +259,12 @@ class AuthService extends ChangeNotifier {
         if (isNewUser) {
           print(
               "Attempting to initialize default categories for new Apple user...");
+          // Capture timezone on first sign in
+          final timezoneOffsetMinutes = -DateTime.now().timeZoneOffset.inMinutes;
           await _userService.updateUserCoreData(userCredential.user!.uid, {
             'hasCompletedOnboarding': false,
             'hasFinishedOnboardingFlow': false,
+            'timezoneOffsetMinutes': timezoneOffsetMinutes,
           });
           
           try {
@@ -460,6 +474,42 @@ class AuthService extends ChangeNotifier {
       }
     } catch (e) {
       print("DEBUG: Error setting up FCM token for user $userId: $e");
+    }
+  }
+
+  /// Ensure user's timezone is stored in their profile
+  Future<void> _ensureTimezoneStored(String userId) async {
+    try {
+      // Check if timezone is already stored
+      final userDoc = await _firestore.collection('users').doc(userId).get();
+      
+      if (!userDoc.exists) {
+        print('DEBUG: User doc does not exist for $userId');
+        return;
+      }
+      
+      final userData = userDoc.data();
+      if (userData == null) {
+        print('DEBUG: User data is null for $userId');
+        return;
+      }
+      
+      // If timezone is already stored, skip
+      if (userData.containsKey('timezoneOffsetMinutes') && 
+          userData['timezoneOffsetMinutes'] != null) {
+        print('DEBUG: Timezone already stored for user $userId');
+        return;
+      }
+      
+      // Capture and store current timezone
+      final timezoneOffsetMinutes = -DateTime.now().timeZoneOffset.inMinutes;
+      await _userService.updateUserCoreData(userId, {
+        'timezoneOffsetMinutes': timezoneOffsetMinutes,
+      });
+      print('DEBUG: Stored timezone offset $timezoneOffsetMinutes minutes for user $userId');
+    } catch (e) {
+      print('DEBUG: Error ensuring timezone stored for $userId: $e');
+      // Don't rethrow - timezone storage failure shouldn't break the app
     }
   }
 

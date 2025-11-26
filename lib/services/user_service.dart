@@ -578,6 +578,11 @@ class UserService {
         }
       }
       
+      // Automatically capture timezone if not provided
+      if (!data.containsKey('timezoneOffsetMinutes')) {
+        data['timezoneOffsetMinutes'] = _getCurrentTimezoneOffsetMinutes();
+      }
+      
       data['updatedAt'] = FieldValue.serverTimestamp();
       await _firestore.collection('users').doc(userId).set(
         data,
@@ -587,5 +592,15 @@ class UserService {
       print('Error updating user core data for $userId: $e');
       rethrow;
     }
+  }
+  
+  /// Get current device timezone offset in minutes from UTC
+  /// Positive values = ahead of UTC (e.g., +480 for PST = UTC-8)
+  /// Negative values = behind UTC
+  int _getCurrentTimezoneOffsetMinutes() {
+    final now = DateTime.now();
+    // timeZoneOffset is negative for timezones ahead of UTC (e.g., -480 for PST)
+    // We want positive for ahead, so negate it
+    return -now.timeZoneOffset.inMinutes;
   }
 }

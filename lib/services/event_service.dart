@@ -26,6 +26,8 @@ class EventService {
     final data = event.toMap();
     data['createdAt'] = now;
     data['updatedAt'] = now;
+    // Track who created the event (for notification filtering)
+    data['lastModifiedByUserId'] = _currentUserId;
 
     final docRef = await _eventsCollection.add(data);
     print('EventService: Event created with ID: ${docRef.id}');
@@ -40,6 +42,8 @@ class EventService {
 
     final data = event.toMap();
     data['updatedAt'] = FieldValue.serverTimestamp();
+    // Track who made the update (for notification filtering)
+    data['lastModifiedByUserId'] = _currentUserId;
 
     await _eventsCollection.doc(event.id).update(data);
   }
@@ -62,7 +66,7 @@ class EventService {
     await _eventsCollection.doc(eventId).delete();
   }
 
-  /// Get events for a user (as planner or collaborator)
+  /// Get events for a user (as planner, collaborator, or invited viewer)
   Future<List<Event>> getEventsForUser(String userId) async {
     try {
       // Query for events where user is the planner (without orderBy to avoid index issues)
@@ -75,11 +79,16 @@ class EventService {
           .where('collaboratorIds', arrayContains: userId)
           .get();
 
+      // Query for events where user is invited as a viewer (without orderBy to avoid index issues)
+      final invitedQuery = await _eventsCollection
+          .where('invitedUserIds', arrayContains: userId)
+          .get();
+
       final Set<String> seenIds = {};
       final List<Event> events = [];
 
       // Combine results and deduplicate
-      for (final doc in [...plannerQuery.docs, ...collaboratorQuery.docs]) {
+      for (final doc in [...plannerQuery.docs, ...collaboratorQuery.docs, ...invitedQuery.docs]) {
         if (!seenIds.contains(doc.id)) {
           seenIds.add(doc.id);
           try {

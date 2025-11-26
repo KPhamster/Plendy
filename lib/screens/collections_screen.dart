@@ -175,7 +175,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
   static const double _bottomListPadding = 80.0;
 
   late TabController _tabController;
-  int _currentTabIndex = 0;
+  int _currentTabIndex = 1;
   // ADDED: Flag to clear TypeAhead controller on next build
   bool _clearSearchOnNextBuild = false;
 
@@ -894,7 +894,10 @@ class CollectionsScreenState extends State<CollectionsScreen>
       }
     });
     _userEmail = _authService.currentUser?.email ?? 'Guest';
-    _tabController = TabController(length: 3, vsync: this);
+    const int initialTabIndex = 1; // Default to the Experiences tab
+    _tabController =
+        TabController(length: 3, vsync: this, initialIndex: initialTabIndex);
+    _currentTabIndex = initialTabIndex;
     _tabController.addListener(() {
       if (_tabController.indexIsChanging) {
         setState(() {

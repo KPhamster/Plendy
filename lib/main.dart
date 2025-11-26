@@ -20,9 +20,13 @@ import 'screens/messages_screen.dart'; // Import MessagesScreen
 import 'screens/chat_screen.dart'; // Import ChatScreen
 import 'services/auth_service.dart';
 import 'services/sharing_service.dart';
+import 'services/event_service.dart'; // Import EventService
+import 'services/experience_service.dart'; // Import ExperienceService
 import 'models/shared_media_compat.dart';
 import 'models/message_thread.dart'; // Import MessageThread
+import 'models/experience.dart'; // Import Experience
 import 'services/notification_state_service.dart'; // Import NotificationStateService
+import 'widgets/event_editor_modal.dart'; // Import EventEditorModal
 import 'package:provider/provider.dart';
 import 'providers/receive_share_provider.dart';
 import 'providers/category_save_progress_notifier.dart';
@@ -169,6 +173,65 @@ Future<void> _openChatFromNotification(String threadId) async {
   }
 }
 
+/// Open an event screen from a notification (invite or reminder)
+Future<void> _openEventFromNotification(String eventId) async {
+  try {
+    final authService = FirebaseAuth.instance;
+    final currentUserId = authService.currentUser?.uid;
+    
+    if (currentUserId == null) {
+      print('FCM: Cannot open event - user not logged in');
+      return;
+    }
+    
+    // Fetch the event
+    final eventService = EventService();
+    final event = await eventService.getEvent(eventId);
+    
+    if (event == null) {
+      print('FCM: Event not found: $eventId');
+      return;
+    }
+    
+    // Fetch experiences referenced in the event
+    final experienceService = ExperienceService();
+    final experienceIds = event.experiences
+        .map((entry) => entry.experienceId)
+        .where((id) => id.isNotEmpty)
+        .toList();
+    
+    List<Experience> experiences = [];
+    if (experienceIds.isNotEmpty) {
+      experiences = await experienceService.getExperiencesByIds(experienceIds);
+    }
+    
+    // Fetch categories
+    final categories = await experienceService.getUserCategories();
+    final colorCategories = await experienceService.getUserColorCategories();
+    
+    // Determine if user can edit (planner or collaborator)
+    final canEdit = event.plannerUserId == currentUserId || 
+                    event.collaboratorIds.contains(currentUserId);
+    final isReadOnly = !canEdit;
+    
+    // Navigate to event editor modal
+    navigatorKey.currentState?.push(
+      MaterialPageRoute(
+        builder: (context) => EventEditorModal(
+          event: event,
+          experiences: experiences,
+          categories: categories,
+          colorCategories: colorCategories,
+          isReadOnly: isReadOnly,
+        ),
+        fullscreenDialog: true,
+      ),
+    );
+  } catch (e) {
+    print('FCM: Error opening event from notification: $e');
+  }
+}
+
 Future<void> _configureLocalNotifications() async {
   // Ensure you have an app icon, e.g., android/app/src/main/res/mipmap-hdpi/ic_launcher.png
   const AndroidInitializationSettings initializationSettingsAndroid =
@@ -197,8 +260,7 @@ Future<void> _configureLocalNotifications() async {
   );
   
   final initialized = await flutterLocalNotificationsPlugin.initialize(initializationSettings,
-      onDidReceiveNotificationResponse:
-          (NotificationResponse notificationResponse) async {
+      onDidReceiveNotificationResponse: (NotificationResponse notificationResponse) async {
     // Handle notification tap when app is in foreground/background but not terminated
     print(
         'Local notification tapped with payload: ${notificationResponse.payload}');
@@ -218,12 +280,12 @@ Future<void> _configureLocalNotifications() async {
             await _openChatFromNotification(threadId);
             return;
           }
-        } else if (type == 'event_reminder') {
+        } else if (type == 'event_reminder' || type == 'event_invite' ||
+                   type == 'event_role_change') {
           final eventId = data['eventId'] as String?;
           if (eventId != null) {
-            print('Event reminder tapped - eventId: $eventId');
-            // TODO: Navigate to event details screen
-            // For now, just print the event ID
+            print('Event notification tapped (${type}) - eventId: $eventId');
+            await _openEventFromNotification(eventId);
             return;
           }
         }
@@ -338,14 +400,14 @@ void main() async {
     // Setup local notifications in background to not delay splash screen
     await _configureLocalNotifications(); // Make this blocking to ensure it's ready
     
-    // Enable iOS system notifications in foreground
-    // The apns-collapse-id in the Cloud Function prevents duplicates at the iOS system level
-    // We'll also filter in Flutter to prevent showing sender's own messages
+    // DISABLE automatic iOS notification display in foreground
+    // We need to filter notifications (e.g., don't show event_invite to wrong user)
+    // so we handle ALL foreground notifications manually via flutter_local_notifications
     await FirebaseMessaging.instance
         .setForegroundNotificationPresentationOptions(
-      alert: true,
+      alert: false, // Don't show automatically - we'll show manually after filtering
       badge: true,
-      sound: true,
+      sound: false, // We'll play sound when showing manually
     );
 
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {
@@ -391,79 +453,95 @@ void main() async {
         return;
       }
       
-      print('FCM: ✅ Proceeding to show notification (different sender)');
+      // For event notifications, check if current user is the intended recipient
+      // This handles cases where FCM tokens are registered under wrong accounts
+      final messageType = message.data['type'] as String?;
+      final recipientUserId = message.data['recipientUserId'] as String?;
+      
+      // Block event_invite and event_role_change if not intended for this user
+      if ((messageType == 'event_invite' || messageType == 'event_role_change') && 
+          recipientUserId != null) {
+        if (currentUserId != recipientUserId) {
+          print('FCM: ⚠️ BLOCKING $messageType - not intended recipient');
+          print('FCM: Intended: $recipientUserId, Current: $currentUserId');
+          return;
+        }
+      }
+      
+      print('FCM: ✅ Proceeding to show notification');
 
       if (message.notification != null) {
         print(
             'FCM: Message also contained a notification: ${message.notification}');
         
-        // Only show local notification on Android
-        // iOS uses system notifications (setForegroundNotificationPresentationOptions)
-        // with apns-collapse-id to prevent duplicates at the OS level
-        if (Platform.isAndroid) {
-          // Prepare payload with notification data
-          String? payload;
-          final messageType = message.data['type'] as String?;
-          
-          // Determine channel ID based on notification type
-          String channelId = 'messages'; // default
-          String channelName = 'Messages';
-          String channelDescription = 'Notifications for new messages';
-          
-          if (messageType == 'new_message') {
-            if (threadId.isNotEmpty) {
-              payload = jsonEncode({'type': messageType, 'threadId': threadId});
-            }
-            channelId = 'messages';
-            channelName = 'Messages';
-            channelDescription = 'Notifications for new messages';
-          } else if (messageType == 'event_reminder') {
-            final eventId = message.data['eventId'] as String?;
-            if (eventId != null) {
-              payload = jsonEncode({'type': messageType, 'eventId': eventId});
-            }
-            channelId = 'events';
-            channelName = 'Events';
-            channelDescription = 'Notifications for event reminders';
-          } else if (messageType == 'follow_request' || messageType == 'new_follower') {
-            payload = message.data['screen'] as String?;
-            channelId = 'social';
-            channelName = 'Social';
-            channelDescription = 'Notifications for followers and follow requests';
-          } else {
-            payload = message.data['screen'] as String?;
+        // Show notification manually on BOTH Android and iOS
+        // We disabled automatic iOS display so we can filter first
+        
+        // Prepare payload with notification data
+        String? payload;
+        
+        // Determine channel ID based on notification type (messageType already defined above)
+        String channelId = 'messages'; // default
+        String channelName = 'Messages';
+        String channelDescription = 'Notifications for new messages';
+
+        if (messageType == 'new_message') {
+          if (threadId.isNotEmpty) {
+            payload = jsonEncode({'type': messageType, 'threadId': threadId});
           }
-          
-          // Use uniqueId as the notification ID to prevent duplicate notifications
-          final notificationId = uniqueId.hashCode;
-          
-          flutterLocalNotificationsPlugin.show(
-            notificationId,
-            message.notification!.title,
-            message.notification!.body,
-            NotificationDetails(
-              android: AndroidNotificationDetails(
-                channelId,
-                channelName,
-                channelDescription: channelDescription,
-                importance: Importance.max,
-                priority: Priority.high,
-                icon: '@mipmap/ic_launcher',
-              ),
-            ),
-            payload: payload,
-          ).then((_) {
-            print('FCM: ✅ Local notification shown successfully on channel: $channelId');
-          }).catchError((e) {
-            print('FCM: ❌ Error showing local notification: $e');
-          });
+          channelId = 'messages';
+          channelName = 'Messages';
+          channelDescription = 'Notifications for new messages';
+        } else if (messageType == 'event_reminder' || messageType == 'event_invite' ||
+                   messageType == 'event_role_change') {
+          final eventId = message.data['eventId'] as String?;
+          if (eventId != null) {
+            payload = jsonEncode({'type': messageType, 'eventId': eventId});
+          }
+          channelId = 'events';
+          channelName = 'Events';
+          channelDescription = 'Notifications for event reminders and invites';
+        } else if (messageType == 'follow_request' || messageType == 'new_follower') {
+          payload = message.data['screen'] as String?;
+          channelId = 'social';
+          channelName = 'Social';
+          channelDescription = 'Notifications for followers and follow requests';
         } else {
-          print('FCM: iOS system notification will be shown automatically');
+          payload = message.data['screen'] as String?;
         }
+        
+        // Use uniqueId as the notification ID to prevent duplicate notifications
+        final notificationId = uniqueId.hashCode;
+        
+        flutterLocalNotificationsPlugin.show(
+          notificationId,
+          message.notification!.title,
+          message.notification!.body,
+          NotificationDetails(
+            android: AndroidNotificationDetails(
+              channelId,
+              channelName,
+              channelDescription: channelDescription,
+              importance: Importance.max,
+              priority: Priority.high,
+              icon: '@mipmap/ic_launcher',
+            ),
+            iOS: const DarwinNotificationDetails(
+              presentAlert: true,
+              presentBadge: true,
+              presentSound: true,
+            ),
+          ),
+          payload: payload,
+        ).then((_) {
+          print('FCM: ✅ Local notification shown successfully on channel: $channelId');
+        }).catchError((e) {
+          print('FCM: ❌ Error showing local notification: $e');
+        });
       }
     });
 
-    FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
+    FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) async {
       print('FCM: Message clicked and opened app!');
       print('FCM: Message data: ${message.data}');
       
@@ -519,7 +597,7 @@ void main() async {
 
           if (threadId != null) {
             // Navigate directly to the chat screen
-            _openChatFromNotification(threadId);
+            await _openChatFromNotification(threadId);
           } else {
             // Fallback: Navigate to Messages screen if no threadId
             navigatorKey.currentState!.push(
@@ -528,12 +606,12 @@ void main() async {
               ),
             );
           }
-        } else if (type == 'event_reminder') {
+        } else if (type == 'event_reminder' || type == 'event_invite' ||
+                   type == 'event_role_change') {
           final eventId = message.data['eventId'] as String?;
-          print("FCM: Event reminder notification - eventId: $eventId");
+          print("FCM: Event notification (${type}) - eventId: $eventId");
           if (eventId != null) {
-            // TODO: Navigate to event details screen
-            print("FCM: Would navigate to event details for eventId: $eventId");
+            await _openEventFromNotification(eventId);
           }
         }
       }

@@ -547,11 +547,15 @@ class _ShareToFriendsSheetState extends State<ShareToFriendsSheet> {
       padding: const EdgeInsets.fromLTRB(16, 16, 8, 8),
       child: Row(
         children: [
-          Text(
-            widget.titleText,
-            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+          Expanded(
+            child: Text(
+              widget.titleText,
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
-          const Spacer(),
+          const SizedBox(width: 8),
           IconButton(
             icon: const Icon(Icons.close),
             onPressed: () => Navigator.of(context).pop(false),
