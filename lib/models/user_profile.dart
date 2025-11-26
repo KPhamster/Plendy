@@ -5,6 +5,7 @@ class UserProfile {
   final String? photoURL;
   final String? bio;
   final bool isPrivate;
+  final int? timezoneOffsetMinutes; // Timezone offset from UTC in minutes
 
   UserProfile({
     required this.id,
@@ -13,6 +14,7 @@ class UserProfile {
     this.photoURL,
     this.bio,
     this.isPrivate = false,
+    this.timezoneOffsetMinutes,
   });
 
   factory UserProfile.fromMap(String id, Map<String, dynamic> data) {
@@ -23,6 +25,7 @@ class UserProfile {
       photoURL: data['photoURL'] as String?,
       bio: data['bio'] as String?,
       isPrivate: data['isPrivate'] as bool? ?? false,
+      timezoneOffsetMinutes: data['timezoneOffsetMinutes'] as int?,
     );
   }
 }

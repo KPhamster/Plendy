@@ -41,6 +41,7 @@ class EventEditorModal extends StatefulWidget {
   final List<UserCategory> categories;
   final List<ColorCategory> colorCategories;
   final bool returnToSelectorOnItineraryTap;
+  final bool isReadOnly; // If true, user can only view, not edit
 
   const EventEditorModal({
     super.key,
@@ -49,6 +50,7 @@ class EventEditorModal extends StatefulWidget {
     required this.categories,
     required this.colorCategories,
     this.returnToSelectorOnItineraryTap = false,
+    this.isReadOnly = false,
   });
 
   @override
@@ -76,6 +78,9 @@ class _EventEditorModalState extends State<EventEditorModal> {
   final Map<String, UserProfile> _userProfiles = {};
   final Set<String> _manuallyEditedScheduleIds = {};
   final Map<String, List<SharedMediaItem>> _experienceMediaCache = {};
+  
+  // Track initial invited users to detect newly added viewers
+  late Set<String> _initialInvitedUserIds;
 
   @override
   void initState() {
@@ -90,6 +95,9 @@ class _EventEditorModalState extends State<EventEditorModal> {
     _capacityController = TextEditingController(
       text: _currentEvent.capacity?.toString() ?? '',
     );
+
+    // Track initial invited users to detect newly added viewers
+    _initialInvitedUserIds = Set<String>.from(_currentEvent.invitedUserIds);
 
     _titleController.addListener(() => _markUnsavedChanges());
     _descriptionController.addListener(() => _markUnsavedChanges());
@@ -165,8 +173,21 @@ class _EventEditorModalState extends State<EventEditorModal> {
         savedEvent = updatedEvent;
       }
 
+      // Detect newly invited users
+      final newlyInvitedUserIds = savedEvent.invitedUserIds
+          .where((id) => !_initialInvitedUserIds.contains(id))
+          .toSet();
+      
+      if (newlyInvitedUserIds.isNotEmpty) {
+        debugPrint('EventEditorModal: ${newlyInvitedUserIds.length} newly invited users detected');
+        debugPrint('EventEditorModal: Cloud Functions will send invite notifications to: $newlyInvitedUserIds');
+        // Note: Invite notifications will be sent by Cloud Functions when they detect
+        // the change to invitedUserIds in Firestore (onCreate or onUpdate triggers)
+      }
+
       try {
-        // Only queue notifications if the notification time is in the future
+        // Queue reminder notifications for all attendees (including newly invited viewers)
+        // Only queue if the notification time is in the future
         final notificationDuration = savedEvent.notificationPreference.type == EventNotificationType.fiveMinutes
             ? const Duration(minutes: 5)
             : savedEvent.notificationPreference.type == EventNotificationType.fifteenMinutes
@@ -338,7 +359,14 @@ class _EventEditorModalState extends State<EventEditorModal> {
             icon: const Icon(Icons.arrow_back),
             onPressed: _handleBackNavigation,
           ),
-          title: TextField(
+          title: widget.isReadOnly
+              ? Text(
+                  _currentEvent.title.isEmpty ? 'Untitled Event' : _currentEvent.title,
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    color: foregroundColor,
+                  ),
+                )
+              : TextField(
             controller: _titleController,
             style: Theme.of(context).textTheme.titleLarge?.copyWith(
               color: foregroundColor,
@@ -352,6 +380,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
             ),
           ),
           actions: [
+            if (!widget.isReadOnly)
             if (_isSaving)
               Padding(
                 padding: const EdgeInsets.all(16.0),
@@ -391,53 +420,57 @@ class _EventEditorModalState extends State<EventEditorModal> {
               ),
           ],
         ),
-        body: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // Hero / Cover Image
-              _buildCoverImageSection(),
+        body: GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onTap: () => FocusScope.of(context).unfocus(),
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Hero / Cover Image
+                _buildCoverImageSection(),
 
-              // Schedule Section
-              _buildScheduleSection(durationText),
+                // Schedule Section
+                _buildScheduleSection(durationText),
 
-              const Divider(height: 1),
+                const Divider(height: 1),
 
-              // Itinerary Section
-              _buildItinerarySection(),
+                // Itinerary Section
+                _buildItinerarySection(),
 
-              const Divider(height: 1),
+                const Divider(height: 1),
 
-              // People Section
-              _buildPeopleSection(),
+                // People Section
+                _buildPeopleSection(),
 
-              const Divider(height: 1),
+                const Divider(height: 1),
 
-              // Visibility & Sharing
-              _buildVisibilitySection(),
+                // Visibility & Sharing
+                _buildVisibilitySection(),
 
-              const Divider(height: 1),
+                const Divider(height: 1),
 
-              // Capacity & RSVPs
-              _buildCapacitySection(),
+                // Capacity & RSVPs
+                _buildCapacitySection(),
 
-              const Divider(height: 1),
+                const Divider(height: 1),
 
-              // Notifications
-              _buildNotificationsSection(),
+                // Notifications
+                _buildNotificationsSection(),
 
-              const Divider(height: 1),
+                const Divider(height: 1),
 
-              // Description
-              _buildDescriptionSection(),
+                // Description
+                _buildDescriptionSection(),
 
-              const Divider(height: 1),
+                const Divider(height: 1),
 
-              // Comments
-              _buildCommentsSection(),
+                // Comments
+                _buildCommentsSection(),
 
-              const SizedBox(height: 80),
-            ],
+                const SizedBox(height: 80),
+              ],
+            ),
           ),
         ),
       ),
@@ -450,7 +483,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
         : _coverImageUrlController.text.trim();
 
     return GestureDetector(
-      onTap: () => _showCoverImageOptions(),
+      onTap: widget.isReadOnly ? null : () => _showCoverImageOptions(),
       child: Container(
         height: 250,
         decoration: BoxDecoration(
@@ -2041,7 +2074,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
         ),
         const SizedBox(height: 8),
         OutlinedButton(
-          onPressed: () async {
+          onPressed: widget.isReadOnly ? null : () async {
             Widget wrapPicker(Widget? child) =>
                 _wrapPickerWithWhiteTheme(context, child);
 
@@ -2175,6 +2208,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
                       ),
                 ),
               ),
+              if (!widget.isReadOnly) ...[
               const SizedBox(width: 8),
               Tooltip(
                 message: 'Add event-only experience',
@@ -2209,6 +2243,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
                   ),
                 ),
               ),
+              ],
             ],
           ),
           const SizedBox(height: 16),
@@ -2226,7 +2261,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
               physics: const NeverScrollableScrollPhysics(),
               itemCount: _currentEvent.experiences.length,
               buildDefaultDragHandles: false,
-              onReorder: (oldIndex, newIndex) {
+              onReorder: widget.isReadOnly ? (_, __) {} : (oldIndex, newIndex) {
                 setState(() {
                   // Track the previous top-most experience ID
                   final String? previousTopExperienceId = _currentEvent.experiences.isNotEmpty
@@ -3886,6 +3921,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
               Expanded(
                 child: TextField(
                   controller: _capacityController,
+                  readOnly: widget.isReadOnly,
                   decoration: const InputDecoration(
                     labelText: 'Max capacity (optional)',
                     border: OutlineInputBorder(),
@@ -4012,12 +4048,13 @@ class _EventEditorModalState extends State<EventEditorModal> {
           const SizedBox(height: 16),
           TextField(
             controller: _descriptionController,
+            readOnly: widget.isReadOnly,
             decoration: const InputDecoration(
               hintText: 'Describe the vibe, schedule details, dress code, etc.',
               border: OutlineInputBorder(),
             ),
             minLines: 4,
-            maxLines: 8,
+            maxLines: null,
             textInputAction: TextInputAction.newline,
           ),
         ],

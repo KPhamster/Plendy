@@ -1,10 +1,11 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:table_calendar/table_calendar.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/event.dart';
 import '../models/experience.dart';
 import '../models/user_category.dart';
-import '../services/event_service.dart';
 import '../services/auth_service.dart';
 import '../services/experience_service.dart';
 import '../widgets/event_editor_modal.dart';
@@ -19,7 +20,6 @@ class EventsScreen extends StatefulWidget {
 
 class _EventsScreenState extends State<EventsScreen>
     with SingleTickerProviderStateMixin {
-  final _eventService = EventService();
   final _authService = AuthService();
   final _experienceService = ExperienceService();
 
@@ -29,7 +29,7 @@ class _EventsScreenState extends State<EventsScreen>
   CalendarFormat _calendarFormat = CalendarFormat.month;
 
   // View mode: 'day', 'week', 'month', 'schedule'
-  String _viewMode = 'month';
+  String _viewMode = 'schedule';
 
   // Events data
   List<Event> _allEvents = [];
@@ -44,11 +44,19 @@ class _EventsScreenState extends State<EventsScreen>
 
   late TabController _tabController;
   late PageController _weekPageController;
+  
+  // Real-time event listeners
+  final List<StreamSubscription> _eventSubscriptions = [];
+  
+  // Track events from each stream to properly handle removals
+  final Map<String, Event> _plannerEvents = {};
+  final Map<String, Event> _collaboratorEvents = {};
+  final Map<String, Event> _invitedEvents = {};
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 4, vsync: this, initialIndex: 2);
+    _tabController = TabController(length: 4, vsync: this, initialIndex: 3);
     _tabController.addListener(() {
       if (_tabController.indexIsChanging) {
         setState(() {
@@ -92,6 +100,10 @@ class _EventsScreenState extends State<EventsScreen>
   void dispose() {
     _tabController.dispose();
     _weekPageController.dispose();
+    // Cancel all real-time event listeners
+    for (final subscription in _eventSubscriptions) {
+      subscription.cancel();
+    }
     super.dispose();
   }
 
@@ -103,21 +115,42 @@ class _EventsScreenState extends State<EventsScreen>
       debugPrint('EventsScreen: Loading events for user: $userId');
       
       if (userId != null) {
-        final events = await _eventService.getEventsForUser(userId);
-        debugPrint('EventsScreen: Loaded ${events.length} events');
-        
-        for (final event in events) {
-          debugPrint('Event: ${event.title} - ${event.startDateTime}');
+        // Cancel existing subscriptions
+        for (final subscription in _eventSubscriptions) {
+          subscription.cancel();
         }
+        _eventSubscriptions.clear();
         
-        // Cache experiences referenced in events
-        await _cacheExperiencesForEvents(events);
+        // Set up real-time listeners for events where user is planner, collaborator, or invited
+        final firestore = FirebaseFirestore.instance;
+        final eventsCollection = firestore.collection('events');
         
-        setState(() {
-          _allEvents = events;
-          _eventsByDate = _groupEventsByDate(events);
-          _isLoading = false;
-        });
+        // Listen for events where user is the planner
+        final plannerSubscription = eventsCollection
+            .where('plannerUserId', isEqualTo: userId)
+            .snapshots()
+            .listen((snapshot) => _handleEventsSnapshot(snapshot, 'planner'));
+        
+        // Listen for events where user is a collaborator
+        final collaboratorSubscription = eventsCollection
+            .where('collaboratorIds', arrayContains: userId)
+            .snapshots()
+            .listen((snapshot) => _handleEventsSnapshot(snapshot, 'collaborator'));
+        
+        // Listen for events where user is invited
+        final invitedSubscription = eventsCollection
+            .where('invitedUserIds', arrayContains: userId)
+            .snapshots()
+            .listen((snapshot) => _handleEventsSnapshot(snapshot, 'invited'));
+        
+        _eventSubscriptions.addAll([
+          plannerSubscription,
+          collaboratorSubscription,
+          invitedSubscription,
+        ]);
+        
+        debugPrint('EventsScreen: Real-time listeners set up for user $userId');
+        setState(() => _isLoading = false);
       } else {
         debugPrint('EventsScreen: No user logged in');
         setState(() => _isLoading = false);
@@ -126,6 +159,63 @@ class _EventsScreenState extends State<EventsScreen>
       debugPrint('Error loading events: $e');
       debugPrint('Stack trace: $stackTrace');
       setState(() => _isLoading = false);
+    }
+  }
+  
+  void _handleEventsSnapshot(QuerySnapshot<Map<String, dynamic>> snapshot, String streamType) {
+    if (!mounted) return;
+    
+    try {
+      // Update the appropriate map based on stream type
+      Map<String, Event> targetMap;
+      switch (streamType) {
+        case 'planner':
+          targetMap = _plannerEvents;
+          break;
+        case 'collaborator':
+          targetMap = _collaboratorEvents;
+          break;
+        case 'invited':
+          targetMap = _invitedEvents;
+          break;
+        default:
+          debugPrint('Unknown stream type: $streamType');
+          return;
+      }
+      
+      // Clear and rebuild this stream's events
+      targetMap.clear();
+      
+      // Parse events from this snapshot
+      for (final doc in snapshot.docs) {
+        try {
+          targetMap[doc.id] = Event.fromMap(doc.data(), id: doc.id);
+        } catch (e) {
+          debugPrint('Error parsing event ${doc.id}: $e');
+        }
+      }
+      
+      // Merge all three streams, deduplicating by event ID
+      final Map<String, Event> allEventsMap = {};
+      allEventsMap.addAll(_plannerEvents);
+      allEventsMap.addAll(_collaboratorEvents);
+      allEventsMap.addAll(_invitedEvents);
+      
+      final events = allEventsMap.values.toList();
+      events.sort((a, b) => b.startDateTime.compareTo(a.startDateTime));
+      
+      debugPrint('EventsScreen: Real-time update ($streamType) - ${events.length} total events');
+      debugPrint('  Planner: ${_plannerEvents.length}, Collaborator: ${_collaboratorEvents.length}, Invited: ${_invitedEvents.length}');
+      
+      // Cache experiences referenced in events
+      _cacheExperiencesForEvents(events);
+      
+      setState(() {
+        _allEvents = events;
+        _eventsByDate = _groupEventsByDate(events);
+      });
+    } catch (e) {
+      debugPrint('Error handling events snapshot: $e');
     }
   }
 
@@ -1097,6 +1187,12 @@ class _EventsScreenState extends State<EventsScreen>
       final categories = await experienceService.getUserCategories();
       final colorCategories = await experienceService.getUserColorCategories();
       
+      // Determine if current user can edit the event
+      final userId = _authService.currentUser?.uid;
+      final canEdit = userId != null && 
+          (event.plannerUserId == userId || event.collaboratorIds.contains(userId));
+      final isReadOnly = !canEdit;
+      
       if (!mounted) return;
       
       // Close loading dialog
@@ -1110,6 +1206,7 @@ class _EventsScreenState extends State<EventsScreen>
             experiences: experiences,
             categories: categories,
             colorCategories: colorCategories,
+            isReadOnly: isReadOnly,
           ),
           fullscreenDialog: true,
         ),
