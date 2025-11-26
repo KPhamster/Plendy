@@ -53,6 +53,7 @@ import '../widgets/privacy_toggle_button.dart';
 import 'event_experience_selector_screen.dart'; // ADDED: Import for EventExperienceSelectorScreen
 import '../widgets/event_editor_modal.dart'; // ADDED: Import for EventEditorModal
 import '../models/event.dart'; // ADDED: Import for Event
+import '../services/event_service.dart';
 
 // Helper classes for shared data
 class _SharedCategoryData {
@@ -167,6 +168,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
     with SingleTickerProviderStateMixin {
   final _authService = AuthService();
   final _experienceService = ExperienceService();
+  final _eventService = EventService();
   final TextEditingController _searchController = TextEditingController();
 
   // Bottom padding to keep last item above the FAB
@@ -731,6 +733,10 @@ class CollectionsScreenState extends State<CollectionsScreen>
   bool _isContentLoading = false;
   bool _isExperiencesLoading = false;
   bool _contentPreloadRequested = false;
+  
+  // Event tracking for experience banners
+  bool _isLoadingEvents = false;
+  Map<String, Event> _experienceIdToEvent = {}; // Maps experience ID to its event
 
   String _buildSharedByLabel({
     required SharePermission permission,
@@ -4853,6 +4859,9 @@ class CollectionsScreenState extends State<CollectionsScreen>
           )
         : leadingBase;
 
+    // Check if this experience is in an upcoming/ongoing event
+    final Event? matchingEvent = _experienceIdToEvent[experience.id];
+    
     return ListTile(
       key: ValueKey(experience.id), // Use experience ID as key
       contentPadding: const EdgeInsets.symmetric(horizontal: 8.0),
@@ -4862,10 +4871,27 @@ class CollectionsScreenState extends State<CollectionsScreen>
       leading: leadingWidget,
       minLeadingWidth: 56,
       selected: isSelecting && isSelected,
-      title: Text(
-        experience.name,
-        overflow: TextOverflow.ellipsis,
-        maxLines: 1,
+      title: Row(
+        children: [
+          Expanded(
+            child: Text(
+              experience.name,
+              overflow: TextOverflow.ellipsis,
+              maxLines: 1,
+            ),
+          ),
+          if (matchingEvent != null) ...[
+            const SizedBox(width: 8),
+            GestureDetector(
+              onTap: () => _openEventEditorForExperience(matchingEvent),
+              child: Icon(
+                Icons.event,
+                color: _getEventColor(matchingEvent),
+                size: 28,
+              ),
+            ),
+          ],
+        ],
       ),
       subtitle: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -5068,6 +5094,9 @@ class CollectionsScreenState extends State<CollectionsScreen>
     final String? ownerName = sharePermission != null
         ? (_shareOwnerNames[sharePermission.ownerUserId] ?? 'Someone')
         : null;
+    
+    // Check if this experience is in an upcoming/ongoing event
+    final Event? matchingEvent = _experienceIdToEvent[experience.id];
 
     String? photoUrl;
     if (experience.location.photoResourceName != null &&
@@ -5128,14 +5157,31 @@ class CollectionsScreenState extends State<CollectionsScreen>
       children: <Widget>[
         Padding(
           padding: const EdgeInsets.fromLTRB(8.0, 8.0, 8.0, 4.0),
-          child: Text(
-            experience.name,
-            style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                  fontWeight: FontWeight.bold,
-                  // Conditional color will be applied if it's part of a stack with background
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  experience.name,
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.bold,
+                        // Conditional color will be applied if it's part of a stack with background
+                      ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                 ),
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
+              ),
+              if (matchingEvent != null) ...[
+                const SizedBox(width: 4),
+                GestureDetector(
+                  onTap: () => _openEventEditorForExperience(matchingEvent),
+                  child: Icon(
+                    Icons.event,
+                    color: _getEventColor(matchingEvent),
+                    size: 26,
+                  ),
+                ),
+              ],
+            ],
           ),
         ),
         if (locationArea != null && locationArea.isNotEmpty)
@@ -5182,14 +5228,31 @@ class CollectionsScreenState extends State<CollectionsScreen>
         children: <Widget>[
           Padding(
             padding: const EdgeInsets.fromLTRB(8.0, 8.0, 8.0, 4.0),
-            child: Text(
-              experience.name,
-              style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white, // White text
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    experience.name,
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white, // White text
+                        ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
                   ),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
+                ),
+                if (matchingEvent != null) ...[
+                  const SizedBox(width: 4),
+                  GestureDetector(
+                    onTap: () => _openEventEditorForExperience(matchingEvent),
+                    child: Icon(
+                      Icons.event,
+                      color: Colors.white,
+                      size: 18,
+                    ),
+                  ),
+                ],
+              ],
             ),
           ),
           if (locationArea != null && locationArea.isNotEmpty)
@@ -9397,6 +9460,145 @@ class CollectionsScreenState extends State<CollectionsScreen>
 
     // OPTIMIZED: Don't preload content here - let it load lazily when user visits Content tab
     // The tab listener will trigger startContentPreload() when needed
+    
+    // Load events for experience banners
+    _loadEventsForExperiences(userId);
+  }
+  
+  /// Fetch events and map them to experiences
+  Future<void> _loadEventsForExperiences(String userId) async {
+    setState(() {
+      _isLoadingEvents = true;
+    });
+    
+    try {
+      final events = await _eventService.getEventsForUser(userId);
+      final now = DateTime.now();
+      final Map<String, Event> experienceToEvent = {};
+      
+      // For each experience, find the earliest upcoming/ongoing event containing it
+      for (final experience in _experiences) {
+        Event? earliestEvent;
+        DateTime? earliestStart;
+        
+        for (final event in events) {
+          // Only consider upcoming or ongoing events
+          if (event.endDateTime.isBefore(now)) {
+            continue;
+          }
+          
+          // Check if this event contains the experience
+          final hasMatch = event.experiences.any((entry) =>
+              entry.experienceId.isNotEmpty &&
+              entry.experienceId == experience.id);
+          
+          if (hasMatch) {
+            if (earliestStart == null || event.startDateTime.isBefore(earliestStart)) {
+              earliestStart = event.startDateTime;
+              earliestEvent = event;
+            }
+          }
+        }
+        
+        if (earliestEvent != null) {
+          experienceToEvent[experience.id] = earliestEvent;
+        }
+      }
+      
+      if (mounted) {
+        setState(() {
+          _experienceIdToEvent = experienceToEvent;
+          _isLoadingEvents = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('_loadEventsForExperiences: Error: $e');
+      if (mounted) {
+        setState(() {
+          _isLoadingEvents = false;
+        });
+      }
+    }
+  }
+  
+  /// Get the event color (prefer colorHex, fall back to ID-based color)
+  Color _getEventColor(Event event) {
+    if (event.colorHex != null && event.colorHex!.isNotEmpty) {
+      return _parseEventColor(event.colorHex!);
+    }
+    // Default color generation based on event ID
+    final colors = [
+      Colors.blue,
+      Colors.red,
+      Colors.green,
+      Colors.orange,
+      Colors.purple,
+      Colors.teal,
+      Colors.pink,
+      Colors.indigo,
+    ];
+    final hash = event.id.hashCode;
+    return colors[hash.abs() % colors.length];
+  }
+
+  Color _parseEventColor(String hexColor) {
+    String normalized = hexColor.toUpperCase().replaceAll('#', '');
+    if (normalized.length == 6) {
+      normalized = 'FF$normalized';
+    }
+    if (normalized.length == 8) {
+      try {
+        return Color(int.parse('0x$normalized'));
+      } catch (_) {
+        return Colors.blue;
+      }
+    }
+    return Colors.blue;
+  }
+  
+  /// Open the event editor modal
+  Future<void> _openEventEditorForExperience(Event event) async {
+    try {
+      // Fetch experiences for the event
+      final experienceIds = event.experiences
+          .where((entry) => entry.experienceId.isNotEmpty)
+          .map((entry) => entry.experienceId)
+          .toList();
+
+      final experiences = experienceIds.isNotEmpty
+          ? await _experienceService.getExperiencesByIds(experienceIds)
+          : <Experience>[];
+
+      if (!mounted) return;
+
+      // Open the event editor modal
+      final result = await showDialog<EventEditorResult>(
+        context: context,
+        useSafeArea: false,
+        builder: (context) => EventEditorModal(
+          event: event,
+          experiences: experiences,
+          categories: _categories,
+          colorCategories: _colorCategories,
+        ),
+      );
+
+      // Handle result
+      if (result != null && result.wasSaved && mounted) {
+        // Refresh events
+        final userId = _authService.currentUser?.uid;
+        if (userId != null) {
+          _loadEventsForExperiences(userId);
+        }
+      }
+    } catch (e) {
+      debugPrint('_openEventEditorForExperience: Error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open event: $e')),
+        );
+      }
+    }
   }
 
   // --- Share Bottom Sheets for Category and Color Category ---

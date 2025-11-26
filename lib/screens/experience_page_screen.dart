@@ -63,6 +63,10 @@ import 'package:firebase_auth/firebase_auth.dart';
 import '../models/report.dart';
 import '../services/report_service.dart';
 import '../widgets/privacy_toggle_button.dart';
+import '../models/event.dart';
+import '../services/event_service.dart';
+import 'package:intl/intl.dart';
+import '../widgets/event_editor_modal.dart';
 
 // Convert to StatefulWidget
 class ExperiencePageScreen extends StatefulWidget {
@@ -204,6 +208,12 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       {}; // Separate cache for media tab categories
   // --- ADDED: State for other experiences linked to media --- END ---
 
+  // --- ADDED: State for event banner --- START ---
+  bool _isLoadingEventBanner = true;
+  Event? _matchingEvent;
+  final EventService _eventService = EventService();
+  // --- ADDED: State for event banner --- END ---
+
   static const Duration _photoRefreshInterval = Duration(days: 30);
 
   bool get _canShowPublicContentToggle {
@@ -320,6 +330,9 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
         widget.shareBannerFromUserId!.isNotEmpty) {
       _resolveSharerDisplayName(widget.shareBannerFromUserId!);
     }
+
+    // Fetch matching event for banner
+    _fetchMatchingEvent();
   }
 
   Future<bool> _handleBackNavigation() async {
@@ -1180,6 +1193,15 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                 SliverToBoxAdapter(
                   child: _buildHeader(context, _currentExperience),
                 ),
+                // --- Event Banner ---
+                if (!_isLoadingEventBanner && _matchingEvent != null)
+                  SliverToBoxAdapter(
+                    child: Container(
+                      color: Colors.white,
+                      padding: const EdgeInsets.fromLTRB(16.0, 12.0, 16.0, 8.0),
+                      child: _buildEventBanner(context),
+                    ),
+                  ),
                 // --- Details Section ---
                 SliverToBoxAdapter(
                   child: Container(
@@ -3336,6 +3358,204 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       setState(() {
         _shareBannerDisplayName = 'Someone';
       });
+    }
+  }
+
+  /// Fetch events and find the matching event for the banner
+  Future<void> _fetchMatchingEvent() async {
+    final String? userId = _authService.currentUser?.uid;
+    if (userId == null || _currentExperience.id.isEmpty) {
+      setState(() {
+        _isLoadingEventBanner = false;
+        _matchingEvent = null;
+      });
+      return;
+    }
+
+    try {
+      final events = await _eventService.getEventsForUser(userId);
+      if (!mounted) return;
+
+      final now = DateTime.now();
+      Event? matchingEvent;
+      DateTime? earliestStartTime;
+
+      for (final event in events) {
+        // Only consider upcoming or ongoing events
+        if (event.endDateTime.isBefore(now)) {
+          continue; // Event has ended
+        }
+
+        // Check if this event contains the current experience
+        final hasMatch = event.experiences.any((entry) =>
+            entry.experienceId.isNotEmpty &&
+            entry.experienceId == _currentExperience.id);
+
+        if (hasMatch) {
+          // Pick the earliest event that matches
+          if (earliestStartTime == null ||
+              event.startDateTime.isBefore(earliestStartTime)) {
+            earliestStartTime = event.startDateTime;
+            matchingEvent = event;
+          }
+        }
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _matchingEvent = matchingEvent;
+        _isLoadingEventBanner = false;
+      });
+    } catch (e) {
+      debugPrint('_fetchMatchingEvent: Error fetching events: $e');
+      if (!mounted) return;
+      setState(() {
+        _isLoadingEventBanner = false;
+        _matchingEvent = null;
+      });
+    }
+  }
+
+  /// Get the event color (prefer colorHex, fall back to ID-based color)
+  Color _getEventColor(Event event) {
+    if (event.colorHex != null && event.colorHex!.isNotEmpty) {
+      return _parseEventColor(event.colorHex!);
+    }
+    // Default color generation based on event ID
+    final colors = [
+      Colors.blue,
+      Colors.red,
+      Colors.green,
+      Colors.orange,
+      Colors.purple,
+      Colors.teal,
+      Colors.pink,
+      Colors.indigo,
+    ];
+    final hash = event.id.hashCode;
+    return colors[hash.abs() % colors.length];
+  }
+
+  Color _parseEventColor(String hexColor) {
+    String normalized = hexColor.toUpperCase().replaceAll('#', '');
+    if (normalized.length == 6) {
+      normalized = 'FF$normalized';
+    }
+    if (normalized.length == 8) {
+      try {
+        return Color(int.parse('0x$normalized'));
+      } catch (_) {
+        return Colors.blue;
+      }
+    }
+    return Colors.blue;
+  }
+
+  bool _isEventColorDark(Color color) {
+    final luminance = (0.299 * color.red + 0.587 * color.green + 0.114 * color.blue) / 255;
+    return luminance < 0.5;
+  }
+
+  /// Build the event banner widget
+  Widget _buildEventBanner(BuildContext context) {
+    final event = _matchingEvent!;
+    final eventColor = _getEventColor(event);
+    final isDark = _isEventColorDark(eventColor);
+    final textColor = isDark ? Colors.white : Colors.black87;
+
+    // Format the date as "Tuesday, June 15, 2025"
+    final dateFormatter = DateFormat('EEEE, MMMM d, yyyy');
+    final formattedDate = dateFormatter.format(event.startDateTime);
+
+    return GestureDetector(
+      onTap: () => _openEventEditor(event),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
+        decoration: BoxDecoration(
+          color: eventColor,
+          borderRadius: BorderRadius.circular(8.0),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              Icons.event,
+              color: textColor,
+              size: 20,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'You are scheduled to go here on $formattedDate',
+                style: TextStyle(
+                  color: textColor,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+            Icon(
+              Icons.chevron_right,
+              color: textColor.withOpacity(0.7),
+              size: 20,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Open the event editor modal
+  Future<void> _openEventEditor(Event event) async {
+    try {
+      // Fetch experiences for the event
+      final experienceIds = event.experiences
+          .where((entry) => entry.experienceId.isNotEmpty)
+          .map((entry) => entry.experienceId)
+          .toList();
+
+      final experiences = experienceIds.isNotEmpty
+          ? await _experienceService.getExperiencesByIds(experienceIds)
+          : <Experience>[];
+
+      // Fetch categories if not already loaded
+      List<UserCategory> categories = _userCategories;
+      List<ColorCategory> colorCategories = widget.userColorCategories;
+
+      if (categories.isEmpty || colorCategories.isEmpty) {
+        final result = await _experienceService.getUserAndColorCategories(
+          includeSharedEditable: true,
+        );
+        categories = result.userCategories;
+        colorCategories = result.colorCategories;
+      }
+
+      if (!mounted) return;
+
+      // Open the event editor modal
+      final result = await showDialog<EventEditorResult>(
+        context: context,
+        useSafeArea: false,
+        builder: (context) => EventEditorModal(
+          event: event,
+          experiences: experiences,
+          categories: categories,
+          colorCategories: colorCategories,
+        ),
+      );
+
+      // Handle result
+      if (result != null && result.wasSaved && mounted) {
+        // Refresh the matching event data
+        _fetchMatchingEvent();
+      }
+    } catch (e) {
+      debugPrint('_openEventEditor: Error opening event editor: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open event: $e')),
+        );
+      }
     }
   }
 
