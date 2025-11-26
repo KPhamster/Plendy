@@ -219,7 +219,7 @@ class _EventsScreenState extends State<EventsScreen>
       // Close loading dialog
       Navigator.of(context).pop();
 
-      final result = await Navigator.push(
+      final result = await Navigator.push<EventEditorResult>(
         context,
         MaterialPageRoute(
           builder: (context) => EventEditorModal(
@@ -232,8 +232,10 @@ class _EventsScreenState extends State<EventsScreen>
         ),
       );
 
-      if (result != null) {
-        _loadEvents();
+      // Refresh immediately if event was saved
+      if (result != null && result.wasSaved) {
+        // Refresh events list to reflect changes immediately
+        await _loadEvents();
       }
     } catch (e) {
       if (!mounted) return;
@@ -1100,7 +1102,7 @@ class _EventsScreenState extends State<EventsScreen>
       // Close loading dialog
       Navigator.of(context).pop();
 
-      final result = await Navigator.push(
+      final result = await Navigator.push<EventEditorResult>(
         context,
         MaterialPageRoute(
           builder: (context) => EventEditorModal(
@@ -1113,8 +1115,10 @@ class _EventsScreenState extends State<EventsScreen>
         ),
       );
 
-      if (result != null) {
-        _loadEvents();
+      // Refresh immediately if event was saved
+      if (result != null && result.wasSaved) {
+        // Refresh events list to reflect changes immediately
+        await _loadEvents();
       }
     } catch (e) {
       if (!mounted) return;
