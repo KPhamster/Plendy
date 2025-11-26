@@ -60,6 +60,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
   final _experienceService = ExperienceService();
   final _authService = AuthService();
   final _eventNotificationQueueService = EventNotificationQueueService();
+  final _googleMapsService = GoogleMapsService();
 
   late Event _currentEvent;
   List<Experience> _availableExperiences = [];
@@ -454,12 +455,6 @@ class _EventEditorModalState extends State<EventEditorModal> {
         height: 250,
         decoration: BoxDecoration(
           color: Colors.grey[300],
-          image: imageUrl != null
-              ? DecorationImage(
-                  image: NetworkImage(imageUrl),
-                  fit: BoxFit.cover,
-                )
-              : null,
         ),
         child: Stack(
           children: [
@@ -474,6 +469,49 @@ class _EventEditorModalState extends State<EventEditorModal> {
                     Text('Tap to add cover image',
                         style: TextStyle(color: Colors.grey)),
                   ],
+                ),
+              )
+            else
+              Positioned.fill(
+                child: Image.network(
+                  imageUrl,
+                  fit: BoxFit.cover,
+                  loadingBuilder: (context, child, loadingProgress) {
+                    if (loadingProgress == null) return child;
+                    return Container(
+                      color: Colors.grey[300],
+                      child: Center(
+                        child: CircularProgressIndicator(
+                          value: loadingProgress.expectedTotalBytes != null
+                              ? loadingProgress.cumulativeBytesLoaded /
+                                  loadingProgress.expectedTotalBytes!
+                              : null,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            Theme.of(context).primaryColor,
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                  errorBuilder: (context, error, stackTrace) {
+                    debugPrint('EventEditorModal: Error loading cover image: $error');
+                    debugPrint('EventEditorModal: Image URL: $imageUrl');
+                    return Container(
+                      color: Colors.grey[300],
+                      child: const Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.broken_image_outlined,
+                                size: 48, color: Colors.grey),
+                            SizedBox(height: 8),
+                            Text('Failed to load image',
+                                style: TextStyle(color: Colors.grey)),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
                 ),
               ),
             Positioned(
@@ -592,16 +630,20 @@ class _EventEditorModalState extends State<EventEditorModal> {
   String? _buildCoverImageUrlFromExperience(Experience experience) {
     final resourceName = experience.location.photoResourceName;
     if (resourceName != null && resourceName.isNotEmpty) {
-      return GoogleMapsService.buildPlacePhotoUrlFromResourceName(
+      final url = GoogleMapsService.buildPlacePhotoUrlFromResourceName(
         resourceName,
         maxWidthPx: 800,
         maxHeightPx: 600,
       );
+      debugPrint('EventEditorModal: Built photo URL from resourceName: $url');
+      return url;
     }
     final photoUrl = experience.location.photoUrl;
     if (photoUrl != null && photoUrl.isNotEmpty) {
+      debugPrint('EventEditorModal: Using photoUrl: $photoUrl');
       return photoUrl;
     }
+    debugPrint('EventEditorModal: No photo available for experience ${experience.id}');
     return null;
   }
 
@@ -794,26 +836,112 @@ class _EventEditorModalState extends State<EventEditorModal> {
                         subtitle: subtitle != null ? Text(subtitle) : null,
                         trailing: hasDerivedImage
                             ? const Icon(Icons.image, color: Colors.black54)
-                            : const Text('No image',
-                                style: TextStyle(color: Colors.grey)),
-                        onTap: () {
-                          if (!hasDerivedImage) {
+                            : (isEventOnly
+                                ? (entry.inlineLocation?.placeId != null && entry.inlineLocation!.placeId!.isNotEmpty
+                                    ? Icon(Icons.cloud_download_outlined, color: primaryColor)
+                                    : const Text('No image', style: TextStyle(color: Colors.grey)))
+                                : (experience?.location.placeId != null && experience!.location.placeId!.isNotEmpty
+                                    ? Icon(Icons.cloud_download_outlined, color: primaryColor)
+                                    : const Text('No image', style: TextStyle(color: Colors.grey)))),
+                        onTap: () async {
+                          // If we already have a URL, use it
+                          if (hasDerivedImage && derivedUrl != null) {
+                            Navigator.of(sheetContext).pop();
+                            if (!mounted) return;
+                            setState(() {
+                              _coverImageUrlController.text = derivedUrl!;
+                              _markUnsavedChanges();
+                            });
+                            return;
+                          }
+                          
+                          // Otherwise, try to fetch from API if we have a placeId
+                          String? placeId;
+                          if (isEventOnly) {
+                            placeId = entry.inlineLocation?.placeId;
+                          } else if (experience != null) {
+                            placeId = experience.location.placeId;
+                          }
+                          
+                          if (placeId == null || placeId.isEmpty) {
                             if (!mounted) return;
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
                                 content: Text(
-                                  'No image available yet for $displayName.',
+                                  'No image available for $displayName.',
                                 ),
                               ),
                             );
                             return;
                           }
-                          Navigator.of(sheetContext).pop();
+                          
+                          // Show loading indicator
                           if (!mounted) return;
-                          setState(() {
-                            _coverImageUrlController.text = derivedUrl!;
-                            _markUnsavedChanges();
-                          });
+                          Navigator.of(sheetContext).pop();
+                          
+                          // Show a loading dialog while fetching
+                          showDialog(
+                            context: context,
+                            barrierDismissible: false,
+                            builder: (loadingContext) {
+                              return Center(
+                                child: CircularProgressIndicator(
+                                  valueColor: AlwaysStoppedAnimation<Color>(
+                                    Theme.of(context).primaryColor,
+                                  ),
+                                ),
+                              );
+                            },
+                          );
+                          
+                          try {
+                            // Fetch photo URL from API
+                            final fetchedUrl = await _googleMapsService.getPlaceImageUrl(
+                              placeId,
+                              maxWidth: 800,
+                              maxHeight: 600,
+                            );
+                            
+                            if (!mounted) return;
+                            Navigator.of(context).pop(); // Close loading dialog
+                            
+                            if (fetchedUrl != null && fetchedUrl.isNotEmpty) {
+                              setState(() {
+                                _coverImageUrlController.text = fetchedUrl;
+                                _markUnsavedChanges();
+                              });
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('Cover image updated'),
+                                  ),
+                                );
+                              }
+                            } else {
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      'Could not fetch image for $displayName.',
+                                    ),
+                                  ),
+                                );
+                              }
+                            }
+                          } catch (e) {
+                            if (!mounted) return;
+                            Navigator.of(context).pop(); // Close loading dialog
+                            debugPrint('EventEditorModal: Error fetching photo: $e');
+                            if (mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    'Failed to fetch image: $e',
+                                  ),
+                                ),
+                              );
+                            }
+                          }
                         },
                       );
                     }),
