@@ -19,6 +19,7 @@ import '../screens/event_experience_selector_screen.dart';
 import '../screens/location_picker_screen.dart';
 import '../screens/experience_page_screen.dart';
 import '../screens/map_screen.dart';
+import '../screens/events_screen.dart';
 import 'share_experience_bottom_sheet.dart';
 
 class EventEditorResult {
@@ -180,10 +181,21 @@ class _EventEditorModalState extends State<EventEditorModal> {
           const SnackBar(content: Text('Event saved')),
         );
 
-        _popWithDraftResult(
-          wasSaved: true,
-          savedEvent: savedEvent,
-          draftOverride: savedEvent,
+        // Pop the modal with result
+        Navigator.of(context).pop(
+          EventEditorResult(
+            savedEvent: savedEvent,
+            draftEvent: savedEvent,
+            wasSaved: true,
+          ),
+        );
+        
+        // Navigate to events screen, removing all previous routes
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(
+            builder: (context) => const EventsScreen(),
+          ),
+          (route) => false, // Remove all previous routes
         );
       }
     } catch (e) {
@@ -859,6 +871,9 @@ class _EventEditorModalState extends State<EventEditorModal> {
       }
       if (!mounted) return;
 
+      // Synchronize controller values before passing event to selector
+      final eventForSelector = _synchronizeCurrentEventFromControllers();
+      
       final selectedOrder = await Navigator.of(context).push<List<String>>(
         MaterialPageRoute(
           builder: (ctx) => EventExperienceSelectorScreen(
@@ -866,8 +881,9 @@ class _EventEditorModalState extends State<EventEditorModal> {
             colorCategories: widget.colorCategories,
             experiences: combinedExperiences,
             preSelectedExperienceIds: selectedIds.toSet(),
-            title: 'Edit itinerary',
+            title: 'Edit Itinerary',
             returnSelectionOnly: true,
+            initialEvent: eventForSelector,
           ),
           fullscreenDialog: true,
         ),
@@ -1775,6 +1791,26 @@ class _EventEditorModalState extends State<EventEditorModal> {
                       ),
                 ),
               ),
+              Tooltip(
+                message: 'View event on map',
+                child: ActionChip(
+                  avatar: Image.asset(
+                    'assets/icon/icon-cropped.png',
+                    height: 18,
+                  ),
+                  label: const SizedBox.shrink(),
+                  labelPadding: EdgeInsets.zero,
+                  onPressed: () => _openEventMapView(),
+                  tooltip: 'View event on map',
+                  backgroundColor: Colors.white,
+                  shape: StadiumBorder(
+                    side: BorderSide(color: Colors.grey.shade300),
+                  ),
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  padding: const EdgeInsets.all(4),
+                ),
+              ),
+              const SizedBox(width: 8),
               GestureDetector(
                 onTap: () => _pickEventColor(),
                 child: Container(
@@ -2775,28 +2811,76 @@ class _EventEditorModalState extends State<EventEditorModal> {
     if (!mounted) return;
 
     final Location locationForMap = _buildLocationForMapNavigation(experience);
+    
+    // Use the current event state (which may have unsaved changes)
+    final eventToShow = _synchronizeCurrentEventFromControllers();
 
-    await Navigator.push(
+    final result = await Navigator.push<Event>(
       context,
       MaterialPageRoute(
         builder: (context) => MapScreen(
+          initialEvent: eventToShow,
           initialExperienceLocation: locationForMap,
         ),
       ),
     );
+
+    // Handle returned event with updated itinerary
+    if (result != null && mounted) {
+      setState(() {
+        _currentEvent = result;
+        _markUnsavedChanges();
+      });
+    }
   }
 
   Future<void> _handleEventOnlyMapButtonPressed(EventExperienceEntry entry) async {
     if (!mounted || entry.inlineLocation == null) return;
 
-    await Navigator.push(
+    // Use the current event state (which may have unsaved changes)
+    final eventToShow = _synchronizeCurrentEventFromControllers();
+
+    final result = await Navigator.push<Event>(
       context,
       MaterialPageRoute(
         builder: (context) => MapScreen(
+          initialEvent: eventToShow,
           initialExperienceLocation: entry.inlineLocation!,
         ),
       ),
     );
+
+    // Handle returned event with updated itinerary
+    if (result != null && mounted) {
+      setState(() {
+        _currentEvent = result;
+        _markUnsavedChanges();
+      });
+    }
+  }
+
+  Future<void> _openEventMapView() async {
+    if (!mounted) return;
+
+    // Use the current event state (which may have unsaved changes)
+    final eventToShow = _synchronizeCurrentEventFromControllers();
+
+    final result = await Navigator.push<Event>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => MapScreen(
+          initialEvent: eventToShow,
+        ),
+      ),
+    );
+
+    // Handle returned event with updated itinerary
+    if (result != null && mounted) {
+      setState(() {
+        _currentEvent = result;
+        _markUnsavedChanges();
+      });
+    }
   }
 
   Location _buildLocationForMapNavigation(Experience experience) {

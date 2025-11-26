@@ -16,6 +16,7 @@ import '../services/auth_service.dart';
 import '../services/experience_service.dart';
 import '../widgets/event_editor_modal.dart';
 import '../widgets/shared_media_preview_modal.dart';
+import '../screens/map_screen.dart';
 
 /// A reusable full-screen modal for selecting experiences for events.
 ///
@@ -64,6 +65,7 @@ class EventExperienceSelectorScreen extends StatefulWidget {
   final ColorCategorySortType? initialColorCategorySort;
   final ExperienceSortType? initialExperienceSort;
   final bool returnSelectionOnly;
+  final Event? initialEvent; // The event being edited (for map view mode)
 
   const EventExperienceSelectorScreen({
     super.key,
@@ -76,6 +78,7 @@ class EventExperienceSelectorScreen extends StatefulWidget {
     this.initialColorCategorySort,
     this.initialExperienceSort,
     this.returnSelectionOnly = false,
+    this.initialEvent,
   });
 
   @override
@@ -140,6 +143,24 @@ class _EventExperienceSelectorScreenState
     _selectedExperienceIds = widget.preSelectedExperienceIds != null
         ? Set.from(widget.preSelectedExperienceIds!)
         : {};
+
+    // Initialize selection order from the existing event's experience order
+    // This ensures existing experiences maintain their order and new selections are appended
+    if (widget.initialEvent != null) {
+      for (final entry in widget.initialEvent!.experiences) {
+        if (entry.experienceId.isNotEmpty && 
+            _selectedExperienceIds.contains(entry.experienceId)) {
+          _selectionOrder.add(entry.experienceId);
+        }
+      }
+    } else if (widget.preSelectedExperienceIds != null) {
+      // If no initialEvent but we have preSelectedIds, preserve order from experiences list
+      for (final exp in widget.experiences) {
+        if (widget.preSelectedExperienceIds!.contains(exp.id)) {
+          _selectionOrder.add(exp.id);
+        }
+      }
+    }
 
     // Initialize sort types from parent or use defaults
     _categorySortType =
@@ -767,6 +788,7 @@ class _EventExperienceSelectorScreenState
     );
   }
 
+
   Widget _buildExperienceSortMenuButton() {
     return PopupMenuButton<ExperienceSortType>(
       icon: const Icon(Icons.sort),
@@ -813,6 +835,31 @@ class _EventExperienceSelectorScreenState
         backgroundColor: Colors.white,
         foregroundColor: Colors.black,
         actions: [
+          // Map button (only show when there are selected experiences)
+          if (_selectedExperienceIds.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: Tooltip(
+                message: 'View selected experiences on map',
+                child: ActionChip(
+                  avatar: Image.asset(
+                    'assets/icon/icon-cropped.png',
+                    height: 18,
+                  ),
+                  label: const SizedBox.shrink(),
+                  labelPadding: EdgeInsets.zero,
+                  onPressed: () => _openMapWithSelectedExperiences(),
+                  tooltip: 'View selected experiences on map',
+                  backgroundColor: Colors.white,
+                  shape: StadiumBorder(
+                    side: BorderSide(color: Colors.grey.shade300),
+                  ),
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  padding: const EdgeInsets.all(4),
+                ),
+              ),
+            ),
+          // Done button
           Padding(
             padding: const EdgeInsets.only(right: 8),
             child: ElevatedButton(
@@ -1511,7 +1558,9 @@ class _EventExperienceSelectorScreenState
 
   Event _buildEventForEditor(String currentUserId) {
     final DateTime now = DateTime.now();
+    // Use initialEvent if provided (editing existing event), then draft, then create new
     final Event baseEvent = _draftEvent ??
+        widget.initialEvent ??
         Event(
           id: '',
           title: 'Untitled Event',
@@ -1535,6 +1584,66 @@ class _EventExperienceSelectorScreenState
       coverImageUrl: coverImageUrl,
       updatedAt: DateTime.now(),
     );
+  }
+
+  Future<void> _openMapWithSelectedExperiences() async {
+    if (_selectedExperienceIds.isEmpty) return;
+
+    final currentUserId = _authService.currentUser?.uid;
+    if (currentUserId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('User not authenticated')),
+      );
+      return;
+    }
+
+    // Build an event with the currently selected experiences
+    final Event event = _buildEventForEditor(currentUserId);
+
+    final result = await Navigator.push<Event>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => MapScreen(
+          initialEvent: event,
+        ),
+      ),
+    );
+
+    // Handle returned event with updated itinerary
+    if (result != null && mounted) {
+      // Extract experience IDs from the returned event
+      final updatedExperienceIds = result.experiences
+          .where((entry) => entry.experienceId.isNotEmpty)
+          .map((entry) => entry.experienceId)
+          .toSet();
+
+      setState(() {
+        _selectedExperienceIds = updatedExperienceIds;
+        
+        // Update selection order to match the event's itinerary order
+        _selectionOrder.clear();
+        for (final entry in result.experiences) {
+          if (entry.experienceId.isNotEmpty) {
+            _selectionOrder.add(entry.experienceId);
+          }
+        }
+        
+        // Store the draft event
+        _draftEvent = result;
+      });
+
+      // Show feedback
+      if (_selectedExperienceIds.length != event.experiences.length) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Updated: ${_selectedExperienceIds.length} experience${_selectedExperienceIds.length != 1 ? 's' : ''} selected',
+            ),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _openExperienceContentPreview(Experience experience) async {

@@ -61,8 +61,9 @@ class MapScreen extends StatefulWidget {
   final Location? initialExperienceLocation; // ADDED: To receive a specific location
   final PublicExperience?
       initialPublicExperience; // ADDED: Optional public experience context
+  final Event? initialEvent; // ADDED: Optional initial event for event view mode
 
-  const MapScreen({super.key, this.initialExperienceLocation, this.initialPublicExperience}); // UPDATED: Constructor
+  const MapScreen({super.key, this.initialExperienceLocation, this.initialPublicExperience, this.initialEvent}); // UPDATED: Constructor
 
   @override
   State<MapScreen> createState() => _MapScreenState();
@@ -181,6 +182,10 @@ class _MapScreenState extends State<MapScreen> {
   bool _isSelectModeOverlayExpanded = false;
   final Map<String, Marker> _selectModeEventOnlyMarkers = {}; // Markers for event-only entries
   
+  // ADDED: State for adding experiences to existing event
+  bool _isAddToEventModeActive = false;
+  List<EventExperienceEntry> _addToEventDraftItinerary = [];
+  
   // Event color palette (same as used in _getEventColor)
   static const List<Color> _eventColorPalette = [
     Colors.blue,
@@ -260,6 +265,83 @@ class _MapScreenState extends State<MapScreen> {
 
     _initializeFiltersAndData(); // Load saved filters and experiences
     _searchController.addListener(_onSearchChanged);
+
+    // Handle initial event if provided
+    if (widget.initialEvent != null) {
+      // Wait a bit for initial data to load, then handle the event
+      Future.delayed(const Duration(milliseconds: 500), () {
+        if (mounted) {
+          _handleInitialEvent(widget.initialEvent!);
+        }
+      });
+    }
+  }
+
+  Future<void> _handleInitialEvent(Event event) async {
+    // Wait for map controller to be ready first
+    final controller = await _mapControllerCompleter.future;
+    if (!mounted) return;
+    _mapController = controller;
+    
+    // Ensure experiences are loaded (this may already be in progress from _initializeFiltersAndData)
+    // Calling it again is safe - it will reload if needed
+    await _loadDataAndGenerateMarkers();
+    
+    if (!mounted) return;
+    
+    // Cache experiences for this event
+    await _cacheEventExperiencesForEvents([event]);
+    
+    if (!mounted) return;
+    
+    // Enter event view mode
+    await _enterEventViewMode(event);
+    
+    // If initialExperienceLocation is provided, focus on the matching marker
+    if (widget.initialExperienceLocation != null) {
+      await _focusOnInitialLocationInEventView(event, widget.initialExperienceLocation!);
+    }
+  }
+  
+  // ADDED: Focus on a specific location in event view mode
+  Future<void> _focusOnInitialLocationInEventView(Event event, Location targetLocation) async {
+    if (!mounted || _mapController == null) return;
+    
+    // Find the matching entry/experience in the event
+    for (int i = 0; i < event.experiences.length; i++) {
+      final entry = event.experiences[i];
+      Location? entryLocation;
+      
+      if (entry.isEventOnly) {
+        entryLocation = entry.inlineLocation;
+      } else if (entry.experienceId.isNotEmpty) {
+        final experience = _eventExperiencesCache[entry.experienceId];
+        if (experience != null) {
+          entryLocation = experience.location;
+        }
+      }
+      
+      // Check if this location matches the target location (within small tolerance)
+      if (entryLocation != null &&
+          (entryLocation.latitude - targetLocation.latitude).abs() < 0.0001 &&
+          (entryLocation.longitude - targetLocation.longitude).abs() < 0.0001) {
+        // Found matching entry - focus on it
+        Experience? experience;
+        if (!entry.isEventOnly && entry.experienceId.isNotEmpty) {
+          experience = _eventExperiencesCache[entry.experienceId];
+        }
+        await _focusEventItineraryItem(entry, experience, i);
+        return;
+      }
+    }
+    
+    // If no exact match found, just focus on the location
+    final position = LatLng(targetLocation.latitude, targetLocation.longitude);
+    _mapController?.animateCamera(
+      CameraUpdate.newCameraPosition(
+        CameraPosition(target: position, zoom: 16.0),
+      ),
+    );
   }
 
   @override
@@ -2533,7 +2615,24 @@ class _MapScreenState extends State<MapScreen> {
 
   // ADDED: Build event itinerary list for overlay
   Widget _buildEventItineraryList() {
-    if (_activeEventViewMode == null || _activeEventViewMode!.experiences.isEmpty) {
+    if (_activeEventViewMode == null) {
+      return const Padding(
+        padding: EdgeInsets.all(16.0),
+        child: Center(
+          child: Text(
+            'No experiences in itinerary',
+            style: TextStyle(color: Colors.grey),
+          ),
+        ),
+      );
+    }
+
+    // Combine existing experiences with draft items when in add-to-event mode
+    final existingExperiences = _activeEventViewMode!.experiences;
+    final draftItems = _isAddToEventModeActive ? _addToEventDraftItinerary : <EventExperienceEntry>[];
+    final totalCount = existingExperiences.length + draftItems.length;
+
+    if (totalCount == 0) {
       return const Padding(
         padding: EdgeInsets.all(16.0),
         child: Center(
@@ -2548,9 +2647,13 @@ class _MapScreenState extends State<MapScreen> {
     return ListView.builder(
       shrinkWrap: true,
       padding: const EdgeInsets.symmetric(vertical: 8),
-      itemCount: _activeEventViewMode!.experiences.length,
+      itemCount: totalCount,
       itemBuilder: (context, index) {
-        final entry = _activeEventViewMode!.experiences[index];
+        final bool isNewItem = index >= existingExperiences.length;
+        final entry = isNewItem 
+            ? draftItems[index - existingExperiences.length]
+            : existingExperiences[index];
+        
         Experience? experience;
         if (!entry.isEventOnly && entry.experienceId.isNotEmpty) {
           // Find experience from cache or marker experiences map
@@ -2564,8 +2667,14 @@ class _MapScreenState extends State<MapScreen> {
               }
             }
           }
+          // Also check from experiences list
+          if (experience == null) {
+            try {
+              experience = _experiences.firstWhere((e) => e.id == entry.experienceId);
+            } catch (_) {}
+          }
         }
-        return _buildEventItineraryItem(entry, experience, index);
+        return _buildEventItineraryItem(entry, experience, index, isNewItem: isNewItem);
       },
     );
   }
@@ -2574,8 +2683,9 @@ class _MapScreenState extends State<MapScreen> {
   Widget _buildEventItineraryItem(
     EventExperienceEntry entry,
     Experience? experience,
-    int index,
-  ) {
+    int index, {
+    bool isNewItem = false,
+  }) {
     final bool isEventOnly = entry.isEventOnly;
     final String displayName = isEventOnly
         ? (entry.inlineName ?? 'Untitled')
@@ -2617,7 +2727,7 @@ class _MapScreenState extends State<MapScreen> {
         : experience?.location.address;
     
     return Material(
-      color: Colors.transparent,
+      color: isNewItem ? Colors.green.withOpacity(0.08) : Colors.transparent,
       child: InkWell(
         onTap: () => _focusEventItineraryItem(entry, experience, index),
         child: Padding(
@@ -2630,7 +2740,7 @@ class _MapScreenState extends State<MapScreen> {
                 width: 24,
                 height: 24,
                 decoration: BoxDecoration(
-                  color: _getEventColor(_activeEventViewMode!),
+                  color: isNewItem ? Colors.green : _getEventColor(_activeEventViewMode!),
                   shape: BoxShape.circle,
                 ),
                 child: Center(
@@ -2678,7 +2788,24 @@ class _MapScreenState extends State<MapScreen> {
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
-                        if (isEventOnly)
+                        if (isNewItem)
+                          Container(
+                            margin: const EdgeInsets.only(left: 8),
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.green,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: const Text(
+                              'NEW',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 9,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          )
+                        else if (isEventOnly)
                           Container(
                             margin: const EdgeInsets.only(left: 8),
                             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -2926,29 +3053,165 @@ class _MapScreenState extends State<MapScreen> {
     int index,
   ) async {
     Location? location;
+    Color markerBackgroundColor = _selectModeColor;
     
     if (entry.isEventOnly) {
       location = entry.inlineLocation;
     } else if (experience != null) {
       location = experience.location;
+      // Get marker color from experience
+      if (experience.colorHexDenorm != null && experience.colorHexDenorm!.isNotEmpty) {
+        markerBackgroundColor = _parseColor(experience.colorHexDenorm!);
+      } else if (experience.colorCategoryId != null) {
+        try {
+          final colorCat = _colorCategories.firstWhere((cc) => cc.id == experience.colorCategoryId);
+          markerBackgroundColor = _parseColor(colorCat.colorHex);
+        } catch (_) {}
+      }
     }
     
     if (location == null || (location.latitude == 0.0 && location.longitude == 0.0)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No valid location for this experience')),
+        );
+      }
       return;
     }
     
     final position = LatLng(location.latitude, location.longitude);
     _mapController ??= await _mapControllerCompleter.future;
-    _mapController?.animateCamera(
-      CameraUpdate.newCameraPosition(
-        CameraPosition(target: position, zoom: 16.0),
-      ),
+    
+    // Animate camera first
+    await _mapController!.animateCamera(
+      CameraUpdate.newLatLngZoom(position, 16.0),
     );
     
     // Collapse the overlay after focusing
     setState(() {
       _isSelectModeOverlayExpanded = false;
     });
+    
+    // Then show the bottom sheet by setting tapped state
+    if (experience != null) {
+      // Saved experience - show full experience details bottom sheet
+      // Get category for the experience
+      UserCategory? resolvedCategory;
+      final String? categoryId = experience.categoryId;
+      if (categoryId != null && categoryId.isNotEmpty) {
+        try {
+          resolvedCategory = _categories.firstWhere((cat) => cat.id == categoryId);
+        } catch (_) {
+          final String? ownerId = experience.createdBy;
+          if (ownerId != null && ownerId.isNotEmpty && _followeeCategories.containsKey(ownerId)) {
+            resolvedCategory = _followeeCategories[ownerId]?[categoryId];
+          }
+        }
+      }
+      if (resolvedCategory == null) {
+        resolvedCategory = _resolveCategoryForExperience(experience);
+      }
+      
+      // Generate selected icon with number badge for select mode
+      final String selectedIconText = _getCategoryIconForExperience(experience) ?? '❓';
+      final selectedIcon = await _bitmapDescriptorFromNumberedIcon(
+        number: index + 1,
+        iconText: selectedIconText,
+        backgroundColor: markerBackgroundColor,
+        size: 100,
+      );
+      
+      // Create selected marker
+      final tappedMarkerId = MarkerId('selected_experience_location');
+      final tappedMarker = Marker(
+        markerId: tappedMarkerId,
+        position: position,
+        infoWindow: InfoWindow(
+          title: '$selectedIconText ${experience.name}',
+        ),
+        icon: selectedIcon,
+        zIndex: 1.0,
+      );
+      
+      // Fetch business status
+      String? businessStatus;
+      bool? openNow;
+      try {
+        if (location.placeId != null && location.placeId!.isNotEmpty) {
+          final detailsMap = await _mapsService.fetchPlaceDetailsData(location.placeId!);
+          businessStatus = detailsMap?['businessStatus'] as String?;
+          openNow = (detailsMap?['currentOpeningHours']?['openNow']) as bool?;
+        }
+      } catch (e) {
+        businessStatus = null;
+        openNow = null;
+      }
+      
+      if (!mounted) return;
+      
+      setState(() {
+        _mapWidgetInitialLocation = location;
+        _tappedLocationDetails = location;
+        _tappedLocationMarker = tappedMarker;
+        _tappedExperience = experience;
+        _tappedExperienceCategory = resolvedCategory;
+        _tappedLocationBusinessStatus = businessStatus;
+        _tappedLocationOpenNow = openNow;
+        _publicReadOnlyExperience = null;
+        _publicReadOnlyExperienceId = null;
+        _searchController.clear();
+        _searchResults = [];
+        _showSearchResults = false;
+      });
+      
+      _showMarkerInfoWindow(tappedMarkerId);
+      unawaited(_prefetchExperienceMedia(experience));
+    } else {
+      // Event-only experience - show location details bottom sheet
+      final tappedMarkerId = MarkerId('selected_location');
+      final tappedMarker = Marker(
+        markerId: tappedMarkerId,
+        position: position,
+        infoWindow: InfoWindow(
+          title: entry.inlineName ?? 'Stop ${index + 1}',
+        ),
+        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueViolet),
+        zIndex: 1.0,
+      );
+      
+      // Fetch business status
+      String? businessStatus;
+      bool? openNow;
+      try {
+        if (location.placeId != null && location.placeId!.isNotEmpty) {
+          final detailsMap = await _mapsService.fetchPlaceDetailsData(location.placeId!);
+          businessStatus = detailsMap?['businessStatus'] as String?;
+          openNow = (detailsMap?['currentOpeningHours']?['openNow']) as bool?;
+        }
+      } catch (e) {
+        businessStatus = null;
+        openNow = null;
+      }
+      
+      if (!mounted) return;
+      
+      setState(() {
+        _mapWidgetInitialLocation = location;
+        _tappedLocationDetails = location;
+        _tappedLocationMarker = tappedMarker;
+        _tappedExperience = null; // No saved experience
+        _tappedExperienceCategory = null;
+        _tappedLocationBusinessStatus = businessStatus;
+        _tappedLocationOpenNow = openNow;
+        _publicReadOnlyExperience = null;
+        _publicReadOnlyExperienceId = null;
+        _searchController.clear();
+        _searchResults = [];
+        _showSearchResults = false;
+      });
+      
+      _showMarkerInfoWindow(tappedMarkerId);
+    }
   }
 
   // ADDED: Focus map on itinerary item
@@ -3004,6 +3267,52 @@ class _MapScreenState extends State<MapScreen> {
 
   // ADDED: Confirm exit event view mode with dialog
   Future<void> _confirmExitEventViewMode() async {
+    // If in add-to-event mode, exit that first
+    if (_isAddToEventModeActive) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) {
+          return AlertDialog(
+            backgroundColor: Colors.white,
+            title: const Text('Stop Adding Experiences?'),
+            content: Text(
+              _addToEventDraftItinerary.isEmpty
+                  ? 'Are you sure you want to stop adding experiences to this event?'
+                  : 'You have ${_addToEventDraftItinerary.length} unadded experience${_addToEventDraftItinerary.length != 1 ? 's' : ''}. Are you sure you want to exit?',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                child: const Text('Exit'),
+              ),
+            ],
+          );
+        },
+      );
+
+      if (confirmed == true && mounted) {
+        // If we came from event experience selector and have changes, return the updated event
+        if (widget.initialEvent != null && _activeEventViewMode != null && _addToEventDraftItinerary.isNotEmpty) {
+          final updatedEvent = _activeEventViewMode!.copyWith(
+            experiences: [
+              ..._activeEventViewMode!.experiences,
+              ..._addToEventDraftItinerary,
+            ],
+            updatedAt: DateTime.now(),
+          );
+          Navigator.of(context).pop(updatedEvent);
+        } else {
+          _exitAddToEventMode();
+        }
+        return; // Don't exit event view mode, just exit add mode
+      } else {
+        return; // User cancelled
+      }
+    }
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (BuildContext dialogContext) {
@@ -3026,7 +3335,12 @@ class _MapScreenState extends State<MapScreen> {
     );
 
     if (confirmed == true && mounted) {
-      _exitEventViewMode();
+      // If we came from event experience selector (initialEvent provided), return to it with the event
+      if (widget.initialEvent != null && _activeEventViewMode != null) {
+        Navigator.of(context).pop(_activeEventViewMode);
+      } else {
+        _exitEventViewMode();
+      }
     }
   }
 
@@ -3039,6 +3353,9 @@ class _MapScreenState extends State<MapScreen> {
       _eventViewMarkerExperiences.clear();
       _eventViewMarkerEntries.clear();
       _isEventOverlayExpanded = false;
+      // Also exit add-to-event mode if active
+      _isAddToEventModeActive = false;
+      _addToEventDraftItinerary = [];
     });
   }
 
@@ -3064,9 +3381,32 @@ class _MapScreenState extends State<MapScreen> {
         _eventViewMarkerEntries.clear();
         _isEventOverlayExpanded = false;
       }
+      // Exit add to event mode if active
+      _isAddToEventModeActive = false;
+      _addToEventDraftItinerary = [];
     });
     
     // Regenerate markers to show selection state (initially none selected)
+    unawaited(_generateMarkersFromExperiences(_filterExperiences(_experiences)));
+  }
+
+  // ADDED: Enter add to event mode - for adding experiences to existing event
+  void _enterAddToEventMode() {
+    if (_activeEventViewMode == null) return;
+    
+    print("🗺️ MAP SCREEN: Entering add to event mode for '${_activeEventViewMode!.title}'");
+    
+    setState(() {
+      _isAddToEventModeActive = true;
+      _addToEventDraftItinerary = [];
+      // Exit regular select mode if active
+      _isSelectModeActive = false;
+      _selectModeDraftItinerary = [];
+      _isSelectModeOverlayExpanded = false;
+      _selectModeEventOnlyMarkers.clear();
+    });
+    
+    // Regenerate markers to show selection state
     unawaited(_generateMarkersFromExperiences(_filterExperiences(_experiences)));
   }
 
@@ -3081,6 +3421,115 @@ class _MapScreenState extends State<MapScreen> {
     });
     // Regenerate markers to remove numbered badges
     unawaited(_generateMarkersFromExperiences(_filterExperiences(_experiences)));
+  }
+
+  // ADDED: Exit add to event mode
+  void _exitAddToEventMode() {
+    print("🗺️ MAP SCREEN: Exiting add to event mode");
+    setState(() {
+      _isAddToEventModeActive = false;
+      _addToEventDraftItinerary = [];
+    });
+    // Regenerate markers to remove selection state
+    unawaited(_generateMarkersFromExperiences(_filterExperiences(_experiences)));
+  }
+
+  // ADDED: Finish adding to event and navigate back to event editor
+  Future<void> _finishAddToEvent() async {
+    if (_addToEventDraftItinerary.isEmpty || _activeEventViewMode == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No experiences selected to add.')),
+        );
+      }
+      return;
+    }
+
+    final userId = _authService.currentUser?.uid;
+    if (userId == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please sign in to update the event.')),
+        );
+      }
+      return;
+    }
+
+    // Show loading indicator
+    if (!mounted) return;
+    
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(
+        child: CircularProgressIndicator(),
+      ),
+    );
+
+    try {
+      // Combine existing experiences with new ones
+      final updatedExperiences = [
+        ..._activeEventViewMode!.experiences,
+        ..._addToEventDraftItinerary,
+      ];
+
+      // Create updated event with new experiences
+      final updatedEvent = _activeEventViewMode!.copyWith(
+        experiences: updatedExperiences,
+        updatedAt: DateTime.now(),
+      );
+
+      // Fetch experiences that are referenced in the itinerary (non-event-only entries)
+      final allExperienceIds = updatedEvent.experiences
+          .map((entry) => entry.experienceId)
+          .where((id) => id.isNotEmpty)
+          .toList();
+
+      List<Experience> experiences = [];
+      if (allExperienceIds.isNotEmpty) {
+        experiences = await _experienceService.getExperiencesByIds(allExperienceIds);
+      }
+
+      // Fetch user's categories and color categories
+      final categories = await _experienceService.getUserCategories();
+      final colorCategories = await _experienceService.getUserColorCategories();
+
+      if (!mounted) return;
+
+      // Close loading dialog
+      Navigator.of(context).pop();
+
+      // Exit add to event mode
+      _exitAddToEventMode();
+
+      // Pop the map screen to go back
+      Navigator.of(context).pop();
+
+      // Navigate to event editor with updated event
+      if (mounted) {
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => EventEditorModal(
+              event: updatedEvent,
+              experiences: experiences,
+              categories: categories,
+              colorCategories: colorCategories,
+            ),
+            fullscreenDialog: true,
+          ),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      
+      // Close loading dialog
+      Navigator.of(context).pop();
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to open event editor: $e')),
+      );
+    }
   }
 
   // ADDED: Confirm exit select mode (prompts if there are items in the draft)
@@ -3232,6 +3681,187 @@ class _MapScreenState extends State<MapScreen> {
     return null;
   }
 
+  int? _getAddToEventDraftIndexForExperience(Experience experience) {
+    for (int i = 0; i < _addToEventDraftItinerary.length; i++) {
+      final entry = _addToEventDraftItinerary[i];
+      if (!entry.isEventOnly && entry.experienceId == experience.id) {
+        return i;
+      }
+    }
+    return null;
+  }
+
+  // ADDED: Check if tapped item is in the active event's itinerary
+  bool _isTappedItemInEventItinerary() {
+    if (_activeEventViewMode == null || _tappedLocationDetails == null) return false;
+    
+    if (_tappedExperience != null) {
+      // Check if saved experience is in event
+      return _activeEventViewMode!.experiences.any(
+        (entry) => !entry.isEventOnly && entry.experienceId == _tappedExperience!.id
+      );
+    } else {
+      // Check if location (event-only) is in event by placeId or coordinates
+      return _activeEventViewMode!.experiences.any((entry) {
+        if (!entry.isEventOnly || entry.inlineLocation == null) return false;
+        // Check by placeId first
+        if (_tappedLocationDetails!.placeId != null &&
+            _tappedLocationDetails!.placeId!.isNotEmpty &&
+            entry.inlineLocation!.placeId == _tappedLocationDetails!.placeId) {
+          return true;
+        }
+        // Check by coordinates
+        return _areCoordinatesClose(
+          _tappedLocationDetails!.latitude,
+          _tappedLocationDetails!.longitude,
+          entry.inlineLocation!.latitude,
+          entry.inlineLocation!.longitude,
+          tolerance: 0.0005,
+        );
+      });
+    }
+  }
+
+  // ADDED: Add tapped item directly to event itinerary and enter add-to-event mode
+  Future<void> _addTappedItemToEvent() async {
+    if (_activeEventViewMode == null || _tappedLocationDetails == null) return;
+    
+    // Create the entry
+    EventExperienceEntry entry;
+    if (_tappedExperience != null) {
+      entry = EventExperienceEntry(experienceId: _tappedExperience!.id);
+    } else {
+      entry = EventExperienceEntry(
+        experienceId: '',
+        inlineName: _tappedLocationDetails!.getPlaceName(),
+        inlineDescription: '',
+        inlineLocation: _tappedLocationDetails,
+        inlineCategoryId: _tappedExperienceCategory?.id,
+        inlineColorCategoryId: null,
+        inlineCategoryIconDenorm: _tappedExperienceCategory?.icon ?? '📍',
+        inlineColorHexDenorm: null,
+      );
+    }
+    
+    // Enter add-to-event mode with this item
+    setState(() {
+      _isAddToEventModeActive = true;
+      _addToEventDraftItinerary = [entry];
+      _isSelectModeActive = false;
+      _selectModeDraftItinerary = [];
+      // Clear tapped location
+      _tappedLocationMarker = null;
+      _tappedLocationDetails = null;
+      _tappedExperience = null;
+      _tappedExperienceCategory = null;
+      _tappedLocationBusinessStatus = null;
+      _tappedLocationOpenNow = null;
+    });
+    
+    // Regenerate markers to show selection state
+    unawaited(_generateMarkersFromExperiences(_filterExperiences(_experiences)));
+    
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Added to event. Tap "✓" to save changes.'),
+        duration: Duration(seconds: 2),
+      ),
+    );
+  }
+
+  // ADDED: Remove tapped item from event itinerary
+  Future<void> _removeTappedItemFromEvent() async {
+    if (_activeEventViewMode == null || _tappedLocationDetails == null) return;
+    
+    // Find the index of the item to remove
+    int indexToRemove = -1;
+    
+    if (_tappedExperience != null) {
+      // Find saved experience in event
+      indexToRemove = _activeEventViewMode!.experiences.indexWhere(
+        (entry) => !entry.isEventOnly && entry.experienceId == _tappedExperience!.id
+      );
+    } else {
+      // Find location (event-only) in event
+      indexToRemove = _activeEventViewMode!.experiences.indexWhere((entry) {
+        if (!entry.isEventOnly || entry.inlineLocation == null) return false;
+        if (_tappedLocationDetails!.placeId != null &&
+            _tappedLocationDetails!.placeId!.isNotEmpty &&
+            entry.inlineLocation!.placeId == _tappedLocationDetails!.placeId) {
+          return true;
+        }
+        return _areCoordinatesClose(
+          _tappedLocationDetails!.latitude,
+          _tappedLocationDetails!.longitude,
+          entry.inlineLocation!.latitude,
+          entry.inlineLocation!.longitude,
+          tolerance: 0.0005,
+        );
+      });
+    }
+    
+    if (indexToRemove == -1) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Item not found in event')),
+      );
+      return;
+    }
+    
+    // Show loading
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(child: CircularProgressIndicator()),
+    );
+    
+    try {
+      // Create updated experiences list without the removed item
+      final updatedExperiences = List<EventExperienceEntry>.from(_activeEventViewMode!.experiences)
+        ..removeAt(indexToRemove);
+      
+      // Create updated event
+      final updatedEvent = _activeEventViewMode!.copyWith(
+        experiences: updatedExperiences,
+        updatedAt: DateTime.now(),
+      );
+      
+      // Save the event
+      await _eventService.updateEvent(updatedEvent);
+      
+      if (!mounted) return;
+      
+      // Close loading dialog
+      Navigator.of(context).pop();
+      
+      // Clear tapped location state
+      setState(() {
+        _tappedLocationMarker = null;
+        _tappedLocationDetails = null;
+        _tappedExperience = null;
+        _tappedExperienceCategory = null;
+        _tappedLocationBusinessStatus = null;
+        _tappedLocationOpenNow = null;
+      });
+      
+      // Refresh event view mode with updated event
+      await _enterEventViewMode(updatedEvent);
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Removed from event'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        Navigator.of(context).pop(); // Close loading
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to remove: $e')),
+        );
+      }
+    }
+  }
+
   // ADDED: Check if a location is in the select mode draft and return its index
   int? _getSelectModeDraftIndexForLocation(Location location) {
     for (int i = 0; i < _selectModeDraftItinerary.length; i++) {
@@ -3255,6 +3885,139 @@ class _MapScreenState extends State<MapScreen> {
       }
     }
     return null;
+  }
+
+  // ADDED: Check if tapped item is in draft itinerary (select mode or add-to-event mode)
+  bool _isTappedItemInDraftItinerary() {
+    if (_tappedLocationDetails == null) return false;
+    
+    if (_tappedExperience != null) {
+      // Check if saved experience is in draft
+      if (_isSelectModeActive) {
+        return _getSelectModeDraftIndexForExperience(_tappedExperience!) != null;
+      } else if (_isAddToEventModeActive) {
+        return _getAddToEventDraftIndexForExperience(_tappedExperience!) != null;
+      }
+    } else {
+      // Check if location is in draft
+      if (_isSelectModeActive) {
+        return _getSelectModeDraftIndexForLocation(_tappedLocationDetails!) != null;
+      } else if (_isAddToEventModeActive) {
+        // Check in add-to-event draft
+        for (final entry in _addToEventDraftItinerary) {
+          if (entry.isEventOnly && entry.inlineLocation != null) {
+            if (_tappedLocationDetails!.placeId != null &&
+                _tappedLocationDetails!.placeId!.isNotEmpty &&
+                entry.inlineLocation!.placeId == _tappedLocationDetails!.placeId) {
+              return true;
+            }
+            if (_areCoordinatesClose(
+              _tappedLocationDetails!.latitude,
+              _tappedLocationDetails!.longitude,
+              entry.inlineLocation!.latitude,
+              entry.inlineLocation!.longitude,
+              tolerance: 0.0005,
+            )) {
+              return true;
+            }
+          }
+        }
+      }
+    }
+    
+    return false;
+  }
+
+  // ADDED: Check if tapped item is in existing event itinerary (for add-to-event mode)
+  bool _isTappedItemInExistingEventItinerary() {
+    if (_activeEventViewMode == null || _tappedLocationDetails == null) return false;
+    
+    if (_tappedExperience != null) {
+      // Check if saved experience is in event
+      return _activeEventViewMode!.experiences.any(
+        (entry) => !entry.isEventOnly && entry.experienceId == _tappedExperience!.id
+      );
+    } else {
+      // Check if location (event-only) is in event by placeId or coordinates
+      return _activeEventViewMode!.experiences.any((entry) {
+        if (!entry.isEventOnly || entry.inlineLocation == null) return false;
+        if (_tappedLocationDetails!.placeId != null &&
+            _tappedLocationDetails!.placeId!.isNotEmpty &&
+            entry.inlineLocation!.placeId == _tappedLocationDetails!.placeId) {
+          return true;
+        }
+        return _areCoordinatesClose(
+          _tappedLocationDetails!.latitude,
+          _tappedLocationDetails!.longitude,
+          entry.inlineLocation!.latitude,
+          entry.inlineLocation!.longitude,
+          tolerance: 0.0005,
+        );
+      });
+    }
+  }
+
+  // ADDED: Remove tapped item from draft itinerary
+  void _removeTappedItemFromDraftItinerary() {
+    if (_tappedLocationDetails == null) return;
+    
+    if (_tappedExperience != null) {
+      // Remove saved experience from draft
+      if (_isSelectModeActive) {
+        final index = _getSelectModeDraftIndexForExperience(_tappedExperience!);
+        if (index != null) {
+          _removeFromSelectModeDraft(index);
+        }
+      } else if (_isAddToEventModeActive) {
+        final index = _getAddToEventDraftIndexForExperience(_tappedExperience!);
+        if (index != null) {
+          setState(() {
+            _addToEventDraftItinerary.removeAt(index);
+          });
+          // Regenerate markers to update selection state
+          unawaited(_generateMarkersFromExperiences(_filterExperiences(_experiences)));
+        }
+      }
+    } else {
+      // Remove location from draft
+      if (_isSelectModeActive) {
+        final index = _getSelectModeDraftIndexForLocation(_tappedLocationDetails!);
+        if (index != null) {
+          _removeFromSelectModeDraft(index);
+        }
+      } else if (_isAddToEventModeActive) {
+        // Find and remove from add-to-event draft
+        int? indexToRemove;
+        for (int i = 0; i < _addToEventDraftItinerary.length; i++) {
+          final entry = _addToEventDraftItinerary[i];
+          if (entry.isEventOnly && entry.inlineLocation != null) {
+            if (_tappedLocationDetails!.placeId != null &&
+                _tappedLocationDetails!.placeId!.isNotEmpty &&
+                entry.inlineLocation!.placeId == _tappedLocationDetails!.placeId) {
+              indexToRemove = i;
+              break;
+            }
+            if (_areCoordinatesClose(
+              _tappedLocationDetails!.latitude,
+              _tappedLocationDetails!.longitude,
+              entry.inlineLocation!.latitude,
+              entry.inlineLocation!.longitude,
+              tolerance: 0.0005,
+            )) {
+              indexToRemove = i;
+              break;
+            }
+          }
+        }
+        if (indexToRemove != null) {
+          setState(() {
+            _addToEventDraftItinerary.removeAt(indexToRemove!);
+          });
+          // Regenerate markers to update selection state
+          unawaited(_generateMarkersFromExperiences(_filterExperiences(_experiences)));
+        }
+      }
+    }
   }
 
   // ADDED: Add experience to select mode draft itinerary
@@ -3405,7 +4168,13 @@ class _MapScreenState extends State<MapScreen> {
       );
     }
 
-    _addToSelectModeDraft(entry);
+    if (_isAddToEventModeActive) {
+      // Add to event mode - check against current event's experiences
+      _addToEventDraft(entry);
+    } else {
+      // Regular select mode - add to draft itinerary
+      _addToSelectModeDraft(entry);
+    }
 
     // Clear the tapped location after adding
     setState(() {
@@ -3416,6 +4185,50 @@ class _MapScreenState extends State<MapScreen> {
       _tappedLocationBusinessStatus = null;
       _tappedLocationOpenNow = null;
     });
+  }
+
+  // ADDED: Add to event draft (similar to select mode but checks against current event)
+  void _addToEventDraft(EventExperienceEntry entry) {
+    if (_activeEventViewMode == null) return;
+    
+    // Check for duplicates in current event's experiences
+    final isDuplicateInEvent = _activeEventViewMode!.experiences.any((existing) {
+      if (entry.isEventOnly && existing.isEventOnly) {
+        return entry.inlineLocation?.placeId != null &&
+            existing.inlineLocation?.placeId == entry.inlineLocation?.placeId;
+      } else if (!entry.isEventOnly && !existing.isEventOnly) {
+        return entry.experienceId == existing.experienceId;
+      }
+      return false;
+    });
+
+    // Check for duplicates in draft
+    final isDuplicateInDraft = _addToEventDraftItinerary.any((existing) {
+      if (entry.isEventOnly && existing.isEventOnly) {
+        return entry.inlineLocation?.placeId != null &&
+            existing.inlineLocation?.placeId == entry.inlineLocation?.placeId;
+      } else if (!entry.isEventOnly && !existing.isEventOnly) {
+        return entry.experienceId == existing.experienceId;
+      }
+      return false;
+    });
+
+    if (isDuplicateInEvent || isDuplicateInDraft) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('This item is already in your event itinerary'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _addToEventDraftItinerary.add(entry);
+    });
+
+    // Regenerate markers to show selection state
+    unawaited(_generateMarkersFromExperiences(_filterExperiences(_experiences)));
   }
 
   String _formatEventTime(Event event) {
@@ -4909,22 +5722,29 @@ class _MapScreenState extends State<MapScreen> {
         markerBackgroundColor = _parseColor(colorCategory.colorHex);
       }
 
-      // Check if this experience is selected in select mode
+      // Check if this experience is selected in select mode or add-to-event mode
       final int? selectModeIndex = _isSelectModeActive
           ? _getSelectModeDraftIndexForExperience(experience)
           : null;
-      final bool isSelectedInDraft = selectModeIndex != null;
+      final int? addToEventIndex = _isAddToEventModeActive
+          ? _getAddToEventDraftIndexForExperience(experience)
+          : null;
+      final bool isSelectedInDraft = selectModeIndex != null || addToEventIndex != null;
+      final int? selectedIndex = selectModeIndex ?? addToEventIndex;
+      final Color selectionColor = _isAddToEventModeActive && _activeEventViewMode != null
+          ? _getEventColor(_activeEventViewMode!)
+          : _selectModeColor;
 
       BitmapDescriptor categoryIconBitmap =
           BitmapDescriptor.defaultMarker; // Default
 
       if (isSelectedInDraft) {
-        // Use numbered icon with select mode color (more saturated)
+        // Use numbered icon with selection color (more saturated)
         try {
           categoryIconBitmap = await _bitmapDescriptorFromNumberedIcon(
-            number: selectModeIndex! + 1, // 1-indexed position
+            number: selectedIndex! + 1, // 1-indexed position
             iconText: iconText,
-            backgroundColor: _selectModeColor, // Use select mode color instead
+            backgroundColor: selectionColor, // Use selection color
             size: 90, // Larger size for selected markers
           );
         } catch (e) {
@@ -5997,6 +6817,29 @@ class _MapScreenState extends State<MapScreen> {
         foregroundColor: Colors.black,
         elevation: 0,
         titleSpacing: 0,
+        leading: (_isEventViewModeActive || _isAddToEventModeActive) && widget.initialEvent != null
+            ? IconButton(
+                icon: const Icon(Icons.arrow_back),
+                onPressed: () async {
+                  // If in add-to-event mode with changes, return the updated event
+                  if (_isAddToEventModeActive && _addToEventDraftItinerary.isNotEmpty && _activeEventViewMode != null) {
+                    final updatedEvent = _activeEventViewMode!.copyWith(
+                      experiences: [
+                        ..._activeEventViewMode!.experiences,
+                        ..._addToEventDraftItinerary,
+                      ],
+                      updatedAt: DateTime.now(),
+                    );
+                    Navigator.of(context).pop(updatedEvent);
+                  } else if (_activeEventViewMode != null) {
+                    // Return the current event (might have been modified via remove)
+                    Navigator.of(context).pop(_activeEventViewMode);
+                  } else {
+                    Navigator.of(context).pop();
+                  }
+                },
+              )
+            : null,
         title: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -6342,7 +7185,7 @@ class _MapScreenState extends State<MapScreen> {
                     allowSelection: true,
                     onLocationSelected: _handleLocationSelected,
                     showControls: true,
-                    mapToolbarEnabled: !_canOpenSelectedExperience && !_isEventViewModeActive,
+                    mapToolbarEnabled: !_canOpenSelectedExperience && !_isEventViewModeActive && !_isAddToEventModeActive,
                     additionalMarkers: allMarkers,
                     onMapControllerCreated: _onMapWidgetCreated,
                   ),
@@ -6414,7 +7257,18 @@ class _MapScreenState extends State<MapScreen> {
                                         ),
                                         const SizedBox(height: 2),
                                         Text(
-                                          '${_eventViewMarkers.length} stop${_eventViewMarkers.length != 1 ? 's' : ''} on map',
+                                          _isAddToEventModeActive
+                                              ? (() {
+                                                  final existingCount = _activeEventViewMode!.experiences.length;
+                                                  final newCount = _addToEventDraftItinerary.length;
+                                                  final totalCount = existingCount + newCount;
+                                                  if (newCount == 0) {
+                                                    return '$existingCount item${existingCount != 1 ? 's' : ''} • Tap to add more';
+                                                  } else {
+                                                    return '$totalCount item${totalCount != 1 ? 's' : ''} (+$newCount new)';
+                                                  }
+                                                })()
+                                              : '${_eventViewMarkers.length} stop${_eventViewMarkers.length != 1 ? 's' : ''} on map',
                                           style: TextStyle(
                                             fontSize: 13,
                                             color: Colors.grey[600],
@@ -6425,30 +7279,110 @@ class _MapScreenState extends State<MapScreen> {
                                   ),
                                   const SizedBox(width: 8),
                                   // List icon button
-                                  Material(
-                                    color: Colors.transparent,
-                                    child: InkWell(
-                                      onTap: () {
-                                        setState(() {
-                                          _isEventOverlayExpanded = !_isEventOverlayExpanded;
-                                        });
-                                      },
-                                      borderRadius: BorderRadius.circular(20),
-                                      child: Container(
-                                        padding: const EdgeInsets.all(8),
-                                        decoration: BoxDecoration(
-                                          color: _getEventColor(_activeEventViewMode!).withOpacity(
-                                            _isEventOverlayExpanded ? 0.8 : 0.6
+                                  Stack(
+                                    clipBehavior: Clip.none,
+                                    children: [
+                                      Material(
+                                        color: Colors.transparent,
+                                        child: InkWell(
+                                          onTap: () {
+                                            setState(() {
+                                              _isEventOverlayExpanded = !_isEventOverlayExpanded;
+                                            });
+                                          },
+                                          borderRadius: BorderRadius.circular(20),
+                                          child: Container(
+                                            padding: const EdgeInsets.all(8),
+                                            decoration: BoxDecoration(
+                                              color: _getEventColor(_activeEventViewMode!).withOpacity(
+                                                _isEventOverlayExpanded ? 0.8 : 0.6
+                                              ),
+                                              shape: BoxShape.circle,
+                                            ),
+                                            child: const Icon(
+                                              Icons.list,
+                                              size: 20,
+                                              color: Colors.white,
+                                            ),
                                           ),
-                                          shape: BoxShape.circle,
-                                        ),
-                                        child: Icon(
-                                          Icons.list,
-                                          size: 20,
-                                          color: Colors.white,
                                         ),
                                       ),
-                                    ),
+                                      Positioned(
+                                        right: -4,
+                                        bottom: -4,
+                                        child: Container(
+                                          padding: const EdgeInsets.all(4),
+                                          decoration: BoxDecoration(
+                                            color: _getEventColor(_activeEventViewMode!),
+                                            shape: BoxShape.circle,
+                                          ),
+                                          child: Text(
+                                            _isAddToEventModeActive
+                                                ? '${_activeEventViewMode!.experiences.length + _addToEventDraftItinerary.length}'
+                                                : '${_activeEventViewMode!.experiences.length}',
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 10,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(width: 4),
+                                  // Add experiences button (or finish button when in add mode)
+                                  Stack(
+                                    clipBehavior: Clip.none,
+                                    children: [
+                                      Material(
+                                        color: Colors.transparent,
+                                        child: InkWell(
+                                          onTap: _isAddToEventModeActive
+                                              ? _finishAddToEvent
+                                              : _enterAddToEventMode,
+                                          borderRadius: BorderRadius.circular(20),
+                                          child: Container(
+                                            padding: const EdgeInsets.all(8),
+                                            decoration: BoxDecoration(
+                                              color: _isAddToEventModeActive
+                                                  ? Colors.green
+                                                  : Theme.of(context).primaryColor,
+                                              shape: BoxShape.circle,
+                                            ),
+                                            child: Icon(
+                                              _isAddToEventModeActive
+                                                  ? Icons.check
+                                                  : Icons.add,
+                                              size: 20,
+                                              color: Colors.white,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                      if (_isAddToEventModeActive)
+                                        Positioned(
+                                          right: -4,
+                                          bottom: -4,
+                                          child: Container(
+                                            padding: const EdgeInsets.all(4),
+                                            decoration: BoxDecoration(
+                                              color: _addToEventDraftItinerary.isNotEmpty 
+                                                  ? Colors.red 
+                                                  : _getEventColor(_activeEventViewMode!),
+                                              shape: BoxShape.circle,
+                                            ),
+                                            child: Text(
+                                              '${_addToEventDraftItinerary.length}',
+                                              style: const TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 10,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                    ],
                                   ),
                                   const SizedBox(width: 4),
                                   // Close button
@@ -6555,75 +7489,101 @@ class _MapScreenState extends State<MapScreen> {
                                   ),
                                   const SizedBox(width: 8),
                                   // List icon button
-                                  Material(
-                                    color: Colors.transparent,
-                                    child: InkWell(
-                                      onTap: () {
-                                        setState(() {
-                                          _isSelectModeOverlayExpanded = !_isSelectModeOverlayExpanded;
-                                        });
-                                      },
-                                      borderRadius: BorderRadius.circular(20),
-                                      child: Container(
-                                        padding: const EdgeInsets.all(8),
-                                        decoration: BoxDecoration(
-                                          color: _selectModeColor.withOpacity(
-                                            _isSelectModeOverlayExpanded ? 0.8 : 0.6
-                                          ),
-                                          shape: BoxShape.circle,
-                                        ),
-                                        child: Stack(
-                                          children: [
-                                            const Icon(
+                                  Stack(
+                                    clipBehavior: Clip.none,
+                                    children: [
+                                      Material(
+                                        color: Colors.transparent,
+                                        child: InkWell(
+                                          onTap: () {
+                                            setState(() {
+                                              _isSelectModeOverlayExpanded = !_isSelectModeOverlayExpanded;
+                                            });
+                                          },
+                                          borderRadius: BorderRadius.circular(20),
+                                          child: Container(
+                                            padding: const EdgeInsets.all(8),
+                                            decoration: BoxDecoration(
+                                              color: _selectModeColor.withOpacity(
+                                                _isSelectModeOverlayExpanded ? 0.8 : 0.6
+                                              ),
+                                              shape: BoxShape.circle,
+                                            ),
+                                            child: const Icon(
                                               Icons.list,
                                               size: 20,
                                               color: Colors.white,
                                             ),
-                                            if (_selectModeDraftItinerary.isNotEmpty)
-                                              Positioned(
-                                                right: -4,
-                                                top: -4,
-                                                child: Container(
-                                                  padding: const EdgeInsets.all(4),
-                                                  decoration: const BoxDecoration(
-                                                    color: Colors.red,
-                                                    shape: BoxShape.circle,
-                                                  ),
-                                                  child: Text(
-                                                    '${_selectModeDraftItinerary.length}',
-                                                    style: const TextStyle(
-                                                      color: Colors.white,
-                                                      fontSize: 10,
-                                                      fontWeight: FontWeight.bold,
-                                                    ),
-                                                  ),
-                                                ),
-                                              ),
-                                          ],
+                                          ),
                                         ),
                                       ),
-                                    ),
+                                      Positioned(
+                                        right: -4,
+                                        bottom: -4,
+                                        child: Container(
+                                          padding: const EdgeInsets.all(4),
+                                          decoration: BoxDecoration(
+                                            color: _selectModeColor,
+                                            shape: BoxShape.circle,
+                                          ),
+                                          child: Text(
+                                            '${_selectModeDraftItinerary.length}',
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 10,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                   const SizedBox(width: 4),
                                   // Checkmark button
-                                  Material(
-                                    color: Colors.transparent,
-                                    child: InkWell(
-                                      onTap: _finishSelectModeAndOpenEditor,
-                                      borderRadius: BorderRadius.circular(20),
-                                      child: Container(
-                                        padding: const EdgeInsets.all(8),
-                                        decoration: BoxDecoration(
-                                          color: Theme.of(context).primaryColor,
-                                          shape: BoxShape.circle,
-                                        ),
-                                        child: const Icon(
-                                          Icons.check,
-                                          size: 20,
-                                          color: Colors.white,
+                                  Stack(
+                                    clipBehavior: Clip.none,
+                                    children: [
+                                      Material(
+                                        color: Colors.transparent,
+                                        child: InkWell(
+                                          onTap: _finishSelectModeAndOpenEditor,
+                                          borderRadius: BorderRadius.circular(20),
+                                          child: Container(
+                                            padding: const EdgeInsets.all(8),
+                                            decoration: BoxDecoration(
+                                              color: Theme.of(context).primaryColor,
+                                              shape: BoxShape.circle,
+                                            ),
+                                            child: const Icon(
+                                              Icons.check,
+                                              size: 20,
+                                              color: Colors.white,
+                                            ),
+                                          ),
                                         ),
                                       ),
-                                    ),
+                                      Positioned(
+                                        right: -4,
+                                        bottom: -4,
+                                        child: Container(
+                                          padding: const EdgeInsets.all(4),
+                                          decoration: BoxDecoration(
+                                            color: _selectModeDraftItinerary.isNotEmpty 
+                                                ? Colors.red 
+                                                : _selectModeColor,
+                                            shape: BoxShape.circle,
+                                          ),
+                                          child: Text(
+                                            '${_selectModeDraftItinerary.length}',
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 10,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                   const SizedBox(width: 4),
                                   // Close button
@@ -6904,24 +7864,96 @@ class _MapScreenState extends State<MapScreen> {
                             ],
                           ),
 
-                          // ADDED: Select button for adding to event itinerary when in select mode
-                          if (_isSelectModeActive && _tappedLocationDetails != null) ...[
+                          // ADDED: Add/Remove button for event itinerary when in select mode or add-to-event mode
+                          if ((_isSelectModeActive || _isAddToEventModeActive) && _tappedLocationDetails != null) ...[
                             const SizedBox(height: 12),
                             SizedBox(
                               width: double.infinity,
-                              child: ElevatedButton.icon(
-                                onPressed: () => _handleSelectForEvent(),
-                                icon: const Icon(Icons.add_circle_outline, size: 20),
-                                label: const Text('Select for Event'),
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: _selectModeColor,
-                                  foregroundColor: Colors.white,
-                                  padding: const EdgeInsets.symmetric(vertical: 12),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                ),
-                              ),
+                              child: (() {
+                                // Check if item is in itinerary (existing event or draft)
+                                final bool isInExistingEvent = _isAddToEventModeActive && _isTappedItemInExistingEventItinerary();
+                                final bool isInDraft = _isTappedItemInDraftItinerary();
+                                final bool isInItinerary = isInExistingEvent || isInDraft;
+                                
+                                return isInItinerary
+                                    ? ElevatedButton.icon(
+                                        onPressed: () {
+                                          if (isInDraft) {
+                                            // Remove from draft
+                                            _removeTappedItemFromDraftItinerary();
+                                            ScaffoldMessenger.of(context).showSnackBar(
+                                              const SnackBar(
+                                                content: Text('Removed from itinerary'),
+                                                duration: Duration(seconds: 1),
+                                              ),
+                                            );
+                                          } else if (isInExistingEvent) {
+                                            // Remove from existing event
+                                            _removeTappedItemFromEvent();
+                                          }
+                                        },
+                                        icon: const Icon(Icons.remove_circle_outline, size: 20),
+                                        label: const Text('Remove from event'),
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: Colors.red.shade600,
+                                          foregroundColor: Colors.white,
+                                          padding: const EdgeInsets.symmetric(vertical: 12),
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(8),
+                                          ),
+                                        ),
+                                      )
+                                    : ElevatedButton.icon(
+                                        onPressed: () => _handleSelectForEvent(),
+                                        icon: const Icon(Icons.add_circle_outline, size: 20),
+                                        label: const Text('Add to Event'),
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: _isAddToEventModeActive && _activeEventViewMode != null
+                                              ? _getEventColor(_activeEventViewMode!)
+                                              : _selectModeColor,
+                                          foregroundColor: Colors.white,
+                                          padding: const EdgeInsets.symmetric(vertical: 12),
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(8),
+                                          ),
+                                        ),
+                                      );
+                              })(),
+                            ),
+                          ],
+
+                          // ADDED: Add/Remove from event button when in event view mode (not in add-to-event or select mode)
+                          if (_isEventViewModeActive && !_isAddToEventModeActive && !_isSelectModeActive && _tappedLocationDetails != null) ...[
+                            const SizedBox(height: 12),
+                            SizedBox(
+                              width: double.infinity,
+                              child: _isTappedItemInEventItinerary()
+                                  ? ElevatedButton.icon(
+                                      onPressed: () => _removeTappedItemFromEvent(),
+                                      icon: const Icon(Icons.remove_circle_outline, size: 20),
+                                      label: const Text('Remove from event'),
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: Colors.red.shade600,
+                                        foregroundColor: Colors.white,
+                                        padding: const EdgeInsets.symmetric(vertical: 12),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(8),
+                                        ),
+                                      ),
+                                    )
+                                  : ElevatedButton.icon(
+                                      onPressed: () => _addTappedItemToEvent(),
+                                      icon: const Icon(Icons.add_circle_outline, size: 20),
+                                      label: const Text('Add to event'),
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: _getEventColor(_activeEventViewMode!),
+                                        foregroundColor: Colors.white,
+                                        padding: const EdgeInsets.symmetric(vertical: 12),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(8),
+                                        ),
+                                      ),
+                                    ),
                             ),
                           ],
 
