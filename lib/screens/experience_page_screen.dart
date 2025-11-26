@@ -963,13 +963,14 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                     }
                   },
                 itemBuilder: (context) {
+                  final bool canEdit = _canEditExperience();
                   final menuItems = <PopupMenuEntry<String>>[
                     const PopupMenuItem<String>(
                       value: 'report',
                       child: Text('Report'),
                     ),
                   ];
-                  if (!widget.readOnlyPreview) {
+                  if (canEdit) {
                     menuItems.add(
                       const PopupMenuItem<String>(
                         value: 'remove',

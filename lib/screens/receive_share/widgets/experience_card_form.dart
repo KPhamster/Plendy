@@ -1325,94 +1325,83 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                       SizedBox(height: 16),
 
                       // --- ADDED: Other Categories Selection ---
-                      Text('Other Categories',
-                          style: Theme.of(context)
-                              .textTheme
-                              .bodyMedium
-                              ?.copyWith(color: Colors.grey[600])),
-                      const SizedBox(height: 4),
-                      Container(
-                        width: double.infinity, // Ensure it takes full width
-                        padding: const EdgeInsets.all(12.0),
-                        decoration: BoxDecoration(
-                          border: Border.all(color: Colors.grey),
-                          borderRadius: BorderRadius.circular(8.0),
-                        ),
-                        child: ValueListenableBuilder<List<UserCategory>>(
-                          valueListenable: widget.userCategoriesNotifier,
-                          builder: (context, allCategories, child) {
-                            final selectedCategories = allCategories
-                                .where((cat) => widget
-                                    .cardData.selectedOtherCategoryIds
-                                    .contains(cat.id))
-                                .toList();
+                      ValueListenableBuilder<List<UserCategory>>(
+                        valueListenable: widget.userCategoriesNotifier,
+                        builder: (context, allCategories, child) {
+                          final selectedCategories = allCategories
+                              .where((cat) => widget
+                                  .cardData.selectedOtherCategoryIds
+                                  .contains(cat.id))
+                              .toList();
+                          final hasSelected = selectedCategories.isNotEmpty;
 
-                            return Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                if (selectedCategories.isEmpty)
-                                  Padding(
-                                    padding: const EdgeInsets.only(bottom: 8.0),
-                                    child: Text(
-                                      'No other categories assigned.',
-                                      style: TextStyle(color: Colors.grey[700]),
-                                    ),
-                                  )
-                                else
-                                  Padding(
-                                    padding: const EdgeInsets.only(bottom: 8.0),
-                                    child: Wrap(
-                                      spacing: 6.0,
-                                      runSpacing: 6.0,
-                                      children:
-                                          selectedCategories.map((category) {
-                                        return Chip(
-                                          backgroundColor: Colors.white,
-                                          avatar: Text(category.icon,
-                                              style: const TextStyle(
-                                                  fontSize: 14)),
-                                          label: Text(category.name),
-                                          onDeleted: () {
-                                            setState(() {
-                                              widget.cardData
-                                                  .selectedOtherCategoryIds
-                                                  .remove(category.id);
-                                            });
-                                            widget.onUpdate(
-                                                refreshCategories: false);
-                                          },
-                                          materialTapTargetSize:
-                                              MaterialTapTargetSize.shrinkWrap,
-                                          padding: const EdgeInsets.symmetric(
-                                              horizontal: 0),
-                                          visualDensity: VisualDensity.compact,
-                                          labelPadding:
-                                              const EdgeInsets.symmetric(
-                                                  horizontal: 4.0),
-                                          deleteIconColor: Colors.grey[600],
-                                          deleteButtonTooltipMessage:
-                                              'Remove category',
-                                        );
-                                      }).toList(),
-                                    ),
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              if (hasSelected) ...[
+                                Text('Other Categories',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .bodyMedium
+                                        ?.copyWith(color: Colors.grey[600])),
+                                const SizedBox(height: 4),
+                                Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.all(12.0),
+                                  decoration: BoxDecoration(
+                                    border: Border.all(color: Colors.grey),
+                                    borderRadius: BorderRadius.circular(8.0),
                                   ),
-                                Center(
-                                  child: TextButton.icon(
-                                    icon: const Icon(Icons.add, size: 20),
-                                    label: const Text('Add / Edit Categories'),
-                                    onPressed:
-                                        _showOtherCategoriesSelectionDialog,
-                                    style: TextButton.styleFrom(
-                                      visualDensity: VisualDensity.compact,
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 12),
-                                    ),
+                                  child: Wrap(
+                                    spacing: 6.0,
+                                    runSpacing: 6.0,
+                                    children: selectedCategories.map((category) {
+                                      return Chip(
+                                        backgroundColor: Colors.white,
+                                        avatar: Text(category.icon,
+                                            style:
+                                                const TextStyle(fontSize: 14)),
+                                        label: Text(category.name),
+                                        onDeleted: () {
+                                          setState(() {
+                                            widget.cardData
+                                                .selectedOtherCategoryIds
+                                                .remove(category.id);
+                                          });
+                                          widget.onUpdate(
+                                              refreshCategories: false);
+                                        },
+                                        materialTapTargetSize:
+                                            MaterialTapTargetSize.shrinkWrap,
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 0),
+                                        visualDensity: VisualDensity.compact,
+                                        labelPadding: const EdgeInsets.symmetric(
+                                            horizontal: 4.0),
+                                        deleteIconColor: Colors.grey[600],
+                                        deleteButtonTooltipMessage:
+                                            'Remove category',
+                                      );
+                                    }).toList(),
                                   ),
                                 ),
+                                const SizedBox(height: 8),
                               ],
-                            );
-                          },
-                        ),
+                              Center(
+                                child: TextButton.icon(
+                                  icon: const Icon(Icons.add, size: 20),
+                                  label: const Text('Assign more categories'),
+                                  onPressed: _showOtherCategoriesSelectionDialog,
+                                  style: TextButton.styleFrom(
+                                    visualDensity: VisualDensity.compact,
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 12),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          );
+                        },
                       ),
                       // --- END ADDED ---
 
@@ -1487,100 +1476,91 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                       SizedBox(height: 16),
 
                       // --- ADDED: Other Color Categories Selection ---
-                      Text('Other Color Categories',
-                          style: Theme.of(context)
-                              .textTheme
-                              .bodyMedium
-                              ?.copyWith(color: Colors.grey[600])),
-                      const SizedBox(height: 4),
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(12.0),
-                        decoration: BoxDecoration(
-                          border: Border.all(color: Colors.grey),
-                          borderRadius: BorderRadius.circular(8.0),
-                        ),
-                        child: ValueListenableBuilder<List<ColorCategory>>(
-                          valueListenable: widget.userColorCategoriesNotifier,
-                          builder: (context, allColorCategories, child) {
-                            final selectedColorCategories = allColorCategories
-                                .where((cat) => widget.cardData
-                                    .selectedOtherColorCategoryIds
-                                    .contains(cat.id))
-                                .toList();
+                      ValueListenableBuilder<List<ColorCategory>>(
+                        valueListenable: widget.userColorCategoriesNotifier,
+                        builder: (context, allColorCategories, child) {
+                          final selectedColorCategories = allColorCategories
+                              .where((cat) => widget.cardData
+                                  .selectedOtherColorCategoryIds
+                                  .contains(cat.id))
+                              .toList();
+                          final hasSelected = selectedColorCategories.isNotEmpty;
 
-                            return Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                if (selectedColorCategories.isEmpty)
-                                  Padding(
-                                    padding: const EdgeInsets.only(bottom: 8.0),
-                                    child: Text(
-                                      'No other color categories assigned.',
-                                      style: TextStyle(color: Colors.grey[700]),
-                                    ),
-                                  )
-                                else
-                                  Padding(
-                                    padding: const EdgeInsets.only(bottom: 8.0),
-                                    child: Wrap(
-                                      spacing: 6.0,
-                                      runSpacing: 6.0,
-                                      children: selectedColorCategories
-                                          .map((category) {
-                                        return Chip(
-                                          backgroundColor: Colors.white,
-                                          avatar: Container(
-                                            width: 18,
-                                            height: 18,
-                                            decoration: BoxDecoration(
-                                              color: category.color,
-                                              shape: BoxShape.circle,
-                                            ),
-                                          ),
-                                          label: Text(category.name),
-                                          onDeleted: () {
-                                            setState(() {
-                                              widget.cardData
-                                                  .selectedOtherColorCategoryIds
-                                                  .remove(category.id);
-                                            });
-                                            widget.onUpdate(
-                                                refreshCategories: false);
-                                          },
-                                          materialTapTargetSize:
-                                              MaterialTapTargetSize.shrinkWrap,
-                                          padding: const EdgeInsets.symmetric(
-                                              horizontal: 0),
-                                          visualDensity: VisualDensity.compact,
-                                          labelPadding:
-                                              const EdgeInsets.symmetric(
-                                                  horizontal: 4.0),
-                                          deleteIconColor: Colors.grey[600],
-                                          deleteButtonTooltipMessage:
-                                              'Remove color category',
-                                        );
-                                      }).toList(),
-                                    ),
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              if (hasSelected) ...[
+                                Text('Other Color Categories',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .bodyMedium
+                                        ?.copyWith(color: Colors.grey[600])),
+                                const SizedBox(height: 4),
+                                Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.all(12.0),
+                                  decoration: BoxDecoration(
+                                    border: Border.all(color: Colors.grey),
+                                    borderRadius: BorderRadius.circular(8.0),
                                   ),
-                                Center(
-                                  child: TextButton.icon(
-                                    icon: const Icon(Icons.add, size: 20),
-                                    label: const Text(
-                                        'Add / Edit Color Categories'),
-                                    onPressed:
-                                        _showOtherColorCategoriesSelectionDialog,
-                                    style: TextButton.styleFrom(
-                                      visualDensity: VisualDensity.compact,
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 12),
-                                    ),
+                                  child: Wrap(
+                                    spacing: 6.0,
+                                    runSpacing: 6.0,
+                                    children:
+                                        selectedColorCategories.map((category) {
+                                      return Chip(
+                                        backgroundColor: Colors.white,
+                                        avatar: Container(
+                                          width: 18,
+                                          height: 18,
+                                          decoration: BoxDecoration(
+                                            color: category.color,
+                                            shape: BoxShape.circle,
+                                          ),
+                                        ),
+                                        label: Text(category.name),
+                                        onDeleted: () {
+                                          setState(() {
+                                            widget.cardData
+                                                .selectedOtherColorCategoryIds
+                                                .remove(category.id);
+                                          });
+                                          widget.onUpdate(
+                                              refreshCategories: false);
+                                        },
+                                        materialTapTargetSize:
+                                            MaterialTapTargetSize.shrinkWrap,
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 0),
+                                        visualDensity: VisualDensity.compact,
+                                        labelPadding: const EdgeInsets.symmetric(
+                                            horizontal: 4.0),
+                                        deleteIconColor: Colors.grey[600],
+                                        deleteButtonTooltipMessage:
+                                            'Remove color category',
+                                      );
+                                    }).toList(),
                                   ),
                                 ),
+                                const SizedBox(height: 8),
                               ],
-                            );
-                          },
-                        ),
+                              Center(
+                                child: TextButton.icon(
+                                  icon: const Icon(Icons.add, size: 20),
+                                  label: const Text(
+                                      'Assign more color categories'),
+                                  onPressed:
+                                      _showOtherColorCategoriesSelectionDialog,
+                                  style: TextButton.styleFrom(
+                                    visualDensity: VisualDensity.compact,
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 12),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          );
+                        },
                       ),
                       // --- END ADDED ---
 

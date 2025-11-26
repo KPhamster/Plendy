@@ -1556,81 +1556,70 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                 SizedBox(height: 16),
 
                 // --- ADDED: Other Categories Selection ---
-                Text('Other Categories',
-                    style: Theme.of(context)
-                        .textTheme
-                        .bodyMedium
-                        ?.copyWith(color: Colors.grey[600])),
-                const SizedBox(height: 4),
-                Container(
-                  width: double.infinity, // Ensure it takes full width
-                  padding: const EdgeInsets.all(12.0),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    border: Border.all(color: Colors.grey),
-                    borderRadius: BorderRadius.circular(8.0),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      if (_cardData.selectedOtherCategoryIds.isEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 8.0),
-                          child: Text(
-                            'No other categories assigned.',
-                            style: TextStyle(color: Colors.grey[700]),
-                          ),
-                        )
-                      else
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 8.0),
-                          child: Wrap(
-                            spacing: 6.0,
-                            runSpacing: 6.0,
-                            children: _cardData.selectedOtherCategoryIds
-                                .map((categoryId) {
-                              final category =
-                                  _currentUserCategories.firstWhereOrNull(
-                                      (cat) => cat.id == categoryId);
-                              if (category == null)
-                                return const SizedBox.shrink();
-                              return Chip(
-                                backgroundColor: Colors.white,
-                                avatar: Text(category.icon,
-                                    style: const TextStyle(fontSize: 14)),
-                                label: Text(category.name),
-                                onDeleted: () {
-                                  setState(() {
-                                    _cardData.selectedOtherCategoryIds
-                                        .remove(categoryId);
-                                  });
-                                },
-                                materialTapTargetSize:
-                                    MaterialTapTargetSize.shrinkWrap,
-                                padding:
-                                    const EdgeInsets.symmetric(horizontal: 0),
-                                visualDensity: VisualDensity.compact,
-                                labelPadding:
-                                    const EdgeInsets.symmetric(horizontal: 4.0),
-                                deleteIconColor: Colors.grey[600],
-                                deleteButtonTooltipMessage: 'Remove category',
-                              );
-                            }).toList(),
-                          ),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (_cardData.selectedOtherCategoryIds.isNotEmpty) ...[
+                      Text('Other Categories',
+                          style: Theme.of(context)
+                              .textTheme
+                              .bodyMedium
+                              ?.copyWith(color: Colors.grey[600])),
+                      const SizedBox(height: 4),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(12.0),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          border: Border.all(color: Colors.grey),
+                          borderRadius: BorderRadius.circular(8.0),
                         ),
-                      Center(
-                        child: TextButton.icon(
-                          icon: const Icon(Icons.add, size: 20),
-                          label: const Text('Add / Edit Categories'),
-                          onPressed: _showOtherCategoriesSelectionDialog,
-                          style: TextButton.styleFrom(
-                            visualDensity: VisualDensity.compact,
-                            padding: const EdgeInsets.symmetric(horizontal: 12),
-                          ),
+                        child: Wrap(
+                          spacing: 6.0,
+                          runSpacing: 6.0,
+                          children: _cardData.selectedOtherCategoryIds
+                              .map((categoryId) {
+                            final category = _currentUserCategories
+                                .firstWhereOrNull((cat) => cat.id == categoryId);
+                            if (category == null) return const SizedBox.shrink();
+                            return Chip(
+                              backgroundColor: Colors.white,
+                              avatar: Text(category.icon,
+                                  style: const TextStyle(fontSize: 14)),
+                              label: Text(category.name),
+                              onDeleted: () {
+                                setState(() {
+                                  _cardData.selectedOtherCategoryIds
+                                      .remove(categoryId);
+                                });
+                              },
+                              materialTapTargetSize:
+                                  MaterialTapTargetSize.shrinkWrap,
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 0),
+                              visualDensity: VisualDensity.compact,
+                              labelPadding:
+                                  const EdgeInsets.symmetric(horizontal: 4.0),
+                              deleteIconColor: Colors.grey[600],
+                              deleteButtonTooltipMessage: 'Remove category',
+                            );
+                          }).toList(),
                         ),
                       ),
+                      const SizedBox(height: 8),
                     ],
-                  ),
+                    Center(
+                      child: TextButton.icon(
+                        icon: const Icon(Icons.add, size: 20),
+                        label: const Text('Assign more categories'),
+                        onPressed: _showOtherCategoriesSelectionDialog,
+                        style: TextButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
                 // --- END ADDED ---
 
@@ -1691,89 +1680,81 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                 SizedBox(height: 16),
 
                 // --- ADDED: Other Color Categories Selection ---
-                Text('Other Color Categories',
-                    style: Theme.of(context)
-                        .textTheme
-                        .bodyMedium
-                        ?.copyWith(color: Colors.grey[600])),
-                const SizedBox(height: 4),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(12.0),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    border: Border.all(color: Colors.grey),
-                    borderRadius: BorderRadius.circular(8.0),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      if (_cardData.selectedOtherColorCategoryIds.isEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 8.0),
-                          child: Text(
-                            'No other color categories assigned.',
-                            style: TextStyle(color: Colors.grey[700]),
-                          ),
-                        )
-                      else
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 8.0),
-                          child: Wrap(
-                            spacing: 6.0,
-                            runSpacing: 6.0,
-                            children: _cardData.selectedOtherColorCategoryIds
-                                .map((colorCategoryId) {
-                              final colorCategory =
-                                  _currentColorCategories.firstWhereOrNull(
-                                      (cat) => cat.id == colorCategoryId);
-                              if (colorCategory == null) {
-                                return const SizedBox.shrink();
-                              }
-                              return Chip(
-                                backgroundColor: Colors.white,
-                                avatar: Container(
-                                  width: 18,
-                                  height: 18,
-                                  decoration: BoxDecoration(
-                                    color: colorCategory.color,
-                                    shape: BoxShape.circle,
-                                  ),
-                                ),
-                                label: Text(colorCategory.name),
-                                onDeleted: () {
-                                  setState(() {
-                                    _cardData.selectedOtherColorCategoryIds
-                                        .remove(colorCategoryId);
-                                  });
-                                },
-                                materialTapTargetSize:
-                                    MaterialTapTargetSize.shrinkWrap,
-                                padding:
-                                    const EdgeInsets.symmetric(horizontal: 0),
-                                visualDensity: VisualDensity.compact,
-                                labelPadding:
-                                    const EdgeInsets.symmetric(horizontal: 4.0),
-                                deleteIconColor: Colors.grey[600],
-                                deleteButtonTooltipMessage:
-                                    'Remove color category',
-                              );
-                            }).toList(),
-                          ),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (_cardData.selectedOtherColorCategoryIds.isNotEmpty) ...[
+                      Text('Other Color Categories',
+                          style: Theme.of(context)
+                              .textTheme
+                              .bodyMedium
+                              ?.copyWith(color: Colors.grey[600])),
+                      const SizedBox(height: 4),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(12.0),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          border: Border.all(color: Colors.grey),
+                          borderRadius: BorderRadius.circular(8.0),
                         ),
-                      Center(
-                        child: TextButton.icon(
-                          icon: const Icon(Icons.add, size: 20),
-                          label: const Text('Add / Edit Color Categories'),
-                          onPressed: _showOtherColorCategoriesSelectionDialog,
-                          style: TextButton.styleFrom(
-                            visualDensity: VisualDensity.compact,
-                            padding: const EdgeInsets.symmetric(horizontal: 12),
-                          ),
+                        child: Wrap(
+                          spacing: 6.0,
+                          runSpacing: 6.0,
+                          children: _cardData.selectedOtherColorCategoryIds
+                              .map((colorCategoryId) {
+                            final colorCategory = _currentColorCategories
+                                .firstWhereOrNull(
+                                    (cat) => cat.id == colorCategoryId);
+                            if (colorCategory == null) {
+                              return const SizedBox.shrink();
+                            }
+                            return Chip(
+                              backgroundColor: Colors.white,
+                              avatar: Container(
+                                width: 18,
+                                height: 18,
+                                decoration: BoxDecoration(
+                                  color: colorCategory.color,
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                              label: Text(colorCategory.name),
+                              onDeleted: () {
+                                setState(() {
+                                  _cardData.selectedOtherColorCategoryIds
+                                      .remove(colorCategoryId);
+                                });
+                              },
+                              materialTapTargetSize:
+                                  MaterialTapTargetSize.shrinkWrap,
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 0),
+                              visualDensity: VisualDensity.compact,
+                              labelPadding:
+                                  const EdgeInsets.symmetric(horizontal: 4.0),
+                              deleteIconColor: Colors.grey[600],
+                              deleteButtonTooltipMessage:
+                                  'Remove color category',
+                            );
+                          }).toList(),
                         ),
                       ),
+                      const SizedBox(height: 8),
                     ],
-                  ),
+                    Center(
+                      child: TextButton.icon(
+                        icon: const Icon(Icons.add, size: 20),
+                        label:
+                            const Text('Assign more color categories'),
+                        onPressed: _showOtherColorCategoriesSelectionDialog,
+                        style: TextButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
                 // --- END ADDED ---
 
