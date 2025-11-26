@@ -2306,41 +2306,43 @@ class _EventEditorModalState extends State<EventEditorModal> {
               },
             ),
           const SizedBox(height: 16),
-          // Add Event-Only Experience button
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              onPressed: _createEventOnlyExperience,
-              icon: const Icon(Icons.edit_note, size: 18, color: Colors.white),
-              label: const Text('Add Event-Only Experience', style: TextStyle(color: Colors.white)),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.grey.shade600,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
+          if (!widget.isReadOnly) ...[
+            // Add Event-Only Experience button
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: _createEventOnlyExperience,
+                icon: const Icon(Icons.edit_note, size: 18, color: Colors.white),
+                label: const Text('Add Event-Only Experience', style: TextStyle(color: Colors.white)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.grey.shade600,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
                 ),
               ),
             ),
-          ),
-          const SizedBox(height: 8),
-          // Add Saved Experiences button
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              onPressed: _openItinerarySelector,
-              icon: const Icon(Icons.add, size: 18),
-              label: const Text('Add from Saved Experiences'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Theme.of(context).primaryColor,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
+            const SizedBox(height: 8),
+            // Add Saved Experiences button
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: _openItinerarySelector,
+                icon: const Icon(Icons.add, size: 18),
+                label: const Text('Add from Saved Experiences'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Theme.of(context).primaryColor,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
                 ),
               ),
             ),
-          ),
+          ],
         ],
       ),
     );
@@ -2674,11 +2676,13 @@ class _EventEditorModalState extends State<EventEditorModal> {
     final Widget leadingWidget = Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        ReorderableDragStartListener(
-          index: index,
-          child: const Icon(Icons.drag_handle),
-        ),
-        const SizedBox(width: 4),
+        if (!widget.isReadOnly) ...[
+          ReorderableDragStartListener(
+            index: index,
+            child: const Icon(Icons.drag_handle),
+          ),
+          const SizedBox(width: 4),
+        ],
         Container(
           width: 56,
           height: 56,
@@ -2887,24 +2891,25 @@ class _EventEditorModalState extends State<EventEditorModal> {
                                     : null,
                               ),
                             if (isEventOnly)
-                              TextButton.icon(
-                                icon: const Icon(Icons.edit),
-                                label: const Text('Edit'),
-                                onPressed: () => _editEventOnlyExperience(entry, index),
-                              ),
                             TextButton.icon(
-                              style: TextButton.styleFrom(
-                                foregroundColor: Theme.of(context).primaryColor,
-                              ),
-                              icon: Icon(Icons.delete,
-                                  color: Theme.of(context).primaryColor),
-                              label: Text(
-                                'Remove',
-                                style: TextStyle(
-                                    color: Theme.of(context).primaryColor),
-                              ),
-                              onPressed: () => _removeExperience(index),
+                              icon: const Icon(Icons.edit),
+                              label: const Text('Edit'),
+                              onPressed: () => _editEventOnlyExperience(entry, index),
                             ),
+                            if (!widget.isReadOnly)
+                              TextButton.icon(
+                                style: TextButton.styleFrom(
+                                  foregroundColor: Theme.of(context).primaryColor,
+                                ),
+                                icon: Icon(Icons.delete,
+                                    color: Theme.of(context).primaryColor),
+                                label: Text(
+                                  'Remove',
+                                  style: TextStyle(
+                                      color: Theme.of(context).primaryColor),
+                                ),
+                                onPressed: () => _removeExperience(index),
+                              ),
                           ],
                         ),
                       ],

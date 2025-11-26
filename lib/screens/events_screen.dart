@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:intl/intl.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/event.dart';
 import '../models/experience.dart';
 import '../models/user_category.dart';
+import '../models/color_category.dart';
 import '../services/auth_service.dart';
 import '../services/experience_service.dart';
 import '../widgets/event_editor_modal.dart';
@@ -38,6 +40,8 @@ class _EventsScreenState extends State<EventsScreen>
 
   // Categories cache for looking up icons
   List<UserCategory> _categories = [];
+  // Cache of ownerId+categoryId -> UserCategory for shared events
+  final Map<String, UserCategory> _sharedOwnerCategories = {};
   
   // Experiences cache: maps experienceId to Experience
   Map<String, Experience> _experiencesCache = {};
@@ -52,6 +56,8 @@ class _EventsScreenState extends State<EventsScreen>
   final Map<String, Event> _plannerEvents = {};
   final Map<String, Event> _collaboratorEvents = {};
   final Map<String, Event> _invitedEvents = {};
+  final ScrollController _scheduleScrollController = ScrollController();
+  bool _scheduleDidInitialScroll = false;
 
   @override
   void initState() {
@@ -72,6 +78,7 @@ class _EventsScreenState extends State<EventsScreen>
               break;
             case 3:
               _viewMode = 'schedule';
+              _scheduleDidInitialScroll = false; // Reset to allow scroll on tab switch
               break;
           }
         });
@@ -100,6 +107,7 @@ class _EventsScreenState extends State<EventsScreen>
   void dispose() {
     _tabController.dispose();
     _weekPageController.dispose();
+    _scheduleScrollController.dispose();
     // Cancel all real-time event listeners
     for (final subscription in _eventSubscriptions) {
       subscription.cancel();
@@ -213,6 +221,8 @@ class _EventsScreenState extends State<EventsScreen>
       setState(() {
         _allEvents = events;
         _eventsByDate = _groupEventsByDate(events);
+        // Don't reset scroll state here - let _buildScheduleView handle it
+        // based on anchor event ID changes
       });
     } catch (e) {
       debugPrint('Error handling events snapshot: $e');
@@ -247,6 +257,41 @@ class _EventsScreenState extends State<EventsScreen>
         }
       } catch (e) {
         debugPrint('Error caching experiences: $e');
+      }
+    }
+
+    // Collect owner/category pairs we need icons for (when denorm is missing)
+    final Map<String, Set<String>> ownerToCategoryIds = {};
+    for (final event in events) {
+      for (final entry in event.experiences) {
+        final exp = _experiencesCache[entry.experienceId];
+        if (exp == null) continue;
+        final ownerId = exp.createdBy ?? '';
+        final categoryId = exp.categoryId ?? '';
+        if (ownerId.isEmpty || categoryId.isEmpty) continue;
+        final cacheKey = '${ownerId}_$categoryId';
+        if (_sharedOwnerCategories.containsKey(cacheKey)) continue;
+        ownerToCategoryIds.putIfAbsent(ownerId, () => <String>{}).add(categoryId);
+      }
+    }
+
+    for (final entry in ownerToCategoryIds.entries) {
+      try {
+        final categories = await _experienceService.getUserCategoriesByOwnerAndIds(
+          entry.key,
+          entry.value.toList(),
+        );
+        if (categories.isNotEmpty && mounted) {
+          setState(() {
+            for (final category in categories) {
+              final cacheKey = '${entry.key}_${category.id}';
+              _sharedOwnerCategories[cacheKey] = category;
+            }
+          });
+        }
+      } catch (e) {
+        debugPrint(
+            'Error caching shared owner categories for ${entry.key}: $e');
       }
     }
   }
@@ -920,17 +965,90 @@ class _EventsScreenState extends State<EventsScreen>
   }
 
   Widget _buildScheduleView(ThemeData theme, bool isDark) {
-    // Group events by date
     final now = DateTime.now();
-    final upcomingEvents = _allEvents.where((event) {
-      return event.startDateTime.isAfter(now.subtract(const Duration(days: 1)));
-    }).toList()
-      ..sort((a, b) => a.startDateTime.compareTo(b.startDateTime));
+    final todayStart = DateTime(now.year, now.month, now.day);
+    final events = [..._allEvents]..sort(
+      (a, b) => a.startDateTime.compareTo(b.startDateTime),
+    );
+    final anchorIndex = events.indexWhere(
+      (event) => !event.startDateTime.isBefore(todayStart),
+    );
+    final targetIndex = anchorIndex == -1 && events.isNotEmpty
+        ? events.length - 1
+        : anchorIndex;
 
-    if (upcomingEvents.isEmpty) {
+    debugPrint('Schedule: Building with ${events.length} events, anchor index: $targetIndex');
+    if (targetIndex != -1 && targetIndex < events.length) {
+      debugPrint('Schedule: Anchor event: "${events[targetIndex].title}" at ${events[targetIndex].startDateTime}');
+    }
+
+    // Scroll to the anchor event by calculating offset
+    if (targetIndex != -1 && !_scheduleDidInitialScroll) {
+      debugPrint('Schedule: Scheduling scroll to index $targetIndex');
+      _scheduleDidInitialScroll = true;
+      
+      // Helper function to attempt scrolling
+      void attemptScroll([int attempts = 0]) {
+        if (attempts >= 10) {
+          debugPrint('Schedule: Max scroll attempts reached');
+          return;
+        }
+        
+        if (!_scheduleScrollController.hasClients) {
+          debugPrint('Schedule: No scroll clients yet (attempt ${attempts + 1}), retrying...');
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            attemptScroll(attempts + 1);
+          });
+          return;
+        }
+        
+        // Calculate offset based on estimated item heights
+        double offset = 0;
+        for (int i = 0; i < targetIndex; i++) {
+          final event = events[i];
+          final showDateHeader = i == 0 ||
+              !isSameDay(
+                event.startDateTime,
+                events[i - 1].startDateTime,
+              );
+          
+          // Add header height if present (16 + text + 8 padding ~= 50px)
+          if (showDateHeader) {
+            offset += 50;
+          }
+          
+          // Add event card height (estimate ~110px per card with margins)
+          offset += 110;
+        }
+        
+        // Add the date header for the anchor event if needed
+        if (targetIndex > 0 && !isSameDay(
+              events[targetIndex].startDateTime,
+              events[targetIndex - 1].startDateTime,
+            )) {
+          offset += 50;
+        }
+        
+        debugPrint('Schedule: Scrolling to calculated offset $offset (max: ${_scheduleScrollController.position.maxScrollExtent})');
+        
+        _scheduleScrollController.animateTo(
+          offset.clamp(0.0, _scheduleScrollController.position.maxScrollExtent),
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      }
+      
+      // Start attempting to scroll after the next frame
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        attemptScroll();
+      });
+    }
+
+    if (events.isEmpty) {
       return RefreshIndicator(
         onRefresh: _loadEvents,
         child: ListView(
+          controller: _scheduleScrollController,
           children: [
             SizedBox(
               height: MediaQuery.of(context).size.height * 0.6,
@@ -959,20 +1077,17 @@ class _EventsScreenState extends State<EventsScreen>
       );
     }
 
-    return RefreshIndicator(
-      onRefresh: _loadEvents,
-      child: ListView.builder(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      itemCount: upcomingEvents.length,
-      itemBuilder: (context, index) {
-        final event = upcomingEvents[index];
-        final showDateHeader = index == 0 ||
-            !isSameDay(
-              event.startDateTime,
-              upcomingEvents[index - 1].startDateTime,
-            );
+    final scheduleEntries = <Widget>[];
+    for (var index = 0; index < events.length; index++) {
+      final event = events[index];
+      final showDateHeader = index == 0 ||
+          !isSameDay(
+            event.startDateTime,
+            events[index - 1].startDateTime,
+          );
 
-        return Column(
+      scheduleEntries.add(
+        Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             if (showDateHeader)
@@ -986,13 +1101,38 @@ class _EventsScreenState extends State<EventsScreen>
                   ),
                 ),
               ),
-            _buildEventCard(event, theme, isDark),
+            _buildEventCard(
+              event,
+              theme,
+              isDark,
+            ),
           ],
-        );
-      },
+        ),
+      );
+    }
+
+    // Add bottom padding so any event can scroll to the top of the viewport
+    // This ensures the last events don't get stuck at the bottom
+    final screenHeight = MediaQuery.of(context).size.height;
+    final safeAreaTop = MediaQuery.of(context).padding.top;
+    final safeAreaBottom = MediaQuery.of(context).padding.bottom;
+    // App bar (~64px) + Tab bar (~48px) + safe area padding
+    final toolbarHeight = 64 + 48 + safeAreaTop;
+    // Available viewport height for scrolling content
+    final viewportHeight = screenHeight - toolbarHeight - safeAreaBottom;
+    // Add padding equal to viewport height minus a small buffer for one event
+    final bottomPadding = (viewportHeight - 150).clamp(200.0, double.infinity);
+    
+    return RefreshIndicator(
+      onRefresh: _loadEvents,
+      child: ListView(
+        controller: _scheduleScrollController,
+        padding: EdgeInsets.only(top: 8, bottom: bottomPadding),
+        children: scheduleEntries,
       ),
     );
   }
+
 
   Widget _buildEventsList(List<Event> events, ThemeData theme, bool isDark) {
     if (events.isEmpty) {
@@ -1034,7 +1174,12 @@ class _EventsScreenState extends State<EventsScreen>
     );
   }
 
-  Widget _buildEventCard(Event event, ThemeData theme, bool isDark) {
+  Widget _buildEventCard(
+    Event event,
+    ThemeData theme,
+    bool isDark, {
+    Key? key,
+  }) {
     final cardColor = isDark
         ? const Color(0xFF2B2930)
         : Colors.white;
@@ -1043,6 +1188,7 @@ class _EventsScreenState extends State<EventsScreen>
     return GestureDetector(
       onTap: () => _openEventDetails(event),
       child: Container(
+        key: key,
         margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
         decoration: BoxDecoration(
           color: cardColor,
@@ -1183,12 +1329,88 @@ class _EventsScreenState extends State<EventsScreen>
         experiences = await experienceService.getExperiencesByIds(experienceIds);
       }
 
-      // Fetch user's categories and color categories
-      final categories = await experienceService.getUserCategories();
-      final colorCategories = await experienceService.getUserColorCategories();
+      // Fetch the category + color metadata from the event owner so shared viewers
+      // see the same icons/colors as the planner.
+      final userId = _authService.currentUser?.uid;
+      final bool isOwner = userId != null && event.plannerUserId == userId;
+
+      List<UserCategory> categories = [];
+      List<ColorCategory> colorCategories = [];
+
+      if (isOwner) {
+        categories = await experienceService.getUserCategories();
+        colorCategories = await experienceService.getUserColorCategories();
+      } else {
+        final Set<String> categoryIds = {};
+        final Set<String> colorCategoryIds = {};
+
+        for (final exp in experiences) {
+          if (exp.categoryId != null && exp.categoryId!.isNotEmpty) {
+            categoryIds.add(exp.categoryId!);
+          }
+          categoryIds.addAll(
+              exp.otherCategories.where((id) => id.isNotEmpty));
+
+          if (exp.colorCategoryId != null &&
+              exp.colorCategoryId!.isNotEmpty) {
+            colorCategoryIds.add(exp.colorCategoryId!);
+          }
+          colorCategoryIds
+              .addAll(exp.otherColorCategoryIds.where((id) => id.isNotEmpty));
+        }
+
+        for (final entry in event.experiences) {
+          if (entry.inlineCategoryId != null &&
+              entry.inlineCategoryId!.isNotEmpty) {
+            categoryIds.add(entry.inlineCategoryId!);
+          }
+          categoryIds.addAll(
+              entry.inlineOtherCategoryIds.where((id) => id.isNotEmpty));
+
+          if (entry.inlineColorCategoryId != null &&
+              entry.inlineColorCategoryId!.isNotEmpty) {
+            colorCategoryIds.add(entry.inlineColorCategoryId!);
+          }
+          colorCategoryIds.addAll(entry.inlineOtherColorCategoryIds
+              .where((id) => id.isNotEmpty));
+        }
+
+        try {
+          if (categoryIds.isNotEmpty) {
+            categories =
+                await experienceService.getUserCategoriesByOwnerAndIds(
+              event.plannerUserId,
+              categoryIds.toList(),
+            );
+          }
+        } catch (e) {
+          debugPrint(
+              'EventsScreen: Failed to fetch planner categories for event ${event.id}: $e');
+        }
+
+        try {
+          if (colorCategoryIds.isNotEmpty) {
+            colorCategories =
+                await experienceService.getColorCategoriesByOwnerAndIds(
+              event.plannerUserId,
+              colorCategoryIds.toList(),
+            );
+          }
+        } catch (e) {
+          debugPrint(
+              'EventsScreen: Failed to fetch planner color categories for event ${event.id}: $e');
+        }
+
+        // Fallback to current user's categories if nothing was fetched
+        if (categories.isEmpty) {
+          categories = await experienceService.getUserCategories();
+        }
+        if (colorCategories.isEmpty) {
+          colorCategories = await experienceService.getUserColorCategories();
+        }
+      }
       
       // Determine if current user can edit the event
-      final userId = _authService.currentUser?.uid;
       final canEdit = userId != null && 
           (event.plannerUserId == userId || event.collaboratorIds.contains(userId));
       final isReadOnly = !canEdit;
@@ -1359,9 +1581,18 @@ class _EventsScreenState extends State<EventsScreen>
           experience.categoryIconDenorm!.isNotEmpty) {
         return experience.categoryIconDenorm;
       }
-      
+
       // Then try looking up by categoryId
       if (experience.categoryId != null && experience.categoryId!.isNotEmpty) {
+        final ownerId = experience.createdBy ?? '';
+        if (ownerId.isNotEmpty) {
+          final cacheKey = '${ownerId}_${experience.categoryId}';
+          final sharedCategory = _sharedOwnerCategories[cacheKey];
+          if (sharedCategory != null && sharedCategory.icon.isNotEmpty) {
+            return sharedCategory.icon;
+          }
+        }
+
         try {
           final category = _categories.firstWhere(
             (cat) => cat.id == experience.categoryId,

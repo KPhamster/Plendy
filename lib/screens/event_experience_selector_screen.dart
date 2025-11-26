@@ -1275,14 +1275,18 @@ class _EventExperienceSelectorScreenState
     final category = _sortedCategories.firstWhereOrNull(
       (cat) => cat.id == experience.categoryId,
     );
-    final categoryIcon = category?.icon ?? '?';
+    final categoryIcon =
+        category?.icon ?? experience.categoryIconDenorm ?? '?';
 
     final colorCategoryForBox = _sortedColorCategories.firstWhereOrNull(
       (cc) => cc.id == experience.colorCategoryId,
     );
     final Color leadingBoxColor = colorCategoryForBox != null
         ? _parseColor(colorCategoryForBox.colorHex).withOpacity(0.5)
-        : Colors.white;
+        : experience.colorHexDenorm != null &&
+                experience.colorHexDenorm!.isNotEmpty
+            ? _parseColor(experience.colorHexDenorm!).withOpacity(0.5)
+            : Colors.white;
 
     final List<UserCategory> otherCategories = experience.otherCategories
         .map(
