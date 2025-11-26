@@ -34,6 +34,9 @@ class EventNotificationQueueService {
 
     final Timestamp sendAtTimestamp = Timestamp.fromDate(sendAt);
     final Timestamp startTimestamp = Timestamp.fromDate(event.startDateTime);
+    
+    // Get the device's timezone offset in minutes
+    final int timezoneOffsetMinutes = event.startDateTime.timeZoneOffset.inMinutes;
 
     final batch = _firestore.batch();
 
@@ -51,6 +54,7 @@ class EventNotificationQueueService {
         'notificationType': event.notificationPreference.type.name,
         'customDurationMs':
             event.notificationPreference.customDuration?.inMilliseconds,
+        'timezoneOffsetMinutes': timezoneOffsetMinutes,
         'status': 'pending',
         'updatedAt': FieldValue.serverTimestamp(),
         'createdAt': FieldValue.serverTimestamp(),
