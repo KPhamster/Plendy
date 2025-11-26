@@ -27,6 +27,7 @@ import '../models/public_experience.dart';
 import '../config/app_constants.dart';
 import '../models/event.dart';
 import '../services/event_service.dart';
+import '../widgets/event_editor_modal.dart';
 
 // Helper function to parse hex color string
 Color _parseColor(String hexColor) {
@@ -172,6 +173,25 @@ class _MapScreenState extends State<MapScreen> {
   final Map<String, EventExperienceEntry> _eventViewMarkerEntries = {}; // Store entry for each marker
   bool get _isEventViewModeActive => _activeEventViewMode != null;
   bool _isEventOverlayExpanded = false; // Track expanded state of event overlay
+
+  // ADDED: Select mode state (for creating new events by selecting experiences on map)
+  bool _isSelectModeActive = false;
+  Color _selectModeColor = Colors.blue; // Random color for the new event
+  List<EventExperienceEntry> _selectModeDraftItinerary = [];
+  bool _isSelectModeOverlayExpanded = false;
+  final Map<String, Marker> _selectModeEventOnlyMarkers = {}; // Markers for event-only entries
+  
+  // Event color palette (same as used in _getEventColor)
+  static const List<Color> _eventColorPalette = [
+    Colors.blue,
+    Colors.red,
+    Colors.green,
+    Colors.orange,
+    Colors.purple,
+    Colors.teal,
+    Colors.pink,
+    Colors.indigo,
+  ];
 
   // ADDED: Resolve and cache display name for owners of shared items
   Future<String> _getOwnerDisplayName(String userId) async {
@@ -1807,7 +1827,9 @@ class _MapScreenState extends State<MapScreen> {
                       const Spacer(),
                       ElevatedButton(
                         onPressed: () {
-                          // TODO: Implement create new event functionality
+                          scrollController.dispose();
+                          Navigator.of(dialogContext).pop();
+                          _enterSelectMode();
                         },
                         style: ElevatedButton.styleFrom(
                           backgroundColor: theme.primaryColor,
@@ -2697,6 +2719,238 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
+  // ADDED: Build select mode itinerary list for overlay
+  Widget _buildSelectModeItineraryList() {
+    if (_selectModeDraftItinerary.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.all(16.0),
+        child: Center(
+          child: Text(
+            'No experiences selected yet.\nTap locations on the map to add them.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.grey),
+          ),
+        ),
+      );
+    }
+
+    return ListView.builder(
+      shrinkWrap: true,
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      itemCount: _selectModeDraftItinerary.length,
+      itemBuilder: (context, index) {
+        final entry = _selectModeDraftItinerary[index];
+        Experience? experience;
+        if (!entry.isEventOnly && entry.experienceId.isNotEmpty) {
+          // Try to find experience from experiences list
+          experience = _experiences.cast<Experience?>().firstWhere(
+            (exp) => exp?.id == entry.experienceId,
+            orElse: () => null,
+          );
+        }
+        return _buildSelectModeItineraryItem(entry, experience, index);
+      },
+    );
+  }
+
+  // ADDED: Build individual itinerary item for select mode overlay
+  Widget _buildSelectModeItineraryItem(
+    EventExperienceEntry entry,
+    Experience? experience,
+    int index,
+  ) {
+    final bool isEventOnly = entry.isEventOnly;
+    final String displayName = isEventOnly
+        ? (entry.inlineName ?? 'Untitled')
+        : (experience?.name ?? 'Unknown Experience');
+    
+    final String? colorCategoryId = isEventOnly
+        ? entry.inlineColorCategoryId
+        : experience?.colorCategoryId;
+    
+    // Get category icon
+    String categoryIcon = '📍';
+    if (isEventOnly) {
+      categoryIcon = entry.inlineCategoryIconDenorm ?? '📍';
+    } else if (experience != null) {
+      categoryIcon = _getCategoryIconForExperience(experience) ?? '📍';
+    }
+    
+    // Get color
+    Color leadingBoxColor = Colors.grey.shade200;
+    if (colorCategoryId != null) {
+      try {
+        final colorCat = _colorCategories.firstWhere((cc) => cc.id == colorCategoryId);
+        leadingBoxColor = _parseColor(colorCat.colorHex).withOpacity(0.5);
+      } catch (_) {
+        if (isEventOnly && entry.inlineColorHexDenorm != null) {
+          leadingBoxColor = _parseColor(entry.inlineColorHexDenorm!).withOpacity(0.5);
+        } else if (experience?.colorHexDenorm != null && experience!.colorHexDenorm!.isNotEmpty) {
+          leadingBoxColor = _parseColor(experience.colorHexDenorm!).withOpacity(0.5);
+        }
+      }
+    } else if (isEventOnly && entry.inlineColorHexDenorm != null) {
+      leadingBoxColor = _parseColor(entry.inlineColorHexDenorm!).withOpacity(0.5);
+    } else if (experience?.colorHexDenorm != null && experience!.colorHexDenorm!.isNotEmpty) {
+      leadingBoxColor = _parseColor(experience.colorHexDenorm!).withOpacity(0.5);
+    }
+    
+    final String? address = isEventOnly
+        ? entry.inlineLocation?.address
+        : experience?.location.address;
+    
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () => _focusSelectModeItineraryItem(entry, experience, index),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Number badge
+              Container(
+                width: 24,
+                height: 24,
+                decoration: BoxDecoration(
+                  color: _selectModeColor,
+                  shape: BoxShape.circle,
+                ),
+                child: Center(
+                  child: Text(
+                    '${index + 1}',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              // Icon box
+              Container(
+                width: 48,
+                height: 48,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: leadingBoxColor,
+                  borderRadius: BorderRadius.circular(8.0),
+                ),
+                child: Text(
+                  categoryIcon,
+                  style: const TextStyle(fontSize: 24),
+                ),
+              ),
+              const SizedBox(width: 12),
+              // Content
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            displayName,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w600,
+                              fontSize: 15,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        if (isEventOnly)
+                          Container(
+                            margin: const EdgeInsets.only(left: 8),
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.grey.shade600,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: const Text(
+                              'Event-only',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 9,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                    if (address != null && address.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        address,
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Colors.grey[600],
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              // Remove button
+              const SizedBox(width: 8),
+              Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: () => _removeFromSelectModeDraft(index),
+                  borderRadius: BorderRadius.circular(16),
+                  child: Container(
+                    padding: const EdgeInsets.all(4),
+                    child: Icon(
+                      Icons.remove_circle_outline,
+                      size: 20,
+                      color: Colors.red[400],
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ADDED: Focus map on select mode itinerary item
+  Future<void> _focusSelectModeItineraryItem(
+    EventExperienceEntry entry,
+    Experience? experience,
+    int index,
+  ) async {
+    Location? location;
+    
+    if (entry.isEventOnly) {
+      location = entry.inlineLocation;
+    } else if (experience != null) {
+      location = experience.location;
+    }
+    
+    if (location == null || (location.latitude == 0.0 && location.longitude == 0.0)) {
+      return;
+    }
+    
+    final position = LatLng(location.latitude, location.longitude);
+    _mapController ??= await _mapControllerCompleter.future;
+    _mapController?.animateCamera(
+      CameraUpdate.newCameraPosition(
+        CameraPosition(target: position, zoom: 16.0),
+      ),
+    );
+    
+    // Collapse the overlay after focusing
+    setState(() {
+      _isSelectModeOverlayExpanded = false;
+    });
+  }
+
   // ADDED: Focus map on itinerary item
   Future<void> _focusEventItineraryItem(
     EventExperienceEntry entry,
@@ -2785,6 +3039,382 @@ class _MapScreenState extends State<MapScreen> {
       _eventViewMarkerExperiences.clear();
       _eventViewMarkerEntries.clear();
       _isEventOverlayExpanded = false;
+    });
+  }
+
+  // ADDED: Enter select mode - for creating new events by selecting experiences on map
+  void _enterSelectMode() {
+    print("🗺️ MAP SCREEN: Entering select mode for new event creation");
+    
+    // Pick a random color from the palette
+    final random = Math.Random();
+    final randomColor = _eventColorPalette[random.nextInt(_eventColorPalette.length)];
+    
+    setState(() {
+      _isSelectModeActive = true;
+      _selectModeColor = randomColor;
+      _selectModeDraftItinerary = [];
+      _isSelectModeOverlayExpanded = false;
+      _selectModeEventOnlyMarkers.clear();
+      // Exit event view mode if active
+      if (_isEventViewModeActive) {
+        _activeEventViewMode = null;
+        _eventViewMarkers.clear();
+        _eventViewMarkerExperiences.clear();
+        _eventViewMarkerEntries.clear();
+        _isEventOverlayExpanded = false;
+      }
+    });
+    
+    // Regenerate markers to show selection state (initially none selected)
+    unawaited(_generateMarkersFromExperiences(_filterExperiences(_experiences)));
+  }
+
+  // ADDED: Exit select mode
+  void _exitSelectMode() {
+    print("🗺️ MAP SCREEN: Exiting select mode");
+    setState(() {
+      _isSelectModeActive = false;
+      _selectModeDraftItinerary = [];
+      _isSelectModeOverlayExpanded = false;
+      _selectModeEventOnlyMarkers.clear();
+    });
+    // Regenerate markers to remove numbered badges
+    unawaited(_generateMarkersFromExperiences(_filterExperiences(_experiences)));
+  }
+
+  // ADDED: Confirm exit select mode (prompts if there are items in the draft)
+  Future<void> _confirmExitSelectMode() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          backgroundColor: Colors.white,
+          title: const Text('Stop Selecting Events?'),
+          content: const Text(
+            'Are you sure you want to stop selecting for your new event?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('Stop'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed == true && mounted) {
+      _exitSelectMode();
+    }
+  }
+
+  // ADDED: Finish select mode and open event editor with selected experiences
+  Future<void> _finishSelectModeAndOpenEditor() async {
+    if (_selectModeDraftItinerary.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please select at least one experience before continuing.')),
+        );
+      }
+      return;
+    }
+
+    final userId = _authService.currentUser?.uid;
+    if (userId == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please sign in to create an event.')),
+        );
+      }
+      return;
+    }
+
+    // Show loading indicator
+    if (!mounted) return;
+    
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(
+        child: CircularProgressIndicator(),
+      ),
+    );
+
+    try {
+      // Create a new event with the draft itinerary
+      final now = DateTime.now();
+      final defaultStart = DateTime(now.year, now.month, now.day, now.hour, 0);
+      final defaultEnd = defaultStart.add(const Duration(hours: 2));
+
+      // Convert select mode color to hex string
+      final colorHexString = '#${_selectModeColor.value.toRadixString(16).padLeft(8, '0').substring(2)}';
+
+      final newEvent = Event(
+        id: '',
+        title: '',
+        description: '',
+        startDateTime: defaultStart,
+        endDateTime: defaultEnd,
+        plannerUserId: userId,
+        experiences: _selectModeDraftItinerary,
+        createdAt: now,
+        updatedAt: now,
+        colorHex: colorHexString,
+      );
+
+      // Fetch experiences that are referenced in the itinerary (non-event-only entries)
+      final experienceIds = _selectModeDraftItinerary
+          .map((entry) => entry.experienceId)
+          .where((id) => id.isNotEmpty)
+          .toList();
+
+      List<Experience> experiences = [];
+      if (experienceIds.isNotEmpty) {
+        experiences = await _experienceService.getExperiencesByIds(experienceIds);
+      }
+
+      // Fetch user's categories and color categories
+      final categories = await _experienceService.getUserCategories();
+      final colorCategories = await _experienceService.getUserColorCategories();
+
+      if (!mounted) return;
+
+      // Close loading dialog
+      Navigator.of(context).pop();
+
+      // Exit select mode before navigating
+      _exitSelectMode();
+
+      // Navigate to event editor
+      final result = await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => EventEditorModal(
+            event: newEvent,
+            experiences: experiences,
+            categories: categories,
+            colorCategories: colorCategories,
+          ),
+          fullscreenDialog: true,
+        ),
+      );
+
+      // Handle result if needed (e.g., refresh events list)
+      if (result != null && mounted) {
+        // Event was saved or edited
+        // Could refresh data here if needed
+      }
+    } catch (e) {
+      if (!mounted) return;
+
+      // Close loading dialog
+      Navigator.of(context).pop();
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error opening event editor: $e')),
+      );
+    }
+  }
+
+  // ADDED: Check if an experience is in the select mode draft and return its index
+  int? _getSelectModeDraftIndexForExperience(Experience experience) {
+    for (int i = 0; i < _selectModeDraftItinerary.length; i++) {
+      final entry = _selectModeDraftItinerary[i];
+      if (!entry.isEventOnly && entry.experienceId == experience.id) {
+        return i;
+      }
+    }
+    return null;
+  }
+
+  // ADDED: Check if a location is in the select mode draft and return its index
+  int? _getSelectModeDraftIndexForLocation(Location location) {
+    for (int i = 0; i < _selectModeDraftItinerary.length; i++) {
+      final entry = _selectModeDraftItinerary[i];
+      if (entry.isEventOnly && entry.inlineLocation != null) {
+        // Compare by placeId first, then coordinates
+        if (location.placeId != null &&
+            location.placeId!.isNotEmpty &&
+            entry.inlineLocation!.placeId == location.placeId) {
+          return i;
+        }
+        if (_areCoordinatesClose(
+          location.latitude,
+          location.longitude,
+          entry.inlineLocation!.latitude,
+          entry.inlineLocation!.longitude,
+          tolerance: 0.0005,
+        )) {
+          return i;
+        }
+      }
+    }
+    return null;
+  }
+
+  // ADDED: Add experience to select mode draft itinerary
+  void _addToSelectModeDraft(EventExperienceEntry entry) {
+    // Check for duplicates based on experienceId or inline location
+    final isDuplicate = _selectModeDraftItinerary.any((existing) {
+      if (entry.isEventOnly && existing.isEventOnly) {
+        // Compare inline locations
+        return entry.inlineLocation?.placeId != null &&
+            existing.inlineLocation?.placeId == entry.inlineLocation?.placeId;
+      } else if (!entry.isEventOnly && !existing.isEventOnly) {
+        // Compare experience IDs
+        return entry.experienceId == existing.experienceId;
+      }
+      return false;
+    });
+
+    if (isDuplicate) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('This item is already in your itinerary'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _selectModeDraftItinerary.add(entry);
+    });
+
+    // Regenerate markers to show numbered badges for selected items
+    if (entry.isEventOnly) {
+      // Generate event-only marker immediately
+      unawaited(_generateSelectModeEventOnlyMarkers());
+    }
+    // Always regenerate experience markers (they may have been selected)
+    unawaited(_regenerateMarkersForSelectMode());
+
+    // Show feedback
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Added to itinerary (${_selectModeDraftItinerary.length} item${_selectModeDraftItinerary.length != 1 ? 's' : ''})',
+        ),
+        duration: const Duration(seconds: 1),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  // ADDED: Remove item from select mode draft itinerary
+  void _removeFromSelectModeDraft(int index) {
+    if (index >= 0 && index < _selectModeDraftItinerary.length) {
+      setState(() {
+        _selectModeDraftItinerary.removeAt(index);
+      });
+      // Regenerate markers to update numbered badges
+      unawaited(_regenerateMarkersForSelectMode());
+    }
+  }
+
+  // ADDED: Regenerate markers when select mode draft changes
+  Future<void> _regenerateMarkersForSelectMode() async {
+    if (!_isSelectModeActive) return;
+    // Regenerate all experience markers to reflect selection state
+    await _generateMarkersFromExperiences(_filterExperiences(_experiences));
+  }
+
+  // ADDED: Generate markers for event-only entries in select mode
+  Future<void> _generateSelectModeEventOnlyMarkers() async {
+    _selectModeEventOnlyMarkers.clear();
+    
+    for (int i = 0; i < _selectModeDraftItinerary.length; i++) {
+      final entry = _selectModeDraftItinerary[i];
+      if (!entry.isEventOnly || entry.inlineLocation == null) continue;
+      
+      final location = entry.inlineLocation!;
+      if (location.latitude == 0.0 && location.longitude == 0.0) continue;
+      
+      final position = LatLng(location.latitude, location.longitude);
+      final iconText = entry.inlineCategoryIconDenorm ?? '📍';
+      final positionNumber = i + 1;
+      
+      try {
+        final markerIcon = await _bitmapDescriptorFromNumberedIcon(
+          number: positionNumber,
+          iconText: iconText,
+          backgroundColor: _selectModeColor,
+          size: 90, // Larger size for selected markers
+        );
+        
+        final markerId = MarkerId('select_mode_event_only_$i');
+        final marker = Marker(
+          markerId: markerId,
+          position: position,
+          icon: markerIcon,
+          zIndex: 2.0, // Above regular markers
+          infoWindow: InfoWindow(
+            title: entry.inlineName ?? 'Stop $positionNumber',
+          ),
+          onTap: () async {
+            FocusScope.of(context).unfocus();
+            // Show location details bottom sheet
+            await _selectLocationOnMap(
+              location,
+              fetchPlaceDetails: false,
+              updateLoadingState: false,
+              animateCamera: true,
+              markerId: 'selected_location',
+            );
+          },
+        );
+        
+        _selectModeEventOnlyMarkers[markerId.value] = marker;
+      } catch (e) {
+        print("🗺️ MAP SCREEN: Failed to generate marker for event-only entry: $e");
+      }
+    }
+    
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  // ADDED: Handle selecting current tapped location for event itinerary
+  void _handleSelectForEvent() {
+    if (_tappedLocationDetails == null) return;
+
+    EventExperienceEntry entry;
+
+    if (_tappedExperience != null) {
+      // Existing saved experience - add as experience-backed entry
+      entry = EventExperienceEntry(
+        experienceId: _tappedExperience!.id,
+      );
+    } else {
+      // Arbitrary location - add as event-only entry
+      entry = EventExperienceEntry(
+        experienceId: '', // Empty for event-only
+        inlineName: _tappedLocationDetails!.getPlaceName(),
+        inlineDescription: '',
+        inlineLocation: _tappedLocationDetails,
+        inlineCategoryId: _tappedExperienceCategory?.id,
+        inlineColorCategoryId: null,
+        inlineCategoryIconDenorm: _tappedExperienceCategory?.icon ?? '📍',
+        inlineColorHexDenorm: null,
+      );
+    }
+
+    _addToSelectModeDraft(entry);
+
+    // Clear the tapped location after adding
+    setState(() {
+      _tappedLocationMarker = null;
+      _tappedLocationDetails = null;
+      _tappedExperience = null;
+      _tappedExperienceCategory = null;
+      _tappedLocationBusinessStatus = null;
+      _tappedLocationOpenNow = null;
     });
   }
 
@@ -4279,32 +4909,66 @@ class _MapScreenState extends State<MapScreen> {
         markerBackgroundColor = _parseColor(colorCategory.colorHex);
       }
 
-      // Generate a unique cache key including the color and the *icon*
-      final String cacheKey = '${iconText}_${markerBackgroundColor.value}';
+      // Check if this experience is selected in select mode
+      final int? selectModeIndex = _isSelectModeActive
+          ? _getSelectModeDraftIndexForExperience(experience)
+          : null;
+      final bool isSelectedInDraft = selectModeIndex != null;
 
       BitmapDescriptor categoryIconBitmap =
           BitmapDescriptor.defaultMarker; // Default
 
-      // Use cache or generate new icon
-      if (_categoryIconCache.containsKey(cacheKey)) {
-        categoryIconBitmap = _categoryIconCache[cacheKey]!;
-        // print(
-        //     "🗺️ MAP SCREEN: Using cached icon '$cacheKey' for ${category.name}");
-      } else {
+      if (isSelectedInDraft) {
+        // Use numbered icon with select mode color (more saturated)
         try {
-          // print(
-          //     "🗺️ MAP SCREEN: Generating icon for '$cacheKey' (${category.name})");
-          // Pass the background color to the generator
-          categoryIconBitmap = await _bitmapDescriptorFromText(
-            iconText,
-            backgroundColor: markerBackgroundColor,
-            size: 70,
+          categoryIconBitmap = await _bitmapDescriptorFromNumberedIcon(
+            number: selectModeIndex! + 1, // 1-indexed position
+            iconText: iconText,
+            backgroundColor: _selectModeColor, // Use select mode color instead
+            size: 90, // Larger size for selected markers
           );
-          _categoryIconCache[cacheKey] = categoryIconBitmap; // Cache the result
         } catch (e) {
           print(
-              "🗺️ MAP SCREEN: Failed to generate bitmap for icon '$cacheKey': $e");
-          // Keep the default marker if generation fails
+              "🗺️ MAP SCREEN: Failed to generate numbered icon for selected experience: $e");
+          // Fall back to regular icon generation
+          final String cacheKey = '${iconText}_${markerBackgroundColor.value}';
+          if (_categoryIconCache.containsKey(cacheKey)) {
+            categoryIconBitmap = _categoryIconCache[cacheKey]!;
+          } else {
+            categoryIconBitmap = await _bitmapDescriptorFromText(
+              iconText,
+              backgroundColor: markerBackgroundColor,
+              size: 70,
+            );
+            _categoryIconCache[cacheKey] = categoryIconBitmap;
+          }
+        }
+      } else {
+        // Regular marker generation
+        // Generate a unique cache key including the color and the *icon*
+        final String cacheKey = '${iconText}_${markerBackgroundColor.value}';
+
+        // Use cache or generate new icon
+        if (_categoryIconCache.containsKey(cacheKey)) {
+          categoryIconBitmap = _categoryIconCache[cacheKey]!;
+          // print(
+          //     "🗺️ MAP SCREEN: Using cached icon '$cacheKey' for ${category.name}");
+        } else {
+          try {
+            // print(
+            //     "🗺️ MAP SCREEN: Generating icon for '$cacheKey' (${category.name})");
+            // Pass the background color to the generator
+            categoryIconBitmap = await _bitmapDescriptorFromText(
+              iconText,
+              backgroundColor: markerBackgroundColor,
+              size: 70,
+            );
+            _categoryIconCache[cacheKey] = categoryIconBitmap; // Cache the result
+          } catch (e) {
+            print(
+                "🗺️ MAP SCREEN: Failed to generate bitmap for icon '$cacheKey': $e");
+            // Keep the default marker if generation fails
+          }
         }
       }
 
@@ -5298,6 +5962,13 @@ class _MapScreenState extends State<MapScreen> {
           "🗺️ MAP SCREEN: Added ${_eventViewMarkers.length} event view markers (event mode active)");
     }
 
+    // ADDED: Add select mode event-only markers when in select mode
+    if (_isSelectModeActive) {
+      allMarkers.addAll(_selectModeEventOnlyMarkers);
+      print(
+          "🗺️ MAP SCREEN: Added ${_selectModeEventOnlyMarkers.length} select mode event-only markers");
+    }
+
     // If an experience is currently tapped, remove its original marker from the map
     // so it can be replaced by the styled _tappedLocationMarker.
     if (_tappedExperience != null) {
@@ -5815,6 +6486,180 @@ class _MapScreenState extends State<MapScreen> {
                       ),
                     ),
                   ),
+                  // ADDED: Select mode overlay (for creating new events)
+                  if (_isSelectModeActive)
+                    Positioned(
+                      top: 16,
+                      left: 16,
+                      right: 16,
+                      child: Container(
+                        constraints: _isSelectModeOverlayExpanded
+                            ? BoxConstraints(
+                                maxHeight: MediaQuery.of(context).size.height * 0.6,
+                              )
+                            : const BoxConstraints(),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(12),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.15),
+                              blurRadius: 10,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            // Header row
+                            Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                              child: Row(
+                                children: [
+                                  Container(
+                                    width: 4,
+                                    height: 40,
+                                    decoration: BoxDecoration(
+                                      color: _selectModeColor,
+                                      borderRadius: BorderRadius.circular(2),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const Text(
+                                          'Select experiences',
+                                          style: TextStyle(
+                                            fontWeight: FontWeight.w600,
+                                            fontSize: 16,
+                                          ),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          _selectModeDraftItinerary.isEmpty
+                                              ? 'Tap locations to add them'
+                                              : '${_selectModeDraftItinerary.length} item${_selectModeDraftItinerary.length != 1 ? 's' : ''} selected',
+                                          style: TextStyle(
+                                            fontSize: 13,
+                                            color: Colors.grey[600],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  // List icon button
+                                  Material(
+                                    color: Colors.transparent,
+                                    child: InkWell(
+                                      onTap: () {
+                                        setState(() {
+                                          _isSelectModeOverlayExpanded = !_isSelectModeOverlayExpanded;
+                                        });
+                                      },
+                                      borderRadius: BorderRadius.circular(20),
+                                      child: Container(
+                                        padding: const EdgeInsets.all(8),
+                                        decoration: BoxDecoration(
+                                          color: _selectModeColor.withOpacity(
+                                            _isSelectModeOverlayExpanded ? 0.8 : 0.6
+                                          ),
+                                          shape: BoxShape.circle,
+                                        ),
+                                        child: Stack(
+                                          children: [
+                                            const Icon(
+                                              Icons.list,
+                                              size: 20,
+                                              color: Colors.white,
+                                            ),
+                                            if (_selectModeDraftItinerary.isNotEmpty)
+                                              Positioned(
+                                                right: -4,
+                                                top: -4,
+                                                child: Container(
+                                                  padding: const EdgeInsets.all(4),
+                                                  decoration: const BoxDecoration(
+                                                    color: Colors.red,
+                                                    shape: BoxShape.circle,
+                                                  ),
+                                                  child: Text(
+                                                    '${_selectModeDraftItinerary.length}',
+                                                    style: const TextStyle(
+                                                      color: Colors.white,
+                                                      fontSize: 10,
+                                                      fontWeight: FontWeight.bold,
+                                                    ),
+                                                  ),
+                                                ),
+                                              ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 4),
+                                  // Checkmark button
+                                  Material(
+                                    color: Colors.transparent,
+                                    child: InkWell(
+                                      onTap: _finishSelectModeAndOpenEditor,
+                                      borderRadius: BorderRadius.circular(20),
+                                      child: Container(
+                                        padding: const EdgeInsets.all(8),
+                                        decoration: BoxDecoration(
+                                          color: Theme.of(context).primaryColor,
+                                          shape: BoxShape.circle,
+                                        ),
+                                        child: const Icon(
+                                          Icons.check,
+                                          size: 20,
+                                          color: Colors.white,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 4),
+                                  // Close button
+                                  Material(
+                                    color: Colors.transparent,
+                                    child: InkWell(
+                                      onTap: _confirmExitSelectMode,
+                                      borderRadius: BorderRadius.circular(20),
+                                      child: Container(
+                                        padding: const EdgeInsets.all(8),
+                                        decoration: BoxDecoration(
+                                          color: Colors.grey[100],
+                                          shape: BoxShape.circle,
+                                        ),
+                                        child: const Icon(
+                                          Icons.close,
+                                          size: 20,
+                                          color: Colors.black54,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            // Expanded itinerary list
+                            if (_isSelectModeOverlayExpanded)
+                              const Divider(height: 1, thickness: 1),
+                            if (_isSelectModeOverlayExpanded)
+                              Flexible(
+                                child: _buildSelectModeItineraryList(),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -6058,6 +6903,27 @@ class _MapScreenState extends State<MapScreen> {
                               ],
                             ],
                           ),
+
+                          // ADDED: Select button for adding to event itinerary when in select mode
+                          if (_isSelectModeActive && _tappedLocationDetails != null) ...[
+                            const SizedBox(height: 12),
+                            SizedBox(
+                              width: double.infinity,
+                              child: ElevatedButton.icon(
+                                onPressed: () => _handleSelectForEvent(),
+                                icon: const Icon(Icons.add_circle_outline, size: 20),
+                                label: const Text('Select for Event'),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: _selectModeColor,
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(vertical: 12),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
 
                           const SizedBox(height: 12),
                         ],
