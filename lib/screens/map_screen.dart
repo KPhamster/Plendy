@@ -155,7 +155,6 @@ class _MapScreenState extends State<MapScreen> {
   bool _sharedIsFetching = false;
   static const int _sharedPageSize = 200;
   bool _isGlobalToggleActive = false; // ADDED: Track globe toggle state
-  bool _isCalendarToggleActive = false; // ADDED: Track calendar toggle state
   bool _isCalendarDialogLoading = false;
   // ADDED: Fallback paging state when query path fails
   List<String>? _fallbackSharedIds;
@@ -174,6 +173,8 @@ class _MapScreenState extends State<MapScreen> {
   final Map<String, EventExperienceEntry> _eventViewMarkerEntries = {}; // Store entry for each marker
   bool get _isEventViewModeActive => _activeEventViewMode != null;
   bool _isEventOverlayExpanded = false; // Track expanded state of event overlay
+  List<UserCategory> _plannerCategories = []; // Planner's categories for shared events
+  List<ColorCategory> _plannerColorCategories = []; // Planner's color categories for shared events
 
   // ADDED: Select mode state (for creating new events by selecting experiences on map)
   bool _isSelectModeActive = false;
@@ -655,6 +656,29 @@ class _MapScreenState extends State<MapScreen> {
     });
   }
 
+  String? _getCategoryIconForExperienceFromCategories(Experience experience, List<UserCategory> categoriesToUse) {
+    final String? categoryId = experience.categoryId;
+
+    // First try the denormalized icon
+    if (experience.categoryIconDenorm != null &&
+        experience.categoryIconDenorm!.isNotEmpty) {
+      return experience.categoryIconDenorm;
+    }
+
+    // Then try to find the category in the provided categories list
+    if (categoryId != null && categoryId.isNotEmpty) {
+      try {
+        final UserCategory category =
+            categoriesToUse.firstWhere((cat) => cat.id == categoryId);
+        return category.icon;
+      } catch (_) {
+        // Category not found in provided list
+      }
+    }
+
+    return null;
+  }
+
   String? _getCategoryIconForExperience(Experience experience) {
     final String? ownerId = experience.createdBy;
     final String? currentUserId = _authService.currentUser?.uid;
@@ -933,6 +957,13 @@ class _MapScreenState extends State<MapScreen> {
       return true;
     }
     return _hasCategorySharePermission(ownerId, colorCategory.id);
+  }
+
+  bool _canEditEvent(Event event) {
+    final String? currentUserId = _authService.currentUser?.uid;
+    if (currentUserId == null) return false;
+    return event.plannerUserId == currentUserId || 
+           event.collaboratorIds.contains(currentUserId);
   }
 
   bool _isExperienceEffectivelyPrivate(Experience experience) {
@@ -1543,18 +1574,7 @@ class _MapScreenState extends State<MapScreen> {
     if (_isCalendarDialogLoading) {
       return;
     }
-
-    final bool newState = !_isCalendarToggleActive;
-    setState(() {
-      _isCalendarToggleActive = newState;
-    });
-    print(
-        "🗺️ MAP SCREEN: Calendar toggle pressed. New state: $_isCalendarToggleActive");
-
-    if (!newState) {
-      return;
-    }
-
+    print("🗺️ MAP SCREEN: Calendar button pressed.");
     await _showEventsDialog();
   }
 
@@ -1653,9 +1673,6 @@ class _MapScreenState extends State<MapScreen> {
     final userId = _authService.currentUser?.uid;
     if (userId == null) {
       if (mounted) {
-        setState(() {
-          _isCalendarToggleActive = false;
-        });
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Please log in to view your events.')),
         );
@@ -1688,11 +1705,6 @@ class _MapScreenState extends State<MapScreen> {
         );
       }
     } finally {
-      if (mounted) {
-        setState(() {
-          _isCalendarToggleActive = false;
-        });
-      }
     }
   }
 
@@ -2249,6 +2261,75 @@ class _MapScreenState extends State<MapScreen> {
       _publicReadOnlyExperienceId = null;
     });
 
+    // Fetch planner's categories for shared events so viewers see correct icons
+    final userId = _authService.currentUser?.uid;
+    final bool isOwner = userId != null && event.plannerUserId == userId;
+    List<UserCategory> plannerCategories = [];
+    List<ColorCategory> plannerColorCategories = [];
+    
+    // Clear previous planner categories
+    _plannerCategories = [];
+    _plannerColorCategories = [];
+
+    if (!isOwner) {
+      // For shared events, fetch the planner's categories to show correct icons
+      final Set<String> categoryIds = {};
+      final Set<String> colorCategoryIds = {};
+
+      // Collect category IDs from experiences
+      for (final entry in event.experiences) {
+        if (!entry.isEventOnly && entry.experienceId.isNotEmpty) {
+          final experience = _eventExperiencesCache[entry.experienceId];
+          if (experience != null) {
+            if (experience.categoryId != null && experience.categoryId!.isNotEmpty) {
+              categoryIds.add(experience.categoryId!);
+            }
+            categoryIds.addAll(experience.otherCategories.where((id) => id.isNotEmpty));
+
+            if (experience.colorCategoryId != null && experience.colorCategoryId!.isNotEmpty) {
+              colorCategoryIds.add(experience.colorCategoryId!);
+            }
+            colorCategoryIds.addAll(experience.otherColorCategoryIds.where((id) => id.isNotEmpty));
+          }
+        } else if (entry.isEventOnly) {
+          // Event-only experiences
+          if (entry.inlineCategoryId != null && entry.inlineCategoryId!.isNotEmpty) {
+            categoryIds.add(entry.inlineCategoryId!);
+          }
+          categoryIds.addAll(entry.inlineOtherCategoryIds.where((id) => id.isNotEmpty));
+
+          if (entry.inlineColorCategoryId != null && entry.inlineColorCategoryId!.isNotEmpty) {
+            colorCategoryIds.add(entry.inlineColorCategoryId!);
+          }
+          colorCategoryIds.addAll(entry.inlineOtherColorCategoryIds.where((id) => id.isNotEmpty));
+        }
+      }
+
+      try {
+        if (categoryIds.isNotEmpty) {
+          plannerCategories = await _experienceService.getUserCategoriesByOwnerAndIds(
+            event.plannerUserId,
+            categoryIds.toList(),
+          );
+          _plannerCategories = plannerCategories;
+        }
+      } catch (e) {
+        print("🗺️ MAP SCREEN: Failed to fetch planner categories for event ${event.id}: $e");
+      }
+
+      try {
+        if (colorCategoryIds.isNotEmpty) {
+          plannerColorCategories = await _experienceService.getColorCategoriesByOwnerAndIds(
+            event.plannerUserId,
+            colorCategoryIds.toList(),
+          );
+          _plannerColorCategories = plannerColorCategories;
+        }
+      } catch (e) {
+        print("🗺️ MAP SCREEN: Failed to fetch planner color categories for event ${event.id}: $e");
+      }
+    }
+
     // Build markers for each experience in the event
     final List<LatLng> positions = [];
     
@@ -2269,16 +2350,14 @@ class _MapScreenState extends State<MapScreen> {
         final experience = _eventExperiencesCache[entry.experienceId];
         if (experience != null) {
           location = experience.location;
-          iconText = _getCategoryIconForExperience(experience) ?? '📍';
-          // Use experience's color if available
-          if (experience.colorHexDenorm != null && experience.colorHexDenorm!.isNotEmpty) {
-            markerBackgroundColor = _parseColor(experience.colorHexDenorm!);
-          } else if (experience.colorCategoryId != null) {
-            try {
-              final colorCat = _colorCategories.firstWhere((cc) => cc.id == experience.colorCategoryId);
-              markerBackgroundColor = _parseColor(colorCat.colorHex);
-            } catch (_) {}
+          // Use planner's categories for shared events to show correct icons
+          if (!isOwner && plannerCategories.isNotEmpty) {
+            iconText = _getCategoryIconForExperienceFromCategories(experience, plannerCategories) ?? '📍';
+          } else {
+            iconText = _getCategoryIconForExperience(experience) ?? '📍';
           }
+          // Always use event color for markers in event view mode (not experience color)
+          // markerBackgroundColor remains as _getEventColor(event) set above
         }
       }
       
@@ -2488,12 +2567,20 @@ class _MapScreenState extends State<MapScreen> {
   ) async {
     print("🗺️ MAP SCREEN: Handling tap on saved experience in event view: '${experience.name}'");
     
-    // Get category for the experience
+    // Get category for the experience - use planner's categories for shared events
     UserCategory? resolvedCategory;
     final String? categoryId = experience.categoryId;
+    final userId = _authService.currentUser?.uid;
+    final bool isOwner = userId != null && _activeEventViewMode != null && _activeEventViewMode!.plannerUserId == userId;
+    
     if (categoryId != null && categoryId.isNotEmpty) {
       try {
-        resolvedCategory = _categories.firstWhere((cat) => cat.id == categoryId);
+        // For shared events, try planner's categories first
+        if (!isOwner && _plannerCategories.isNotEmpty) {
+          resolvedCategory = _plannerCategories.firstWhere((cat) => cat.id == categoryId);
+        } else {
+          resolvedCategory = _categories.firstWhere((cat) => cat.id == categoryId);
+        }
       } catch (_) {
         final String? ownerId = experience.createdBy;
         if (ownerId != null && ownerId.isNotEmpty && _followeeCategories.containsKey(ownerId)) {
@@ -2506,7 +2593,13 @@ class _MapScreenState extends State<MapScreen> {
     }
     
     // Generate selected icon with number badge for event view mode
-    final String selectedIconText = _getCategoryIconForExperience(experience) ?? '❓';
+    // Use planner's categories for shared events to show correct icons
+    final String selectedIconText;
+    if (!isOwner && _plannerCategories.isNotEmpty) {
+      selectedIconText = _getCategoryIconForExperienceFromCategories(experience, _plannerCategories) ?? '❓';
+    } else {
+      selectedIconText = _getCategoryIconForExperience(experience) ?? '❓';
+    }
     final selectedIcon = await _bitmapDescriptorFromNumberedIcon(
       number: positionNumber,
       iconText: selectedIconText,
@@ -2695,19 +2788,33 @@ class _MapScreenState extends State<MapScreen> {
         ? entry.inlineColorCategoryId
         : experience?.colorCategoryId;
     
-    // Get category icon
+    // Get category icon - use planner's categories for shared events
     String categoryIcon = '📍';
+    final userId = _authService.currentUser?.uid;
+    final bool isOwner = userId != null && _activeEventViewMode != null && _activeEventViewMode!.plannerUserId == userId;
+    
     if (isEventOnly) {
       categoryIcon = entry.inlineCategoryIconDenorm ?? '📍';
     } else if (experience != null) {
-      categoryIcon = _getCategoryIconForExperience(experience) ?? '📍';
+      // Use planner's categories for shared events to show correct icons
+      if (!isOwner && _plannerCategories.isNotEmpty) {
+        categoryIcon = _getCategoryIconForExperienceFromCategories(experience, _plannerCategories) ?? '📍';
+      } else {
+        categoryIcon = _getCategoryIconForExperience(experience) ?? '📍';
+      }
     }
     
-    // Get color
+    // Get color - use planner's color categories for shared events
     Color leadingBoxColor = Colors.grey.shade200;
     if (colorCategoryId != null) {
       try {
-        final colorCat = _colorCategories.firstWhere((cc) => cc.id == colorCategoryId);
+        ColorCategory? colorCat;
+        // For shared events, try planner's color categories first
+        if (!isOwner && _plannerColorCategories.isNotEmpty) {
+          colorCat = _plannerColorCategories.firstWhere((cc) => cc.id == colorCategoryId);
+        } else {
+          colorCat = _colorCategories.firstWhere((cc) => cc.id == colorCategoryId);
+        }
         leadingBoxColor = _parseColor(colorCat.colorHex).withOpacity(0.5);
       } catch (_) {
         if (isEventOnly && entry.inlineColorHexDenorm != null) {
@@ -3356,6 +3463,9 @@ class _MapScreenState extends State<MapScreen> {
       // Also exit add-to-event mode if active
       _isAddToEventModeActive = false;
       _addToEventDraftItinerary = [];
+      // Clear planner categories
+      _plannerCategories = [];
+      _plannerColorCategories = [];
     });
   }
 
@@ -6886,7 +6996,7 @@ class _MapScreenState extends State<MapScreen> {
             child: IconButton(
               icon: Icon(
                 Icons.event_outlined,
-                color: _isEventViewModeActive ? Colors.black : Colors.grey,
+                color: Colors.black,
               ),
               tooltip: 'Toggle calendar view',
               onPressed: _handleCalendarToggle,
@@ -7330,60 +7440,64 @@ class _MapScreenState extends State<MapScreen> {
                                       ),
                                     ],
                                   ),
-                                  const SizedBox(width: 4),
                                   // Add experiences button (or finish button when in add mode)
-                                  Stack(
-                                    clipBehavior: Clip.none,
-                                    children: [
-                                      Material(
-                                        color: Colors.transparent,
-                                        child: InkWell(
-                                          onTap: _isAddToEventModeActive
-                                              ? _finishAddToEvent
-                                              : _enterAddToEventMode,
-                                          borderRadius: BorderRadius.circular(20),
-                                          child: Container(
-                                            padding: const EdgeInsets.all(8),
-                                            decoration: BoxDecoration(
-                                              color: _isAddToEventModeActive
-                                                  ? Colors.green
-                                                  : Theme.of(context).primaryColor,
-                                              shape: BoxShape.circle,
-                                            ),
-                                            child: Icon(
-                                              _isAddToEventModeActive
-                                                  ? Icons.check
-                                                  : Icons.add,
-                                              size: 20,
-                                              color: Colors.white,
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                      if (_isAddToEventModeActive)
-                                        Positioned(
-                                          right: -4,
-                                          bottom: -4,
-                                          child: Container(
-                                            padding: const EdgeInsets.all(4),
-                                            decoration: BoxDecoration(
-                                              color: _addToEventDraftItinerary.isNotEmpty 
-                                                  ? Colors.red 
-                                                  : _getEventColor(_activeEventViewMode!),
-                                              shape: BoxShape.circle,
-                                            ),
-                                            child: Text(
-                                              '${_addToEventDraftItinerary.length}',
-                                              style: const TextStyle(
+                                  // Only show if user can edit the event
+                                  if (_canEditEvent(_activeEventViewMode!)) ...[
+                                    const SizedBox(width: 4),
+                                    Stack(
+                                      clipBehavior: Clip.none,
+                                      children: [
+                                        Material(
+                                          color: Colors.transparent,
+                                          child: InkWell(
+                                            onTap: _isAddToEventModeActive
+                                                ? _finishAddToEvent
+                                                : _enterAddToEventMode,
+                                            borderRadius: BorderRadius.circular(20),
+                                            child: Container(
+                                              padding: const EdgeInsets.all(8),
+                                              decoration: BoxDecoration(
+                                                color: _isAddToEventModeActive
+                                                    ? Colors.green
+                                                    : Theme.of(context).primaryColor,
+                                                shape: BoxShape.circle,
+                                              ),
+                                              child: Icon(
+                                                _isAddToEventModeActive
+                                                    ? Icons.check
+                                                    : Icons.add,
+                                                size: 20,
                                                 color: Colors.white,
-                                                fontSize: 10,
-                                                fontWeight: FontWeight.bold,
                                               ),
                                             ),
                                           ),
                                         ),
-                                    ],
-                                  ),
+                                        if (_isAddToEventModeActive)
+                                          Positioned(
+                                            right: -4,
+                                            bottom: -4,
+                                            child: Container(
+                                              padding: const EdgeInsets.all(4),
+                                              decoration: BoxDecoration(
+                                                color: _addToEventDraftItinerary.isNotEmpty 
+                                                    ? Colors.red 
+                                                    : _getEventColor(_activeEventViewMode!),
+                                                shape: BoxShape.circle,
+                                              ),
+                                              child: Text(
+                                                '${_addToEventDraftItinerary.length}',
+                                                style: const TextStyle(
+                                                  color: Colors.white,
+                                                  fontSize: 10,
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                      ],
+                                    ),
+                                    const SizedBox(width: 4),
+                                  ],
                                   const SizedBox(width: 4),
                                   // Close button
                                   Material(
@@ -7865,7 +7979,8 @@ class _MapScreenState extends State<MapScreen> {
                           ),
 
                           // ADDED: Add/Remove button for event itinerary when in select mode or add-to-event mode
-                          if ((_isSelectModeActive || _isAddToEventModeActive) && _tappedLocationDetails != null) ...[
+                          // Only show for add-to-event mode if user can edit the event
+                          if ((_isSelectModeActive || (_isAddToEventModeActive && _activeEventViewMode != null && _canEditEvent(_activeEventViewMode!))) && _tappedLocationDetails != null) ...[
                             const SizedBox(height: 12),
                             SizedBox(
                               width: double.infinity,
@@ -7923,7 +8038,8 @@ class _MapScreenState extends State<MapScreen> {
                           ],
 
                           // ADDED: Add/Remove from event button when in event view mode (not in add-to-event or select mode)
-                          if (_isEventViewModeActive && !_isAddToEventModeActive && !_isSelectModeActive && _tappedLocationDetails != null) ...[
+                          // Only show if user can edit the event
+                          if (_isEventViewModeActive && !_isAddToEventModeActive && !_isSelectModeActive && _tappedLocationDetails != null && _activeEventViewMode != null && _canEditEvent(_activeEventViewMode!)) ...[
                             const SizedBox(height: 12),
                             SizedBox(
                               width: double.infinity,

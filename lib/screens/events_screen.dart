@@ -691,49 +691,67 @@ class _EventsScreenState extends State<EventsScreen>
     final events = _getEventsForDay(_selectedDay);
     return RefreshIndicator(
       onRefresh: _loadEvents,
-      child: Column(
-        children: [
-        // Day header
-        Container(
-          padding: const EdgeInsets.all(16),
-          child: Row(
-            children: [
-              IconButton(
-                icon: const Icon(Icons.chevron_left),
-                onPressed: () {
-                  setState(() {
-                    _selectedDay = _selectedDay.subtract(const Duration(days: 1));
-                    _focusedDay = _selectedDay;
-                  });
-                },
-              ),
-              Expanded(
-                child: Center(
-                  child: Text(
-                    DateFormat('EEEE, MMMM d, y').format(_selectedDay),
-                    style: theme.textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
-                    textAlign: TextAlign.center,
+      child: GestureDetector(
+        onHorizontalDragEnd: (details) {
+          // Swipe left to go to next day
+          if (details.primaryVelocity! < 0) {
+            setState(() {
+              _selectedDay = _selectedDay.add(const Duration(days: 1));
+              _focusedDay = _selectedDay;
+            });
+          }
+          // Swipe right to go to previous day
+          else if (details.primaryVelocity! > 0) {
+            setState(() {
+              _selectedDay = _selectedDay.subtract(const Duration(days: 1));
+              _focusedDay = _selectedDay;
+            });
+          }
+        },
+        child: Column(
+          children: [
+            // Day header
+            Container(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.chevron_left),
+                    onPressed: () {
+                      setState(() {
+                        _selectedDay = _selectedDay.subtract(const Duration(days: 1));
+                        _focusedDay = _selectedDay;
+                      });
+                    },
                   ),
-                ),
+                  Expanded(
+                    child: Center(
+                      child: Text(
+                        DateFormat('EEEE, MMMM d, y').format(_selectedDay),
+                        style: theme.textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.chevron_right),
+                    onPressed: () {
+                      setState(() {
+                        _selectedDay = _selectedDay.add(const Duration(days: 1));
+                        _focusedDay = _selectedDay;
+                      });
+                    },
+                  ),
+                ],
               ),
-              IconButton(
-                icon: const Icon(Icons.chevron_right),
-                onPressed: () {
-                  setState(() {
-                    _selectedDay = _selectedDay.add(const Duration(days: 1));
-                    _focusedDay = _selectedDay;
-                  });
-                },
-              ),
-            ],
-          ),
+            ),
+            Expanded(
+              child: _buildEventsList(events, theme, isDark),
+            ),
+          ],
         ),
-        Expanded(
-          child: _buildEventsList(events, theme, isDark),
-        ),
-      ],
       ),
     );
   }
