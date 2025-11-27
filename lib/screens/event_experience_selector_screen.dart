@@ -1772,6 +1772,7 @@ class _EventExperienceSelectorScreenState
           categories: widget.categories,
           colorCategories: widget.colorCategories,
           returnToSelectorOnItineraryTap: true,
+          isReadOnly: true,
         ),
         fullscreenDialog: true,
       ),

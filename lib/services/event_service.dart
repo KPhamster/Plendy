@@ -48,6 +48,86 @@ class EventService {
     await _eventsCollection.doc(event.id).update(data);
   }
 
+  /// Append a comment to an event
+  Future<EventComment> addCommentToEvent(
+    String eventId,
+    EventComment comment,
+  ) async {
+    if (_currentUserId == null) {
+      throw Exception('User not authenticated');
+    }
+
+    if (eventId.isEmpty) {
+      throw Exception('Event ID cannot be empty');
+    }
+
+    if (comment.text.trim().isEmpty) {
+      throw Exception('Comment text cannot be empty');
+    }
+
+    final commentId = comment.commentId.isNotEmpty
+        ? comment.commentId
+        : _eventsCollection.doc().id;
+    final authorId =
+        comment.authorId.isNotEmpty ? comment.authorId : _currentUserId!;
+
+    final newComment = comment.copyWith(
+      commentId: commentId,
+      authorId: authorId,
+      createdAt: comment.createdAt,
+    );
+
+    final Map<String, dynamic> commentMap = {
+      'commentId': newComment.commentId,
+      'authorId': newComment.authorId,
+      'text': newComment.text.trim(),
+      'createdAt': Timestamp.fromDate(newComment.createdAt),
+      if (newComment.experienceId != null && newComment.experienceId!.isNotEmpty)
+        'experienceId': newComment.experienceId,
+    };
+
+    final docRef = _eventsCollection.doc(eventId);
+    try {
+      await _firestore.runTransaction((transaction) async {
+        final snapshot = await transaction.get(docRef);
+        if (!snapshot.exists) {
+          throw Exception('Event not found');
+        }
+
+        final data =
+            snapshot.data() as Map<String, dynamic>? ?? <String, dynamic>{};
+        final existingComments =
+            (data['comments'] as List<dynamic>?)?.toList() ?? <dynamic>[];
+
+        final List<Map<String, dynamic>> updatedComments = existingComments
+            .map<Map<String, dynamic>>((entry) {
+              if (entry is Map<String, dynamic>) {
+                return Map<String, dynamic>.from(entry);
+              }
+              return <String, dynamic>{};
+            })
+            .where((entry) => entry.isNotEmpty)
+            .toList();
+
+        updatedComments.add(commentMap);
+
+        transaction.update(docRef, {
+          'comments': updatedComments,
+          'updatedAt': FieldValue.serverTimestamp(),
+          'lastModifiedByUserId': _currentUserId!,
+        });
+      });
+    } on FirebaseException catch (e) {
+      print('EventService: Failed to add comment - ${e.code}: ${e.message}');
+      rethrow;
+    } catch (e) {
+      print('EventService: Error adding comment: $e');
+      rethrow;
+    }
+
+    return newComment;
+  }
+
   /// Get an event by ID
   Future<Event?> getEvent(String eventId) async {
     final doc = await _eventsCollection.doc(eventId).get();
@@ -150,4 +230,3 @@ class EventService {
     return random.split('').map((c) => chars[int.parse(c)]).join();
   }
 }
-
