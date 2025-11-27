@@ -389,6 +389,83 @@ class _EventsScreenState extends State<EventsScreen>
       _focusedDay = DateTime.now();
       _selectedDay = DateTime.now();
     });
+    
+    // Handle different views
+    if (_viewMode == 'schedule') {
+      // If on Schedule tab, scroll to today's event
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _scrollScheduleToToday();
+      });
+    } else if (_viewMode == 'week') {
+      // If on Week tab, navigate to this week
+      _weekPageController.animateToPage(
+        52, // Page 52 is the current week
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOut,
+      );
+    }
+  }
+  
+  void _navigateWeekToMonth(DateTime selectedDate) {
+    // Calculate the first day of the selected month
+    final firstDayOfMonth = DateTime(selectedDate.year, selectedDate.month, 1);
+    
+    // Calculate the week start (Sunday) for that month
+    // If the first day is not a Sunday, get the next Sunday for the first full week
+    final dayOfWeek = firstDayOfMonth.weekday;
+    final daysUntilSunday = (7 - dayOfWeek) % 7;
+    
+    final firstFullWeekStart = daysUntilSunday == 0
+        ? firstDayOfMonth
+        : firstDayOfMonth.add(Duration(days: daysUntilSunday));
+    
+    // Calculate which page this week corresponds to
+    // Page 52 is the current week, so we calculate the offset
+    final now = DateTime.now();
+    final currentWeekStart = now.subtract(
+      Duration(days: now.weekday % 7),
+    );
+    
+    // Calculate the number of weeks between currentWeekStart and firstFullWeekStart
+    final weekDifference = firstFullWeekStart.difference(currentWeekStart).inDays ~/ 7;
+    final targetPage = 52 + weekDifference;
+    
+    debugPrint(
+      'Week: Navigating to month ${selectedDate.month}/${selectedDate.year}, '
+      'first full week: ${DateFormat('MMM d').format(firstFullWeekStart)}, '
+      'page: $targetPage',
+    );
+    
+    _weekPageController.animateToPage(
+      targetPage,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeOut,
+    );
+  }
+
+  void _scrollScheduleToToday() {
+    final now = DateTime.now();
+    final todayStart = DateTime(now.year, now.month, now.day);
+    
+    final events = [..._allEvents]..sort(
+      (a, b) => a.startDateTime.compareTo(b.startDateTime),
+    );
+    if (events.isEmpty) return;
+    
+    // Find first event on or after today
+    int targetIndex = events.indexWhere(
+      (event) => !event.startDateTime.isBefore(todayStart),
+    );
+    
+    // If no events on or after today, use the last event
+    if (targetIndex == -1) {
+      targetIndex = events.length - 1;
+    }
+    
+    debugPrint(
+      'Schedule: Scrolling to today (index $targetIndex)',
+    );
+    _scrollScheduleToIndex(events, targetIndex, reason: 'today');
   }
 
   @override
@@ -469,9 +546,7 @@ class _EventsScreenState extends State<EventsScreen>
           // Search icon
           IconButton(
             icon: const Icon(Icons.search),
-            onPressed: () {
-              // TODO: Implement search
-            },
+            onPressed: () => _showSearchDialog(context, theme, isDark),
           ),
         ],
       ),
@@ -635,10 +710,11 @@ class _EventsScreenState extends State<EventsScreen>
               Expanded(
                 child: Center(
                   child: Text(
-                    DateFormat('EEEE, MMMM d').format(_selectedDay),
+                    DateFormat('EEEE, MMMM d, y').format(_selectedDay),
                     style: theme.textTheme.titleLarge?.copyWith(
                       fontWeight: FontWeight.w600,
                     ),
+                    textAlign: TextAlign.center,
                   ),
                 ),
               ),
@@ -986,62 +1062,7 @@ class _EventsScreenState extends State<EventsScreen>
     if (targetIndex != -1 && !_scheduleDidInitialScroll) {
       debugPrint('Schedule: Scheduling scroll to index $targetIndex');
       _scheduleDidInitialScroll = true;
-      
-      // Helper function to attempt scrolling
-      void attemptScroll([int attempts = 0]) {
-        if (attempts >= 10) {
-          debugPrint('Schedule: Max scroll attempts reached');
-          return;
-        }
-        
-        if (!_scheduleScrollController.hasClients) {
-          debugPrint('Schedule: No scroll clients yet (attempt ${attempts + 1}), retrying...');
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            attemptScroll(attempts + 1);
-          });
-          return;
-        }
-        
-        // Calculate offset based on estimated item heights
-        double offset = 0;
-        for (int i = 0; i < targetIndex; i++) {
-          final event = events[i];
-          final showDateHeader = i == 0 ||
-              !isSameDay(
-                event.startDateTime,
-                events[i - 1].startDateTime,
-              );
-          
-          // Add header height if present (16 + text + 8 padding ~= 50px)
-          if (showDateHeader) {
-            offset += 50;
-          }
-          
-          // Add event card height (estimate ~110px per card with margins)
-          offset += 110;
-        }
-        
-        // Add the date header for the anchor event if needed
-        if (targetIndex > 0 && !isSameDay(
-              events[targetIndex].startDateTime,
-              events[targetIndex - 1].startDateTime,
-            )) {
-          offset += 50;
-        }
-        
-        debugPrint('Schedule: Scrolling to calculated offset $offset (max: ${_scheduleScrollController.position.maxScrollExtent})');
-        
-        _scheduleScrollController.animateTo(
-          offset.clamp(0.0, _scheduleScrollController.position.maxScrollExtent),
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOut,
-        );
-      }
-      
-      // Start attempting to scroll after the next frame
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        attemptScroll();
-      });
+      _scrollScheduleToIndex(events, targetIndex, reason: 'initial');
     }
 
     if (events.isEmpty) {
@@ -1131,6 +1152,124 @@ class _EventsScreenState extends State<EventsScreen>
         children: scheduleEntries,
       ),
     );
+  }
+
+  void _scrollScheduleToIndex(
+    List<Event> events,
+    int targetIndex, {
+    String reason = 'manual',
+  }) {
+    if (targetIndex < 0 || targetIndex >= events.length) return;
+
+    void attemptScroll([int attempts = 0]) {
+      if (attempts >= 10) {
+        debugPrint('Schedule: Max scroll attempts reached for $reason');
+        return;
+      }
+
+      if (!_scheduleScrollController.hasClients) {
+        debugPrint('Schedule: No scroll clients yet for $reason (attempt ${attempts + 1}), retrying...');
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          attemptScroll(attempts + 1);
+        });
+        return;
+      }
+
+      final offset = _calculateScheduleOffset(events, targetIndex);
+      debugPrint(
+        'Schedule: Scrolling ($reason) to index $targetIndex at offset $offset '
+        '(max: ${_scheduleScrollController.position.maxScrollExtent})',
+      );
+
+      _scheduleScrollController.animateTo(
+        offset.clamp(0.0, _scheduleScrollController.position.maxScrollExtent),
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOut,
+      );
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      attemptScroll();
+    });
+  }
+
+  double _calculateScheduleOffset(List<Event> events, int targetIndex) {
+    double offset = 0;
+    for (int i = 0; i < targetIndex; i++) {
+      final event = events[i];
+      final showDateHeader = i == 0 ||
+          !isSameDay(
+            event.startDateTime,
+            events[i - 1].startDateTime,
+          );
+
+      if (showDateHeader) {
+        offset += 50; // Date header height
+      }
+
+      offset += 110; // Estimated card height with padding
+    }
+
+    if (targetIndex > 0 &&
+        !isSameDay(
+          events[targetIndex].startDateTime,
+          events[targetIndex - 1].startDateTime,
+        )) {
+      offset += 50;
+    }
+
+    return offset;
+  }
+
+  void _scrollScheduleToMonth(DateTime selectedDate) {
+    if (_viewMode != 'schedule') return;
+
+    final events = [..._allEvents]..sort(
+      (a, b) => a.startDateTime.compareTo(b.startDateTime),
+    );
+    if (events.isEmpty) return;
+
+    final targetIndex = _findEventIndexForMonth(events, selectedDate);
+    if (targetIndex == -1) return;
+
+    debugPrint(
+      'Schedule: Scrolling to month ${selectedDate.month}/${selectedDate.year} (index $targetIndex)',
+    );
+    _scrollScheduleToIndex(events, targetIndex, reason: 'month');
+  }
+
+  int _findEventIndexForMonth(List<Event> events, DateTime selectedDate) {
+    if (events.isEmpty) return -1;
+
+    final targetMonthStart = DateTime(selectedDate.year, selectedDate.month, 1);
+    int? monthIndex;
+    int? nearestIndex;
+    int? nearestDistanceMinutes;
+
+    for (int i = 0; i < events.length; i++) {
+      final eventDate = events[i].startDateTime;
+
+      if (eventDate.year == targetMonthStart.year &&
+          eventDate.month == targetMonthStart.month) {
+        monthIndex = i;
+        break;
+      }
+
+      final distanceMinutes =
+          eventDate.difference(targetMonthStart).inMinutes.abs();
+      final isCloser = nearestDistanceMinutes == null ||
+          distanceMinutes < nearestDistanceMinutes;
+      final isEquallyCloseButFuture = nearestDistanceMinutes != null &&
+          distanceMinutes == nearestDistanceMinutes &&
+          !eventDate.isBefore(targetMonthStart);
+
+      if (isCloser || isEquallyCloseButFuture) {
+        nearestDistanceMinutes = distanceMinutes;
+        nearestIndex = i;
+      }
+    }
+
+    return monthIndex ?? nearestIndex ?? -1;
   }
 
 
@@ -1531,6 +1670,15 @@ class _EventsScreenState extends State<EventsScreen>
             _selectedDay = selectedDate;
           });
           Navigator.of(context).pop();
+          if (_viewMode == 'schedule') {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              _scrollScheduleToMonth(selectedDate);
+            });
+          } else if (_viewMode == 'week') {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              _navigateWeekToMonth(selectedDate);
+            });
+          }
         },
       ),
     );
@@ -1608,6 +1756,249 @@ class _EventsScreenState extends State<EventsScreen>
 
     return null; // No icon available
   }
+
+  void _showSearchDialog(BuildContext context, ThemeData theme, bool isDark) {
+    showDialog(
+      context: context,
+      builder: (context) => _EventSearchDialog(
+        events: _allEvents,
+        experiencesCache: _experiencesCache,
+        theme: theme,
+        isDark: isDark,
+        onEventSelected: (event) {
+          Navigator.of(context).pop();
+          _scrollToEventFromSearch(event);
+        },
+      ),
+    );
+  }
+
+  void _scrollToEventFromSearch(Event event) {
+    final events = [..._allEvents]..sort(
+      (a, b) => a.startDateTime.compareTo(b.startDateTime),
+    );
+    
+    final targetIndex = events.indexWhere((e) => e.id == event.id);
+    if (targetIndex != -1) {
+      // Switch to schedule view if not already there
+      if (_viewMode != 'schedule') {
+        _tabController.animateTo(3);
+      }
+      
+      // Schedule the scroll for the next frame to ensure we're on the schedule view
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _scrollScheduleToIndex(events, targetIndex, reason: 'search');
+      });
+    }
+  }
+}
+
+/// Search dialog for events and their experiences
+class _EventSearchDialog extends StatefulWidget {
+  final List<Event> events;
+  final Map<String, Experience> experiencesCache;
+  final ThemeData theme;
+  final bool isDark;
+  final Function(Event) onEventSelected;
+
+  const _EventSearchDialog({
+    required this.events,
+    required this.experiencesCache,
+    required this.theme,
+    required this.isDark,
+    required this.onEventSelected,
+  });
+
+  @override
+  State<_EventSearchDialog> createState() => _EventSearchDialogState();
+}
+
+class _EventSearchDialogState extends State<_EventSearchDialog> {
+  late TextEditingController _searchController;
+  List<_SearchResult> _searchResults = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _searchController = TextEditingController();
+    _searchController.addListener(_performSearch);
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  void _performSearch() {
+    final query = _searchController.text.toLowerCase();
+    
+    if (query.isEmpty) {
+      setState(() => _searchResults = []);
+      return;
+    }
+
+    final results = <_SearchResult>[];
+    
+    for (final event in widget.events) {
+      // Search in event title
+      if (event.title.toLowerCase().contains(query)) {
+        results.add(_SearchResult(
+          event: event,
+          matchType: 'event',
+          matchText: event.title,
+        ));
+      }
+      
+      // Search in event description
+      if (event.description.isNotEmpty && 
+          event.description.toLowerCase().contains(query)) {
+        results.add(_SearchResult(
+          event: event,
+          matchType: 'description',
+          matchText: event.description,
+        ));
+      }
+      
+      // Search in experiences
+      for (final entry in event.experiences) {
+        if (entry.experienceId.isEmpty) {
+          // Event-only experience
+          if (entry.inlineName != null &&
+              entry.inlineName!.isNotEmpty &&
+              entry.inlineName!.toLowerCase().contains(query)) {
+            results.add(_SearchResult(
+              event: event,
+              matchType: 'experience',
+              matchText: entry.inlineName!,
+            ));
+          }
+        } else {
+          // Regular experience
+          final exp = widget.experiencesCache[entry.experienceId];
+          if (exp != null && exp.name.toLowerCase().contains(query)) {
+            results.add(_SearchResult(
+              event: event,
+              matchType: 'experience',
+              matchText: exp.name,
+            ));
+          }
+        }
+      }
+    }
+
+    setState(() => _searchResults = results);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Container(
+        decoration: BoxDecoration(
+          color: widget.isDark ? const Color(0xFF2B2930) : Colors.white,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Search field
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: TextField(
+                controller: _searchController,
+                autofocus: true,
+                decoration: InputDecoration(
+                  hintText: 'Search events & experiences...',
+                  prefixIcon: const Icon(Icons.search),
+                  suffixIcon: _searchController.text.isNotEmpty
+                      ? IconButton(
+                          icon: const Icon(Icons.clear),
+                          onPressed: () => _searchController.clear(),
+                        )
+                      : null,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
+                ),
+              ),
+            ),
+            // Results
+            Expanded(
+              child: _searchResults.isEmpty
+                  ? Center(
+                      child: Text(
+                        _searchController.text.isEmpty
+                            ? 'Start typing to search...'
+                            : 'No results found',
+                        style: TextStyle(
+                          color: widget.isDark
+                              ? Colors.white54
+                              : Colors.black54,
+                        ),
+                      ),
+                    )
+                  : ListView.builder(
+                      itemCount: _searchResults.length,
+                      itemBuilder: (context, index) {
+                        final result = _searchResults[index];
+                        return _buildSearchResultTile(result);
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSearchResultTile(_SearchResult result) {
+    final dateStr = DateFormat('MMM d, y').format(result.event.startDateTime);
+    final timeStr = DateFormat('h:mm a').format(result.event.startDateTime);
+    
+    String subtitle;
+    if (result.matchType == 'event') {
+      subtitle = 'Event title • $dateStr at $timeStr';
+    } else if (result.matchType == 'description') {
+      subtitle = 'Event description • $dateStr';
+    } else {
+      subtitle = 'Experience • ${result.event.title}';
+    }
+
+    return ListTile(
+      title: Text(
+        result.matchText,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      subtitle: Text(
+        subtitle,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      onTap: () => widget.onEventSelected(result.event),
+      trailing: const Icon(Icons.arrow_forward, size: 18),
+    );
+  }
+}
+
+/// Search result model
+class _SearchResult {
+  final Event event;
+  final String matchType; // 'event', 'description', or 'experience'
+  final String matchText;
+
+  _SearchResult({
+    required this.event,
+    required this.matchType,
+    required this.matchText,
+  });
 }
 
 /// Custom month/year picker sheet
