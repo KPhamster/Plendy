@@ -3542,6 +3542,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
           experiences: experiences,
           categories: categories,
           colorCategories: colorCategories,
+          isReadOnly: true,
         ),
       );
 

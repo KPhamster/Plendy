@@ -2196,8 +2196,8 @@ class _MapScreenState extends State<MapScreen> {
                   subtitle: const Text('See full event details'),
                   onTap: () {
                     Navigator.of(sheetContext).pop();
-                    // TODO: Implement view event page navigation
-                    print("🗺️ MAP SCREEN: View event page tapped for '${event.title}' - not yet implemented");
+                    Navigator.of(dialogContext).pop();
+                    _openEventPage(event);
                   },
                 ),
                 // View event map option
@@ -2229,6 +2229,163 @@ class _MapScreenState extends State<MapScreen> {
         );
       },
     );
+  }
+
+  // ADDED: Open event editor in view mode for the selected event
+  Future<void> _openEventPage(Event event) async {
+    if (!mounted) return;
+
+    print("🗺️ MAP SCREEN: Opening event page for '${event.title}' (${event.id})");
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(child: CircularProgressIndicator()),
+    );
+
+    try {
+      // Resolve experiences referenced by the event (exclude event-only entries)
+      final experienceIds = event.experiences
+          .map((entry) => entry.experienceId)
+          .where((id) => id.isNotEmpty)
+          .toList();
+
+      final Map<String, Experience> resolvedExperiences = {};
+      final List<String> missingExperienceIds = [];
+
+      for (final id in experienceIds) {
+        final cached = _eventExperiencesCache[id];
+        if (cached != null) {
+          resolvedExperiences[id] = cached;
+        } else {
+          missingExperienceIds.add(id);
+        }
+      }
+
+      if (missingExperienceIds.isNotEmpty) {
+        final fetchedExperiences =
+            await _experienceService.getExperiencesByIds(missingExperienceIds);
+        for (final exp in fetchedExperiences) {
+          resolvedExperiences[exp.id] = exp;
+          _eventExperiencesCache[exp.id] = exp;
+        }
+      }
+
+      final List<Experience> experiences = experienceIds
+          .map((id) => resolvedExperiences[id])
+          .whereType<Experience>()
+          .toList();
+
+      // Fetch category + color metadata from planner so viewers see correct icons
+      final userId = _authService.currentUser?.uid;
+      final bool isOwner = userId != null && event.plannerUserId == userId;
+
+      List<UserCategory> categories = [];
+      List<ColorCategory> colorCategories = [];
+
+      if (isOwner) {
+        categories = _categories.isNotEmpty
+            ? _categories
+            : await _experienceService.getUserCategories();
+        colorCategories = _colorCategories.isNotEmpty
+            ? _colorCategories
+            : await _experienceService.getUserColorCategories();
+      } else {
+        final Set<String> categoryIds = {};
+        final Set<String> colorCategoryIds = {};
+
+        for (final exp in experiences) {
+          if (exp.categoryId != null && exp.categoryId!.isNotEmpty) {
+            categoryIds.add(exp.categoryId!);
+          }
+          categoryIds.addAll(exp.otherCategories.where((id) => id.isNotEmpty));
+
+          if (exp.colorCategoryId != null && exp.colorCategoryId!.isNotEmpty) {
+            colorCategoryIds.add(exp.colorCategoryId!);
+          }
+          colorCategoryIds
+              .addAll(exp.otherColorCategoryIds.where((id) => id.isNotEmpty));
+        }
+
+        for (final entry in event.experiences) {
+          if (entry.inlineCategoryId != null && entry.inlineCategoryId!.isNotEmpty) {
+            categoryIds.add(entry.inlineCategoryId!);
+          }
+          categoryIds
+              .addAll(entry.inlineOtherCategoryIds.where((id) => id.isNotEmpty));
+
+          if (entry.inlineColorCategoryId != null &&
+              entry.inlineColorCategoryId!.isNotEmpty) {
+            colorCategoryIds.add(entry.inlineColorCategoryId!);
+          }
+          colorCategoryIds.addAll(
+              entry.inlineOtherColorCategoryIds.where((id) => id.isNotEmpty));
+        }
+
+        try {
+          if (categoryIds.isNotEmpty) {
+            categories = await _experienceService.getUserCategoriesByOwnerAndIds(
+              event.plannerUserId,
+              categoryIds.toList(),
+            );
+          }
+        } catch (e) {
+          print(
+              "🗺️ MAP SCREEN: Failed to fetch planner categories for event ${event.id}: $e");
+        }
+
+        try {
+          if (colorCategoryIds.isNotEmpty) {
+            colorCategories =
+                await _experienceService.getColorCategoriesByOwnerAndIds(
+              event.plannerUserId,
+              colorCategoryIds.toList(),
+            );
+          }
+        } catch (e) {
+          print(
+              "🗺️ MAP SCREEN: Failed to fetch planner color categories for event ${event.id}: $e");
+        }
+
+        if (categories.isEmpty) {
+          categories = _categories.isNotEmpty
+              ? _categories
+              : await _experienceService.getUserCategories();
+        }
+        if (colorCategories.isEmpty) {
+          colorCategories = _colorCategories.isNotEmpty
+              ? _colorCategories
+              : await _experienceService.getUserColorCategories();
+        }
+      }
+
+      if (!mounted) return;
+
+      Navigator.of(context).pop();
+
+      await Navigator.push<EventEditorResult>(
+        context,
+        MaterialPageRoute(
+          builder: (context) => EventEditorModal(
+            event: event,
+            experiences: experiences,
+            categories: categories,
+            colorCategories: colorCategories,
+            isReadOnly: true,
+          ),
+          fullscreenDialog: true,
+        ),
+      );
+    } catch (e, stackTrace) {
+      print("🗺️ MAP SCREEN: Error opening event page for ${event.id}: $e");
+      print(stackTrace);
+      if (!mounted) return;
+
+      Navigator.of(context).pop();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error loading event details: $e')),
+      );
+    }
   }
 
   // ADDED: Enter event view mode - show event's experiences on map
@@ -3625,6 +3782,7 @@ class _MapScreenState extends State<MapScreen> {
               experiences: experiences,
               categories: categories,
               colorCategories: colorCategories,
+              isReadOnly: true,
             ),
             fullscreenDialog: true,
           ),
@@ -3758,6 +3916,7 @@ class _MapScreenState extends State<MapScreen> {
             experiences: experiences,
             categories: categories,
             colorCategories: colorCategories,
+            isReadOnly: true,
           ),
           fullscreenDialog: true,
         ),

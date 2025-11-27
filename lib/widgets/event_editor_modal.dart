@@ -3,6 +3,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:collection/collection.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter_colorpicker/flutter_colorpicker.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/event.dart';
 import '../models/experience.dart';
 import '../models/user_profile.dart';
@@ -70,11 +71,23 @@ class _EventEditorModalState extends State<EventEditorModal> {
   late TextEditingController _descriptionController;
   late TextEditingController _coverImageUrlController;
   late TextEditingController _capacityController;
+  late TextEditingController _commentController;
   bool _isPeopleExpanded = false;
   final Map<String, bool> _itineraryExpandedState = {};
 
   bool _isSaving = false;
+  bool _isPostingComment = false;
   bool _hasUnsavedChanges = false;
+  bool _isEditModeEnabled = false;
+
+  bool get _isReadOnly => widget.isReadOnly && !_isEditModeEnabled;
+
+  bool get _canCurrentUserEdit {
+    final userId = _authService.currentUser?.uid;
+    if (userId == null) return false;
+    return _currentEvent.plannerUserId == userId ||
+        _currentEvent.collaboratorIds.contains(userId);
+  }
 
   // User profiles cache
   final Map<String, UserProfile> _userProfiles = {};
@@ -88,6 +101,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
   void initState() {
     super.initState();
     _currentEvent = _eventWithAutoPrimarySchedule(widget.event);
+    _isEditModeEnabled = !widget.isReadOnly;
     _availableExperiences = List<Experience>.from(widget.experiences);
     _titleController = TextEditingController(text: _currentEvent.title);
     _descriptionController =
@@ -97,6 +111,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
     _capacityController = TextEditingController(
       text: _currentEvent.capacity?.toString() ?? '',
     );
+    _commentController = TextEditingController();
 
     // Track initial invited users to detect newly added viewers
     _initialInvitedUserIds = Set<String>.from(_currentEvent.invitedUserIds);
@@ -115,6 +130,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
     _descriptionController.dispose();
     _coverImageUrlController.dispose();
     _capacityController.dispose();
+    _commentController.dispose();
     super.dispose();
   }
 
@@ -126,11 +142,22 @@ class _EventEditorModalState extends State<EventEditorModal> {
     }
   }
 
+  Future<void> _ensureUserProfileLoaded(String userId) async {
+    if (_userProfiles.containsKey(userId)) return;
+    final profile = await _experienceService.getUserProfileById(userId);
+    if (profile != null && mounted) {
+      setState(() {
+        _userProfiles[userId] = profile;
+      });
+    }
+  }
+
   Future<void> _loadUserProfiles() async {
     final userIds = <String>{
       _currentEvent.plannerUserId,
       ..._currentEvent.collaboratorIds,
       ..._currentEvent.invitedUserIds,
+      ..._currentEvent.comments.map((c) => c.authorId),
     };
 
     for (final userId in userIds) {
@@ -336,6 +363,116 @@ class _EventEditorModalState extends State<EventEditorModal> {
   bool get _isTimeRangeValid =>
       !_currentEvent.endDateTime.isBefore(_currentEvent.startDateTime);
 
+  bool get _canUserComment {
+    final userId = _authService.currentUser?.uid;
+    if (userId == null) return false;
+    if (_currentEvent.visibility == EventVisibility.public) return true;
+    if (_currentEvent.plannerUserId == userId) return true;
+    if (_currentEvent.collaboratorIds.contains(userId)) return true;
+    if (_currentEvent.invitedUserIds.contains(userId)) return true;
+    return false;
+  }
+
+  Future<void> _submitComment() async {
+    if (_isPostingComment) return;
+    if (_currentEvent.id.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Save the event before commenting.')),
+      );
+      return;
+    }
+
+    final user = _authService.currentUser;
+    if (user == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please sign in to leave a comment.')),
+      );
+      return;
+    }
+
+    if (!_canUserComment) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('You do not have permission to comment.')),
+      );
+      return;
+    }
+
+    final text = _commentController.text.trim();
+    if (text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Comment cannot be empty.')),
+      );
+      return;
+    }
+
+    final provisionalId =
+        'temp-${DateTime.now().microsecondsSinceEpoch.toString()}';
+    final newComment = EventComment(
+      commentId: provisionalId,
+      authorId: user.uid,
+      text: text,
+      createdAt: DateTime.now(),
+    );
+
+    setState(() {
+      _isPostingComment = true;
+      _currentEvent = _currentEvent.copyWith(
+        comments: [..._currentEvent.comments, newComment],
+      );
+    });
+    _commentController.clear();
+
+    await _ensureUserProfileLoaded(user.uid);
+
+    try {
+      final savedComment =
+          await _eventService.addCommentToEvent(_currentEvent.id, newComment);
+      if (!mounted) return;
+      setState(() {
+        _currentEvent = _currentEvent.copyWith(
+          comments: _currentEvent.comments
+              .map((c) => c.commentId == provisionalId ? savedComment : c)
+              .toList(),
+        );
+      });
+    } catch (e) {
+      debugPrint('EventEditorModal: Error posting comment: $e');
+      if (!mounted) return;
+      setState(() {
+        _currentEvent = _currentEvent.copyWith(
+          comments: _currentEvent.comments
+              .where((c) => c.commentId != provisionalId)
+              .toList(),
+        );
+        _commentController.text = text;
+      });
+      
+      String errorMessage = 'Failed to post comment';
+      if (e is FirebaseException) {
+        if (e.code == 'permission-denied') {
+          errorMessage = 'You do not have permission to comment on this event';
+        } else if (e.code == 'not-found') {
+          errorMessage = 'Event not found';
+        } else {
+          errorMessage = 'Failed to post comment: ${e.message ?? e.code}';
+        }
+      } else if (e.toString().contains('not authenticated')) {
+        errorMessage = 'Please sign in to comment';
+      } else if (e.toString().isNotEmpty) {
+        errorMessage = 'Failed to post comment: $e';
+      }
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(errorMessage)),
+      );
+    } finally {
+      if (!mounted) return;
+      setState(() {
+        _isPostingComment = false;
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final Duration duration =
@@ -363,7 +500,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
             icon: const Icon(Icons.arrow_back),
             onPressed: _handleBackNavigation,
           ),
-          title: widget.isReadOnly
+          title: _isReadOnly
               ? Text(
                   _currentEvent.title.isEmpty ? 'Untitled Event' : _currentEvent.title,
                   style: Theme.of(context).textTheme.titleLarge?.copyWith(
@@ -384,44 +521,54 @@ class _EventEditorModalState extends State<EventEditorModal> {
             ),
           ),
           actions: [
-            if (!widget.isReadOnly)
-            if (_isSaving)
-              Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    valueColor: AlwaysStoppedAnimation<Color>(foregroundColor),
-                  ),
-                ),
-              )
-            else
-              Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: isTimeRangeValid
-                        ? (isDarkColor 
-                            ? Colors.white.withOpacity(0.2)
-                            : Colors.black.withOpacity(0.1))
-                        : foregroundColor.withOpacity(0.3),
-                    foregroundColor: foregroundColor,
-                    elevation: 0,
-                    padding: const EdgeInsets.fromLTRB(12, 6, 16, 6),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(20),
-                      side: BorderSide(
-                        color: foregroundColor.withOpacity(0.3),
-                        width: 1,
-                      ),
+            if (_isReadOnly && _canCurrentUserEdit)
+              IconButton(
+                icon: const Icon(Icons.edit),
+                tooltip: 'Edit',
+                onPressed: () {
+                  setState(() {
+                    _isEditModeEnabled = true;
+                  });
+                },
+              ),
+            if (!_isReadOnly)
+              if (_isSaving)
+                Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(foregroundColor),
                     ),
                   ),
-                  onPressed: isTimeRangeValid ? _saveEvent : null,
-                  child: const Text('Save'),
+                )
+              else
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: isTimeRangeValid
+                          ? (isDarkColor 
+                              ? Colors.white.withOpacity(0.2)
+                              : Colors.black.withOpacity(0.1))
+                          : foregroundColor.withOpacity(0.3),
+                      foregroundColor: foregroundColor,
+                      elevation: 0,
+                      padding: const EdgeInsets.fromLTRB(12, 6, 16, 6),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(20),
+                        side: BorderSide(
+                          color: foregroundColor.withOpacity(0.3),
+                          width: 1,
+                        ),
+                      ),
+                    ),
+                    onPressed: isTimeRangeValid ? _saveEvent : null,
+                    child: const Text('Save'),
+                  ),
                 ),
-              ),
           ],
         ),
         body: GestureDetector(
@@ -487,7 +634,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
         : _coverImageUrlController.text.trim();
 
     return GestureDetector(
-      onTap: widget.isReadOnly ? null : () => _showCoverImageOptions(),
+      onTap: _isReadOnly ? null : () => _showCoverImageOptions(),
       child: Container(
         height: 250,
         decoration: BoxDecoration(
@@ -554,7 +701,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
             Positioned(
               bottom: 8,
               right: 8,
-              child: widget.isReadOnly
+              child: _isReadOnly
                   ? const SizedBox.shrink()
                   : FloatingActionButton.small(
                       onPressed: _showCoverImageOptions,
@@ -1995,7 +2142,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
                   padding: const EdgeInsets.all(4),
                 ),
               ),
-              if (!widget.isReadOnly) ...[
+              if (!_isReadOnly) ...[
                 const SizedBox(width: 8),
                 GestureDetector(
                   onTap: () => _pickEventColor(),
@@ -2079,7 +2226,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
         foregroundColor: Colors.black,
         disabledForegroundColor: Colors.black,
       ),
-      onPressed: widget.isReadOnly ? null : () async {
+      onPressed: _isReadOnly ? null : () async {
         Widget wrapPicker(Widget? child) =>
             _wrapPickerWithWhiteTheme(context, child);
 
@@ -2225,7 +2372,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
                       ),
                 ),
               ),
-              if (!widget.isReadOnly) ...[
+              if (!_isReadOnly) ...[
               const SizedBox(width: 8),
               Tooltip(
                 message: 'Add event-only experience',
@@ -2278,7 +2425,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
               physics: const NeverScrollableScrollPhysics(),
               itemCount: _currentEvent.experiences.length,
               buildDefaultDragHandles: false,
-              onReorder: widget.isReadOnly ? (_, __) {} : (oldIndex, newIndex) {
+              onReorder: _isReadOnly ? (_, __) {} : (oldIndex, newIndex) {
                 setState(() {
                   // Track the previous top-most experience ID
                   final String? previousTopExperienceId = _currentEvent.experiences.isNotEmpty
@@ -2323,7 +2470,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
               },
             ),
           const SizedBox(height: 16),
-          if (!widget.isReadOnly) ...[
+          if (!_isReadOnly) ...[
             // Add Event-Only Experience button
             SizedBox(
               width: double.infinity,
@@ -2698,7 +2845,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
     final Widget leadingWidget = Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        if (!widget.isReadOnly) ...[
+        if (!_isReadOnly) ...[
           ReorderableDragStartListener(
             index: index,
             child: const Icon(Icons.drag_handle),
@@ -2725,7 +2872,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
         ? _formatDateTime(entry.scheduledTime!)
         : null;
 
-    if (widget.isReadOnly) {
+    if (_isReadOnly) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -3046,7 +3193,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
                                     ],
                                   ),
                                 ),
-                                if (!widget.isReadOnly)
+                                if (!_isReadOnly)
                                   const Padding(
                                     padding: EdgeInsets.only(
                                         top: 4.0, left: 8.0),
@@ -3089,7 +3236,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
                                     ],
                                   ),
                                 ),
-                                if (!widget.isReadOnly)
+                                if (!_isReadOnly)
                                   const Padding(
                                     padding: EdgeInsets.only(
                                         top: 4.0, left: 8.0),
@@ -3132,7 +3279,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
                                     ],
                                   ),
                                 ),
-                                if (!widget.isReadOnly)
+                                if (!_isReadOnly)
                                   const Padding(
                                     padding: EdgeInsets.only(
                                         top: 4.0, left: 8.0),
@@ -3160,7 +3307,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
                               label: const Text('Edit'),
                               onPressed: () => _editEventOnlyExperience(entry, index),
                             ),
-                            if (!widget.isReadOnly)
+                            if (!_isReadOnly)
                               TextButton.icon(
                                 style: TextButton.styleFrom(
                                   foregroundColor: Theme.of(context).primaryColor,
@@ -3802,7 +3949,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
         ),
     ];
 
-    if (!widget.isReadOnly) {
+    if (!_isReadOnly) {
       return Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(
@@ -4155,7 +4302,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
     switch (_currentEvent.visibility) {
       case EventVisibility.private:
         visibilityLabel = 'Private';
-        visibilityDescription = 'Only you and collaborators';
+        visibilityDescription = 'Only those who are invited';
         break;
       case EventVisibility.sharedLink:
         visibilityLabel = 'Shared Link';
@@ -4176,14 +4323,14 @@ class _EventEditorModalState extends State<EventEditorModal> {
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               Text(
-                widget.isReadOnly
+                _isReadOnly
                     ? 'Visibility & Sharing:'
                     : 'Visibility & Sharing',
                 style: Theme.of(context).textTheme.titleMedium?.copyWith(
                       fontWeight: FontWeight.bold,
                     ),
               ),
-              if (widget.isReadOnly)
+              if (_isReadOnly)
                 Padding(
                   padding: const EdgeInsets.only(left: 24),
                   child: Column(
@@ -4211,13 +4358,13 @@ class _EventEditorModalState extends State<EventEditorModal> {
             ],
           ),
           const SizedBox(height: 16),
-          if (widget.isReadOnly) ...[
+          if (_isReadOnly) ...[
             // Description shown inline with header row
           ] else ...[
           RadioListTile<EventVisibility>(
             contentPadding: EdgeInsets.zero,
             title: const Text('Private'),
-            subtitle: const Text('Only you and collaborators'),
+            subtitle: const Text('Only those who are invited'),
             value: EventVisibility.private,
             groupValue: _currentEvent.visibility,
             onChanged: isPlanner
@@ -4378,7 +4525,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
               Expanded(
                 child: TextField(
                   controller: _capacityController,
-                  readOnly: widget.isReadOnly,
+                  readOnly: _isReadOnly,
                   decoration: const InputDecoration(
                     labelText: 'Max capacity (optional)',
                     border: OutlineInputBorder(),
@@ -4444,12 +4591,12 @@ class _EventEditorModalState extends State<EventEditorModal> {
             children: [
               Text(
                 'Notification:',
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
                       fontWeight: FontWeight.bold,
                     ),
               ),
               const SizedBox(width: 12),
-              if (widget.isReadOnly)
+              if (_isReadOnly)
                 Text(
                   _notificationLabel(
                     _currentEvent.notificationPreference.type,
@@ -4463,7 +4610,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
                 ),
             ],
           ),
-          if (!widget.isReadOnly) ...[
+          if (!_isReadOnly) ...[
             const SizedBox(height: 16),
             DropdownButtonFormField<EventNotificationType>(
               value: _currentEvent.notificationPreference.type,
@@ -4560,7 +4707,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
           const SizedBox(height: 16),
           TextField(
             controller: _descriptionController,
-            readOnly: widget.isReadOnly,
+            readOnly: _isReadOnly,
             decoration: const InputDecoration(
               hintText: 'Describe the vibe, schedule details, dress code, etc.',
               border: OutlineInputBorder(),
@@ -4643,47 +4790,200 @@ class _EventEditorModalState extends State<EventEditorModal> {
   }
 
   Widget _buildCommentsSection() {
+    final theme = Theme.of(context);
+    final mutedTextColor =
+        theme.textTheme.bodySmall?.color?.withOpacity(0.7) ??
+            Colors.grey[600];
+    final comments = List<EventComment>.from(_currentEvent.comments)
+      ..sort(
+        (a, b) => b.createdAt.compareTo(a.createdAt),
+      );
+    final canComment = _canUserComment;
+    final isAuthenticated = _authService.currentUser != null;
+
     return Padding(
       padding: const EdgeInsets.all(16.0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Comments (${_currentEvent.comments.length})',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+            'Comments (${comments.length})',
+            style: theme.textTheme.titleMedium?.copyWith(
                   fontWeight: FontWeight.bold,
                 ),
           ),
           const SizedBox(height: 16),
-          if (_currentEvent.comments.isEmpty)
-            const Text('No comments yet.', style: TextStyle(color: Colors.grey))
+          if (comments.isEmpty)
+            Text(
+              'No comments yet.',
+              style: TextStyle(color: Colors.grey[600]),
+            )
           else
-            ...widget.event.comments.map((comment) {
-              final author = _userProfiles[comment.authorId];
-              return ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: _buildUserAvatar(author, size: 36),
-                title: Text(author?.displayName ?? 'User'),
-                subtitle: Text(comment.text),
-                trailing: Text(
-                  _formatTimeAgo(comment.createdAt),
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              );
-            }),
+            Column(
+              children: comments.map((comment) {
+                final author = _userProfiles[comment.authorId];
+                final displayName =
+                    author?.displayName ?? author?.username ?? 'Someone';
+                final experienceLabel =
+                    _getExperienceLabelForComment(comment.experienceId);
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildUserAvatar(author, size: 36),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    displayName,
+                                    style: theme.textTheme.bodyMedium
+                                        ?.copyWith(
+                                            fontWeight: FontWeight.w600),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  _formatTimeAgo(comment.createdAt),
+                                  style:
+                                      theme.textTheme.bodySmall?.copyWith(
+                                            color: mutedTextColor,
+                                          ),
+                                ),
+                              ],
+                            ),
+                            if (experienceLabel != null) ...[
+                              const SizedBox(height: 4),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 4,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.grey.shade200,
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Text(
+                                  experienceLabel,
+                                  style: theme.textTheme.bodySmall,
+                                ),
+                              ),
+                            ],
+                            const SizedBox(height: 6),
+                            Text(comment.text),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }).toList(),
+            ),
           const SizedBox(height: 8),
-          OutlinedButton.icon(
-            icon: const Icon(Icons.add_comment),
-            label: const Text('Add Comment'),
-            onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                    content: Text('Add comment - not yet implemented')),
-              );
-            },
+          _buildCommentComposer(
+            canComment: canComment,
+            isAuthenticated: isAuthenticated,
           ),
         ],
       ),
+    );
+  }
+
+  String? _getExperienceLabelForComment(String? experienceId) {
+    if (experienceId == null || experienceId.isEmpty) return null;
+
+    final entry = _currentEvent.experiences.firstWhereOrNull(
+      (e) => e.experienceId == experienceId,
+    );
+
+    if (entry != null && entry.isEventOnly) {
+      return entry.inlineName ?? 'Event-only stop';
+    }
+
+    final experience = _availableExperiences.firstWhereOrNull(
+      (exp) => exp.id == experienceId,
+    );
+    if (experience != null) {
+      return experience.name;
+    }
+
+    if (entry != null) {
+      return entry.inlineName ?? 'Itinerary stop';
+    }
+
+    return null;
+  }
+
+  Widget _buildCommentComposer({
+    required bool canComment,
+    required bool isAuthenticated,
+  }) {
+    final theme = Theme.of(context);
+    String hintText = 'Add a comment...';
+
+    if (!isAuthenticated) {
+      hintText = 'Sign in to comment';
+    } else if (_currentEvent.id.isEmpty) {
+      hintText = 'Save event to comment';
+    } else if (!canComment) {
+      hintText = 'Comments are limited to invited guests';
+    }
+
+    final bool enableInput =
+        isAuthenticated && canComment && !_isPostingComment && _currentEvent.id.isNotEmpty;
+
+    return Row(
+      children: [
+        Expanded(
+          child: TextField(
+            controller: _commentController,
+            enabled: enableInput,
+            minLines: 1,
+            maxLines: 3,
+            decoration: InputDecoration(
+              hintText: hintText,
+              border: const OutlineInputBorder(),
+              isDense: true,
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Container(
+          decoration: BoxDecoration(
+            color: enableInput ? theme.primaryColor : Colors.grey.shade300,
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: IconButton(
+            icon: _isPostingComment
+                ? SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(
+                        enableInput
+                            ? Colors.white
+                            : theme.iconTheme.color ?? Colors.black,
+                      ),
+                    ),
+                  )
+                : Icon(
+                    Icons.send,
+                    color: enableInput
+                        ? Colors.white
+                        : theme.iconTheme.color ?? Colors.black54,
+                  ),
+            onPressed: enableInput ? _submitComment : null,
+          ),
+        ),
+      ],
     );
   }
 

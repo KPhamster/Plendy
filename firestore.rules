@@ -347,10 +347,21 @@ service cloud.firestore {
         request.resource.data.endDateTime is timestamp &&
         request.resource.data.visibility in ['private', 'sharedLink', 'public'];
 
-      // Allow updating if user is planner or collaborator
+      // Allow updating if user is planner, collaborator, or adding a comment as an invited viewer  
+      // Updated: 2025-01-27 - Fixed permission for invited users to comment
       allow update: if request.auth != null && (
         resource.data.plannerUserId == request.auth.uid ||
-        (resource.data.collaboratorIds is list && request.auth.uid in resource.data.collaboratorIds)
+        (resource.data.collaboratorIds is list && request.auth.uid in resource.data.collaboratorIds) ||
+        (
+          // Allow invited users and public event viewers to add comments only
+          (
+            resource.data.visibility == 'public' ||
+            resource.data.plannerUserId == request.auth.uid ||
+            (resource.data.collaboratorIds is list && request.auth.uid in resource.data.collaboratorIds) ||
+            (resource.data.invitedUserIds is list && request.auth.uid in resource.data.invitedUserIds)
+          ) &&
+          isCommentOnlyUpdate(resource.data, request.resource.data, request.auth.uid)
+        )
       );
 
       // Allow deleting only if user is the planner
@@ -432,6 +443,59 @@ service cloud.firestore {
       (!loc.keys().hasAny(['administrativeAreaLevel6']) || loc.administrativeAreaLevel6 is string) &&
       (!loc.keys().hasAny(['administrativeAreaLevel7']) || loc.administrativeAreaLevel7 is string)
     );
+  }
+
+  // Event comment helpers
+  function canCommentOnEvent(eventData, uid) {
+    return eventData.visibility == 'public' ||
+      eventData.plannerUserId == uid ||
+      (eventData.collaboratorIds is list && uid in eventData.collaboratorIds) ||
+      (eventData.invitedUserIds is list && uid in eventData.invitedUserIds);
+  }
+
+  function isValidEventComment(comment) {
+    return comment is map &&
+      comment.commentId is string &&
+      comment.commentId.size() > 0 &&
+      comment.authorId is string &&
+      comment.authorId.size() > 0 &&
+      comment.text is string &&
+      comment.text.size() > 0 &&
+      comment.createdAt is timestamp &&
+      (!comment.keys().hasAny(['experienceId']) || 
+       comment.experienceId == null || 
+       (comment.experienceId is string && comment.experienceId.size() > 0));
+  }
+
+  function isValidEventCommentList(comments) {
+    return comments is list &&
+      comments.size() == comments.where(c, isValidEventComment(c)).size();
+  }
+
+  function isCommentOnlyUpdate(oldData, newData, uid) {
+    let diff = newData.diff(oldData);
+    let allowedKeys = ['comments', 'updatedAt', 'lastModifiedByUserId'];
+    let oldCommentsSize = (oldData.comments is list) ? oldData.comments.size() : 0;
+    let newCommentsSize = (newData.comments is list) ? newData.comments.size() : 0;
+    
+    // Check 1: Only allowed keys changed
+    let onlyAllowedKeys = diff.changedKeys().hasOnly(allowedKeys);
+    
+    // Check 2: Ensure we're only adding comments, not removing them
+    let isAddingComments = newCommentsSize >= oldCommentsSize;
+    
+    // Check 3: New data has comments as a list
+    let commentsIsList = newData.comments is list;
+    
+    // Check 4: lastModifiedByUserId matches current user
+    let correctUserId = newData.lastModifiedByUserId == uid;
+    
+    // Check 5: Validate that new comments array contains valid comments
+    // Simplified: Just check if the new comment at the end is valid
+    let hasValidComments = (newCommentsSize == 0) || 
+      (commentsIsList && newCommentsSize > 0 && isValidEventComment(newData.comments[newCommentsSize - 1]));
+    
+    return onlyAllowedKeys && isAddingComments && commentsIsList && correctUserId && hasValidComments;
   }
 
   function isThreadParticipant(data, uid) {

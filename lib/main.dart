@@ -208,12 +208,7 @@ Future<void> _openEventFromNotification(String eventId) async {
     // Fetch categories
     final categories = await experienceService.getUserCategories();
     final colorCategories = await experienceService.getUserColorCategories();
-    
-    // Determine if user can edit (planner or collaborator)
-    final canEdit = event.plannerUserId == currentUserId || 
-                    event.collaboratorIds.contains(currentUserId);
-    final isReadOnly = !canEdit;
-    
+
     // Navigate to event editor modal
     navigatorKey.currentState?.push(
       MaterialPageRoute(
@@ -222,7 +217,7 @@ Future<void> _openEventFromNotification(String eventId) async {
           experiences: experiences,
           categories: categories,
           colorCategories: colorCategories,
-          isReadOnly: isReadOnly,
+          isReadOnly: true,
         ),
         fullscreenDialog: true,
       ),

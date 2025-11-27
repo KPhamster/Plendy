@@ -362,6 +362,7 @@ class _EventsScreenState extends State<EventsScreen>
             experiences: const [],
             categories: categories,
             colorCategories: colorCategories,
+            isReadOnly: true,
           ),
           fullscreenDialog: true,
         ),
@@ -1567,11 +1568,6 @@ class _EventsScreenState extends State<EventsScreen>
         }
       }
       
-      // Determine if current user can edit the event
-      final canEdit = userId != null && 
-          (event.plannerUserId == userId || event.collaboratorIds.contains(userId));
-      final isReadOnly = !canEdit;
-      
       if (!mounted) return;
       
       // Close loading dialog
@@ -1585,7 +1581,7 @@ class _EventsScreenState extends State<EventsScreen>
             experiences: experiences,
             categories: categories,
             colorCategories: colorCategories,
-            isReadOnly: isReadOnly,
+            isReadOnly: true,
           ),
           fullscreenDialog: true,
         ),
