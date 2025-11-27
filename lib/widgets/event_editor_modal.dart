@@ -70,6 +70,8 @@ class _EventEditorModalState extends State<EventEditorModal> {
   late TextEditingController _descriptionController;
   late TextEditingController _coverImageUrlController;
   late TextEditingController _capacityController;
+  bool _isPeopleExpanded = false;
+  final Map<String, bool> _itineraryExpandedState = {};
 
   bool _isSaving = false;
   bool _hasUnsavedChanges = false;
@@ -343,6 +345,8 @@ class _EventEditorModalState extends State<EventEditorModal> {
     final Color eventColor = _getEventColor(_currentEvent);
     final bool isDarkColor = _isDarkColor(eventColor);
     final Color foregroundColor = isDarkColor ? Colors.white : Colors.black;
+    final bool showCapacitySection =
+        _capacityController.text.trim().isNotEmpty;
 
     return WillPopScope(
       onWillPop: () async {
@@ -451,9 +455,9 @@ class _EventEditorModalState extends State<EventEditorModal> {
                 const Divider(height: 1),
 
                 // Capacity & RSVPs
-                _buildCapacitySection(),
+                if (showCapacitySection) _buildCapacitySection(),
 
-                const Divider(height: 1),
+                if (showCapacitySection) const Divider(height: 1),
 
                 // Notifications
                 _buildNotificationsSection(),
@@ -550,11 +554,13 @@ class _EventEditorModalState extends State<EventEditorModal> {
             Positioned(
               bottom: 8,
               right: 8,
-              child: FloatingActionButton.small(
-                onPressed: _showCoverImageOptions,
-                backgroundColor: Colors.white,
-                child: const Icon(Icons.edit, color: Colors.black),
-              ),
+              child: widget.isReadOnly
+                  ? const SizedBox.shrink()
+                  : FloatingActionButton.small(
+                      onPressed: _showCoverImageOptions,
+                      backgroundColor: Colors.white,
+                      child: const Icon(Icons.edit, color: Colors.black),
+                    ),
             ),
           ],
         ),
@@ -1989,22 +1995,24 @@ class _EventEditorModalState extends State<EventEditorModal> {
                   padding: const EdgeInsets.all(4),
                 ),
               ),
-              const SizedBox(width: 8),
-              GestureDetector(
-                onTap: () => _pickEventColor(),
-                child: Container(
-                  width: 32,
-                  height: 32,
-                  decoration: BoxDecoration(
-                    color: currentColor,
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                      color: Colors.grey.shade400,
-                      width: 1,
+              if (!widget.isReadOnly) ...[
+                const SizedBox(width: 8),
+                GestureDetector(
+                  onTap: () => _pickEventColor(),
+                  child: Container(
+                    width: 32,
+                    height: 32,
+                    decoration: BoxDecoration(
+                      color: currentColor,
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: Colors.grey.shade400,
+                        width: 1,
+                      ),
                     ),
                   ),
                 ),
-              ),
+              ],
             ],
           ),
           const SizedBox(height: 16),
@@ -2037,11 +2045,13 @@ class _EventEditorModalState extends State<EventEditorModal> {
             minDateTime: _currentEvent.startDateTime,
           ),
           const SizedBox(height: 8),
-          Text(
-            'Duration: $durationText',
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: Colors.grey[600],
-                ),
+          Center(
+            child: Text(
+              'Duration: $durationText',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Colors.grey[600],
+                  ),
+            ),
           ),
         ],
       ),
@@ -2055,6 +2065,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
     DateTime? minDateTime,
     DateTime? maxDateTime,
   }) {
+    final labelText = '$label:';
     final DateTime effectiveMinDate = minDateTime ?? DateTime(2000);
     final DateTime effectiveMaxDate = maxDateTime ?? DateTime(2100);
     final DateTime initialDate = dateTime.isBefore(effectiveMinDate)
@@ -2063,65 +2074,71 @@ class _EventEditorModalState extends State<EventEditorModal> {
             ? effectiveMaxDate
             : dateTime;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    final dateButton = OutlinedButton(
+      style: OutlinedButton.styleFrom(
+        foregroundColor: Colors.black,
+        disabledForegroundColor: Colors.black,
+      ),
+      onPressed: widget.isReadOnly ? null : () async {
+        Widget wrapPicker(Widget? child) =>
+            _wrapPickerWithWhiteTheme(context, child);
+
+        final date = await showDatePicker(
+          context: context,
+          initialDate: initialDate,
+          firstDate: effectiveMinDate,
+          lastDate: effectiveMaxDate,
+          builder: (ctx, child) => wrapPicker(child),
+        );
+        if (date == null || !mounted) return;
+
+        final time = await showTimePicker(
+          context: context,
+          initialTime: TimeOfDay.fromDateTime(initialDate),
+          builder: (ctx, child) => wrapPicker(child),
+        );
+        if (time == null || !mounted) return;
+
+        final newDateTime = DateTime(
+          date.year,
+          date.month,
+          date.day,
+          time.hour,
+          time.minute,
+        );
+        if (minDateTime != null && newDateTime.isBefore(minDateTime)) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('$label time must be after the start time.'),
+            ),
+          );
+          return;
+        }
+        if (maxDateTime != null && newDateTime.isAfter(maxDateTime)) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content:
+                  Text('$label time must be before the available range.'),
+            ),
+          );
+          return;
+        }
+        onChanged(newDateTime);
+      },
+      child: Text(_formatDateTime(dateTime)),
+    );
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         Text(
-          label,
+          labelText,
           style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                 fontWeight: FontWeight.w600,
               ),
         ),
-        const SizedBox(height: 8),
-        OutlinedButton(
-          onPressed: widget.isReadOnly ? null : () async {
-            Widget wrapPicker(Widget? child) =>
-                _wrapPickerWithWhiteTheme(context, child);
-
-            final date = await showDatePicker(
-              context: context,
-              initialDate: initialDate,
-              firstDate: effectiveMinDate,
-              lastDate: effectiveMaxDate,
-              builder: (ctx, child) => wrapPicker(child),
-            );
-            if (date == null || !mounted) return;
-
-            final time = await showTimePicker(
-              context: context,
-              initialTime: TimeOfDay.fromDateTime(initialDate),
-              builder: (ctx, child) => wrapPicker(child),
-            );
-            if (time == null || !mounted) return;
-
-            final newDateTime = DateTime(
-              date.year,
-              date.month,
-              date.day,
-              time.hour,
-              time.minute,
-            );
-            if (minDateTime != null && newDateTime.isBefore(minDateTime)) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text('$label time must be after the start time.'),
-                ),
-              );
-              return;
-            }
-            if (maxDateTime != null && newDateTime.isAfter(maxDateTime)) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content:
-                      Text('$label time must be before the available range.'),
-                ),
-              );
-              return;
-            }
-            onChanged(newDateTime);
-          },
-          child: Text(_formatDateTime(dateTime)),
-        ),
+        const SizedBox(width: 12),
+        Expanded(child: dateButton),
       ],
     );
   }
@@ -2353,6 +2370,11 @@ class _EventEditorModalState extends State<EventEditorModal> {
     Experience? experience,
     int index,
   ) {
+    final String tileId = entry.isEventOnly
+        ? 'event-only-${entry.inlineName ?? 'unnamed'}-$index'
+        : '${entry.experienceId}-$index';
+    final bool isExpanded = _itineraryExpandedState[tileId] ?? false;
+    final tileKey = GlobalKey<State<ExpansionTile>>();
     // Determine if this is an event-only experience
     final bool isEventOnly = entry.isEventOnly;
     
@@ -2703,6 +2725,242 @@ class _EventEditorModalState extends State<EventEditorModal> {
         ? _formatDateTime(entry.scheduledTime!)
         : null;
 
+    if (widget.isReadOnly) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (scheduledTimeLabel != null)
+            Padding(
+              padding: const EdgeInsets.only(left: 8.0, bottom: 4.0),
+              child: Text(
+                scheduledTimeLabel,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Colors.grey[700],
+                      fontWeight: FontWeight.w600,
+                    ),
+              ),
+            ),
+          Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Card(
+                key: ValueKey(entry.experienceId),
+                margin: const EdgeInsets.only(bottom: 12),
+                color: Colors.grey.shade100,
+                child: Column(
+                  children: [
+                    ListTile(
+                      contentPadding:
+                          const EdgeInsets.symmetric(horizontal: 8.0),
+                      leading: leadingWidget,
+                      title: Text(
+                        displayName,
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 1,
+                      ),
+                      subtitle: subtitleChildren.isEmpty
+                          ? null
+                          : Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: subtitleChildren,
+                            ),
+                      trailing: Icon(
+                        isExpanded ? Icons.expand_less : Icons.expand_more,
+                        size: 20,
+                      ),
+                      onTap: () {
+                        setState(() {
+                          _itineraryExpandedState[tileId] = !isExpanded;
+                        });
+                      },
+                    ),
+                    if (isExpanded)
+                      Padding(
+                        padding: const EdgeInsets.all(16.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            // Scheduled Time
+                            InkWell(
+                              onTap: () {
+                                setState(() {
+                                  _itineraryExpandedState[tileId] = false;
+                                });
+                              },
+                              child: Padding(
+                            padding:
+                                    const EdgeInsets.symmetric(vertical: 8.0),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Padding(
+                                      padding: EdgeInsets.only(
+                                          top: 4.0, right: 16.0),
+                                      child: Icon(Icons.schedule, size: 24),
+                                    ),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          const Text(
+                                            'Scheduled time',
+                                            style: TextStyle(
+                                              fontWeight: FontWeight.w500,
+                                              fontSize: 16,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            entry.scheduledTime != null
+                                                ? _formatDateTime(
+                                                    entry.scheduledTime!)
+                                                : 'Not set',
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .bodyMedium
+                                                ?.copyWith(
+                                                  color: Colors.grey[700],
+                                                ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                            // Transport Info
+                            InkWell(
+                              onTap: () {
+                                setState(() {
+                                  _itineraryExpandedState[tileId] = false;
+                                });
+                              },
+                              child: Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 8.0),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Padding(
+                                      padding: EdgeInsets.only(
+                                          top: 4.0, right: 16.0),
+                                      child: Icon(Icons.directions, size: 24),
+                                    ),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          const Text(
+                                            'Transportation',
+                                            style: TextStyle(
+                                              fontWeight: FontWeight.w500,
+                                              fontSize: 16,
+                                            ),
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                            (entry.transportInfo == null ||
+                                                    entry.transportInfo!
+                                                        .trim()
+                                                        .isEmpty ||
+                                                    entry.transportInfo ==
+                                                        'Notes on how to get here')
+                                                ? 'Not mentioned'
+                                                : entry.transportInfo!,
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .bodyMedium
+                                                ?.copyWith(
+                                                  color: Colors.grey[700],
+                                                ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                            // Note
+                            InkWell(
+                              onTap: () {
+                                setState(() {
+                                  _itineraryExpandedState[tileId] = false;
+                                });
+                              },
+                              child: Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 8.0),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Padding(
+                                      padding: EdgeInsets.only(
+                                          top: 4.0, right: 16.0),
+                                      child: Icon(Icons.note, size: 24),
+                                    ),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          const Text(
+                                            'Notes',
+                                            style: TextStyle(
+                                              fontWeight: FontWeight.w500,
+                                              fontSize: 16,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            entry.note ?? 'None',
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .bodyMedium
+                                                ?.copyWith(
+                                                  color: Colors.grey[700],
+                                                ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                            if (!isEventOnly) ...[
+                              const Divider(),
+                              Align(
+                                alignment: Alignment.centerRight,
+                                child: TextButton.icon(
+                                  icon: const Icon(Icons.open_in_new),
+                                  label: const Text('Open'),
+                                  onPressed: experience != null
+                                      ? () => _openExperiencePage(experience)
+                                      : null,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              Positioned(
+                top: 6,
+                left: 6,
+                child: _buildExperienceIndexBadge(index),
+              ),
+            ],
+          ),
+        ],
+      );
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -2788,10 +3046,12 @@ class _EventEditorModalState extends State<EventEditorModal> {
                                     ],
                                   ),
                                 ),
-                                const Padding(
-                                  padding: EdgeInsets.only(top: 4.0, left: 8.0),
-                                  child: Icon(Icons.edit_outlined, size: 20),
-                                ),
+                                if (!widget.isReadOnly)
+                                  const Padding(
+                                    padding: EdgeInsets.only(
+                                        top: 4.0, left: 8.0),
+                                    child: Icon(Icons.edit_outlined, size: 20),
+                                  ),
                               ],
                             ),
                           ),
@@ -2829,10 +3089,12 @@ class _EventEditorModalState extends State<EventEditorModal> {
                                     ],
                                   ),
                                 ),
-                                const Padding(
-                                  padding: EdgeInsets.only(top: 4.0, left: 8.0),
-                                  child: Icon(Icons.edit_outlined, size: 20),
-                                ),
+                                if (!widget.isReadOnly)
+                                  const Padding(
+                                    padding: EdgeInsets.only(
+                                        top: 4.0, left: 8.0),
+                                    child: Icon(Icons.edit_outlined, size: 20),
+                                  ),
                               ],
                             ),
                           ),
@@ -2870,10 +3132,12 @@ class _EventEditorModalState extends State<EventEditorModal> {
                                     ],
                                   ),
                                 ),
-                                const Padding(
-                                  padding: EdgeInsets.only(top: 4.0, left: 8.0),
-                                  child: Icon(Icons.edit_outlined, size: 20),
-                                ),
+                                if (!widget.isReadOnly)
+                                  const Padding(
+                                    padding: EdgeInsets.only(
+                                        top: 4.0, left: 8.0),
+                                    child: Icon(Icons.edit_outlined, size: 20),
+                                  ),
                               ],
                             ),
                           ),
@@ -3464,95 +3728,231 @@ class _EventEditorModalState extends State<EventEditorModal> {
     final planner = _userProfiles[_currentEvent.plannerUserId];
     final currentUserId = _authService.currentUser?.uid;
     final isPlanner = currentUserId == _currentEvent.plannerUserId;
+    final peopleProfiles = _collectPeopleProfiles();
+
+    final List<Widget> bodyChildren = [
+      // Planner
+      ListTile(
+        contentPadding: EdgeInsets.zero,
+        leading: _buildUserAvatar(planner),
+        title: Text(planner?.displayName ?? 'Loading...'),
+        subtitle: const Text('Planner'),
+      ),
+      const SizedBox(height: 8),
+      // Collaborators
+      if (_currentEvent.collaboratorIds.isNotEmpty) ...[
+        Text(
+          'Collaborators',
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: _currentEvent.collaboratorIds.map((userId) {
+            final profile = _userProfiles[userId];
+            return Chip(
+              avatar: _buildUserAvatar(profile, size: 24),
+              label: Text(profile?.displayName ?? 'User'),
+              deleteIcon: isPlanner ? const Icon(Icons.close, size: 18) : null,
+              onDeleted: isPlanner ? () => _removeCollaborator(userId) : null,
+            );
+          }).toList(),
+        ),
+        const SizedBox(height: 8),
+      ],
+      if (isPlanner)
+        OutlinedButton.icon(
+          icon: const Icon(Icons.person_add),
+          label: const Text('Add Collaborators'),
+          onPressed: _openAddCollaboratorsSheet,
+        ),
+      const SizedBox(height: 16),
+      // Invited Users
+      if (_currentEvent.invitedUserIds.isNotEmpty) ...[
+        Text(
+          'Viewers',
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: _currentEvent.invitedUserIds.map((userId) {
+            final profile = _userProfiles[userId];
+            return Chip(
+              avatar: _buildUserAvatar(profile, size: 24),
+              label: Text(profile?.displayName ?? 'User'),
+              deleteIcon: isPlanner ? const Icon(Icons.close, size: 18) : null,
+              onDeleted: isPlanner ? () => _removeInvitedUser(userId) : null,
+            );
+          }).toList(),
+        ),
+        const SizedBox(height: 8),
+      ],
+      if (isPlanner)
+        OutlinedButton.icon(
+          icon: const Icon(Icons.visibility_outlined),
+          label: const Text('Add Viewers'),
+          onPressed: _openInvitePeopleSheet,
+        ),
+    ];
+
+    if (!widget.isReadOnly) {
+      return Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'People',
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+            ),
+            const SizedBox(height: 16),
+            ...bodyChildren,
+          ],
+        ),
+      );
+    }
 
     return Padding(
       padding: const EdgeInsets.all(16.0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'People',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
+          InkWell(
+            onTap: () {
+              setState(() {
+                _isPeopleExpanded = !_isPeopleExpanded;
+              });
+            },
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Text(
+                  'People:',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
                 ),
-          ),
-          const SizedBox(height: 16),
-          // Planner
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            leading: _buildUserAvatar(planner),
-            title: Text(planner?.displayName ?? 'Loading...'),
-            subtitle: const Text('Planner'),
-          ),
-          const SizedBox(height: 8),
-          // Collaborators
-          if (_currentEvent.collaboratorIds.isNotEmpty) ...[
-            Text(
-              'Collaborators',
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
+                const SizedBox(width: 12),
+                if (!_isPeopleExpanded)
+                  Expanded(
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        final avatars = _buildCollapsedPeopleAvatars(
+                          peopleProfiles,
+                          constraints.maxWidth,
+                        );
+                        if (avatars.isEmpty) {
+                          return const Text('No people');
+                        }
+                        return Row(children: avatars);
+                      },
+                    ),
                   ),
+                if (!_isPeopleExpanded) const SizedBox(width: 8),
+                Icon(
+                  _isPeopleExpanded
+                      ? Icons.expand_less
+                      : Icons.expand_more,
+                  size: 20,
+                ),
+              ],
             ),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: _currentEvent.collaboratorIds.map((userId) {
-                final profile = _userProfiles[userId];
-                return Chip(
-                  avatar: _buildUserAvatar(profile, size: 24),
-                  label: Text(profile?.displayName ?? 'User'),
-                  deleteIcon:
-                      isPlanner ? const Icon(Icons.close, size: 18) : null,
-                  onDeleted:
-                      isPlanner ? () => _removeCollaborator(userId) : null,
-                );
-              }).toList(),
-            ),
-            const SizedBox(height: 8),
+          ),
+          if (_isPeopleExpanded) ...[
+            const SizedBox(height: 16),
+            ...bodyChildren,
           ],
-          if (isPlanner)
-            OutlinedButton.icon(
-              icon: const Icon(Icons.person_add),
-              label: const Text('Add Collaborators'),
-              onPressed: _openAddCollaboratorsSheet,
-            ),
-          const SizedBox(height: 16),
-          // Invited Users
-          if (_currentEvent.invitedUserIds.isNotEmpty) ...[
-            Text(
-              'Viewers',
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
-                  ),
-            ),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: _currentEvent.invitedUserIds.map((userId) {
-                final profile = _userProfiles[userId];
-                return Chip(
-                  avatar: _buildUserAvatar(profile, size: 24),
-                  label: Text(profile?.displayName ?? 'User'),
-                  deleteIcon:
-                      isPlanner ? const Icon(Icons.close, size: 18) : null,
-                  onDeleted:
-                      isPlanner ? () => _removeInvitedUser(userId) : null,
-                );
-              }).toList(),
-            ),
-            const SizedBox(height: 8),
-          ],
-          if (isPlanner)
-            OutlinedButton.icon(
-              icon: const Icon(Icons.visibility_outlined),
-              label: const Text('Add Viewers'),
-              onPressed: _openInvitePeopleSheet,
-            ),
         ],
       ),
     );
+  }
+
+  List<UserProfile?> _collectPeopleProfiles() {
+    final ids = <String>[];
+    void addId(String id) {
+      if (id.isEmpty) return;
+      if (!ids.contains(id)) ids.add(id);
+    }
+
+    addId(_currentEvent.plannerUserId);
+    for (final id in _currentEvent.collaboratorIds) {
+      addId(id);
+    }
+    for (final id in _currentEvent.invitedUserIds) {
+      addId(id);
+    }
+
+    return ids.map((id) => _userProfiles[id]).toList();
+  }
+
+  List<Widget> _buildCollapsedPeopleAvatars(
+    List<UserProfile?> profiles,
+    double maxWidth,
+  ) {
+    const double avatarSize = 32;
+    const double spacing = 8;
+    const double ellipsisWidth = 14;
+
+    double used = 0;
+    final widgets = <Widget>[];
+
+    for (final profile in profiles) {
+      final bool addSpacing = widgets.isNotEmpty;
+      final double itemWidth = (addSpacing ? spacing : 0) + avatarSize;
+
+      if (used + itemWidth > maxWidth) {
+        if (widgets.isNotEmpty) {
+          final double ellipsisNeeded =
+              (widgets.isNotEmpty ? spacing : 0) + ellipsisWidth;
+          if (used + ellipsisNeeded > maxWidth && widgets.isNotEmpty) {
+            // Remove the last avatar to make space for ellipsis
+            if (widgets.isNotEmpty) {
+              // Remove trailing spacing if present
+              if (widgets.last is SizedBox &&
+                  (widgets.last as SizedBox).width == spacing) {
+                widgets.removeLast();
+                used -= spacing;
+              }
+              if (widgets.isNotEmpty) {
+                widgets.removeLast();
+                used -= avatarSize;
+              }
+            }
+          }
+          if (widgets.isNotEmpty) {
+            widgets.add(const SizedBox(width: spacing));
+            used += spacing;
+          }
+        }
+        widgets.add(const Text('...'));
+        break;
+      }
+
+      if (addSpacing) {
+        widgets.add(const SizedBox(width: spacing));
+        used += spacing;
+      }
+
+      widgets.add(
+        SizedBox(
+          width: avatarSize,
+          height: avatarSize,
+          child: _buildUserAvatar(profile, size: avatarSize),
+        ),
+      );
+      used += avatarSize;
+    }
+
+    return widgets;
   }
 
   Widget _buildUserAvatar(UserProfile? profile, {double size = 40}) {
@@ -3750,19 +4150,70 @@ class _EventEditorModalState extends State<EventEditorModal> {
   Widget _buildVisibilitySection() {
     final currentUserId = _authService.currentUser?.uid;
     final isPlanner = currentUserId == _currentEvent.plannerUserId;
+    final String visibilityLabel;
+    final String visibilityDescription;
+    switch (_currentEvent.visibility) {
+      case EventVisibility.private:
+        visibilityLabel = 'Private';
+        visibilityDescription = 'Only you and collaborators';
+        break;
+      case EventVisibility.sharedLink:
+        visibilityLabel = 'Shared Link';
+        visibilityDescription = 'Anyone with the link';
+        break;
+      case EventVisibility.public:
+        visibilityLabel = 'Public';
+        visibilityDescription = 'Discoverable by anyone';
+        break;
+    }
 
     return Padding(
       padding: const EdgeInsets.all(16.0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'Visibility & Sharing',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Text(
+                widget.isReadOnly
+                    ? 'Visibility & Sharing:'
+                    : 'Visibility & Sharing',
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+              ),
+              if (widget.isReadOnly)
+                Padding(
+                  padding: const EdgeInsets.only(left: 24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        visibilityLabel,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.black,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        visibilityDescription,
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: Colors.grey[700],
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
+            ],
           ),
           const SizedBox(height: 16),
+          if (widget.isReadOnly) ...[
+            // Description shown inline with header row
+          ] else ...[
           RadioListTile<EventVisibility>(
             contentPadding: EdgeInsets.zero,
             title: const Text('Private'),
@@ -3863,6 +4314,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
               ),
             ],
           ],
+          ],
         ],
       ),
     );
@@ -3961,52 +4413,111 @@ class _EventEditorModalState extends State<EventEditorModal> {
   }
 
   Widget _buildNotificationsSection() {
+    String _notificationLabel(
+      EventNotificationType type,
+      Duration? customDuration,
+    ) {
+      switch (type) {
+        case EventNotificationType.fiveMinutes:
+          return '5 minutes before';
+        case EventNotificationType.fifteenMinutes:
+          return '15 minutes before';
+        case EventNotificationType.thirtyMinutes:
+          return '30 minutes before';
+        case EventNotificationType.oneHour:
+          return '1 hour before';
+        case EventNotificationType.oneDay:
+          return '1 day before';
+        case EventNotificationType.custom:
+          final duration = customDuration ?? const Duration(minutes: 30);
+          return 'Custom: ${_formatDuration(duration)} before';
+      }
+    }
+
     return Padding(
       padding: const EdgeInsets.all(16.0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'Notifications',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Text(
+                'Notification:',
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+              ),
+              const SizedBox(width: 12),
+              if (widget.isReadOnly)
+                Text(
+                  _notificationLabel(
+                    _currentEvent.notificationPreference.type,
+                    _currentEvent.notificationPreference.customDuration,
+                  ),
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.black,
+                  ),
                 ),
-          ),
-          const SizedBox(height: 16),
-          DropdownButtonFormField<EventNotificationType>(
-            value: _currentEvent.notificationPreference.type,
-            decoration: const InputDecoration(
-              labelText: 'Remind me',
-              border: OutlineInputBorder(),
-            ),
-            items: const [
-              DropdownMenuItem(
-                value: EventNotificationType.fiveMinutes,
-                child: Text('5 minutes before'),
-              ),
-              DropdownMenuItem(
-                value: EventNotificationType.fifteenMinutes,
-                child: Text('15 minutes before'),
-              ),
-              DropdownMenuItem(
-                value: EventNotificationType.thirtyMinutes,
-                child: Text('30 minutes before'),
-              ),
-              DropdownMenuItem(
-                value: EventNotificationType.oneHour,
-                child: Text('1 hour before'),
-              ),
-              DropdownMenuItem(
-                value: EventNotificationType.oneDay,
-                child: Text('1 day before'),
-              ),
-              DropdownMenuItem(
-                value: EventNotificationType.custom,
-                child: Text('Custom...'),
-              ),
             ],
-            onChanged: (value) {
-              if (value != null) {
+          ),
+          if (!widget.isReadOnly) ...[
+            const SizedBox(height: 16),
+            DropdownButtonFormField<EventNotificationType>(
+              value: _currentEvent.notificationPreference.type,
+              decoration: const InputDecoration(
+                labelText: 'Remind me',
+                border: OutlineInputBorder(),
+              ),
+              items: const [
+                DropdownMenuItem(
+                  value: EventNotificationType.fiveMinutes,
+                  child: Text('5 minutes before'),
+                ),
+                DropdownMenuItem(
+                  value: EventNotificationType.fifteenMinutes,
+                  child: Text('15 minutes before'),
+                ),
+                DropdownMenuItem(
+                  value: EventNotificationType.thirtyMinutes,
+                  child: Text('30 minutes before'),
+                ),
+                DropdownMenuItem(
+                  value: EventNotificationType.oneHour,
+                  child: Text('1 hour before'),
+                ),
+                DropdownMenuItem(
+                  value: EventNotificationType.oneDay,
+                  child: Text('1 day before'),
+                ),
+                DropdownMenuItem(
+                  value: EventNotificationType.custom,
+                  child: Text('Custom...'),
+                ),
+              ],
+              onChanged: (value) async {
+                if (value == null) return;
+                if (value == EventNotificationType.custom) {
+                  final duration = await _showCustomDurationDialog(
+                    initialDuration:
+                        _currentEvent.notificationPreference.customDuration,
+                  );
+                  if (duration == null) return;
+                  if (!mounted) return;
+                  setState(() {
+                    _currentEvent = _currentEvent.copyWith(
+                      notificationPreference: EventNotificationPreference(
+                        type: value,
+                        customDuration: duration,
+                      ),
+                    );
+                    _markUnsavedChanges();
+                  });
+                  return;
+                }
+
                 setState(() {
                   _currentEvent = _currentEvent.copyWith(
                     notificationPreference:
@@ -4014,25 +4525,21 @@ class _EventEditorModalState extends State<EventEditorModal> {
                   );
                   _markUnsavedChanges();
                 });
-
-                if (value == EventNotificationType.custom) {
-                  _showCustomDurationDialog();
-                }
-              }
-            },
-          ),
-          if (_currentEvent.notificationPreference.type ==
-                  EventNotificationType.custom &&
-              _currentEvent.notificationPreference.customDuration != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: Text(
-                'Custom: ${_formatDuration(_currentEvent.notificationPreference.customDuration!)} before',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Colors.grey[600],
-                    ),
-              ),
+              },
             ),
+            if (_currentEvent.notificationPreference.type ==
+                    EventNotificationType.custom &&
+                _currentEvent.notificationPreference.customDuration != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  'Custom: ${_formatDuration(_currentEvent.notificationPreference.customDuration!)} before',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Colors.grey[600],
+                      ),
+                ),
+              ),
+          ],
         ],
       ),
     );
@@ -4067,9 +4574,9 @@ class _EventEditorModalState extends State<EventEditorModal> {
     );
   }
 
-  Future<void> _showCustomDurationDialog() async {
-    int hours = 0;
-    int minutes = 30;
+  Future<Duration?> _showCustomDurationDialog({Duration? initialDuration}) async {
+    int hours = initialDuration?.inHours ?? 0;
+    int minutes = (initialDuration?.inMinutes ?? 30) % 60;
 
     final result = await showDialog<Duration>(
       context: context,
@@ -4132,17 +4639,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
       },
     );
 
-    if (result != null && mounted) {
-      setState(() {
-        _currentEvent = _currentEvent.copyWith(
-          notificationPreference: EventNotificationPreference(
-            type: EventNotificationType.custom,
-            customDuration: result,
-          ),
-        );
-        _markUnsavedChanges();
-      });
-    }
+    return result;
   }
 
   Widget _buildCommentsSection() {
