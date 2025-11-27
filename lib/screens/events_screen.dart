@@ -362,7 +362,6 @@ class _EventsScreenState extends State<EventsScreen>
             experiences: const [],
             categories: categories,
             colorCategories: colorCategories,
-            isReadOnly: true,
           ),
           fullscreenDialog: true,
         ),
