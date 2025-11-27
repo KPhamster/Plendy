@@ -4663,7 +4663,6 @@ class CollectionsScreenState extends State<CollectionsScreen>
           experiences: const [],
           categories: _categories,
           colorCategories: _colorCategories,
-          isReadOnly: true,
         ),
         fullscreenDialog: true,
       ),
