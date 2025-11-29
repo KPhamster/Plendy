@@ -4,6 +4,7 @@ import 'package:collection/collection.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter_colorpicker/flutter_colorpicker.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/services.dart';
 import '../models/event.dart';
 import '../models/experience.dart';
 import '../models/user_profile.dart';
@@ -21,6 +22,7 @@ import '../screens/location_picker_screen.dart';
 import '../screens/experience_page_screen.dart';
 import '../screens/map_screen.dart';
 import '../screens/events_screen.dart';
+import '../screens/auth_screen.dart';
 import 'share_experience_bottom_sheet.dart';
 
 class EventEditorResult {
@@ -521,6 +523,26 @@ class _EventEditorModalState extends State<EventEditorModal> {
             ),
           ),
           actions: [
+            if (_isReadOnly && !_canCurrentUserEdit && _authService.currentUser == null)
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: TextButton(
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (context) => AuthScreen(),
+                      ),
+                    );
+                  },
+                  child: Text(
+                    'Sign In',
+                    style: TextStyle(
+                      color: foregroundColor,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
             if (_isReadOnly && _canCurrentUserEdit)
               IconButton(
                 icon: const Icon(Icons.edit),
@@ -4361,64 +4383,63 @@ class _EventEditorModalState extends State<EventEditorModal> {
           if (_isReadOnly) ...[
             // Description shown inline with header row
           ] else ...[
-          RadioListTile<EventVisibility>(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('Private'),
-            subtitle: const Text('Only those who are invited'),
-            value: EventVisibility.private,
-            groupValue: _currentEvent.visibility,
-            onChanged: isPlanner
-                ? (value) {
-                    if (value != null) {
-                      setState(() {
-                        _currentEvent =
-                            _currentEvent.copyWith(visibility: value);
-                        _markUnsavedChanges();
-                      });
+            RadioListTile<EventVisibility>(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Private'),
+              subtitle: const Text('Only those who are invited'),
+              value: EventVisibility.private,
+              groupValue: _currentEvent.visibility,
+              onChanged: isPlanner
+                  ? (value) {
+                      if (value != null) {
+                        setState(() {
+                          _currentEvent =
+                              _currentEvent.copyWith(visibility: value);
+                          _markUnsavedChanges();
+                        });
+                      }
                     }
-                  }
-                : null,
-          ),
-          RadioListTile<EventVisibility>(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('Shared Link'),
-            subtitle: const Text('Anyone with the link'),
-            value: EventVisibility.sharedLink,
-            groupValue: _currentEvent.visibility,
-            onChanged: isPlanner
-                ? (value) {
-                    if (value != null) {
-                      setState(() {
-                        _currentEvent =
-                            _currentEvent.copyWith(visibility: value);
-                        _markUnsavedChanges();
-                      });
+                  : null,
+            ),
+            RadioListTile<EventVisibility>(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Shared Link'),
+              subtitle: const Text('Anyone with the link'),
+              value: EventVisibility.sharedLink,
+              groupValue: _currentEvent.visibility,
+              onChanged: isPlanner
+                  ? (value) {
+                      if (value != null) {
+                        setState(() {
+                          _currentEvent =
+                              _currentEvent.copyWith(visibility: value);
+                          _markUnsavedChanges();
+                        });
+                      }
                     }
-                  }
-                : null,
-          ),
-          RadioListTile<EventVisibility>(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('Public'),
-            subtitle: const Text('Discoverable by anyone'),
-            value: EventVisibility.public,
-            groupValue: _currentEvent.visibility,
-            onChanged: isPlanner
-                ? (value) {
-                    if (value != null) {
-                      setState(() {
-                        _currentEvent =
-                            _currentEvent.copyWith(visibility: value);
-                        _markUnsavedChanges();
-                      });
+                  : null,
+            ),
+            RadioListTile<EventVisibility>(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Public'),
+              subtitle: const Text('Discoverable by anyone'),
+              value: EventVisibility.public,
+              groupValue: _currentEvent.visibility,
+              onChanged: isPlanner
+                  ? (value) {
+                      if (value != null) {
+                        setState(() {
+                          _currentEvent =
+                              _currentEvent.copyWith(visibility: value);
+                          _markUnsavedChanges();
+                        });
+                      }
                     }
-                  }
-                : null,
-          ),
-          const SizedBox(height: 16),
-          if (isPlanner &&
-              _currentEvent.id.isNotEmpty &&
-              _currentEvent.visibility != EventVisibility.private) ...[
+                  : null,
+            ),
+            const SizedBox(height: 16),
+          ],
+          if (isPlanner && _currentEvent.id.isNotEmpty) ...[
             if (_currentEvent.shareToken == null)
               OutlinedButton.icon(
                 icon: const Icon(Icons.link),
@@ -4442,8 +4463,11 @@ class _EventEditorModalState extends State<EventEditorModal> {
                     ),
                     IconButton(
                       icon: const Icon(Icons.copy),
-                      onPressed: () {
-                        // TODO: Copy to clipboard
+                      onPressed: () async {
+                        final token = _currentEvent.shareToken;
+                        if (token == null) return;
+                        final link = 'https://plendy.app/event/$token';
+                        await Clipboard.setData(ClipboardData(text: link));
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(content: Text('Copied to clipboard')),
                         );
@@ -4460,7 +4484,6 @@ class _EventEditorModalState extends State<EventEditorModal> {
                 onPressed: _revokeShareLink,
               ),
             ],
-          ],
           ],
         ],
       ),

@@ -25,6 +25,9 @@ import 'services/experience_service.dart'; // Import ExperienceService
 import 'models/shared_media_compat.dart';
 import 'models/message_thread.dart'; // Import MessageThread
 import 'models/experience.dart'; // Import Experience
+import 'models/event.dart'; // Import Event
+import 'models/user_category.dart'; // Import UserCategory
+import 'models/color_category.dart'; // Import ColorCategory
 import 'services/notification_state_service.dart'; // Import NotificationStateService
 import 'widgets/event_editor_modal.dart'; // Import EventEditorModal
 import 'package:provider/provider.dart';
@@ -224,6 +227,113 @@ Future<void> _openEventFromNotification(String eventId) async {
     );
   } catch (e) {
     print('FCM: Error opening event from notification: $e');
+  }
+}
+
+Future<Map<String, dynamic>?> _loadEventData(String token) async {
+  try {
+    final eventService = EventService();
+    final event = await eventService.getEventByShareToken(token);
+    if (event == null) {
+      print('DeepLink: Event not found for token: $token');
+      return null;
+    }
+
+    final experienceService = ExperienceService();
+    
+    List<Experience> experiences = [];
+    List<UserCategory> categories = [];
+    List<ColorCategory> colorCategories = [];
+    
+    // Load related data for both authenticated and unauthenticated users
+    // Firestore rules now allow public read access to experiences/categories
+    try {
+      final experienceIds = event.experiences
+          .map((entry) => entry.experienceId)
+          .where((id) => id.isNotEmpty)
+          .toList();
+
+      if (experienceIds.isNotEmpty) {
+        experiences = await experienceService.getExperiencesByIds(experienceIds);
+      }
+
+      // Collect unique category and color category IDs from experiences, grouped by owner
+      final Map<String, Set<String>> categoriesByOwner = {};
+      final Map<String, Set<String>> colorCategoriesByOwner = {};
+      
+      for (final exp in experiences) {
+        final ownerId = exp.createdBy;
+        if (ownerId != null && ownerId.isNotEmpty) {
+          // Add primary category
+          if (exp.categoryId != null && exp.categoryId!.isNotEmpty) {
+            categoriesByOwner.putIfAbsent(ownerId, () => {}).add(exp.categoryId!);
+          }
+          // Add primary color category
+          if (exp.colorCategoryId != null && exp.colorCategoryId!.isNotEmpty) {
+            colorCategoriesByOwner.putIfAbsent(ownerId, () => {}).add(exp.colorCategoryId!);
+          }
+          // Add other categories
+          for (final catId in exp.otherCategories) {
+            if (catId.isNotEmpty) {
+              categoriesByOwner.putIfAbsent(ownerId, () => {}).add(catId);
+            }
+          }
+          // Add other color categories
+          for (final colorCatId in exp.otherColorCategoryIds) {
+            if (colorCatId.isNotEmpty) {
+              colorCategoriesByOwner.putIfAbsent(ownerId, () => {}).add(colorCatId);
+            }
+          }
+        }
+      }
+      
+      // Fetch categories from each owner
+      final List<Future<List<UserCategory>>> categoryFutures = [];
+      for (final entry in categoriesByOwner.entries) {
+        categoryFutures.add(
+          experienceService.getUserCategoriesByOwnerAndIds(
+            entry.key,
+            entry.value.toList(),
+          )
+        );
+      }
+      
+      final List<Future<List<ColorCategory>>> colorCategoryFutures = [];
+      for (final entry in colorCategoriesByOwner.entries) {
+        colorCategoryFutures.add(
+          experienceService.getColorCategoriesByOwnerAndIds(
+            entry.key,
+            entry.value.toList(),
+          )
+        );
+      }
+      
+      // Wait for all category fetches to complete
+      if (categoryFutures.isNotEmpty) {
+        final results = await Future.wait(categoryFutures);
+        categories = results.expand((list) => list).toList();
+      }
+      
+      if (colorCategoryFutures.isNotEmpty) {
+        final results = await Future.wait(colorCategoryFutures);
+        colorCategories = results.expand((list) => list).toList();
+      }
+      
+      print('DeepLink: Loaded ${experiences.length} experiences, ${categories.length} categories, ${colorCategories.length} color categories');
+    } catch (e) {
+      print('DeepLink: Error loading related data (non-critical): $e');
+      // Continue with empty lists - event will display with denormalized data
+    }
+
+    return {
+      'event': event,
+      'experiences': experiences,
+      'categories': categories,
+      'colorCategories': colorCategories,
+    };
+  } catch (e) {
+    print('DeepLink: Error loading event data for token $token: $e');
+    rethrow;
   }
 }
 
@@ -707,6 +817,7 @@ class _MyAppState extends State<MyApp> {
   String? _deferredDiscoveryShareToken;
   String?
       _initialDiscoveryShareToken; // NEW: Track initial discovery share token from URL
+  String? _initialEventShareToken; // Track initial event share token from URL
   static const int _maxNavigatorPushRetries = 12;
 
   void _pushRouteWhenReady(WidgetBuilder builder,
@@ -868,26 +979,41 @@ class _MyAppState extends State<MyApp> {
 
     print("MAIN: App initializing");
 
-    // NEW: Check if this is a discovery share preview link on web
+    // NEW: Check if this is a discovery share or event share preview link on web
     if (kIsWeb) {
       try {
         final uri = Uri.base;
         final segments = uri.pathSegments;
-        if (segments.isNotEmpty &&
-            segments.first.toLowerCase() == 'discovery-share' &&
-            segments.length > 1) {
-          final rawToken = segments[1];
-          final token = _cleanToken(rawToken);
-          if (token != null && token.isNotEmpty) {
-            setState(() {
-              _initialDiscoveryShareToken = token;
-            });
-            print(
-                "MAIN: Detected initial discovery share token from URL: $token");
+        if (segments.isNotEmpty) {
+          final firstSegment = segments.first.toLowerCase();
+          
+          // Check for discovery share link
+          if (firstSegment == 'discovery-share' && segments.length > 1) {
+            final rawToken = segments[1];
+            final token = _cleanToken(rawToken);
+            if (token != null && token.isNotEmpty) {
+              setState(() {
+                _initialDiscoveryShareToken = token;
+              });
+              print(
+                  "MAIN: Detected initial discovery share token from URL: $token");
+            }
+          }
+          // Check for event share link
+          else if (firstSegment == 'event' && segments.length > 1) {
+            final rawToken = segments[1];
+            final token = _cleanToken(rawToken);
+            if (token != null && token.isNotEmpty) {
+              setState(() {
+                _initialEventShareToken = token;
+              });
+              print(
+                  "MAIN: Detected initial event share token from URL: $token");
+            }
           }
         }
       } catch (e) {
-        print("MAIN: Error checking for initial discovery share token: $e");
+        print("MAIN: Error checking for initial share token from URL: $e");
       }
     }
 
@@ -1165,6 +1291,79 @@ class _MyAppState extends State<MyApp> {
       } else {
         print('DeepLink: Category share token missing or empty.');
       }
+    } else if (firstSegment == 'event') {
+      final String? rawToken = segments.length > 1 ? segments[1] : null;
+      final String? token = _cleanToken(rawToken);
+      print('DeepLink: Event share - rawToken: ' +
+          rawToken.toString() +
+          ', cleanToken: ' +
+          token.toString());
+      if (token != null && token.isNotEmpty) {
+        if (rawToken != null && rawToken != token) {
+          print('DeepLink: Sanitized event share token from ' +
+              rawToken +
+              ' to ' +
+              token);
+        }
+        
+        // Store the token to show the event as root widget for unauthenticated users
+        setState(() {
+          _initialEventShareToken = token;
+        });
+        
+        // Also push the route for authenticated users (will be on top of MainScreen)
+        _pushRouteWhenReady(
+          (context) => FutureBuilder<Map<String, dynamic>?>(
+            future: _loadEventData(token),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Scaffold(
+                  body: Center(child: CircularProgressIndicator()),
+                );
+              }
+
+              if (snapshot.hasError || snapshot.data == null) {
+                return Scaffold(
+                  appBar: AppBar(title: const Text('Error')),
+                  body: Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.error_outline, size: 64, color: Colors.red),
+                        const SizedBox(height: 16),
+                        Text(
+                          'Unable to load event',
+                          style: Theme.of(context).textTheme.titleLarge,
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          snapshot.hasError 
+                              ? 'Error: ${snapshot.error}'
+                              : 'Event not found',
+                          style: Theme.of(context).textTheme.bodyMedium,
+                          textAlign: TextAlign.center,
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }
+
+              final data = snapshot.data!;
+              return EventEditorModal(
+                event: data['event'] as Event,
+                experiences: data['experiences'] as List<Experience>,
+                categories: data['categories'] as List<UserCategory>,
+                colorCategories: data['colorCategories'] as List<ColorCategory>,
+                isReadOnly: true,
+              );
+            },
+          ),
+          settings: RouteSettings(name: '/event/$token'),
+        );
+      } else {
+        print('DeepLink: Event share token missing or empty.');
+      }
     } else {
       print('DeepLink: No handler for path segments: ' + segments.toString());
     }
@@ -1277,6 +1476,75 @@ class _MyAppState extends State<MyApp> {
   Widget _buildHomeWidget(AuthService authService, bool launchedFromShare) {
     print(
         "MAIN BUILD DEBUG: _buildHomeWidget called with launchedFromShare=$launchedFromShare");
+
+    // NEW: Prioritize event share preview (for unauthenticated users)
+    if (_initialEventShareToken != null && _initialEventShareToken!.isNotEmpty) {
+      print(
+          "MAIN BUILD DEBUG: Showing EventEditorModal for token: $_initialEventShareToken");
+      return FutureBuilder<Map<String, dynamic>?>(
+        future: _loadEventData(_initialEventShareToken!),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Scaffold(
+              body: Center(child: CircularProgressIndicator()),
+            );
+          }
+
+          if (snapshot.hasError || snapshot.data == null) {
+            return Scaffold(
+              appBar: AppBar(
+                title: const Text('Error'),
+                actions: [
+                  TextButton(
+                    onPressed: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (context) => const AuthScreen(),
+                        ),
+                      );
+                    },
+                    child: const Text(
+                      'Sign In',
+                      style: TextStyle(color: Colors.white),
+                    ),
+                  ),
+                ],
+              ),
+              body: Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.error_outline, size: 64, color: Colors.red),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Unable to load event',
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      snapshot.hasError 
+                          ? 'Error: ${snapshot.error}'
+                          : 'Event not found',
+                      style: Theme.of(context).textTheme.bodyMedium,
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }
+
+          final data = snapshot.data!;
+          return EventEditorModal(
+            event: data['event'] as Event,
+            experiences: data['experiences'] as List<Experience>,
+            categories: data['categories'] as List<UserCategory>,
+            colorCategories: data['colorCategories'] as List<ColorCategory>,
+            isReadOnly: true,
+          );
+        },
+      );
+    }
 
     // NEW: Prioritize discovery share preview on web
     if (kIsWeb &&
