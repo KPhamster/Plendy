@@ -5,6 +5,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter_colorpicker/flutter_colorpicker.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/services.dart';
+import 'package:share_plus/share_plus.dart';
 import '../models/event.dart';
 import '../models/experience.dart';
 import '../models/user_profile.dart';
@@ -16,6 +17,7 @@ import '../services/experience_service.dart';
 import '../services/auth_service.dart';
 import '../services/google_maps_service.dart';
 import '../services/event_notification_queue_service.dart';
+import '../services/message_service.dart';
 import '../widgets/shared_media_preview_modal.dart';
 import '../screens/event_experience_selector_screen.dart';
 import '../screens/location_picker_screen.dart';
@@ -66,6 +68,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
   final _authService = AuthService();
   final _eventNotificationQueueService = EventNotificationQueueService();
   final _googleMapsService = GoogleMapsService();
+  final _messageService = MessageService();
 
   late Event _currentEvent;
   List<Experience> _availableExperiences = [];
@@ -197,7 +200,17 @@ class _EventEditorModalState extends State<EventEditorModal> {
       if (isNewEvent) {
         // New event - create it
         final eventId = await _eventService.createEvent(updatedEvent);
-        savedEvent = updatedEvent.copyWith(id: eventId);
+        String? shareToken;
+        try {
+          shareToken = await _eventService.generateShareToken(eventId);
+        } catch (e) {
+          debugPrint(
+              'EventEditorModal: Failed to auto-generate share token: $e');
+        }
+        savedEvent = updatedEvent.copyWith(
+          id: eventId,
+          shareToken: shareToken ?? updatedEvent.shareToken,
+        );
       } else {
         // Existing event - update it
         await _eventService.updateEvent(updatedEvent);
@@ -2164,6 +2177,28 @@ class _EventEditorModalState extends State<EventEditorModal> {
                   padding: const EdgeInsets.all(4),
                 ),
               ),
+              if (_currentEvent.shareToken?.isNotEmpty == true) ...[
+                const SizedBox(width: 8),
+                Tooltip(
+                  message: 'Share event',
+                  child: ActionChip(
+                    avatar: const Icon(
+                      Icons.share_outlined,
+                      size: 18,
+                      color: Colors.black87,
+                    ),
+                    label: const SizedBox.shrink(),
+                    labelPadding: EdgeInsets.zero,
+                    onPressed: _showEventShareSheet,
+                    backgroundColor: Colors.white,
+                    shape: StadiumBorder(
+                      side: BorderSide(color: Colors.grey.shade300),
+                    ),
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    padding: const EdgeInsets.all(4),
+                  ),
+                ),
+              ],
               if (!_isReadOnly) ...[
                 const SizedBox(width: 8),
                 GestureDetector(
@@ -3502,6 +3537,95 @@ class _EventEditorModalState extends State<EventEditorModal> {
     }
   }
 
+  Future<void> _showEventShareSheet() async {
+    final token = _currentEvent.shareToken;
+    if (token == null || token.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Generate a share link first.')),
+      );
+      return;
+    }
+
+    final link = 'https://plendy.app/event/$token';
+
+    await showShareExperienceBottomSheet(
+      context: context,
+      titleText: 'Share Event',
+      onDirectShare: () async => _shareEventToPlendyFriends(link),
+      onCreateLink: ({
+        required String shareMode,
+        required bool giveEditAccess,
+      }) async =>
+          _shareEventLinkExternally(link),
+    );
+  }
+
+  Future<void> _shareEventLinkExternally(String link) async {
+    await Share.share('Check out this event on Plendy! $link');
+  }
+
+  Future<void> _shareEventToPlendyFriends(String link) async {
+    final user = _authService.currentUser;
+    if (user == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please sign in to share with friends.')),
+      );
+      return;
+    }
+
+    final title = _titleController.text.trim();
+
+    final bool? shared = await showShareToFriendsModal(
+      context: context,
+      subjectLabel: title.isEmpty ? null : title,
+      actionButtonLabel: 'Share',
+      onSubmit: (recipientIds) async {
+        await _sendEventShareMessages(
+          senderId: user.uid,
+          recipientIds: recipientIds,
+          link: link,
+          title: title,
+        );
+      },
+    );
+
+    if (shared == true && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Shared with friends!')),
+      );
+    }
+  }
+
+  Future<void> _sendEventShareMessages({
+    required String senderId,
+    required List<String> recipientIds,
+    required String link,
+    required String title,
+  }) async {
+    if (recipientIds.isEmpty) return;
+    final message =
+        'Check out this event${title.isNotEmpty ? ': $title' : ''}\n$link';
+
+    for (final recipientId in recipientIds) {
+      try {
+        final thread = await _messageService.createOrGetThread(
+          currentUserId: senderId,
+          participantIds: [recipientId],
+        );
+        await _messageService.sendMessage(
+          threadId: thread.id,
+          senderId: senderId,
+          text: message,
+        );
+      } catch (e) {
+        debugPrint(
+            'EventEditorModal: Failed to share event with $recipientId: $e');
+      }
+    }
+  }
+
   Location _buildLocationForMapNavigation(Experience experience) {
     final Location location = experience.location;
     final String? displayName = location.displayName;
@@ -4477,12 +4601,13 @@ class _EventEditorModalState extends State<EventEditorModal> {
                 ),
               ),
               const SizedBox(height: 8),
-              TextButton.icon(
-                icon: const Icon(Icons.link_off, color: Colors.red),
-                label: const Text('Revoke Link',
-                    style: TextStyle(color: Colors.red)),
-                onPressed: _revokeShareLink,
-              ),
+              if (!_isReadOnly)
+                TextButton.icon(
+                  icon: const Icon(Icons.link_off, color: Colors.red),
+                  label: const Text('Revoke Link',
+                      style: TextStyle(color: Colors.red)),
+                  onPressed: _revokeShareLink,
+                ),
             ],
           ],
         ],
@@ -4514,7 +4639,8 @@ class _EventEditorModalState extends State<EventEditorModal> {
     try {
       await _eventService.revokeShareToken(_currentEvent.id);
       setState(() {
-        _currentEvent = _currentEvent.copyWith(shareToken: null);
+        _currentEvent =
+            _currentEvent.copyWith(shareToken: null, clearShareToken: true);
       });
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

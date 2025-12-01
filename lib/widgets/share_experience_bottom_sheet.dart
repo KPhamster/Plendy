@@ -19,6 +19,7 @@ Future<T?> showShareExperienceBottomSheet<T>({
   required BuildContext context,
   required Future<void> Function() onDirectShare,
   required ShareBottomSheetCreateLinkCallback onCreateLink,
+  String titleText = 'Share Experience',
 }) {
   return showModalBottomSheet<T>(
     context: context,
@@ -30,6 +31,7 @@ Future<T?> showShareExperienceBottomSheet<T>({
       return ShareExperienceBottomSheetContent(
         onDirectShare: onDirectShare,
         onCreateLink: onCreateLink,
+        titleText: titleText,
       );
     },
   );
@@ -40,10 +42,12 @@ class ShareExperienceBottomSheetContent extends StatefulWidget {
     super.key,
     required this.onDirectShare,
     required this.onCreateLink,
+    required this.titleText,
   });
 
   final Future<void> Function() onDirectShare;
   final ShareBottomSheetCreateLinkCallback onCreateLink;
+  final String titleText;
 
   @override
   State<ShareExperienceBottomSheetContent> createState() =>
@@ -91,9 +95,9 @@ class _ShareExperienceBottomSheetContentState
           children: [
             Row(
               children: [
-                const Text(
-                  'Share Experience',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+                Text(
+                  widget.titleText,
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
                 ),
                 const Spacer(),
                 IconButton(

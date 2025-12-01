@@ -418,6 +418,7 @@ class Event extends Equatable {
     DateTime? createdAt,
     DateTime? updatedAt,
     String? shareToken,
+    bool clearShareToken = false,
     List<EventComment>? comments,
     String? colorHex,
   }) {
@@ -439,7 +440,7 @@ class Event extends Equatable {
           notificationPreference ?? this.notificationPreference,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
-      shareToken: shareToken ?? this.shareToken,
+      shareToken: clearShareToken ? null : (shareToken ?? this.shareToken),
       comments: comments ?? this.comments,
       colorHex: colorHex ?? this.colorHex,
     );
