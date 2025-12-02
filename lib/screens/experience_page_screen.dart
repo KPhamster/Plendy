@@ -4365,6 +4365,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
+          backgroundColor: Colors.white,
+          surfaceTintColor: Colors.white, // Force a pure white dialog on M3
           title: const Text('Remove Experience'),
           content: const Text(
               'This will remove the experience from your list. You will no longer see or edit it. Do you want to proceed?'),
