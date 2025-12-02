@@ -2584,7 +2584,6 @@ class _EventEditorModalState extends State<EventEditorModal> {
         ? 'event-only-${entry.inlineName ?? 'unnamed'}-$index'
         : '${entry.experienceId}-$index';
     final bool isExpanded = _itineraryExpandedState[tileId] ?? false;
-    final tileKey = GlobalKey<State<ExpansionTile>>();
     // Determine if this is an event-only experience
     final bool isEventOnly = entry.isEventOnly;
     
@@ -3673,86 +3672,132 @@ class _EventEditorModalState extends State<EventEditorModal> {
     if (_attemptedAnonymousSignIn) return;
     _attemptedAnonymousSignIn = true;
     try {
-      await FirebaseAuth.instance.signInAnonymously();
+      final userCredential = await FirebaseAuth.instance.signInAnonymously();
+      debugPrint('EventEditorModal: Anonymous sign-in successful: ${userCredential.user?.uid}');
+      // Wait for the auth service to update its state
+      await Future.delayed(const Duration(milliseconds: 200));
     } catch (e) {
       debugPrint(
           'EventEditorModal: Anonymous sign-in for content preview failed: $e');
       _attemptedAnonymousSignIn = false;
+      rethrow; // Propagate error so caller can handle it
     }
   }
 
   Future<void> _openExperienceContentPreview(Experience experience) async {
-    await _ensureAuthenticatedForContentIfNeeded();
-
-    if (experience.sharedMediaItemIds.isEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content:
-                Text('No saved content available yet for this experience.'),
-          ),
-        );
-      }
-      return;
+    // Show loading dialog while authenticating and fetching content
+    BuildContext? loadingContext;
+    if (mounted) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) {
+          loadingContext = ctx;
+          return Center(
+            child: CircularProgressIndicator(
+              valueColor: AlwaysStoppedAnimation<Color>(
+                Theme.of(context).primaryColor,
+              ),
+            ),
+          );
+        },
+      );
     }
 
-    final cachedItems = _experienceMediaCache[experience.id];
-    late final List<SharedMediaItem> resolvedItems;
+    try {
+      // Ensure user is authenticated (anonymous sign-in if needed)
+      await _ensureAuthenticatedForContentIfNeeded();
 
-    if (cachedItems == null) {
-      try {
+      if (experience.sharedMediaItemIds.isEmpty) {
+        if (loadingContext != null && mounted) {
+          Navigator.of(loadingContext!).pop();
+        }
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content:
+                  Text('No saved content available yet for this experience.'),
+            ),
+          );
+        }
+        return;
+      }
+
+      final cachedItems = _experienceMediaCache[experience.id];
+      late final List<SharedMediaItem> resolvedItems;
+
+      if (cachedItems == null) {
         final fetched = await _experienceService
             .getSharedMediaItems(experience.sharedMediaItemIds);
         fetched.sort((a, b) => b.createdAt.compareTo(a.createdAt));
         resolvedItems = fetched;
         _experienceMediaCache[experience.id] = fetched;
-      } catch (e) {
+      } else {
+        resolvedItems = cachedItems;
+      }
+
+      // Close loading dialog
+      if (loadingContext != null && mounted) {
+        Navigator.of(loadingContext!).pop();
+        loadingContext = null;
+      }
+
+      if (resolvedItems.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Could not load content preview: $e')),
+            const SnackBar(
+              content:
+                  Text('No saved content available yet for this experience.'),
+            ),
           );
         }
         return;
       }
-    } else {
-      resolvedItems = cachedItems;
-    }
 
-    if (resolvedItems.isEmpty) {
+      if (!mounted) return;
+
+      final UserCategory? category = widget.categories.firstWhereOrNull(
+        (cat) => cat.id == experience.categoryId,
+      );
+
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        useRootNavigator: true,
+        builder: (modalContext) {
+          final SharedMediaItem initialMedia = resolvedItems.first;
+          return SharedMediaPreviewModal(
+            experience: experience,
+            mediaItem: initialMedia,
+            mediaItems: resolvedItems,
+            onLaunchUrl: _launchUrl,
+            category: category,
+            userColorCategories: widget.colorCategories,
+          );
+        },
+      );
+    } catch (e) {
+      // Close loading dialog if still open
+      if (loadingContext != null && mounted) {
+        Navigator.of(loadingContext!).pop();
+      }
+      
+      debugPrint('EventEditorModal: Error opening content preview: $e');
       if (mounted) {
+        String errorMessage = 'Could not load content preview';
+        if (e.toString().contains('permission') || e.toString().contains('PERMISSION_DENIED')) {
+          errorMessage = 'Sign in to view this content';
+        } else if (e.toString().contains('sign in') || e.toString().contains('auth')) {
+          errorMessage = 'Authentication required to view content';
+        } else {
+          errorMessage = 'Could not load content: $e';
+        }
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content:
-                Text('No saved content available yet for this experience.'),
-          ),
+          SnackBar(content: Text(errorMessage)),
         );
       }
-      return;
     }
-
-    if (!mounted) return;
-
-    final UserCategory? category = widget.categories.firstWhereOrNull(
-      (cat) => cat.id == experience.categoryId,
-    );
-
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      useRootNavigator: true,
-      builder: (modalContext) {
-        final SharedMediaItem initialMedia = resolvedItems.first;
-        return SharedMediaPreviewModal(
-          experience: experience,
-          mediaItem: initialMedia,
-          mediaItems: resolvedItems,
-          onLaunchUrl: _launchUrl,
-          category: category,
-          userColorCategories: widget.colorCategories,
-        );
-      },
-    );
   }
 
   Color _parseColor(String hexColor) {

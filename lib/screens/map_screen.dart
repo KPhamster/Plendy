@@ -1905,7 +1905,7 @@ class _MapScreenState extends State<MapScreen> {
           scrollToAnchor();
         });
 
-        return Dialog(
+        return _wrapWebPointerInterceptor(Dialog(
           backgroundColor: Colors.white,
           insetPadding:
               const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
@@ -2008,7 +2008,7 @@ class _MapScreenState extends State<MapScreen> {
               ],
             ),
           ),
-        );
+        ));
       },
     );
   }
@@ -2252,7 +2252,9 @@ class _MapScreenState extends State<MapScreen> {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (context) => const Center(child: CircularProgressIndicator()),
+      builder: (context) => _wrapWebPointerInterceptor(
+        const Center(child: CircularProgressIndicator()),
+      ),
     );
 
     try {
@@ -3549,7 +3551,7 @@ class _MapScreenState extends State<MapScreen> {
       final confirmed = await showDialog<bool>(
         context: context,
         builder: (dialogContext) {
-          return AlertDialog(
+          return _wrapWebPointerInterceptor(AlertDialog(
             backgroundColor: Colors.white,
             title: const Text('Stop Adding Experiences?'),
             content: Text(
@@ -3567,7 +3569,7 @@ class _MapScreenState extends State<MapScreen> {
                 child: const Text('Exit'),
               ),
             ],
-          );
+          ));
         },
       );
 
@@ -3593,7 +3595,7 @@ class _MapScreenState extends State<MapScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (BuildContext dialogContext) {
-        return AlertDialog(
+        return _wrapWebPointerInterceptor(AlertDialog(
           backgroundColor: Colors.white,
           title: const Text('Leave Event View?'),
           content: const Text('Are you sure you want to leave the event view?'),
@@ -3607,7 +3609,7 @@ class _MapScreenState extends State<MapScreen> {
               child: const Text('Yes'),
             ),
           ],
-        );
+        ));
       },
     );
 
@@ -3741,8 +3743,10 @@ class _MapScreenState extends State<MapScreen> {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (context) => const Center(
-        child: CircularProgressIndicator(),
+      builder: (context) => _wrapWebPointerInterceptor(
+        const Center(
+          child: CircularProgressIndicator(),
+        ),
       ),
     );
 
@@ -3817,7 +3821,7 @@ class _MapScreenState extends State<MapScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) {
-        return AlertDialog(
+        return _wrapWebPointerInterceptor(AlertDialog(
           backgroundColor: Colors.white,
           title: const Text('Stop Selecting Events?'),
           content: const Text(
@@ -3833,7 +3837,7 @@ class _MapScreenState extends State<MapScreen> {
               child: const Text('Stop'),
             ),
           ],
-        );
+        ));
       },
     );
 
@@ -3869,8 +3873,10 @@ class _MapScreenState extends State<MapScreen> {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (context) => const Center(
-        child: CircularProgressIndicator(),
+      builder: (context) => _wrapWebPointerInterceptor(
+        const Center(
+          child: CircularProgressIndicator(),
+        ),
       ),
     );
 
@@ -4091,7 +4097,9 @@ class _MapScreenState extends State<MapScreen> {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (context) => const Center(child: CircularProgressIndicator()),
+      builder: (context) => _wrapWebPointerInterceptor(
+        const Center(child: CircularProgressIndicator()),
+      ),
     );
     
     try {
@@ -5281,7 +5289,7 @@ class _MapScreenState extends State<MapScreen> {
       builder: (BuildContext context) {
         return StatefulBuilder(
           builder: (BuildContext context, StateSetter setStateOuter) {
-            return AlertDialog(
+            return _wrapWebPointerInterceptor(AlertDialog(
               backgroundColor: Colors.white,
               title: const Text('Filter Experiences'),
               insetPadding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 24.0),
@@ -5837,7 +5845,7 @@ class _MapScreenState extends State<MapScreen> {
               },
             ),
           ],
-        );
+        ));
           },
         );
       },
@@ -7191,48 +7199,49 @@ class _MapScreenState extends State<MapScreen> {
               onPressed: _handleGlobeToggle,
             ),
           ),
-          Container(
-            color: Colors.white,
-            child: IconButton(
-              icon: Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  const Icon(Icons.filter_list),
-                  if (_hasActiveFilters)
-                    Positioned(
-                      right: 4,
-                      bottom: 4,
-                      child: Container(
-                        width: 10,
-                        height: 10,
-                        decoration: BoxDecoration(
-                          color: Theme.of(context).primaryColor,
-                          shape: BoxShape.circle,
-                          border: Border.all(color: Colors.white, width: 1.5),
+          if (_authService.currentUser != null)
+            Container(
+              color: Colors.white,
+              child: IconButton(
+                icon: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    const Icon(Icons.filter_list),
+                    if (_hasActiveFilters)
+                      Positioned(
+                        right: 4,
+                        bottom: 4,
+                        child: Container(
+                          width: 10,
+                          height: 10,
+                          decoration: BoxDecoration(
+                            color: Theme.of(context).primaryColor,
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.white, width: 1.5),
+                          ),
                         ),
                       ),
-                    ),
-                ],
+                  ],
+                ),
+                tooltip: 'Filter Experiences',
+                onPressed: () {
+                  print("🗺️ MAP SCREEN: Filter button pressed!");
+                  setState(() {
+                    _tappedLocationMarker = null;
+                    _tappedLocationDetails = null;
+                    _tappedExperience = null; // ADDED: Clear associated experience
+                    _tappedExperienceCategory = null; // ADDED: Clear associated category
+                    _tappedLocationBusinessStatus = null; // ADDED: Clear business status
+                    _tappedLocationOpenNow = null; // ADDED: Clear open-now status
+                    _searchController.clear();
+                    _searchResults = [];
+                    _showSearchResults = false;
+                    _searchFocusNode.unfocus();
+                  });
+                  _showFilterDialog();
+                },
               ),
-              tooltip: 'Filter Experiences',
-              onPressed: () {
-                print("🗺️ MAP SCREEN: Filter button pressed!");
-                setState(() {
-                  _tappedLocationMarker = null;
-                  _tappedLocationDetails = null;
-                  _tappedExperience = null; // ADDED: Clear associated experience
-                  _tappedExperienceCategory = null; // ADDED: Clear associated category
-                  _tappedLocationBusinessStatus = null; // ADDED: Clear business status
-                  _tappedLocationOpenNow = null; // ADDED: Clear open-now status
-                  _searchController.clear();
-                  _searchResults = [];
-                  _showSearchResults = false;
-                  _searchFocusNode.unfocus();
-                });
-                _showFilterDialog();
-              },
             ),
-          ),
         ],
       ),
       body: SafeArea(
