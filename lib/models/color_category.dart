@@ -121,9 +121,9 @@ class ColorCategory extends Equatable {
 
   // --- ADDED: Default Color Categories ---
   static const Map<String, String> defaultColorCategories = {
-    'Want to go': 'E52020', // Red
-    'Been here already': '24C924', // Green
-    'Favorite': 'F479DA', // Pink
+    'Want to go': 'EB2727', // Red
+    'Been here already': '359D35', // Green
+    'Favorite': 'FF899D', // Pink
   };
   // --- END ADDED ---
 
