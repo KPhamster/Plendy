@@ -15,6 +15,7 @@ import '../services/user_service.dart';
 import '../services/experience_service.dart';
 import '../widgets/shared_media_preview_modal.dart';
 import 'experience_page_screen.dart';
+import 'main_screen.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 // Helper function to parse hex color string
@@ -96,6 +97,22 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
   void dispose() {
     _tabController.dispose();
     super.dispose();
+  }
+
+  void _navigateToMainScreen() {
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const MainScreen(initialIndex: 3)),
+      (route) => false,
+    );
+  }
+
+  Future<bool> _handleBackNavigation() async {
+    if (Navigator.of(context).canPop()) {
+      Navigator.of(context).pop();
+    } else {
+      _navigateToMainScreen();
+    }
+    return false;
   }
 
   Future<void> _loadProfile({bool showFullPageLoader = true}) async {
@@ -939,15 +956,22 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
       );
     }
 
-    return Scaffold(
-      backgroundColor: Colors.white,
-      appBar: AppBar(
-        title: viewingOwnProfile ? const Text('Public Profile') : null,
+    return WillPopScope(
+      onWillPop: _handleBackNavigation,
+      child: Scaffold(
         backgroundColor: Colors.white,
-        foregroundColor: Colors.black,
-        elevation: 0,
+        appBar: AppBar(
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back),
+            onPressed: () => _handleBackNavigation(),
+          ),
+          title: viewingOwnProfile ? const Text('Public Profile') : null,
+          backgroundColor: Colors.white,
+          foregroundColor: Colors.black,
+          elevation: 0,
+        ),
+        body: SafeArea(child: content),
       ),
-      body: SafeArea(child: content),
     );
   }
 

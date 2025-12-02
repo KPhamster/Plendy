@@ -26,6 +26,7 @@ import '../screens/experience_page_screen.dart';
 import '../screens/map_screen.dart';
 import '../screens/events_screen.dart';
 import '../screens/auth_screen.dart';
+import '../screens/main_screen.dart';
 import 'share_experience_bottom_sheet.dart';
 
 class EventEditorResult {
@@ -373,8 +374,20 @@ class _EventEditorModalState extends State<EventEditorModal> {
     }
   }
 
-  Future<void> _handleBackNavigation() async {
-    _popWithDraftResult();
+  void _navigateToMainScreen() {
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const MainScreen(initialIndex: 2)),
+      (route) => false,
+    );
+  }
+
+  Future<bool> _handleBackNavigation() async {
+    if (Navigator.of(context).canPop()) {
+      _popWithDraftResult();
+    } else {
+      _navigateToMainScreen();
+    }
+    return false;
   }
 
   bool get _isTimeRangeValid =>
@@ -505,10 +518,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
         _authService.currentUser != null && _authService.currentUser!.isAnonymous;
 
     return WillPopScope(
-      onWillPop: () async {
-        _popWithDraftResult();
-        return false;
-      },
+      onWillPop: _handleBackNavigation,
       child: Scaffold(
         backgroundColor: Colors.white,
         appBar: AppBar(
@@ -517,7 +527,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
           elevation: 0,
           leading: IconButton(
             icon: const Icon(Icons.arrow_back),
-            onPressed: _handleBackNavigation,
+            onPressed: () => _handleBackNavigation(),
           ),
           title: _isReadOnly
               ? Text(
