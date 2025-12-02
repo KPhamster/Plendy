@@ -7033,6 +7033,19 @@ class _MapScreenState extends State<MapScreen> {
                 icon: _publicReadOnlyCategory.icon,
               )
             : _tappedLocationDetails?.getPlaceName() ?? 'Selected Location';
+    final String? selectedAdditionalNotes = (() {
+      final notes = _tappedExperience?.additionalNotes?.trim();
+      if (notes != null && notes.isNotEmpty) {
+        return notes;
+      }
+      if (hasPublicFallback) {
+        final publicNotes = _publicReadOnlyExperience?.additionalNotes?.trim();
+        if (publicNotes != null && publicNotes.isNotEmpty) {
+          return publicNotes;
+        }
+      }
+      return null;
+    })();
 
     // Combine experience markers and the tapped marker (if it exists)
     final Map<String, Marker> allMarkers = Map.from(_markers);
@@ -8086,6 +8099,31 @@ class _MapScreenState extends State<MapScreen> {
                                 ),
                                 const SizedBox(height: 12),
                               ],
+                              if (selectedAdditionalNotes != null) ...[
+                                Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Icon(
+                                      Icons.notes,
+                                      size: 18,
+                                      color: Colors.grey[700],
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        selectedAdditionalNotes!,
+                                        style: TextStyle(
+                                          color: Colors.grey[800],
+                                          fontStyle: FontStyle.italic,
+                                        ),
+                                        maxLines: 3,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                              ],
                               if (_tappedLocationDetails!.address != null &&
                                   _tappedLocationDetails!.address!.isNotEmpty) ...[
                                 Text(
@@ -8093,6 +8131,31 @@ class _MapScreenState extends State<MapScreen> {
                                   style: TextStyle(color: Colors.grey[700]),
                                 ),
                                 SizedBox(height: 8),
+                              ],
+                              if (selectedAdditionalNotes != null) ...[
+                                Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Icon(
+                                      Icons.notes,
+                                      size: 18,
+                                      color: Colors.grey[700],
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        selectedAdditionalNotes!,
+                                        style: TextStyle(
+                                          color: Colors.grey[800],
+                                          fontStyle: FontStyle.italic,
+                                        ),
+                                        maxLines: 3,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
                               ],
                               // ADDED: Star Rating
                               if (_tappedLocationDetails!.rating != null) ...[

@@ -1306,6 +1306,72 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       ),
     );
   }
+
+  // Description block
+  Widget _buildDescriptionSection(
+    BuildContext context, {
+    String? description,
+  }) {
+    final bool hasDescription =
+        description != null && description.trim().isNotEmpty;
+
+    if (!hasDescription) return const SizedBox.shrink();
+
+    final textTheme = Theme.of(context).textTheme.bodyMedium;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6.0),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.description_outlined,
+              size: 20.0, color: Colors.black54),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  description!.trim(),
+                  style: textTheme,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNotesRow(BuildContext context, String notes) {
+    final textTheme = Theme.of(context).textTheme.bodyMedium;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6.0),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.notes, size: 20.0, color: Colors.black54),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Notes',
+                  style: textTheme?.copyWith(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  notes,
+                  style: textTheme?.copyWith(fontStyle: FontStyle.italic),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
   // --- ADDED: Helper to build detail row with a leading WIDGET --- END ---
 
   // Helper method to build the details section (now accepts place details)
@@ -1624,14 +1690,10 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
             },
           ),
           // --- ADDED: Color Category Row (Directly) --- END ---
-          _buildDetailRow(
+          _buildDescriptionSection(
             context,
-            Icons.description_outlined,
-            'Description',
-            formattedDescription, // Use pre-formatted value
-            showLabel: false, // HIDE label
+            description: formattedDescription,
           ),
-          // --- END Notes Row ---
           // Make the address row tappable
           if (!hideLocationDetails) ...[
             GestureDetector(
@@ -1644,6 +1706,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                 showLabel: false, // HIDE label
               ),
             ),
+            if ((_currentExperience.additionalNotes?.trim().isNotEmpty ?? false))
+              _buildNotesRow(context, _currentExperience.additionalNotes!.trim()),
             _buildStatusRow(
               context,
               getDetail('businessStatus'),
@@ -1673,14 +1737,6 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
           // --- ADDED: Other Categories Row ---
           _buildOtherCategoriesRow(context, _currentExperience),
           // --- END ADDED ---
-          // --- ADDED Notes Row ---
-          _buildDetailRow(
-            context,
-            Icons.notes, // CHANGED Icon to match modal
-            'Notes',
-            _currentExperience.additionalNotes, // Use the field directly
-            showLabel: false, // HIDE label
-          ),
         ],
       ),
     );
