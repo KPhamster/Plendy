@@ -1515,9 +1515,7 @@ class _MapScreenState extends State<MapScreen> {
       final marker = Marker(
         markerId: markerId,
         position: position,
-        infoWindow: InfoWindow(
-          title: publicExp.name,
-        ),
+        infoWindow: _infoWindowForPlatform(publicExp.name),
         icon: publicIcon,
         onTap: () async {
           FocusScope.of(context).unfocus();
@@ -1529,9 +1527,7 @@ class _MapScreenState extends State<MapScreen> {
           final tappedMarker = Marker(
             markerId: tappedMarkerId,
             position: position,
-            infoWindow: InfoWindow(
-              title: publicExp.name,
-            ),
+            infoWindow: _infoWindowForPlatform(publicExp.name),
             icon: publicSelectedIcon,
             zIndex: 1.0,
           );
@@ -2565,8 +2561,8 @@ class _MapScreenState extends State<MapScreen> {
         position: position,
         icon: markerIcon,
         zIndex: 2.0, // Above regular markers
-        infoWindow: InfoWindow(
-          title: entry.isEventOnly 
+        infoWindow: _infoWindowForPlatform(
+          entry.isEventOnly 
               ? '$positionNumber. ${entry.inlineName ?? 'Stop $positionNumber'}'
               : '$positionNumber. ${markerExperience?.name ?? 'Experience'}',
         ),
@@ -2784,9 +2780,7 @@ class _MapScreenState extends State<MapScreen> {
     final tappedMarker = Marker(
       markerId: tappedMarkerId,
       position: LatLng(location.latitude, location.longitude),
-      infoWindow: InfoWindow(
-        title: '$selectedIconText ${experience.name}',
-      ),
+      infoWindow: _infoWindowForPlatform('$selectedIconText ${experience.name}'),
       icon: selectedIcon,
       zIndex: 1.0,
     );
@@ -2837,9 +2831,7 @@ class _MapScreenState extends State<MapScreen> {
     final tappedMarker = Marker(
       markerId: tappedMarkerId,
       position: LatLng(location.latitude, location.longitude),
-      infoWindow: InfoWindow(
-        title: entry.inlineName ?? 'Stop $positionNumber',
-      ),
+      infoWindow: _infoWindowForPlatform(entry.inlineName ?? 'Stop $positionNumber'),
       icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueViolet),
       zIndex: 1.0,
     );
@@ -3405,9 +3397,7 @@ class _MapScreenState extends State<MapScreen> {
       final tappedMarker = Marker(
         markerId: tappedMarkerId,
         position: position,
-        infoWindow: InfoWindow(
-          title: '$selectedIconText ${experience.name}',
-        ),
+        infoWindow: _infoWindowForPlatform('$selectedIconText ${experience.name}'),
         icon: selectedIcon,
         zIndex: 1.0,
       );
@@ -3451,9 +3441,7 @@ class _MapScreenState extends State<MapScreen> {
       final tappedMarker = Marker(
         markerId: tappedMarkerId,
         position: position,
-        infoWindow: InfoWindow(
-          title: entry.inlineName ?? 'Stop ${index + 1}',
-        ),
+        infoWindow: _infoWindowForPlatform(entry.inlineName ?? 'Stop ${index + 1}'),
         icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueViolet),
         zIndex: 1.0,
       );
@@ -4404,9 +4392,7 @@ class _MapScreenState extends State<MapScreen> {
           position: position,
           icon: markerIcon,
           zIndex: 2.0, // Above regular markers
-          infoWindow: InfoWindow(
-            title: entry.inlineName ?? 'Stop $positionNumber',
-          ),
+          infoWindow: _infoWindowForPlatform(entry.inlineName ?? 'Stop $positionNumber'),
           onTap: () async {
             FocusScope.of(context).unfocus();
             // Show location details bottom sheet
@@ -4736,9 +4722,7 @@ class _MapScreenState extends State<MapScreen> {
       final Marker tappedMarker = Marker(
         markerId: tappedMarkerId,
         position: target,
-        infoWindow: InfoWindow(
-          title: '${_resolveCategoryForExperience(experience).icon} ${experience.name}',
-        ),
+        infoWindow: _infoWindowForPlatform('${_resolveCategoryForExperience(experience).icon} ${experience.name}'),
         icon: selectedIcon,
         zIndex: 1.0,
       );
@@ -5097,6 +5081,7 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   void _showMarkerInfoWindow(MarkerId markerId) {
+    if (kIsWeb) return;
     // Try immediately after the current frame, then retry once after a short delay.
     // This mitigates a first-tap race where the selected marker may not be ready yet.
     Future<void> _showNow() async {
@@ -6094,9 +6079,7 @@ class _MapScreenState extends State<MapScreen> {
       final marker = Marker(
         markerId: markerId,
         position: position,
-        infoWindow: InfoWindow(
-          title: '$iconText ${experience.name}',
-        ),
+        infoWindow: _infoWindowForPlatform('$iconText ${experience.name}'),
         icon: categoryIconBitmap,
         // MODIFIED: Experience marker onTap shows location details panel
         onTap: () async {
@@ -6121,9 +6104,7 @@ class _MapScreenState extends State<MapScreen> {
           final tappedMarker = Marker(
             markerId: tappedMarkerId,
             position: position,
-            infoWindow: InfoWindow(
-              title: '$selectedIconText ${experience.name}',
-            ),
+            infoWindow: _infoWindowForPlatform('$selectedIconText ${experience.name}'),
             icon: selectedIcon, // Use the new enlarged icon
             zIndex: 1.0,
           );
@@ -6242,16 +6223,7 @@ class _MapScreenState extends State<MapScreen> {
     final tappedMarker = Marker(
       markerId: markerIdObj,
       position: targetLatLng,
-      infoWindow: InfoWindow(
-        title: finalLocationDetails.getPlaceName(),
-        onTap: () {
-          print(
-              "🗺️ MAP SCREEN: InfoWindow tapped for ${finalLocationDetails.getPlaceName()}");
-          if (_tappedLocationDetails != null) {
-            _openDirectionsForLocation(_tappedLocationDetails!);
-          }
-        },
-      ),
+      infoWindow: _infoWindowForPlatform(finalLocationDetails.getPlaceName()),
       icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueViolet),
       zIndex: 1.0,
     );
@@ -6670,9 +6642,7 @@ class _MapScreenState extends State<MapScreen> {
       final tappedMarker = Marker(
         markerId: tappedMarkerId,
         position: targetLatLng,
-        infoWindow: InfoWindow(
-          title: '${category.icon} ${experience.name}',
-        ),
+        infoWindow: _infoWindowForPlatform('${category.icon} ${experience.name}'),
         icon: selectedIcon, // Use the new enlarged icon
         zIndex: 1.0,
       );
@@ -6768,14 +6738,7 @@ class _MapScreenState extends State<MapScreen> {
       final tappedMarker = Marker(
         markerId: tappedMarkerId,
         position: targetLatLng, 
-        infoWindow: InfoWindow(
-          title: location.getPlaceName(),
-          onTap: () {
-            if (_tappedLocationDetails != null) {
-              _openDirectionsForLocation(_tappedLocationDetails!);
-            }
-          },
-        ),
+        infoWindow: _infoWindowForPlatform(location.getPlaceName()),
         icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueViolet),
         zIndex: 1.0,
       );
@@ -7030,6 +6993,14 @@ class _MapScreenState extends State<MapScreen> {
     return PointerInterceptor(child: child);
   }
 
+  // Helper to disable InfoWindow on web (prevents automatic popup)
+  InfoWindow _infoWindowForPlatform(String title) {
+    if (kIsWeb) {
+      return InfoWindow.noText;
+    }
+    return InfoWindow(title: title);
+  }
+
   @override
   Widget build(BuildContext context) {
     print("🗺️ MAP SCREEN: Building widget. isLoading: $_isLoading");
@@ -7049,6 +7020,8 @@ class _MapScreenState extends State<MapScreen> {
         : publicExperienceMediaCount;
     final bool canPreviewContent = selectedMediaCount > 0;
     final bool showExperiencePrompt = _canOpenSelectedExperience;
+    final bool showFilterButton = _authService.currentUser != null &&
+        !(_authService.currentUser?.isAnonymous ?? false);
     final String selectedTitle = _tappedExperience != null
         ? _formatExperienceTitle(
             name: _tappedExperience!.name,
@@ -7199,7 +7172,7 @@ class _MapScreenState extends State<MapScreen> {
               onPressed: _handleGlobeToggle,
             ),
           ),
-          if (_authService.currentUser != null)
+          if (showFilterButton)
             Container(
               color: Colors.white,
               child: IconButton(
@@ -7959,353 +7932,368 @@ class _MapScreenState extends State<MapScreen> {
                       ),
                     ),
                   ),
-                ],
-              ),
-            ),
-
             // --- ADDED: Tapped Location Details Panel (moved from bottomNavigationBar) ---
             if (_tappedLocationDetails != null && !isKeyboardVisible)
-              Container(
-                  width: double.infinity, // ADDED: Make container fill screen width
-                  padding: EdgeInsets.fromLTRB(
-                      16, 16, 16, 8 + MediaQuery.of(context).padding.bottom / 2),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.1),
-                        blurRadius: 8,
-                        offset: Offset(0, -3), // Shadow upwards as it's at the bottom of content
-                      ),
-                    ],
-                  ),
-                  child: Stack(
-                    clipBehavior: Clip.none, 
-                    children: [
-                      // ADDED: Positioned "Tap to view" text at the very top
-                      if (showExperiencePrompt)
-                        Positioned(
-                          top: -12, // Move it further up, closer to the edge
-                          left: 0,
-                          right: 0,
-                          child: Center(
-                            child: Text(
-                              'Tap to view experience details',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Colors.grey[500],
-                                fontStyle: FontStyle.italic,
-                              ),
-                            ),
+              Align(
+                alignment: Alignment.bottomCenter,
+                child: _wrapWebPointerInterceptor(
+                  ConstrainedBox(
+                    constraints: kIsWeb
+                        ? const BoxConstraints(maxWidth: 480)
+                        : const BoxConstraints(),
+                    child: Container(
+                        padding: EdgeInsets.fromLTRB(
+                            16, 16, 16, 8 + MediaQuery.of(context).padding.bottom / 2),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: const BorderRadius.only(
+                            topLeft: Radius.circular(16),
+                            topRight: Radius.circular(16),
                           ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.1),
+                              blurRadius: 8,
+                              offset: Offset(0, -3), // Shadow upwards as it's at the bottom of content
+                            ),
+                          ],
                         ),
-                      GestureDetector(
-                        onTap: showExperiencePrompt
-                            ? _handleTappedLocationNavigation
-                            : null,
-                        behavior: HitTestBehavior.translucent,
-                        child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min, 
-                        children: [
-                          // ADDED: Add space at the top for the positioned text
+                        child: Stack(
+                          clipBehavior: Clip.none, 
+                          children: [
+                          // ADDED: Positioned "Tap to view" text at the very top
                           if (showExperiencePrompt)
-                            SizedBox(height: 12),
-                          // Only show "Selected Location" for non-experience locations
-                          if (!showExperiencePrompt) ...[
-                            Text(
-                              'Selected Location',
-                              style: TextStyle(
-                                fontWeight: FontWeight.normal,
-                                fontSize: 14,
-                                color: Colors.grey[800],
-                              ),
-                            ),
-                            SizedBox(height: 12),
-                          ],
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.center,
-                            children: [
-                              Expanded(
+                            Positioned(
+                              top: -12, // Move it further up, closer to the edge
+                              left: 0,
+                              right: 0,
+                              child: Center(
                                 child: Text(
-                                  selectedTitle,
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w500,
-                                    fontSize: 16,
+                                  'Tap to view experience details',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.grey[500],
+                                    fontStyle: FontStyle.italic,
                                   ),
                                 ),
                               ),
-                              Transform.translate(
-                                offset: const Offset(16, 0),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Transform.translate(
-                                      offset: const Offset(-6, 0),
-                                      child: IconButton(
-                                        onPressed: () {
-                                          if (_tappedLocationDetails != null) {
-                                            _launchMapLocation(_tappedLocationDetails!);
-                                          }
-                                        },
-                                        icon: Icon(Icons.map_outlined, color: Colors.green[700], size: 28),
-                                        tooltip: 'Open in map app',
-                                        padding: EdgeInsets.zero,
-                                        constraints: const BoxConstraints(),
-                                      ),
-                                    ),
-                                    Transform.translate(
-                                      offset: const Offset(-12, 0),
-                                      child: IconButton(
-                                        onPressed: () {
-                                          if (_tappedLocationDetails != null) {
-                                            _openDirectionsForLocation(_tappedLocationDetails!);
-                                          }
-                                        },
-                                        icon: Icon(Icons.directions, color: Colors.blue, size: 28),
-                                        tooltip: 'Get Directions',
-                                        padding: EdgeInsets.zero,
-                                        constraints: const BoxConstraints(),
-                                      ),
-                                    ),
-                                    Transform.translate(
-                                      offset: const Offset(-18, 0),
-                                      child: IconButton(
-                                        onPressed: () {
-                                          setState(() {
-                                            _tappedLocationMarker = null;
-                                            _tappedLocationDetails = null;
-                                            _tappedExperience = null;
-                                            _tappedExperienceCategory = null;
-                                            _tappedLocationBusinessStatus = null;
-                                            _tappedLocationOpenNow = null;
-                                          });
-                                        },
-                                        icon: Icon(Icons.close, color: Colors.grey[600], size: 28),
-                                        tooltip: 'Close',
-                                        padding: EdgeInsets.zero,
-                                        constraints: const BoxConstraints(),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
-                          SizedBox(height: 8),
-                          if (_tappedExperience != null) ...[
-                            if (_tappedExperience!.otherCategories.isNotEmpty) ...[
-                              _buildOtherCategoriesWidget(),
-                              const SizedBox(height: 12),
-                            ],
-                            Align(
-                              alignment: Alignment.centerLeft,
-                              child: _buildColorCategoryWidget(),
                             ),
-                            const SizedBox(height: 12),
-                          ],
-                          if (_tappedLocationDetails!.address != null &&
-                              _tappedLocationDetails!.address!.isNotEmpty) ...[
-                            Text(
-                              _tappedLocationDetails!.address!,
-                              style: TextStyle(color: Colors.grey[700]),
-                            ),
-                            SizedBox(height: 8),
-                          ],
-                          // ADDED: Star Rating
-                          if (_tappedLocationDetails!.rating != null) ...[
-                            Row(
-                              children: [
-                                ...List.generate(5, (i) {
-                                  final ratingValue = _tappedLocationDetails!.rating!;
-                                  return Icon(
-                                    i < ratingValue.floor()
-                                        ? Icons.star
-                                        : (i < ratingValue)
-                                            ? Icons.star_half
-                                            : Icons.star_border,
-                                    size: 18, 
-                                    color: Colors.amber,
-                                  );
-                                }),
-                                SizedBox(width: 8),
-                                if (_tappedLocationDetails!.userRatingCount != null && _tappedLocationDetails!.userRatingCount! > 0)
-                                  Text(
-                                    '(${_tappedLocationDetails!.userRatingCount})',
-                                    style: TextStyle(
-                                      color: Colors.grey[600],
-                                      fontSize: 13,
-                                    ),
-                                  ),
-                              ],
-                            ),
-                            SizedBox(height: 8), // Added SizedBox after rating like in location_picker_screen
-                          ],
-
-                          // ADDED: Business Status row below star rating with play button
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.center,
+                          GestureDetector(
+                            onTap: showExperiencePrompt
+                                ? _handleTappedLocationNavigation
+                                : null,
+                            behavior: HitTestBehavior.translucent,
+                            child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min, 
                             children: [
-                              Expanded(child: _buildBusinessStatusWidget()),
-                              if (_tappedExperience != null || hasPublicFallback) ...[
-                                const SizedBox(width: 12),
-                                GestureDetector(
-                                  onTap: _onPlayExperienceContent,
-                                  child: Opacity(
-                                    opacity: canPreviewContent ? 1.0 : 0.45,
-                                    child: Stack(
-                                      clipBehavior: Clip.none,
+                              // ADDED: Add space at the top for the positioned text
+                              if (showExperiencePrompt)
+                                SizedBox(height: 12),
+                              // Only show "Selected Location" for non-experience locations
+                              if (!showExperiencePrompt) ...[
+                                Text(
+                                  'Selected Location',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.normal,
+                                    fontSize: 14,
+                                    color: Colors.grey[800],
+                                  ),
+                                ),
+                                SizedBox(height: 12),
+                              ],
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.center,
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      selectedTitle,
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.w500,
+                                        fontSize: 16,
+                                      ),
+                                    ),
+                                  ),
+                                  Transform.translate(
+                                    offset: const Offset(16, 0),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
                                       children: [
-                                        Container(
-                                          width: 48,
-                                          height: 48,
-                                          decoration: BoxDecoration(
-                                            color: Theme.of(context).primaryColor,
-                                            shape: BoxShape.circle,
-                                          ),
-                                          child: const Icon(
-                                            Icons.play_arrow,
-                                            color: Colors.white,
-                                            size: 24,
-                                          ),
-                                        ),
-                                        Positioned(
-                                          bottom: -2,
-                                          right: -2,
-                                          child: Container(
-                                            width: 22,
-                                            height: 22,
-                                            decoration: BoxDecoration(
-                                              color: Colors.white,
-                                              shape: BoxShape.circle,
-                                              border: Border.all(
-                                                color: Theme.of(context).primaryColor,
-                                                width: 2,
-                                              ),
-                                            ),
-                                            child: Center(
-                                              child: Text(
-                                                selectedMediaCount.toString(),
-                                                style: TextStyle(
-                                                  color: Theme.of(context).primaryColor,
-                                                  fontSize: 12,
-                                                  fontWeight: FontWeight.w600,
-                                                ),
-                                              ),
-                                            ),
+                                        Transform.translate(
+                                          offset: kIsWeb ? const Offset(0, 0) : const Offset(-6, 0),
+                                          child: IconButton(
+                                            onPressed: () {
+                                              if (_tappedLocationDetails != null) {
+                                                _launchMapLocation(_tappedLocationDetails!);
+                                              }
+                                            },
+                                            icon: Icon(Icons.map_outlined, color: Colors.green[700], size: 28),
+                                            tooltip: 'Open in map app',
+                                            padding: EdgeInsets.zero,
+                                            constraints: const BoxConstraints(),
                                           ),
                                         ),
+                                        if (kIsWeb) const SizedBox(width: 12),
+                                        Transform.translate(
+                                          offset: kIsWeb ? const Offset(0, 0) : const Offset(-12, 0),
+                                          child: IconButton(
+                                            onPressed: () {
+                                              if (_tappedLocationDetails != null) {
+                                                _openDirectionsForLocation(_tappedLocationDetails!);
+                                              }
+                                            },
+                                            icon: Icon(Icons.directions, color: Colors.blue, size: 28),
+                                            tooltip: 'Get Directions',
+                                            padding: EdgeInsets.zero,
+                                            constraints: const BoxConstraints(),
+                                          ),
+                                        ),
+                                        if (kIsWeb) const SizedBox(width: 12),
+                                        Transform.translate(
+                                          offset: kIsWeb ? const Offset(0, 0) : const Offset(-18, 0),
+                                          child: IconButton(
+                                            onPressed: () {
+                                              setState(() {
+                                                _tappedLocationMarker = null;
+                                                _tappedLocationDetails = null;
+                                                _tappedExperience = null;
+                                                _tappedExperienceCategory = null;
+                                                _tappedLocationBusinessStatus = null;
+                                                _tappedLocationOpenNow = null;
+                                              });
+                                            },
+                                            icon: Icon(Icons.close, color: Colors.grey[600], size: 28),
+                                            tooltip: 'Close',
+                                            padding: EdgeInsets.zero,
+                                            constraints: const BoxConstraints(),
+                                          ),
+                                        ),
+                                        if (kIsWeb) const SizedBox(width: 8),
                                       ],
                                     ),
                                   ),
+                                ],
+                              ),
+                              SizedBox(height: 8),
+                              if (_tappedExperience != null) ...[
+                                if (_tappedExperience!.otherCategories.isNotEmpty) ...[
+                                  _buildOtherCategoriesWidget(),
+                                  const SizedBox(height: 12),
+                                ],
+                                Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: _buildColorCategoryWidget(),
                                 ),
+                                const SizedBox(height: 12),
                               ],
-                            ],
-                          ),
-
-                          // ADDED: Add/Remove button for event itinerary when in select mode or add-to-event mode
-                          // Only show for add-to-event mode if user can edit the event
-                          if ((_isSelectModeActive || (_isAddToEventModeActive && _activeEventViewMode != null && _canEditEvent(_activeEventViewMode!))) && _tappedLocationDetails != null) ...[
-                            const SizedBox(height: 12),
-                            SizedBox(
-                              width: double.infinity,
-                              child: (() {
-                                // Check if item is in itinerary (existing event or draft)
-                                final bool isInExistingEvent = _isAddToEventModeActive && _isTappedItemInExistingEventItinerary();
-                                final bool isInDraft = _isTappedItemInDraftItinerary();
-                                final bool isInItinerary = isInExistingEvent || isInDraft;
-                                
-                                return isInItinerary
-                                    ? ElevatedButton.icon(
-                                        onPressed: () {
-                                          if (isInDraft) {
-                                            // Remove from draft
-                                            _removeTappedItemFromDraftItinerary();
-                                            ScaffoldMessenger.of(context).showSnackBar(
-                                              const SnackBar(
-                                                content: Text('Removed from itinerary'),
-                                                duration: Duration(seconds: 1),
-                                              ),
-                                            );
-                                          } else if (isInExistingEvent) {
-                                            // Remove from existing event
-                                            _removeTappedItemFromEvent();
-                                          }
-                                        },
-                                        icon: const Icon(Icons.remove_circle_outline, size: 20),
-                                        label: const Text('Remove from event'),
-                                        style: ElevatedButton.styleFrom(
-                                          backgroundColor: Colors.red.shade600,
-                                          foregroundColor: Colors.white,
-                                          padding: const EdgeInsets.symmetric(vertical: 12),
-                                          shape: RoundedRectangleBorder(
-                                            borderRadius: BorderRadius.circular(8),
-                                          ),
-                                        ),
-                                      )
-                                    : ElevatedButton.icon(
-                                        onPressed: () => _handleSelectForEvent(),
-                                        icon: const Icon(Icons.add_circle_outline, size: 20),
-                                        label: const Text('Add to Event'),
-                                        style: ElevatedButton.styleFrom(
-                                          backgroundColor: _isAddToEventModeActive && _activeEventViewMode != null
-                                              ? _getEventColor(_activeEventViewMode!)
-                                              : _selectModeColor,
-                                          foregroundColor: Colors.white,
-                                          padding: const EdgeInsets.symmetric(vertical: 12),
-                                          shape: RoundedRectangleBorder(
-                                            borderRadius: BorderRadius.circular(8),
-                                          ),
-                                        ),
+                              if (_tappedLocationDetails!.address != null &&
+                                  _tappedLocationDetails!.address!.isNotEmpty) ...[
+                                Text(
+                                  _tappedLocationDetails!.address!,
+                                  style: TextStyle(color: Colors.grey[700]),
+                                ),
+                                SizedBox(height: 8),
+                              ],
+                              // ADDED: Star Rating
+                              if (_tappedLocationDetails!.rating != null) ...[
+                                Row(
+                                  children: [
+                                    ...List.generate(5, (i) {
+                                      final ratingValue = _tappedLocationDetails!.rating!;
+                                      return Icon(
+                                        i < ratingValue.floor()
+                                            ? Icons.star
+                                            : (i < ratingValue)
+                                                ? Icons.star_half
+                                                : Icons.star_border,
+                                        size: 18, 
+                                        color: Colors.amber,
                                       );
-                              })(),
-                            ),
-                          ],
-
-                          // ADDED: Add/Remove from event button when in event view mode (not in add-to-event or select mode)
-                          // Only show if user can edit the event
-                          if (_isEventViewModeActive && !_isAddToEventModeActive && !_isSelectModeActive && _tappedLocationDetails != null && _activeEventViewMode != null && _canEditEvent(_activeEventViewMode!)) ...[
-                            const SizedBox(height: 12),
-                            SizedBox(
-                              width: double.infinity,
-                              child: _isTappedItemInEventItinerary()
-                                  ? ElevatedButton.icon(
-                                      onPressed: () => _removeTappedItemFromEvent(),
-                                      icon: const Icon(Icons.remove_circle_outline, size: 20),
-                                      label: const Text('Remove from event'),
-                                      style: ElevatedButton.styleFrom(
-                                        backgroundColor: Colors.red.shade600,
-                                        foregroundColor: Colors.white,
-                                        padding: const EdgeInsets.symmetric(vertical: 12),
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(8),
+                                    }),
+                                    SizedBox(width: 8),
+                                    if (_tappedLocationDetails!.userRatingCount != null && _tappedLocationDetails!.userRatingCount! > 0)
+                                      Text(
+                                        '(${_tappedLocationDetails!.userRatingCount})',
+                                        style: TextStyle(
+                                          color: Colors.grey[600],
+                                          fontSize: 13,
                                         ),
                                       ),
-                                    )
-                                  : ElevatedButton.icon(
-                                      onPressed: () => _addTappedItemToEvent(),
-                                      icon: const Icon(Icons.add_circle_outline, size: 20),
-                                      label: const Text('Add to event'),
-                                      style: ElevatedButton.styleFrom(
-                                        backgroundColor: _getEventColor(_activeEventViewMode!),
-                                        foregroundColor: Colors.white,
-                                        padding: const EdgeInsets.symmetric(vertical: 12),
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(8),
+                                  ],
+                                ),
+                                SizedBox(height: 8), // Added SizedBox after rating like in location_picker_screen
+                              ],
+
+                              // ADDED: Business Status row below star rating with play button
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.center,
+                                children: [
+                                  Expanded(child: _buildBusinessStatusWidget()),
+                                  if (_tappedExperience != null || hasPublicFallback) ...[
+                                    const SizedBox(width: 12),
+                                    GestureDetector(
+                                      onTap: _onPlayExperienceContent,
+                                      child: Opacity(
+                                        opacity: canPreviewContent ? 1.0 : 0.45,
+                                        child: Stack(
+                                          clipBehavior: Clip.none,
+                                          children: [
+                                            Container(
+                                              width: 48,
+                                              height: 48,
+                                              decoration: BoxDecoration(
+                                                color: Theme.of(context).primaryColor,
+                                                shape: BoxShape.circle,
+                                              ),
+                                              child: const Icon(
+                                                Icons.play_arrow,
+                                                color: Colors.white,
+                                                size: 24,
+                                              ),
+                                            ),
+                                            Positioned(
+                                              bottom: -2,
+                                              right: -2,
+                                              child: Container(
+                                                width: 22,
+                                                height: 22,
+                                                decoration: BoxDecoration(
+                                                  color: Colors.white,
+                                                  shape: BoxShape.circle,
+                                                  border: Border.all(
+                                                    color: Theme.of(context).primaryColor,
+                                                    width: 2,
+                                                  ),
+                                                ),
+                                                child: Center(
+                                                  child: Text(
+                                                    selectedMediaCount.toString(),
+                                                    style: TextStyle(
+                                                      color: Theme.of(context).primaryColor,
+                                                      fontSize: 12,
+                                                      fontWeight: FontWeight.w600,
+                                                    ),
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                          ],
                                         ),
                                       ),
                                     ),
-                            ),
-                          ],
+                                  ],
+                                ],
+                              ),
 
-                          const SizedBox(height: 12),
-                        ],
-                        ),
-                      ),
-                  ],
+                              // ADDED: Add/Remove button for event itinerary when in select mode or add-to-event mode
+                              // Only show for add-to-event mode if user can edit the event
+                              if ((_isSelectModeActive || (_isAddToEventModeActive && _activeEventViewMode != null && _canEditEvent(_activeEventViewMode!))) && _tappedLocationDetails != null) ...[
+                                const SizedBox(height: 12),
+                                SizedBox(
+                                  width: double.infinity,
+                                  child: (() {
+                                    // Check if item is in itinerary (existing event or draft)
+                                    final bool isInExistingEvent = _isAddToEventModeActive && _isTappedItemInExistingEventItinerary();
+                                    final bool isInDraft = _isTappedItemInDraftItinerary();
+                                    final bool isInItinerary = isInExistingEvent || isInDraft;
+                                    
+                                    return isInItinerary
+                                        ? ElevatedButton.icon(
+                                            onPressed: () {
+                                              if (isInDraft) {
+                                                // Remove from draft
+                                                _removeTappedItemFromDraftItinerary();
+                                                ScaffoldMessenger.of(context).showSnackBar(
+                                                  const SnackBar(
+                                                    content: Text('Removed from itinerary'),
+                                                    duration: Duration(seconds: 1),
+                                                  ),
+                                                );
+                                              } else if (isInExistingEvent) {
+                                                // Remove from existing event
+                                                _removeTappedItemFromEvent();
+                                              }
+                                            },
+                                            icon: const Icon(Icons.remove_circle_outline, size: 20),
+                                            label: const Text('Remove from event'),
+                                            style: ElevatedButton.styleFrom(
+                                              backgroundColor: Colors.red.shade600,
+                                              foregroundColor: Colors.white,
+                                              padding: const EdgeInsets.symmetric(vertical: 12),
+                                              shape: RoundedRectangleBorder(
+                                                borderRadius: BorderRadius.circular(8),
+                                              ),
+                                            ),
+                                          )
+                                        : ElevatedButton.icon(
+                                            onPressed: () => _handleSelectForEvent(),
+                                            icon: const Icon(Icons.add_circle_outline, size: 20),
+                                            label: const Text('Add to Event'),
+                                            style: ElevatedButton.styleFrom(
+                                              backgroundColor: _isAddToEventModeActive && _activeEventViewMode != null
+                                                  ? _getEventColor(_activeEventViewMode!)
+                                                  : _selectModeColor,
+                                              foregroundColor: Colors.white,
+                                              padding: const EdgeInsets.symmetric(vertical: 12),
+                                              shape: RoundedRectangleBorder(
+                                                borderRadius: BorderRadius.circular(8),
+                                              ),
+                                            ),
+                                          );
+                                  })(),
+                                ),
+                              ],
+
+                              // ADDED: Add/Remove from event button when in event view mode (not in add-to-event or select mode)
+                              // Only show if user can edit the event
+                              if (_isEventViewModeActive && !_isAddToEventModeActive && !_isSelectModeActive && _tappedLocationDetails != null && _activeEventViewMode != null && _canEditEvent(_activeEventViewMode!)) ...[
+                                const SizedBox(height: 12),
+                                SizedBox(
+                                  width: double.infinity,
+                                  child: _isTappedItemInEventItinerary()
+                                      ? ElevatedButton.icon(
+                                          onPressed: () => _removeTappedItemFromEvent(),
+                                          icon: const Icon(Icons.remove_circle_outline, size: 20),
+                                          label: const Text('Remove from event'),
+                                          style: ElevatedButton.styleFrom(
+                                            backgroundColor: Colors.red.shade600,
+                                            foregroundColor: Colors.white,
+                                            padding: const EdgeInsets.symmetric(vertical: 12),
+                                            shape: RoundedRectangleBorder(
+                                              borderRadius: BorderRadius.circular(8),
+                                            ),
+                                          ),
+                                        )
+                                      : ElevatedButton.icon(
+                                          onPressed: () => _addTappedItemToEvent(),
+                                          icon: const Icon(Icons.add_circle_outline, size: 20),
+                                          label: const Text('Add to event'),
+                                          style: ElevatedButton.styleFrom(
+                                            backgroundColor: _getEventColor(_activeEventViewMode!),
+                                            foregroundColor: Colors.white,
+                                            padding: const EdgeInsets.symmetric(vertical: 12),
+                                            shape: RoundedRectangleBorder(
+                                              borderRadius: BorderRadius.circular(8),
+                                            ),
+                                          ),
+                                        ),
+                                ),
+                              ],
+
+                              const SizedBox(height: 12),
+                            ],
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                    ), // Close _wrapWebPointerInterceptor
                 ),
               ),
             // --- END Tapped Location Details ---
+                ],
+              ),
+            ),
           ],
         ),
       ),
