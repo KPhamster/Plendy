@@ -2,6 +2,7 @@ import 'dart:async'; // Import async
 import 'dart:math' as Math; // Import for mathematical functions
 import 'dart:typed_data'; // Import for ByteData
 import 'dart:ui' as ui; // Import for ui.Image, ui.Canvas etc.
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart'; // Add Google Maps import
 import 'package:intl/intl.dart';
@@ -9,6 +10,7 @@ import 'package:url_launcher/url_launcher.dart'; // ADDED: Import url_launcher
 import 'package:cloud_firestore/cloud_firestore.dart'; // ADDED: For pagination cursors
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:pointer_interceptor/pointer_interceptor.dart';
 import '../services/sharing_service.dart'; // RESTORED: Fallback path
 import '../models/enums/share_enums.dart'; // RESTORED: Fallback path
 import '../widgets/google_maps_widget.dart';
@@ -1278,6 +1280,15 @@ class _MapScreenState extends State<MapScreen> {
       }
     }
   }
+  
+  // Adjust marker icon size for web where the rendered pixels appear larger.
+  int _markerSizeForPlatform(int baseSize) {
+    if (kIsWeb) {
+      final int scaled = (baseSize * 0.32).round();
+      return scaled.clamp(18, baseSize);
+    }
+    return baseSize;
+  }
 
   // ADDED: Helper function to create BitmapDescriptor from text/emoji
   Future<BitmapDescriptor> _bitmapDescriptorFromText(
@@ -1288,9 +1299,10 @@ class _MapScreenState extends State<MapScreen> {
     Color textColor = Colors.black,
     String? fontFamily,
   }) async {
+    final int effectiveSize = _markerSizeForPlatform(size);
     final ui.PictureRecorder pictureRecorder = ui.PictureRecorder();
     final Canvas canvas = Canvas(pictureRecorder);
-    final double radius = size / 2;
+    final double radius = effectiveSize / 2;
 
     // Optional: Draw a background circle if needed
     // final Paint circlePaint = Paint()..color = Colors.blue; // Example background
@@ -1306,29 +1318,29 @@ class _MapScreenState extends State<MapScreen> {
     final ui.ParagraphBuilder paragraphBuilder = ui.ParagraphBuilder(
       ui.ParagraphStyle(
         textAlign: TextAlign.center,
-        fontSize: size * 0.7, // Adjust emoji size relative to marker size
+        fontSize: effectiveSize * 0.7, // Adjust emoji size relative to marker size
         fontFamily: fontFamily,
       ),
     );
     paragraphBuilder.pushStyle(ui.TextStyle(
       color: textColor,
       fontFamily: fontFamily,
-      fontSize: size * 0.7,
+      fontSize: effectiveSize * 0.7,
     ));
     paragraphBuilder.addText(text);
     paragraphBuilder.pop();
     final ui.Paragraph paragraph = paragraphBuilder.build();
-    paragraph.layout(ui.ParagraphConstraints(width: size.toDouble()));
+    paragraph.layout(ui.ParagraphConstraints(width: effectiveSize.toDouble()));
 
     // Center the emoji text
-    final double textX = (size - paragraph.width) / 2;
-    final double textY = (size - paragraph.height) / 2;
+    final double textX = (effectiveSize - paragraph.width) / 2;
+    final double textY = (effectiveSize - paragraph.height) / 2;
     canvas.drawParagraph(paragraph, Offset(textX, textY));
 
     // Convert canvas to image
     final ui.Image image = await pictureRecorder
         .endRecording()
-        .toImage(size, size); // Use size for both width and height
+        .toImage(effectiveSize, effectiveSize); // Use size for both width and height
 
     // Convert image to bytes
     final ByteData? byteData =
@@ -2603,9 +2615,10 @@ class _MapScreenState extends State<MapScreen> {
     required Color backgroundColor,
     int size = 80,
   }) async {
+    final int effectiveSize = _markerSizeForPlatform(size);
     final ui.PictureRecorder pictureRecorder = ui.PictureRecorder();
     final Canvas canvas = Canvas(pictureRecorder);
-    final double radius = size / 2;
+    final double radius = effectiveSize / 2;
 
     // Draw main background circle (fully opaque for selected state)
     final Paint circlePaint = Paint()..color = backgroundColor;
@@ -2615,26 +2628,26 @@ class _MapScreenState extends State<MapScreen> {
     final ui.ParagraphBuilder iconBuilder = ui.ParagraphBuilder(
       ui.ParagraphStyle(
         textAlign: TextAlign.center,
-        fontSize: size * 0.45,
+        fontSize: effectiveSize * 0.45,
       ),
     );
     iconBuilder.pushStyle(ui.TextStyle(
       color: Colors.white,
-      fontSize: size * 0.45,
+      fontSize: effectiveSize * 0.45,
     ));
     iconBuilder.addText(iconText);
     iconBuilder.pop();
     final ui.Paragraph iconParagraph = iconBuilder.build();
-    iconParagraph.layout(ui.ParagraphConstraints(width: size.toDouble()));
+    iconParagraph.layout(ui.ParagraphConstraints(width: effectiveSize.toDouble()));
     
-    final double iconX = (size - iconParagraph.width) / 2;
-    final double iconY = (size - iconParagraph.height) / 2 - size * 0.08;
+    final double iconX = (effectiveSize - iconParagraph.width) / 2;
+    final double iconY = (effectiveSize - iconParagraph.height) / 2 - effectiveSize * 0.08;
     canvas.drawParagraph(iconParagraph, Offset(iconX, iconY));
 
     // Draw number badge in bottom-right corner
-    final double badgeRadius = size * 0.22;
-    final double badgeX = size - badgeRadius - 2;
-    final double badgeY = size - badgeRadius - 2;
+    final double badgeRadius = effectiveSize * 0.22;
+    final double badgeX = effectiveSize - badgeRadius - 2;
+    final double badgeY = effectiveSize - badgeRadius - 2;
     
     // Badge background (white with border)
     final Paint badgeBorderPaint = Paint()
@@ -2669,7 +2682,7 @@ class _MapScreenState extends State<MapScreen> {
     // Convert to image
     final ui.Image image = await pictureRecorder
         .endRecording()
-        .toImage(size, size);
+        .toImage(effectiveSize, effectiveSize);
     final ByteData? byteData = await image.toByteData(format: ui.ImageByteFormat.png);
     if (byteData == null) {
       throw Exception('Failed to convert numbered icon to byte data');
@@ -6001,6 +6014,7 @@ class _MapScreenState extends State<MapScreen> {
       final Color selectionColor = _isAddToEventModeActive && _activeEventViewMode != null
           ? _getEventColor(_activeEventViewMode!)
           : _selectModeColor;
+      final int regularMarkerSizeKey = _markerSizeForPlatform(70);
 
       BitmapDescriptor categoryIconBitmap =
           BitmapDescriptor.defaultMarker; // Default
@@ -6012,20 +6026,20 @@ class _MapScreenState extends State<MapScreen> {
             number: selectedIndex! + 1, // 1-indexed position
             iconText: iconText,
             backgroundColor: selectionColor, // Use selection color
-            size: 90, // Larger size for selected markers
+            size: 90, // Base size; scaled inside helper
           );
         } catch (e) {
           print(
               "🗺️ MAP SCREEN: Failed to generate numbered icon for selected experience: $e");
           // Fall back to regular icon generation
-          final String cacheKey = '${iconText}_${markerBackgroundColor.value}';
+          final String cacheKey = '${iconText}_${markerBackgroundColor.value}_$regularMarkerSizeKey';
           if (_categoryIconCache.containsKey(cacheKey)) {
             categoryIconBitmap = _categoryIconCache[cacheKey]!;
           } else {
             categoryIconBitmap = await _bitmapDescriptorFromText(
               iconText,
               backgroundColor: markerBackgroundColor,
-              size: 70,
+              size: 70, // Base size; scaled inside helper
             );
             _categoryIconCache[cacheKey] = categoryIconBitmap;
           }
@@ -6033,7 +6047,7 @@ class _MapScreenState extends State<MapScreen> {
       } else {
         // Regular marker generation
         // Generate a unique cache key including the color and the *icon*
-        final String cacheKey = '${iconText}_${markerBackgroundColor.value}';
+        final String cacheKey = '${iconText}_${markerBackgroundColor.value}_$regularMarkerSizeKey';
 
         // Use cache or generate new icon
         if (_categoryIconCache.containsKey(cacheKey)) {
@@ -6048,7 +6062,7 @@ class _MapScreenState extends State<MapScreen> {
             categoryIconBitmap = await _bitmapDescriptorFromText(
               iconText,
               backgroundColor: markerBackgroundColor,
-              size: 70,
+              size: 70, // Base size; scaled inside helper
             );
             _categoryIconCache[cacheKey] = categoryIconBitmap; // Cache the result
           } catch (e) {
@@ -7001,6 +7015,13 @@ class _MapScreenState extends State<MapScreen> {
     return '$trimmedIcon $name';
   }
 
+  Widget _wrapWebPointerInterceptor(Widget child) {
+    if (!kIsWeb) {
+      return child;
+    }
+    return PointerInterceptor(child: child);
+  }
+
   @override
   Widget build(BuildContext context) {
     print("🗺️ MAP SCREEN: Building widget. isLoading: $_isLoading");
@@ -7462,18 +7483,280 @@ class _MapScreenState extends State<MapScreen> {
                       top: 16,
                       left: 16,
                       right: 16,
-                      child: GestureDetector(
-                        onTap: () async {
-                          // Fit camera to show all itinerary experiences
-                          final positions = _eventViewMarkers.values
-                              .map((marker) => marker.position)
-                              .toList();
-                          if (positions.isNotEmpty) {
-                            await _fitCameraToBounds(positions);
-                          }
-                        },
-                        child: Container(
-                          constraints: _isEventOverlayExpanded
+                      child: _wrapWebPointerInterceptor(
+                        GestureDetector(
+                          onTap: () async {
+                            // Fit camera to show all itinerary experiences
+                            final positions = _eventViewMarkers.values
+                                .map((marker) => marker.position)
+                                .toList();
+                            if (positions.isNotEmpty) {
+                              await _fitCameraToBounds(positions);
+                            }
+                          },
+                          child: Container(
+                            constraints: _isEventOverlayExpanded
+                                ? BoxConstraints(
+                                    maxHeight:
+                                        MediaQuery.of(context).size.height * 0.6,
+                                  )
+                                : const BoxConstraints(),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(12),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.15),
+                                  blurRadius: 10,
+                                  offset: const Offset(0, 2),
+                                ),
+                              ],
+                            ),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                // Header row
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 16, vertical: 12),
+                                  child: Row(
+                                    children: [
+                                      Container(
+                                        width: 4,
+                                        height: 40,
+                                        decoration: BoxDecoration(
+                                          color: _getEventColor(
+                                              _activeEventViewMode!),
+                                          borderRadius:
+                                              BorderRadius.circular(2),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Text(
+                                              _activeEventViewMode!.title
+                                                      .isEmpty
+                                                  ? 'Untitled Event'
+                                                  : _activeEventViewMode!
+                                                      .title,
+                                              style: const TextStyle(
+                                                fontWeight: FontWeight.w600,
+                                                fontSize: 16,
+                                              ),
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                            const SizedBox(height: 2),
+                                            Text(
+                                              _isAddToEventModeActive
+                                                  ? (() {
+                                                      final existingCount =
+                                                          _activeEventViewMode!
+                                                              .experiences
+                                                              .length;
+                                                      final newCount =
+                                                          _addToEventDraftItinerary
+                                                              .length;
+                                                      final totalCount =
+                                                          existingCount +
+                                                              newCount;
+                                                      if (newCount == 0) {
+                                                        return '$existingCount item${existingCount != 1 ? 's' : ''} • Tap to add more';
+                                                      } else {
+                                                        return '$totalCount item${totalCount != 1 ? 's' : ''} (+$newCount new)';
+                                                      }
+                                                    })()
+                                                  : '${_eventViewMarkers.length} stop${_eventViewMarkers.length != 1 ? 's' : ''} on map',
+                                              style: TextStyle(
+                                                fontSize: 13,
+                                                color: Colors.grey[600],
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      // List icon button
+                                      Stack(
+                                        clipBehavior: Clip.none,
+                                        children: [
+                                          Material(
+                                            color: Colors.transparent,
+                                            child: InkWell(
+                                              onTap: () {
+                                                setState(() {
+                                                  _isEventOverlayExpanded =
+                                                      !_isEventOverlayExpanded;
+                                                });
+                                              },
+                                              borderRadius:
+                                                  BorderRadius.circular(20),
+                                              child: Container(
+                                                padding:
+                                                    const EdgeInsets.all(8),
+                                                decoration: BoxDecoration(
+                                                  color: _getEventColor(
+                                                    _activeEventViewMode!,
+                                                  ).withOpacity(
+                                                        _isEventOverlayExpanded
+                                                            ? 0.8
+                                                            : 0.6,
+                                                      ),
+                                                  shape: BoxShape.circle,
+                                                ),
+                                                child: const Icon(
+                                                  Icons.list,
+                                                  size: 20,
+                                                  color: Colors.white,
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                          Positioned(
+                                            right: -4,
+                                            bottom: -4,
+                                            child: Container(
+                                              padding:
+                                                  const EdgeInsets.all(4),
+                                              decoration: BoxDecoration(
+                                                color: _getEventColor(
+                                                    _activeEventViewMode!),
+                                                shape: BoxShape.circle,
+                                              ),
+                                              child: Text(
+                                                _isAddToEventModeActive
+                                                    ? '${_activeEventViewMode!.experiences.length + _addToEventDraftItinerary.length}'
+                                                    : '${_activeEventViewMode!.experiences.length}',
+                                                style: const TextStyle(
+                                                  color: Colors.white,
+                                                  fontSize: 10,
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      // Add experiences button (or finish button when in add mode)
+                                      // Only show if user can edit the event
+                                      if (_canEditEvent(_activeEventViewMode!))
+                                        ...[
+                                          const SizedBox(width: 4),
+                                          Stack(
+                                            clipBehavior: Clip.none,
+                                            children: [
+                                              Material(
+                                                color: Colors.transparent,
+                                                child: InkWell(
+                                                  onTap: _isAddToEventModeActive
+                                                      ? _finishAddToEvent
+                                                      : _enterAddToEventMode,
+                                                  borderRadius:
+                                                      BorderRadius.circular(20),
+                                                  child: Container(
+                                                    padding:
+                                                        const EdgeInsets.all(8),
+                                                    decoration: BoxDecoration(
+                                                      color:
+                                                          _isAddToEventModeActive
+                                                              ? Colors.green
+                                                              : Theme.of(
+                                                                      context)
+                                                                  .primaryColor,
+                                                      shape: BoxShape.circle,
+                                                    ),
+                                                    child: Icon(
+                                                      _isAddToEventModeActive
+                                                          ? Icons.check
+                                                          : Icons.add,
+                                                      size: 20,
+                                                      color: Colors.white,
+                                                    ),
+                                                  ),
+                                                ),
+                                              ),
+                                              if (_isAddToEventModeActive)
+                                                Positioned(
+                                                  right: -4,
+                                                  bottom: -4,
+                                                  child: Container(
+                                                    padding:
+                                                        const EdgeInsets.all(4),
+                                                    decoration: BoxDecoration(
+                                                      color: _addToEventDraftItinerary
+                                                              .isNotEmpty
+                                                          ? Colors.red
+                                                          : _getEventColor(
+                                                              _activeEventViewMode!),
+                                                      shape: BoxShape.circle,
+                                                    ),
+                                                    child: Text(
+                                                      '${_addToEventDraftItinerary.length}',
+                                                      style: const TextStyle(
+                                                        color: Colors.white,
+                                                        fontSize: 10,
+                                                        fontWeight:
+                                                            FontWeight.bold,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ),
+                                            ],
+                                          ),
+                                          const SizedBox(width: 4),
+                                        ],
+                                      const SizedBox(width: 4),
+                                      // Close button
+                                      Material(
+                                        color: Colors.transparent,
+                                        child: InkWell(
+                                          onTap: _confirmExitEventViewMode,
+                                          borderRadius:
+                                              BorderRadius.circular(20),
+                                          child: Container(
+                                            padding: const EdgeInsets.all(8),
+                                            decoration: BoxDecoration(
+                                              color: Colors.grey[100],
+                                              shape: BoxShape.circle,
+                                            ),
+                                            child: const Icon(
+                                              Icons.close,
+                                              size: 20,
+                                              color: Colors.black54,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                // Expanded itinerary list
+                                if (_isEventOverlayExpanded)
+                                  Divider(height: 1, thickness: 1),
+                                if (_isEventOverlayExpanded)
+                                  Flexible(
+                                    child: _buildEventItineraryList(),
+                                  ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  // ADDED: Select mode overlay (for creating new events)
+                  if (_isSelectModeActive)
+                    Positioned(
+                      top: 16,
+                      left: 16,
+                      right: 16,
+                      child: _wrapWebPointerInterceptor(
+                        Container(
+                          constraints: _isSelectModeOverlayExpanded
                               ? BoxConstraints(
                                   maxHeight: MediaQuery.of(context).size.height * 0.6,
                                 )
@@ -7492,231 +7775,6 @@ class _MapScreenState extends State<MapScreen> {
                           child: Column(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                            // Header row
-                            Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                              child: Row(
-                                children: [
-                                  Container(
-                                    width: 4,
-                                    height: 40,
-                                    decoration: BoxDecoration(
-                                      color: _getEventColor(_activeEventViewMode!),
-                                      borderRadius: BorderRadius.circular(2),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        Text(
-                                          _activeEventViewMode!.title.isEmpty 
-                                              ? 'Untitled Event' 
-                                              : _activeEventViewMode!.title,
-                                          style: const TextStyle(
-                                            fontWeight: FontWeight.w600,
-                                            fontSize: 16,
-                                          ),
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                        const SizedBox(height: 2),
-                                        Text(
-                                          _isAddToEventModeActive
-                                              ? (() {
-                                                  final existingCount = _activeEventViewMode!.experiences.length;
-                                                  final newCount = _addToEventDraftItinerary.length;
-                                                  final totalCount = existingCount + newCount;
-                                                  if (newCount == 0) {
-                                                    return '$existingCount item${existingCount != 1 ? 's' : ''} • Tap to add more';
-                                                  } else {
-                                                    return '$totalCount item${totalCount != 1 ? 's' : ''} (+$newCount new)';
-                                                  }
-                                                })()
-                                              : '${_eventViewMarkers.length} stop${_eventViewMarkers.length != 1 ? 's' : ''} on map',
-                                          style: TextStyle(
-                                            fontSize: 13,
-                                            color: Colors.grey[600],
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  // List icon button
-                                  Stack(
-                                    clipBehavior: Clip.none,
-                                    children: [
-                                      Material(
-                                        color: Colors.transparent,
-                                        child: InkWell(
-                                          onTap: () {
-                                            setState(() {
-                                              _isEventOverlayExpanded = !_isEventOverlayExpanded;
-                                            });
-                                          },
-                                          borderRadius: BorderRadius.circular(20),
-                                          child: Container(
-                                            padding: const EdgeInsets.all(8),
-                                            decoration: BoxDecoration(
-                                              color: _getEventColor(_activeEventViewMode!).withOpacity(
-                                                _isEventOverlayExpanded ? 0.8 : 0.6
-                                              ),
-                                              shape: BoxShape.circle,
-                                            ),
-                                            child: const Icon(
-                                              Icons.list,
-                                              size: 20,
-                                              color: Colors.white,
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                      Positioned(
-                                        right: -4,
-                                        bottom: -4,
-                                        child: Container(
-                                          padding: const EdgeInsets.all(4),
-                                          decoration: BoxDecoration(
-                                            color: _getEventColor(_activeEventViewMode!),
-                                            shape: BoxShape.circle,
-                                          ),
-                                          child: Text(
-                                            _isAddToEventModeActive
-                                                ? '${_activeEventViewMode!.experiences.length + _addToEventDraftItinerary.length}'
-                                                : '${_activeEventViewMode!.experiences.length}',
-                                            style: const TextStyle(
-                                              color: Colors.white,
-                                              fontSize: 10,
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                  // Add experiences button (or finish button when in add mode)
-                                  // Only show if user can edit the event
-                                  if (_canEditEvent(_activeEventViewMode!)) ...[
-                                    const SizedBox(width: 4),
-                                    Stack(
-                                      clipBehavior: Clip.none,
-                                      children: [
-                                        Material(
-                                          color: Colors.transparent,
-                                          child: InkWell(
-                                            onTap: _isAddToEventModeActive
-                                                ? _finishAddToEvent
-                                                : _enterAddToEventMode,
-                                            borderRadius: BorderRadius.circular(20),
-                                            child: Container(
-                                              padding: const EdgeInsets.all(8),
-                                              decoration: BoxDecoration(
-                                                color: _isAddToEventModeActive
-                                                    ? Colors.green
-                                                    : Theme.of(context).primaryColor,
-                                                shape: BoxShape.circle,
-                                              ),
-                                              child: Icon(
-                                                _isAddToEventModeActive
-                                                    ? Icons.check
-                                                    : Icons.add,
-                                                size: 20,
-                                                color: Colors.white,
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                        if (_isAddToEventModeActive)
-                                          Positioned(
-                                            right: -4,
-                                            bottom: -4,
-                                            child: Container(
-                                              padding: const EdgeInsets.all(4),
-                                              decoration: BoxDecoration(
-                                                color: _addToEventDraftItinerary.isNotEmpty 
-                                                    ? Colors.red 
-                                                    : _getEventColor(_activeEventViewMode!),
-                                                shape: BoxShape.circle,
-                                              ),
-                                              child: Text(
-                                                '${_addToEventDraftItinerary.length}',
-                                                style: const TextStyle(
-                                                  color: Colors.white,
-                                                  fontSize: 10,
-                                                  fontWeight: FontWeight.bold,
-                                                ),
-                                              ),
-                                            ),
-                                          ),
-                                      ],
-                                    ),
-                                    const SizedBox(width: 4),
-                                  ],
-                                  const SizedBox(width: 4),
-                                  // Close button
-                                  Material(
-                                    color: Colors.transparent,
-                                    child: InkWell(
-                                      onTap: _confirmExitEventViewMode,
-                                      borderRadius: BorderRadius.circular(20),
-                                      child: Container(
-                                        padding: const EdgeInsets.all(8),
-                                        decoration: BoxDecoration(
-                                          color: Colors.grey[100],
-                                          shape: BoxShape.circle,
-                                        ),
-                                        child: const Icon(
-                                          Icons.close,
-                                          size: 20,
-                                          color: Colors.black54,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            // Expanded itinerary list
-                            if (_isEventOverlayExpanded)
-                              Divider(height: 1, thickness: 1),
-                            if (_isEventOverlayExpanded)
-                              Flexible(
-                                child: _buildEventItineraryList(),
-                              ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                  // ADDED: Select mode overlay (for creating new events)
-                  if (_isSelectModeActive)
-                    Positioned(
-                      top: 16,
-                      left: 16,
-                      right: 16,
-                      child: Container(
-                        constraints: _isSelectModeOverlayExpanded
-                            ? BoxConstraints(
-                                maxHeight: MediaQuery.of(context).size.height * 0.6,
-                              )
-                            : const BoxConstraints(),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(12),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.15),
-                              blurRadius: 10,
-                              offset: const Offset(0, 2),
-                            ),
-                          ],
-                        ),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
                             // Header row
                             Padding(
                               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -7891,6 +7949,7 @@ class _MapScreenState extends State<MapScreen> {
                         ),
                       ),
                     ),
+                  ),
                 ],
               ),
             ),

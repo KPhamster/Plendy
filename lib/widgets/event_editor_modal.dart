@@ -6,6 +6,7 @@ import 'package:flutter_colorpicker/flutter_colorpicker.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../models/event.dart';
 import '../models/experience.dart';
 import '../models/user_profile.dart';
@@ -84,6 +85,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
   bool _isPostingComment = false;
   bool _hasUnsavedChanges = false;
   bool _isEditModeEnabled = false;
+  bool _attemptedAnonymousSignIn = false;
 
   bool get _isReadOnly => widget.isReadOnly && !_isEditModeEnabled;
 
@@ -499,6 +501,8 @@ class _EventEditorModalState extends State<EventEditorModal> {
     final Color foregroundColor = isDarkColor ? Colors.white : Colors.black;
     final bool showCapacitySection =
         _capacityController.text.trim().isNotEmpty;
+    final bool isAnonymousViewer =
+        _authService.currentUser != null && _authService.currentUser!.isAnonymous;
 
     return WillPopScope(
       onWillPop: () async {
@@ -536,7 +540,9 @@ class _EventEditorModalState extends State<EventEditorModal> {
             ),
           ),
           actions: [
-            if (_isReadOnly && !_canCurrentUserEdit && _authService.currentUser == null)
+            if (_isReadOnly &&
+                !_canCurrentUserEdit &&
+                (_authService.currentUser == null || isAnonymousViewer))
               Padding(
                 padding: const EdgeInsets.only(right: 8),
                 child: TextButton(
@@ -3661,7 +3667,23 @@ class _EventEditorModalState extends State<EventEditorModal> {
     }
   }
 
+  Future<void> _ensureAuthenticatedForContentIfNeeded() async {
+    if (!_isReadOnly) return;
+    if (_authService.currentUser != null) return;
+    if (_attemptedAnonymousSignIn) return;
+    _attemptedAnonymousSignIn = true;
+    try {
+      await FirebaseAuth.instance.signInAnonymously();
+    } catch (e) {
+      debugPrint(
+          'EventEditorModal: Anonymous sign-in for content preview failed: $e');
+      _attemptedAnonymousSignIn = false;
+    }
+  }
+
   Future<void> _openExperienceContentPreview(Experience experience) async {
+    await _ensureAuthenticatedForContentIfNeeded();
+
     if (experience.sharedMediaItemIds.isEmpty) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
