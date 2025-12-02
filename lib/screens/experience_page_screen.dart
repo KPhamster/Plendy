@@ -49,13 +49,13 @@ import '../models/color_category.dart';
 import 'package:collection/collection.dart';
 // --- END ADDED ---
 import 'map_screen.dart'; // ADDED: Import for MapScreen
+import 'main_screen.dart';
 import 'package:flutter/foundation.dart'; // ADDED for kIsWeb
 import 'package:webview_flutter/webview_flutter.dart';
 import '../services/experience_share_service.dart'; // ADDED: Import ExperienceShareService
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../config/app_constants.dart';
-import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import '../widgets/web_media_preview_card.dart'; // ADDED: Import for WebMediaPreviewCard
 import '../widgets/share_experience_bottom_sheet.dart';
 import '../widgets/save_to_experiences_modal.dart';
@@ -335,15 +335,26 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     _fetchMatchingEvent();
   }
 
+  void _navigateToMainScreen() {
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const MainScreen()),
+      (route) => false,
+    );
+  }
+
   Future<bool> _handleBackNavigation() async {
-    if (widget.readOnlyPreview) {
-      if (widget.focusMapOnPop) {
-        Navigator.of(context).pop(_buildMapFocusPayload());
+    if (Navigator.of(context).canPop()) {
+      if (widget.readOnlyPreview) {
+        if (widget.focusMapOnPop) {
+          Navigator.of(context).pop(_buildMapFocusPayload());
+        } else {
+          Navigator.of(context).pop();
+        }
       } else {
-        Navigator.of(context).pop();
+        Navigator.of(context).pop(_didDataChange);
       }
     } else {
-      Navigator.of(context).pop(_didDataChange);
+      _navigateToMainScreen();
     }
     return false;
   }
@@ -609,7 +620,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
             }
           }
 
-          if (updatedExperience != null) {
+          if (updatedExperience != null && !widget.readOnlyPreview) {
             _experienceService.updateExperience(updatedExperience).then((_) {
               print(
                   "ExperiencePageScreen: Saved updated experience with refreshed photo metadata to Firestore.");
@@ -4590,7 +4601,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     required String shareMode, // 'my_copy' | 'separate_copy'
     required bool giveEditAccess,
   }) async {
-    ScaffoldMessenger.of(context).showSnackBar(
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(
       const SnackBar(content: Text('Creating shareable link...')),
     );
     try {
@@ -4604,77 +4616,14 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       );
       if (!mounted) return;
       Navigator.of(context).pop();
-      _showShareUrlOptions(url);
+      await Share.share('Check out this experience from Plendy! $url');
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      messenger.showSnackBar(
         SnackBar(content: Text('Failed to create link: $e')),
       );
     }
   }
 
-  void _showShareUrlOptions(String url) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (ctx) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('Share link',
-                    style:
-                        TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
-                const SizedBox(height: 8),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.grey[100],
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(url, style: const TextStyle(fontSize: 14)),
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    ElevatedButton.icon(
-                      onPressed: () async {
-                        await Share.share(url);
-                        if (context.mounted) Navigator.of(ctx).pop();
-                      },
-                      icon: const Icon(Icons.ios_share),
-                      label: const Text('Share'),
-                      style: ElevatedButton.styleFrom(
-                          backgroundColor: Theme.of(context).primaryColor,
-                          foregroundColor: Colors.white),
-                    ),
-                    const SizedBox(width: 12),
-                    OutlinedButton.icon(
-                      onPressed: () async {
-                        await Clipboard.setData(ClipboardData(text: url));
-                        if (context.mounted) {
-                          Navigator.of(ctx).pop();
-                          ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Link copied')));
-                        }
-                      },
-                      icon: const Icon(Icons.copy),
-                      label: const Text('Copy'),
-                    ),
-                  ],
-                )
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
   // --- END: Share bottom sheet ---
 }
 
