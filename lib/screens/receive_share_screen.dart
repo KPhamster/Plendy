@@ -2593,6 +2593,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             final String cardYelpUrl = card.yelpUrlController.text.trim();
             final String cardWebsite = card.websiteController.text.trim();
             final String notes = card.notesController.text.trim();
+            final bool shouldClearNotes = notes.isEmpty;
             final String categoryIdToSave = card.selectedCategoryId!;
             bool canProcessPublicExperience =
                 placeId.isNotEmpty && cardLocation != null;
@@ -2664,6 +2665,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                   yelpUrl: cardYelpUrl.isNotEmpty ? cardYelpUrl : null,
                   website: cardWebsite.isNotEmpty ? cardWebsite : null,
                   additionalNotes: notes.isNotEmpty ? notes : null,
+                  clearAdditionalNotes: shouldClearNotes,
                   updatedAt: now,
                   editorUserIds: currentExperienceData.editorUserIds
                           .contains(currentUserId)

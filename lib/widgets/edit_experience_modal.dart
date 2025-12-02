@@ -82,6 +82,12 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
   bool get _isSaveEnabled =>
       !_requiresCategorySelection || (_hasPrimaryCategory && _hasColorCategory);
 
+  void _populateNotesController(Experience source) {
+    final String? notes = source.additionalNotes;
+    _cardData.notesController.text =
+        (notes != null && notes.isNotEmpty) ? notes : '';
+  }
+
   String _buildCategoryWarningMessage() {
     if (_hasPrimaryCategory && _hasColorCategory) {
       return '';
@@ -105,7 +111,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
     _cardData.titleController.text = widget.experience.name;
     _cardData.yelpUrlController.text = widget.experience.yelpUrl ?? '';
     _cardData.websiteController.text = widget.experience.website ?? '';
-    _cardData.notesController.text = widget.experience.additionalNotes ?? '';
+    _populateNotesController(widget.experience);
     _cardData.selectedCategoryId = widget.experience.categoryId;
     _cardData.selectedColorCategoryId = widget.experience.colorCategoryId;
     _cardData.selectedOtherCategoryIds = List<String>.from(
@@ -348,7 +354,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
       _cardData.titleController.text = src.name;
       _cardData.yelpUrlController.text = src.yelpUrl ?? '';
       _cardData.websiteController.text = src.website ?? '';
-      _cardData.notesController.text = src.additionalNotes ?? '';
+      _populateNotesController(src);
       _cardData.selectedCategoryId = src.categoryId;
       _cardData.selectedColorCategoryId = src.colorCategoryId;
       _cardData.selectedOtherCategoryIds =
@@ -1238,6 +1244,9 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
               longitude: 0.0,
               address: 'No location specified'); // Default/disabled location
 
+      final String trimmedNotes = _cardData.notesController.text.trim();
+      final bool shouldClearNotes = trimmedNotes.isEmpty;
+
       final updatedExperience = widget.experience.copyWith(
         id: _cardData.existingExperienceId?.isNotEmpty == true
             ? _cardData.existingExperienceId
@@ -1254,9 +1263,8 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
         colorCategoryId: _cardData.selectedColorCategoryId,
         otherColorCategoryIds: _cardData.selectedOtherColorCategoryIds,
         otherCategories: _cardData.selectedOtherCategoryIds,
-        additionalNotes: _cardData.notesController.text.trim().isEmpty
-            ? null
-            : _cardData.notesController.text.trim(),
+        additionalNotes: shouldClearNotes ? null : trimmedNotes,
+        clearAdditionalNotes: shouldClearNotes,
         isPrivate: _cardData.isPrivate,
         updatedAt: DateTime.now(), // Update timestamp
       );

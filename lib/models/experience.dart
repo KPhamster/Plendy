@@ -466,6 +466,7 @@ class Experience {
     List<String>? sharedMediaItemIds,
     String? sharedMediaType,
     String? additionalNotes,
+    bool clearAdditionalNotes = false,
     List<String>? editorUserIds,
     bool? isPrivate,
     bool? hasExplicitPrivacy,
@@ -504,7 +505,8 @@ class Experience {
       priceRange: priceRange ?? this.priceRange,
       sharedMediaItemIds: sharedMediaItemIds ?? this.sharedMediaItemIds,
       sharedMediaType: sharedMediaType ?? this.sharedMediaType,
-      additionalNotes: additionalNotes,
+      additionalNotes:
+          clearAdditionalNotes ? null : (additionalNotes ?? this.additionalNotes),
       editorUserIds: editorUserIds ?? this.editorUserIds,
       isPrivate: isPrivate ?? this.isPrivate,
       hasExplicitPrivacy: hasExplicitPrivacy ?? this.hasExplicitPrivacy,
