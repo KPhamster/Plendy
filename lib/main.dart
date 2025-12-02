@@ -232,6 +232,21 @@ Future<void> _openEventFromNotification(String eventId) async {
 
 Future<Map<String, dynamic>?> _loadEventData(String token) async {
   try {
+    // Ensure user is authenticated (anonymously if not signed in) to view shared media
+    final currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser == null) {
+      try {
+        print('DeepLink: Signing in anonymously to view shared event content');
+        await FirebaseAuth.instance.signInAnonymously();
+        print('DeepLink: Anonymous sign-in successful');
+        // Wait for auth state to propagate
+        await Future.delayed(const Duration(milliseconds: 300));
+      } catch (e) {
+        print('DeepLink: Anonymous sign-in failed: $e');
+        // Continue anyway - event metadata can still be viewed
+      }
+    }
+
     final eventService = EventService();
     final event = await eventService.getEventByShareToken(token);
     if (event == null) {
