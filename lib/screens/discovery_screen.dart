@@ -2892,6 +2892,20 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
               item.mediaUrl, // Pass the specific media URL being viewed
         );
       },
+      onSubmitToThreads: (threadIds) async {
+        await _experienceShareService.createDirectShareToThreads(
+          experience: baseExperience,
+          threadIds: threadIds,
+          highlightedMediaUrl: item.mediaUrl,
+        );
+      },
+      onSubmitToNewGroupChat: (participantIds) async {
+        await _experienceShareService.createDirectShareToNewGroupChat(
+          experience: baseExperience,
+          participantIds: participantIds,
+          highlightedMediaUrl: item.mediaUrl,
+        );
+      },
     );
     return shared;
   }

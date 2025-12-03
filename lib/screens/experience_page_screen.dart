@@ -4526,6 +4526,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
 
   Future<void> _shareMediaItemDirectly(SharedMediaItem mediaItem) async {
     if (!mounted) return;
+    final String? highlightedUrl =
+        mediaItem.path.isNotEmpty ? mediaItem.path : null;
     final bool? shared = await showShareToFriendsModal(
       context: context,
       subjectLabel: _currentExperience.name,
@@ -4533,8 +4535,21 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
         await _experienceShareService.createDirectShare(
           experience: _currentExperience,
           toUserIds: recipientIds,
-          highlightedMediaUrl:
-              mediaItem.path.isNotEmpty ? mediaItem.path : null,
+          highlightedMediaUrl: highlightedUrl,
+        );
+      },
+      onSubmitToThreads: (threadIds) async {
+        await _experienceShareService.createDirectShareToThreads(
+          experience: _currentExperience,
+          threadIds: threadIds,
+          highlightedMediaUrl: highlightedUrl,
+        );
+      },
+      onSubmitToNewGroupChat: (participantIds) async {
+        await _experienceShareService.createDirectShareToNewGroupChat(
+          experience: _currentExperience,
+          participantIds: participantIds,
+          highlightedMediaUrl: highlightedUrl,
         );
       },
     );
@@ -4605,6 +4620,18 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
         await _experienceShareService.createDirectShare(
           experience: _currentExperience,
           toUserIds: recipientIds,
+        );
+      },
+      onSubmitToThreads: (threadIds) async {
+        await _experienceShareService.createDirectShareToThreads(
+          experience: _currentExperience,
+          threadIds: threadIds,
+        );
+      },
+      onSubmitToNewGroupChat: (participantIds) async {
+        await _experienceShareService.createDirectShareToNewGroupChat(
+          experience: _currentExperience,
+          participantIds: participantIds,
         );
       },
     );

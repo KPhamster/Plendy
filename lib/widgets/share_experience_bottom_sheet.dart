@@ -7,7 +7,9 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/app_constants.dart';
+import '../models/message_thread.dart';
 import '../models/user_profile.dart';
+import '../services/message_service.dart';
 import '../services/user_service.dart';
 
 typedef ShareBottomSheetCreateLinkCallback = Future<void> Function({
@@ -153,10 +155,14 @@ class _ShareExperienceBottomSheetContentState
 }
 
 typedef ShareToFriendsSubmit = Future<void> Function(List<String> userIds);
+typedef ShareToThreadsSubmit = Future<void> Function(List<String> threadIds);
+typedef ShareToGroupChatSubmit = Future<void> Function(List<String> userIds);
 
 Future<bool?> showShareToFriendsModal({
   required BuildContext context,
   required ShareToFriendsSubmit onSubmit,
+  ShareToThreadsSubmit? onSubmitToThreads,
+  ShareToGroupChatSubmit? onSubmitToNewGroupChat,
   String? subjectLabel,
   String titleText = 'Share to friends',
   String actionButtonLabel = 'Share',
@@ -173,6 +179,8 @@ Future<bool?> showShareToFriendsModal({
     ),
     builder: (ctx) => ShareToFriendsSheet(
       onSubmit: onSubmit,
+      onSubmitToThreads: onSubmitToThreads,
+      onSubmitToNewGroupChat: onSubmitToNewGroupChat,
       subjectLabel: subjectLabel,
       titleText: titleText,
       actionButtonLabel: actionButtonLabel,
@@ -187,6 +195,8 @@ class ShareToFriendsSheet extends StatefulWidget {
   const ShareToFriendsSheet({
     super.key,
     required this.onSubmit,
+    this.onSubmitToThreads,
+    this.onSubmitToNewGroupChat,
     this.subjectLabel,
     this.titleText = 'Share to friends',
     this.actionButtonLabel = 'Share',
@@ -196,6 +206,8 @@ class ShareToFriendsSheet extends StatefulWidget {
   });
 
   final ShareToFriendsSubmit onSubmit;
+  final ShareToThreadsSubmit? onSubmitToThreads;
+  final ShareToGroupChatSubmit? onSubmitToNewGroupChat;
   final String? subjectLabel;
   final String titleText;
   final String actionButtonLabel;
@@ -210,12 +222,23 @@ class ShareToFriendsSheet extends StatefulWidget {
 class _ShareToFriendsSheetState extends State<ShareToFriendsSheet> {
   final TextEditingController _searchController = TextEditingController();
   final UserService _userService = UserService();
+  final MessageService _messageService = MessageService();
+  
+  // View 1: Friends selection
   final Map<String, UserProfile> _selectedProfiles = {};
   final Map<String, DateTime> _lastSharedAt = {};
-
   final List<UserProfile> _orderedFriends = [];
   List<UserProfile> _searchResults = [];
   Set<String> _friendIdSet = {};
+
+  // View 2: Existing chats selection
+  final Set<String> _selectedThreadIds = {};
+  List<MessageThread> _existingThreads = [];
+  bool _isLoadingThreads = false;
+  String? _threadsError;
+
+  // View toggle
+  bool _isViewingExistingChats = false;
 
   bool _isLoading = true;
   bool _isSearching = false;
@@ -440,11 +463,110 @@ class _ShareToFriendsSheetState extends State<ShareToFriendsSheet> {
     });
   }
 
+  Future<void> _loadExistingThreads() async {
+    final User? currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser == null) {
+      setState(() {
+        _isLoadingThreads = false;
+        _threadsError = 'You must be signed in to view chats.';
+      });
+      return;
+    }
+
+    setState(() {
+      _isLoadingThreads = true;
+      _threadsError = null;
+    });
+
+    try {
+      // Fetch threads without orderBy to avoid needing a composite index
+      // We'll sort client-side instead
+      final snapshot = await FirebaseFirestore.instance
+          .collection('message_threads')
+          .where('participants', arrayContains: currentUser.uid)
+          .limit(100)
+          .get();
+
+      final threads = snapshot.docs
+          .map((doc) => MessageThread.fromFirestore(doc))
+          .toList();
+
+      // Sort by lastMessageTimestamp descending (most recent first)
+      threads.sort((a, b) {
+        final aTime = a.lastMessageTimestamp ?? a.updatedAt ?? a.createdAt;
+        final bTime = b.lastMessageTimestamp ?? b.updatedAt ?? b.createdAt;
+        if (aTime == null && bTime == null) return 0;
+        if (aTime == null) return 1;
+        if (bTime == null) return -1;
+        return bTime.compareTo(aTime);
+      });
+
+      if (!mounted) return;
+      setState(() {
+        _existingThreads = threads;
+        _isLoadingThreads = false;
+      });
+    } catch (e) {
+      debugPrint('ShareToFriendsSheet: Failed to load threads: $e');
+      if (!mounted) return;
+      setState(() {
+        _isLoadingThreads = false;
+        _threadsError = 'Unable to load your chats right now.';
+      });
+    }
+  }
+
+  void _toggleThreadSelection(String threadId) {
+    setState(() {
+      if (_selectedThreadIds.contains(threadId)) {
+        _selectedThreadIds.remove(threadId);
+      } else {
+        _selectedThreadIds.add(threadId);
+      }
+    });
+  }
+
+  void _switchToExistingChatsView() {
+    setState(() {
+      _isViewingExistingChats = true;
+    });
+    if (_existingThreads.isEmpty && !_isLoadingThreads) {
+      _loadExistingThreads();
+    }
+  }
+
+  void _switchToFriendsView() {
+    setState(() {
+      _isViewingExistingChats = false;
+    });
+  }
+
   Future<void> _submitShare() async {
+    if (_isViewingExistingChats) {
+      await _submitToThreads();
+    } else {
+      await _submitToFriends();
+    }
+  }
+
+  Future<void> _submitToFriends() async {
     if (_selectedProfiles.isEmpty || _isSubmitting) {
       return;
     }
     FocusScope.of(context).unfocus();
+
+    // If multiple friends selected, show dialog to choose individual or group
+    if (_selectedProfiles.length > 1) {
+      final choice = await _showMultipleFriendsDialog();
+      if (choice == null) return; // User cancelled
+      
+      if (choice == 'group') {
+        await _submitAsGroupChat();
+        return;
+      }
+      // Otherwise continue with individual shares
+    }
+
     setState(() {
       _isSubmitting = true;
     });
@@ -454,6 +576,129 @@ class _ShareToFriendsSheetState extends State<ShareToFriendsSheet> {
       Navigator.of(context).pop(true);
     } catch (e) {
       debugPrint('ShareToFriendsSheet: submit failed: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Unable to send share. Please try again.'),
+          ),
+        );
+        setState(() {
+          _isSubmitting = false;
+        });
+      }
+    }
+  }
+
+  Future<String?> _showMultipleFriendsDialog() async {
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'You selected multiple friends',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'How would you like to share?',
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Colors.grey,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 24),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () => Navigator.of(ctx).pop('individual'),
+                  child: const Text('Send to each individually'),
+                ),
+              ),
+              if (widget.onSubmitToNewGroupChat != null) ...[
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.of(ctx).pop('group'),
+                    child: const Text('Create a new group chat'),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(null),
+                  child: const Text('Cancel'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _submitAsGroupChat() async {
+    if (widget.onSubmitToNewGroupChat == null) return;
+    
+    setState(() {
+      _isSubmitting = true;
+    });
+    try {
+      await widget.onSubmitToNewGroupChat!(_selectedProfiles.keys.toList());
+      if (!mounted) return;
+      Navigator.of(context).pop(true);
+    } catch (e) {
+      debugPrint('ShareToFriendsSheet: group chat submit failed: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Unable to create group chat. Please try again.'),
+          ),
+        );
+        setState(() {
+          _isSubmitting = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _submitToThreads() async {
+    if (_selectedThreadIds.isEmpty || _isSubmitting) {
+      return;
+    }
+    if (widget.onSubmitToThreads == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Sharing to existing chats is not supported here.'),
+        ),
+      );
+      return;
+    }
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _isSubmitting = true;
+    });
+    try {
+      await widget.onSubmitToThreads!(_selectedThreadIds.toList());
+      if (!mounted) return;
+      Navigator.of(context).pop(true);
+    } catch (e) {
+      debugPrint('ShareToFriendsSheet: thread submit failed: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -495,7 +740,11 @@ class _ShareToFriendsSheetState extends State<ShareToFriendsSheet> {
   Widget build(BuildContext context) {
     final mediaQuery = MediaQuery.of(context);
     final bottomInset = mediaQuery.viewInsets.bottom;
-    final bool hasSelection = _selectedProfiles.isNotEmpty;
+    
+    // Determine selection state based on current view
+    final bool hasSelection = _isViewingExistingChats
+        ? _selectedThreadIds.isNotEmpty
+        : _selectedProfiles.isNotEmpty;
     final bool isSearching = _searchController.text.trim().isNotEmpty;
     final List<UserProfile> visibleProfiles =
         isSearching ? _searchResults : _orderedFriends;
@@ -508,7 +757,7 @@ class _ShareToFriendsSheetState extends State<ShareToFriendsSheet> {
           child: Column(
             children: [
               _buildHeader(context),
-              _buildSearchField(),
+              if (!_isViewingExistingChats) _buildSearchField(),
               if (widget.subjectLabel != null &&
                   widget.subjectLabel!.isNotEmpty)
                 Padding(
@@ -531,12 +780,18 @@ class _ShareToFriendsSheetState extends State<ShareToFriendsSheet> {
                     ],
                   ),
                 ),
-              if (hasSelection) _buildSelectionChips(),
+              _buildViewToggleButton(),
+              if (!_isViewingExistingChats && _selectedProfiles.isNotEmpty)
+                _buildSelectionChips(),
+              if (_isViewingExistingChats && _selectedThreadIds.isNotEmpty)
+                _buildThreadSelectionChips(),
               Expanded(
-                child: _buildListContent(
-                  isSearching: isSearching,
-                  visibleProfiles: visibleProfiles,
-                ),
+                child: _isViewingExistingChats
+                    ? _buildExistingChatsContent()
+                    : _buildListContent(
+                        isSearching: isSearching,
+                        visibleProfiles: visibleProfiles,
+                      ),
               ),
               _buildShareButton(hasSelection),
             ],
@@ -594,6 +849,207 @@ class _ShareToFriendsSheetState extends State<ShareToFriendsSheet> {
         ),
       ),
     );
+  }
+
+  Widget _buildViewToggleButton() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: InkWell(
+        onTap: _isViewingExistingChats
+            ? _switchToFriendsView
+            : _switchToExistingChatsView,
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: Colors.grey.shade100,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: Colors.grey.shade300),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                _isViewingExistingChats
+                    ? Icons.person_outline
+                    : Icons.forum_outlined,
+                size: 20,
+                color: Theme.of(context).primaryColor,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  _isViewingExistingChats
+                      ? 'Choose individual friends'
+                      : 'Choose existing chats',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: Theme.of(context).primaryColor,
+                  ),
+                ),
+              ),
+              Icon(
+                Icons.chevron_right,
+                size: 20,
+                color: Theme.of(context).primaryColor,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildThreadSelectionChips() {
+    final currentUserId = FirebaseAuth.instance.currentUser?.uid ?? '';
+    return SizedBox(
+      height: 72,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        children: _selectedThreadIds.map((threadId) {
+          final thread = _existingThreads.firstWhere(
+            (t) => t.id == threadId,
+            orElse: () => MessageThread(
+              id: threadId,
+              participantIds: [],
+              participantProfiles: {},
+              participantsKey: '',
+            ),
+          );
+          final display = _getThreadDisplayName(thread, currentUserId);
+          return Padding(
+            padding: const EdgeInsets.only(right: 8.0),
+            child: Chip(
+              label: Text(display),
+              avatar: thread.isGroup
+                  ? const CircleAvatar(child: Icon(Icons.group, size: 16))
+                  : null,
+              deleteIcon: const Icon(Icons.close),
+              onDeleted: () {
+                setState(() {
+                  _selectedThreadIds.remove(threadId);
+                });
+              },
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  String _getThreadDisplayName(MessageThread thread, String currentUserId) {
+    if (thread.title != null && thread.title!.isNotEmpty) {
+      return thread.title!;
+    }
+    final others = thread.otherParticipants(currentUserId);
+    if (others.isEmpty) return 'Chat';
+    if (others.length == 1) {
+      return others.first.displayName ?? others.first.username ?? 'Friend';
+    }
+    final names = others
+        .take(3)
+        .map((p) => p.displayName ?? p.username ?? 'Friend')
+        .join(', ');
+    if (others.length > 3) {
+      return '$names +${others.length - 3}';
+    }
+    return names;
+  }
+
+  Widget _buildExistingChatsContent() {
+    if (_isLoadingThreads) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (_threadsError != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          child: Text(
+            _threadsError!,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 14),
+          ),
+        ),
+      );
+    }
+
+    if (_existingThreads.isEmpty) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.symmetric(horizontal: 24),
+          child: Text(
+            'No existing chats found. Start a conversation first!',
+            textAlign: TextAlign.center,
+          ),
+        ),
+      );
+    }
+
+    final currentUserId = FirebaseAuth.instance.currentUser?.uid ?? '';
+
+    return ListView.separated(
+      itemCount: _existingThreads.length,
+      separatorBuilder: (_, __) => const Divider(height: 1),
+      itemBuilder: (context, index) {
+        final thread = _existingThreads[index];
+        final bool isSelected = _selectedThreadIds.contains(thread.id);
+        final displayName = _getThreadDisplayName(thread, currentUserId);
+        final others = thread.otherParticipants(currentUserId);
+
+        return ListTile(
+          leading: _buildThreadAvatar(thread, others),
+          title: Text(displayName),
+          subtitle: thread.lastMessage != null
+              ? Text(
+                  thread.lastMessage!,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: Colors.grey.shade600,
+                  ),
+                )
+              : null,
+          trailing: Icon(
+            isSelected ? Icons.check_circle : Icons.radio_button_unchecked,
+            color: isSelected ? Theme.of(context).primaryColor : Colors.grey,
+          ),
+          onTap: () => _toggleThreadSelection(thread.id),
+        );
+      },
+    );
+  }
+
+  Widget _buildThreadAvatar(
+    MessageThread thread,
+    List<dynamic> others,
+  ) {
+    if (thread.isGroup) {
+      return CircleAvatar(
+        child: Icon(
+          Icons.group,
+          color: Colors.black,
+        ),
+      );
+    }
+
+    if (others.isNotEmpty) {
+      final participant = others.first;
+      final photoUrl = participant.photoUrl;
+      if (photoUrl != null && photoUrl.isNotEmpty) {
+        return CircleAvatar(
+          backgroundImage: NetworkImage(photoUrl),
+        );
+      }
+      final name = participant.displayName ?? participant.username ?? '';
+      return CircleAvatar(
+        child: Text(name.isNotEmpty ? name[0].toUpperCase() : '?'),
+      );
+    }
+
+    return const CircleAvatar(child: Icon(Icons.person));
   }
 
   Widget _buildSelectionChips() {
@@ -774,8 +1230,17 @@ class _ShareToFriendsSheetState extends State<ShareToFriendsSheet> {
 
   Widget _buildShareButton(bool hasSelection) {
     final String baseLabel = widget.actionButtonLabel;
+    final int selectionCount = _isViewingExistingChats
+        ? _selectedThreadIds.length
+        : _selectedProfiles.length;
     final String label =
-        hasSelection ? '$baseLabel (${_selectedProfiles.length})' : baseLabel;
+        hasSelection ? '$baseLabel ($selectionCount)' : baseLabel;
+    
+    // Check if the required callback is available for current view
+    final bool canSubmit = _isViewingExistingChats
+        ? widget.onSubmitToThreads != null
+        : true;
+    
     return SafeArea(
       top: false,
       child: Padding(
@@ -783,7 +1248,9 @@ class _ShareToFriendsSheetState extends State<ShareToFriendsSheet> {
         child: SizedBox(
           width: double.infinity,
           child: ElevatedButton(
-            onPressed: hasSelection && !_isSubmitting ? _submitShare : null,
+            onPressed: hasSelection && !_isSubmitting && canSubmit
+                ? _submitShare
+                : null,
             child: _isSubmitting
                 ? const SizedBox(
                     height: 20,

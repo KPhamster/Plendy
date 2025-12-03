@@ -3604,6 +3604,22 @@ class _EventEditorModalState extends State<EventEditorModal> {
           title: title,
         );
       },
+      onSubmitToThreads: (threadIds) async {
+        await _sendEventShareToThreads(
+          senderId: user.uid,
+          threadIds: threadIds,
+          link: link,
+          title: title,
+        );
+      },
+      onSubmitToNewGroupChat: (participantIds) async {
+        await _sendEventShareToNewGroupChat(
+          senderId: user.uid,
+          participantIds: participantIds,
+          link: link,
+          title: title,
+        );
+      },
     );
 
     if (shared == true && mounted) {
@@ -3638,6 +3654,56 @@ class _EventEditorModalState extends State<EventEditorModal> {
         debugPrint(
             'EventEditorModal: Failed to share event with $recipientId: $e');
       }
+    }
+  }
+
+  Future<void> _sendEventShareToThreads({
+    required String senderId,
+    required List<String> threadIds,
+    required String link,
+    required String title,
+  }) async {
+    if (threadIds.isEmpty) return;
+    final message =
+        'Check out this event${title.isNotEmpty ? ': $title' : ''}\n$link';
+
+    for (final threadId in threadIds) {
+      try {
+        await _messageService.sendMessage(
+          threadId: threadId,
+          senderId: senderId,
+          text: message,
+        );
+      } catch (e) {
+        debugPrint(
+            'EventEditorModal: Failed to share event to thread $threadId: $e');
+      }
+    }
+  }
+
+  Future<void> _sendEventShareToNewGroupChat({
+    required String senderId,
+    required List<String> participantIds,
+    required String link,
+    required String title,
+  }) async {
+    if (participantIds.isEmpty) return;
+    final message =
+        'Check out this event${title.isNotEmpty ? ': $title' : ''}\n$link';
+
+    try {
+      final thread = await _messageService.createOrGetThread(
+        currentUserId: senderId,
+        participantIds: participantIds,
+      );
+      await _messageService.sendMessage(
+        threadId: thread.id,
+        senderId: senderId,
+        text: message,
+      );
+    } catch (e) {
+      debugPrint(
+          'EventEditorModal: Failed to create group chat for event share: $e');
     }
   }
 
