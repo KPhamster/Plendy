@@ -81,6 +81,102 @@ class ExperienceShareService {
     return shareDocRef.id;
   }
 
+  /// Share to existing message threads (group chats or individual chats)
+  Future<String> createDirectShareToThreads({
+    required Experience experience,
+    required List<String> threadIds,
+    String? highlightedMediaUrl,
+  }) async {
+    final userId = _currentUserId;
+    if (userId == null) throw Exception('User not authenticated');
+    if (threadIds.isEmpty) throw Exception('No threads provided');
+
+    final snapshot = await _buildSnapshotFromExperienceAsync(experience);
+    
+    if (highlightedMediaUrl != null && highlightedMediaUrl.isNotEmpty) {
+      snapshot['highlightedMediaUrl'] = highlightedMediaUrl;
+    }
+
+    final data = {
+      'experienceId': experience.id,
+      'fromUserId': userId,
+      'toThreadIds': threadIds,
+      'visibility': 'direct',
+      'collaboration': false,
+      'createdAt': FieldValue.serverTimestamp(),
+      'snapshot': snapshot,
+      if (highlightedMediaUrl != null && highlightedMediaUrl.isNotEmpty)
+        'highlightedMediaUrl': highlightedMediaUrl,
+    };
+
+    final shareDocRef = await _shares.add(data);
+    
+    // Send experience share message to each thread
+    for (final threadId in threadIds) {
+      try {
+        await _messageService.sendExperienceShareMessage(
+          threadId: threadId,
+          senderId: userId,
+          experienceSnapshot: snapshot,
+          shareId: shareDocRef.id,
+        );
+      } catch (e) {
+        print('Failed to send share message to thread $threadId: $e');
+      }
+    }
+    
+    return shareDocRef.id;
+  }
+
+  /// Share to a new group chat with multiple users
+  Future<String> createDirectShareToNewGroupChat({
+    required Experience experience,
+    required List<String> participantIds,
+    String? highlightedMediaUrl,
+  }) async {
+    final userId = _currentUserId;
+    if (userId == null) throw Exception('User not authenticated');
+    if (participantIds.isEmpty) throw Exception('No participants provided');
+
+    final snapshot = await _buildSnapshotFromExperienceAsync(experience);
+    
+    if (highlightedMediaUrl != null && highlightedMediaUrl.isNotEmpty) {
+      snapshot['highlightedMediaUrl'] = highlightedMediaUrl;
+    }
+
+    // Create a new group chat thread with all participants
+    final thread = await _messageService.createOrGetThread(
+      currentUserId: userId,
+      participantIds: participantIds,
+    );
+
+    final data = {
+      'experienceId': experience.id,
+      'fromUserId': userId,
+      'toUserIds': participantIds,
+      'toThreadId': thread.id,
+      'visibility': 'direct',
+      'collaboration': false,
+      'isGroupShare': true,
+      'createdAt': FieldValue.serverTimestamp(),
+      'snapshot': snapshot,
+      if (highlightedMediaUrl != null && highlightedMediaUrl.isNotEmpty)
+        'highlightedMediaUrl': highlightedMediaUrl,
+    };
+
+    final shareDocRef = await _shares.add(data);
+    
+    // Send experience share message to the group chat
+    await _messageService.sendExperienceShareMessage(
+      threadId: thread.id,
+      senderId: userId,
+      experienceSnapshot: snapshot,
+      shareId: shareDocRef.id,
+    );
+    
+    return shareDocRef.id;
+  }
+
   Future<String> createLinkShare({
     required Experience experience,
     String? message,
