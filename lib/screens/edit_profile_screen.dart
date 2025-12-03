@@ -251,20 +251,39 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 children: [
                   GestureDetector(
                     onTap: _pickImage,
-                    child: CircleAvatar(
-                      radius: 50,
-                      backgroundImage: _imageFile != null
-                          ? FileImage(_imageFile!)
-                          : (_authService.currentUser?.photoURL != null &&
-                                  _authService.currentUser!.photoURL!.isNotEmpty
-                              ? NetworkImage(
-                                  _authService.currentUser!.photoURL!)
-                              : null) as ImageProvider?,
-                      child: (_imageFile == null &&
-                              (_authService.currentUser?.photoURL == null ||
-                                  _authService.currentUser!.photoURL!.isEmpty)
-                          ? const Icon(Icons.camera_alt, size: 50)
-                          : null),
+                    child: Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        CircleAvatar(
+                          radius: 50,
+                          backgroundImage: _imageFile != null
+                              ? FileImage(_imageFile!)
+                              : (_authService.currentUser?.photoURL != null &&
+                                      _authService.currentUser!.photoURL!.isNotEmpty
+                                  ? NetworkImage(
+                                      _authService.currentUser!.photoURL!)
+                                  : null) as ImageProvider?,
+                          child: (_imageFile == null &&
+                                  (_authService.currentUser?.photoURL == null ||
+                                      _authService.currentUser!.photoURL!.isEmpty)
+                              ? const Icon(Icons.camera_alt, size: 50)
+                              : null),
+                        ),
+                        Positioned(
+                          bottom: 0,
+                          right: 0,
+                          child: Container(
+                            width: 28,
+                            height: 28,
+                            decoration: BoxDecoration(
+                              color: Theme.of(context).primaryColor,
+                              shape: BoxShape.circle,
+                              border: Border.all(color: Colors.white, width: 2),
+                            ),
+                            child: const Icon(Icons.edit, size: 16, color: Colors.white),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                   const SizedBox(height: 16),

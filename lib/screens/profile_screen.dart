@@ -128,8 +128,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
       appBar: AppBar(
         backgroundColor: Colors.white,
         foregroundColor: Colors.black,
-        title: const Text('Profile'),
+        title: const Text('My Account'),
         actions: [
+          TextButton(
+            onPressed: _openEditProfile,
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              foregroundColor: Colors.black,
+            ),
+            child: const Text('Edit profile'),
+          ),
           IconButton(
             icon: const Icon(Icons.edit),
             onPressed: _openEditProfile,
@@ -152,27 +160,50 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            user?.photoURL != null
-                                ? ClipOval(
-                                    child: CachedNetworkImage(
-                                      imageUrl: user!.photoURL!,
-                                      width: 100,
-                                      height: 100,
-                                      fit: BoxFit.cover,
-                                      placeholder: (context, url) => const CircleAvatar(
-                                        radius: 50,
-                                        child: Icon(Icons.person, size: 50),
-                                      ),
-                                      errorWidget: (context, url, error) => const CircleAvatar(
-                                        radius: 50,
-                                        child: Icon(Icons.person, size: 50),
-                                      ),
+                            Stack(
+                              clipBehavior: Clip.none,
+                              children: [
+                                SizedBox(
+                                  width: 100,
+                                  height: 100,
+                                  child: user?.photoURL != null
+                                      ? ClipOval(
+                                          child: CachedNetworkImage(
+                                            imageUrl: user!.photoURL!,
+                                            width: 100,
+                                            height: 100,
+                                            fit: BoxFit.cover,
+                                            placeholder: (context, url) => const CircleAvatar(
+                                              radius: 50,
+                                              child: Icon(Icons.person, size: 50),
+                                            ),
+                                            errorWidget: (context, url, error) => const CircleAvatar(
+                                              radius: 50,
+                                              child: Icon(Icons.person, size: 50),
+                                            ),
+                                          ),
+                                        )
+                                      : const CircleAvatar(
+                                          radius: 50,
+                                          child: Icon(Icons.person, size: 50),
+                                        ),
+                                ),
+                                Positioned(
+                                  bottom: 0,
+                                  right: 0,
+                                  child: Container(
+                                    width: 28,
+                                    height: 28,
+                                    decoration: BoxDecoration(
+                                      color: Theme.of(context).primaryColor,
+                                      shape: BoxShape.circle,
+                                      border: Border.all(color: Colors.white, width: 2),
                                     ),
-                                  )
-                                : const CircleAvatar(
-                                    radius: 50,
-                                    child: Icon(Icons.person, size: 50),
+                                    child: const Icon(Icons.edit, size: 16, color: Colors.white),
                                   ),
+                                ),
+                              ],
+                            ),
                             const SizedBox(height: 16),
                             if (user?.displayName?.isNotEmpty ?? false)
                               Text(

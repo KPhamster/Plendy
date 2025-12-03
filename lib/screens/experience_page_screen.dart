@@ -932,27 +932,30 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
             ),
 
           // --- ADDED: Positioned Back Button ---
-          Positioned(
-            // Position accounting for status bar height + padding
-            top: MediaQuery.of(context).padding.top + 8.0,
-            left: 8.0,
-            child: Container(
-              // Copied from SliverAppBar leading
-              margin:
-                  const EdgeInsets.all(0), // No margin needed when positioned
-              decoration: BoxDecoration(
-                color: Colors.black
-                    .withOpacity(0.4), // Slightly darker for visibility
-                shape: BoxShape.circle,
-              ),
-              child: BackButton(
-                color: Colors.white,
-                onPressed: () {
-                  _handleBackNavigation();
-                },
+          // Show when not in read-only preview, or when opened from discovery screen
+          // (discovery screen sets publicExperienceId, share preview sets shareBannerFromUserId)
+          if (!widget.readOnlyPreview || widget.publicExperienceId != null)
+            Positioned(
+              // Position accounting for status bar height + padding
+              top: MediaQuery.of(context).padding.top + 8.0,
+              left: 8.0,
+              child: Container(
+                // Copied from SliverAppBar leading
+                margin:
+                    const EdgeInsets.all(0), // No margin needed when positioned
+                decoration: BoxDecoration(
+                  color: Colors.black
+                      .withOpacity(0.4), // Slightly darker for visibility
+                  shape: BoxShape.circle,
+                ),
+                child: BackButton(
+                  color: Colors.white,
+                  onPressed: () {
+                    _handleBackNavigation();
+                  },
+                ),
               ),
             ),
-          ),
           // --- END: Positioned Back Button ---
 
           // --- ADDED: Positioned Overflow Menu (3-dot) ---
@@ -3302,6 +3305,22 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   Future<List<Experience>> _buildInitialExperiencesForSave({
     required String mediaUrl,
   }) async {
+    // When viewing an experience in read-only mode (from share_preview_screen
+    // or discovery_screen), only offer the current experience for saving -
+    // don't fetch other experiences linked to the media.
+    // - shareBannerFromUserId is set when coming from share_preview_screen
+    // - publicExperienceId is set when coming from discovery_screen
+    // In both cases, the "Save Experience" button should only save the current
+    // experience being viewed, not show a list of linked experiences.
+    // Note: The discovery feed's direct "Save" button (in discovery_screen.dart)
+    // still fetches linked experiences - this only affects the ExperiencePageScreen.
+    final bool isReadOnlyView = widget.shareBannerFromUserId != null ||
+        widget.publicExperienceId != null;
+
+    if (isReadOnlyView) {
+      return [_buildExperienceDraftForSaveModal()];
+    }
+
     final List<Experience> linkedExperiences =
         await _fetchExperiencesLinkedToMedia(mediaUrl);
     final List<Experience> deduped = _dedupeExperiencesById(linkedExperiences);

@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:math';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/message_thread.dart';
@@ -24,14 +26,18 @@ class _NewMessageThreadScreenState extends State<NewMessageThreadScreen> {
   final UserService _userService = UserService();
   final Map<String, UserProfile> _selectedProfiles = {};
   List<UserProfile> _searchResults = [];
+  List<UserProfile> _friends = [];
   Timer? _debounce;
   bool _isSearching = false;
   bool _creatingChat = false;
+  bool _isLoadingFriends = false;
+  String? _friendsError;
 
   @override
   void initState() {
     super.initState();
     _searchController.addListener(_onSearchChanged);
+    _loadFriends();
   }
 
   @override
@@ -42,6 +48,48 @@ class _NewMessageThreadScreenState extends State<NewMessageThreadScreen> {
     super.dispose();
   }
 
+  Future<void> _loadFriends() async {
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final currentUser = authService.currentUser;
+    if (currentUser == null) {
+      return;
+    }
+
+    setState(() {
+      _isLoadingFriends = true;
+      _friendsError = null;
+    });
+
+    try {
+      final friendIds = await _userService.getFriendIds(currentUser.uid);
+      final profiles = await _fetchProfiles(friendIds);
+      if (!mounted) return;
+
+      profiles.sort((a, b) {
+        final nameA =
+            (a.displayName ?? a.username ?? '').toLowerCase().trim();
+        final nameB =
+            (b.displayName ?? b.username ?? '').toLowerCase().trim();
+        return nameA.compareTo(nameB);
+      });
+
+      setState(() {
+        _friends = profiles;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _friendsError = 'Could not load friends right now.';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingFriends = false;
+        });
+      }
+    }
+  }
+
   void _onSearchChanged() {
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 300), () {
@@ -49,6 +97,7 @@ class _NewMessageThreadScreenState extends State<NewMessageThreadScreen> {
       if (query.isEmpty) {
         setState(() {
           _searchResults = [];
+          _isSearching = false;
         });
         return;
       }
@@ -149,7 +198,10 @@ class _NewMessageThreadScreenState extends State<NewMessageThreadScreen> {
     final canCreate = _selectedProfiles.isNotEmpty && !_creatingChat;
 
     return Scaffold(
+      backgroundColor: Colors.white,
       appBar: AppBar(
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.black,
         title: const Text('New Message'),
       ),
       bottomNavigationBar: SafeArea(
@@ -158,6 +210,22 @@ class _NewMessageThreadScreenState extends State<NewMessageThreadScreen> {
           child: SizedBox(
             width: double.infinity,
             child: ElevatedButton(
+              style: ButtonStyle(
+                backgroundColor:
+                    MaterialStateProperty.resolveWith<Color?>((states) {
+                  if (states.contains(MaterialState.disabled)) {
+                    return null; // Use default disabled color
+                  }
+                  return Theme.of(context).primaryColor;
+                }),
+                foregroundColor:
+                    MaterialStateProperty.resolveWith<Color?>((states) {
+                  if (states.contains(MaterialState.disabled)) {
+                    return null; // Use default disabled color
+                  }
+                  return Colors.white;
+                }),
+              ),
               onPressed: canCreate ? _createChat : null,
               child: _creatingChat
                   ? const SizedBox(
@@ -237,9 +305,7 @@ class _NewMessageThreadScreenState extends State<NewMessageThreadScreen> {
 
   Widget _buildResultsList() {
     if (_searchController.text.isEmpty) {
-      return const Center(
-        child: Text('Search for people to start a chat.'),
-      );
+      return _buildFriendsList();
     }
 
     if (_searchResults.isEmpty) {
@@ -248,11 +314,35 @@ class _NewMessageThreadScreenState extends State<NewMessageThreadScreen> {
       );
     }
 
+    return _buildProfileList(_searchResults);
+  }
+
+  Widget _buildFriendsList() {
+    if (_isLoadingFriends) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (_friendsError != null) {
+      return Center(
+        child: Text(_friendsError!),
+      );
+    }
+
+    if (_friends.isEmpty) {
+      return const Center(
+        child: Text('Add friends to start a chat.'),
+      );
+    }
+
+    return _buildProfileList(_friends);
+  }
+
+  Widget _buildProfileList(List<UserProfile> profiles) {
     return ListView.separated(
-      itemCount: _searchResults.length,
+      itemCount: profiles.length,
       separatorBuilder: (_, __) => const Divider(height: 1),
       itemBuilder: (context, index) {
-        final profile = _searchResults[index];
+        final profile = profiles[index];
         final isSelected = _selectedProfiles.containsKey(profile.id);
         final title = profile.displayName ?? profile.username ?? 'Friend';
         final subtitle =
@@ -273,5 +363,28 @@ class _NewMessageThreadScreenState extends State<NewMessageThreadScreen> {
         );
       },
     );
+  }
+
+  Future<List<UserProfile>> _fetchProfiles(List<String> userIds) async {
+    if (userIds.isEmpty) return const <UserProfile>[];
+    final FirebaseFirestore firestore = FirebaseFirestore.instance;
+    final Map<String, UserProfile> profiles = {};
+
+    for (int i = 0; i < userIds.length; i += 10) {
+      final List<String> chunk =
+          userIds.sublist(i, min(i + 10, userIds.length));
+      final QuerySnapshot<Map<String, dynamic>> snapshot = await firestore
+          .collection('users')
+          .where(FieldPath.documentId, whereIn: chunk)
+          .get();
+      for (final doc in snapshot.docs) {
+        profiles[doc.id] = UserProfile.fromMap(doc.id, doc.data());
+      }
+    }
+
+    return userIds
+        .where(profiles.containsKey)
+        .map((id) => profiles[id]!)
+        .toList();
   }
 }

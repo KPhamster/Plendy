@@ -833,6 +833,7 @@ class _MyAppState extends State<MyApp> {
   String?
       _initialDiscoveryShareToken; // NEW: Track initial discovery share token from URL
   String? _initialEventShareToken; // Track initial event share token from URL
+  String? _initialExperienceShareToken; // Track initial experience share token from URL
   static const int _maxNavigatorPushRetries = 12;
 
   void _pushRouteWhenReady(WidgetBuilder builder,
@@ -1024,6 +1025,18 @@ class _MyAppState extends State<MyApp> {
               });
               print(
                   "MAIN: Detected initial event share token from URL: $token");
+            }
+          }
+          // Check for experience share link
+          else if (firstSegment == 'shared' && segments.length > 1) {
+            final rawToken = segments[1];
+            final token = _cleanToken(rawToken);
+            if (token != null && token.isNotEmpty) {
+              setState(() {
+                _initialExperienceShareToken = token;
+              });
+              print(
+                  "MAIN: Detected initial experience share token from URL: $token");
             }
           }
         }
@@ -1568,6 +1581,15 @@ class _MyAppState extends State<MyApp> {
       print(
           "MAIN BUILD DEBUG: Showing DiscoverySharePreviewScreen for token: $_initialDiscoveryShareToken");
       return DiscoverySharePreviewScreen(token: _initialDiscoveryShareToken!);
+    }
+
+    // NEW: Prioritize experience share preview on web (for unauthenticated users)
+    if (kIsWeb &&
+        _initialExperienceShareToken != null &&
+        _initialExperienceShareToken!.isNotEmpty) {
+      print(
+          "MAIN BUILD DEBUG: Showing SharePreviewScreen for token: $_initialExperienceShareToken");
+      return SharePreviewScreen(token: _initialExperienceShareToken!);
     }
 
     // If we have shared files, show ReceiveShareScreen

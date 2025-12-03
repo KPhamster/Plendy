@@ -37,10 +37,10 @@ class SharePreviewScreen extends StatelessWidget {
       },
       child: Scaffold(
         appBar: AppBar(
-          leading: IconButton(
+          leading: kIsWeb ? IconButton(
             icon: const Icon(Icons.arrow_back),
             onPressed: () => _navigateToMain(context),
-          ),
+          ) : null,
           title:
               const Text('Shared Experience', style: TextStyle(fontSize: 16)),
           actions: [
