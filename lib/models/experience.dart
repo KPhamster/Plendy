@@ -274,6 +274,8 @@ class Experience {
   // Plendy app specific data
   final double plendyRating;
   final int plendyReviewCount;
+  // User's personal thumbs up/down rating: true = thumbs up, false = thumbs down, null = no vote
+  final bool? userThumbRating;
   final List<String> imageUrls;
   final List<String> reelIds; // IDs of Reel objects
   final List<String> followerIds; // IDs of users following this experience
@@ -325,6 +327,7 @@ class Experience {
     this.googleReviewCount,
     this.plendyRating = 0.0,
     this.plendyReviewCount = 0,
+    this.userThumbRating,
     this.imageUrls = const [],
     this.reelIds = const [],
     this.followerIds = const [],
@@ -370,6 +373,7 @@ class Experience {
       googleReviewCount: data['googleReviewCount'],
       plendyRating: _parseRating(data['plendyRating']),
       plendyReviewCount: data['plendyReviewCount'] ?? 0,
+      userThumbRating: data['userThumbRating'] as bool?,
       imageUrls: _parseStringList(data['imageUrls']),
       reelIds: _parseStringList(data['reelIds']),
       followerIds: _parseStringList(data['followerIds']),
@@ -413,6 +417,7 @@ class Experience {
       'googleReviewCount': googleReviewCount,
       'plendyRating': plendyRating,
       'plendyReviewCount': plendyReviewCount,
+      'userThumbRating': userThumbRating,
       'imageUrls': imageUrls,
       'reelIds': reelIds,
       'followerIds': followerIds,
@@ -453,6 +458,8 @@ class Experience {
     int? googleReviewCount,
     double? plendyRating,
     int? plendyReviewCount,
+    bool? userThumbRating,
+    bool clearUserThumbRating = false,
     List<String>? imageUrls,
     List<String>? reelIds,
     List<String>? followerIds,
@@ -492,6 +499,7 @@ class Experience {
       googleReviewCount: googleReviewCount ?? this.googleReviewCount,
       plendyRating: plendyRating ?? this.plendyRating,
       plendyReviewCount: plendyReviewCount ?? this.plendyReviewCount,
+      userThumbRating: clearUserThumbRating ? null : (userThumbRating ?? this.userThumbRating),
       imageUrls: imageUrls ?? this.imageUrls,
       reelIds: reelIds ?? this.reelIds,
       followerIds: followerIds ?? this.followerIds,

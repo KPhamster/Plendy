@@ -4513,6 +4513,22 @@ class CollectionsScreenState extends State<CollectionsScreen>
                                           const SizedBox(width: 6),
                                           IconButton(
                                             tooltip:
+                                                'Create event with selected',
+                                            icon: Icon(
+                                                Icons.event_outlined,
+                                                color: selectedCount == 0
+                                                    ? Colors.grey
+                                                    : Colors.deepPurple),
+                                            onPressed: selectedCount == 0
+                                                ? null
+                                                : () {
+                                                    unawaited(
+                                                        _handleCreateEventWithSelectedExperiences());
+                                                  },
+                                          ),
+                                          const SizedBox(width: 6),
+                                          IconButton(
+                                            tooltip:
                                                 'Share selected experiences',
                                             icon: Icon(
                                                 Icons.share_outlined,
@@ -6289,6 +6305,77 @@ class CollectionsScreenState extends State<CollectionsScreen>
     }
   }
   // --- END ADDED ---
+
+  /// Creates a new event with the selected experiences in the itinerary
+  Future<void> _handleCreateEventWithSelectedExperiences() async {
+    final userId = _authService.currentUser?.uid;
+    if (userId == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please sign in to create an event.'),
+          ),
+        );
+      }
+      return;
+    }
+
+    final List<Experience> selectedExperiences = _experiences
+        .where((experience) => _selectedExperienceIds.contains(experience.id))
+        .toList();
+    if (selectedExperiences.isEmpty) {
+      return;
+    }
+
+    // Create EventExperienceEntry items from selected experiences
+    final List<EventExperienceEntry> experienceEntries = selectedExperiences
+        .map((experience) => EventExperienceEntry(experienceId: experience.id))
+        .toList();
+
+    final now = DateTime.now();
+    final defaultStart = DateTime(now.year, now.month, now.day, now.hour, 0);
+    final defaultEnd = defaultStart.add(const Duration(hours: 1));
+
+    final newEvent = Event(
+      id: '',
+      title: '',
+      description: '',
+      startDateTime: defaultStart,
+      endDateTime: defaultEnd,
+      plannerUserId: userId,
+      createdAt: now,
+      updatedAt: now,
+      experiences: experienceEntries,
+    );
+
+    // Exit selection mode
+    setState(() {
+      _isSelectingExperiences = false;
+      _selectedExperienceIds.clear();
+    });
+
+    if (!mounted) return;
+
+    final result = await Navigator.of(context).push<EventEditorResult>(
+      MaterialPageRoute(
+        builder: (ctx) => EventEditorModal(
+          event: newEvent,
+          experiences: selectedExperiences,
+          categories: _categories,
+          colorCategories: _colorCategories,
+        ),
+        fullscreenDialog: true,
+      ),
+    );
+
+    if (!mounted) return;
+
+    if (result != null && result.wasSaved && result.savedEvent != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Event created successfully')),
+      );
+    }
+  }
 
   Future<void> _handleShareSelectedExperiences() async {
     final List<Experience> selectedExperiences = _experiences

@@ -219,6 +219,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
 
   // --- ADDED: State for thumbs up/down rating --- START ---
   bool? _userVote; // null = no vote, true = thumbs up, false = thumbs down
+  bool _isUpdatingRating = false; // Prevent double taps while saving
+  PublicExperience? _publicExperience; // Store public experience data for rating counts
   // --- ADDED: State for thumbs up/down rating --- END ---
 
   static const Duration _photoRefreshInterval = Duration(days: 30);
@@ -303,6 +305,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     super.initState();
     // Initialize local state with initial experience data
     _currentExperience = widget.experience;
+    // Initialize user vote from the experience's saved rating
+    _userVote = widget.experience.userThumbRating;
 
     _tabController =
         TabController(length: 3, vsync: this); // Initialize TabController
@@ -318,6 +322,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     _fetchReviews(); // Fetch reviews on init
     _fetchComments(); // Fetch comments on init
     _loadCurrentUserAndCategories(); // Fetch current user and categories
+    _loadPublicExperience(); // Fetch public experience for rating counts
     // TODO: Fetch comment count if needed
     // If preview media were provided, use them and skip fetching
     if (widget.initialMediaItems != null) {
@@ -654,6 +659,25 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
               'Failed to load place details. Please try again later.';
         });
       }
+    }
+  }
+
+  // --- ADDED: Method to load public experience for rating counts ---
+  Future<void> _loadPublicExperience() async {
+    final String? placeId = _currentExperience.location.placeId;
+    if (placeId == null || placeId.isEmpty) {
+      return; // No placeId, can't load public experience
+    }
+
+    try {
+      final publicExperience = await _experienceService.findPublicExperienceByPlaceId(placeId);
+      if (mounted) {
+        setState(() {
+          _publicExperience = publicExperience;
+        });
+      }
+    } catch (e) {
+      debugPrint('ExperiencePageScreen: Error loading public experience: $e');
     }
   }
 
@@ -1017,6 +1041,108 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
           ),
           // --- END: Positioned Overflow Menu (3-dot) ---
 
+          // --- ADDED: Thumbs Up/Down Rating Buttons (Bottom-Right) ---
+          if (!widget.readOnlyPreview)
+            Positioned(
+              bottom: 16.0,
+              right: 16.0,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Thumbs Up Column (Button + Count)
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      GestureDetector(
+                        onTap: _isUpdatingRating ? null : () => _handleThumbRating(true),
+                        child: Container(
+                          width: 32,
+                          height: 32,
+                          decoration: BoxDecoration(
+                            color: Colors.black.withOpacity(0.4),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(
+                            _userVote == true
+                                ? Icons.thumb_up
+                                : Icons.thumb_up_outlined,
+                            color: _userVote == true
+                                ? Colors.green
+                                : Colors.white.withOpacity(0.9),
+                            size: 18.0,
+                          ),
+                        ),
+                      ),
+                      Transform.translate(
+                        offset: const Offset(0, -4),
+                        child: Text(
+                          (_publicExperience?.thumbsUpCount ?? 0).toString(),
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 12.0,
+                            fontWeight: FontWeight.w500,
+                            shadows: [
+                              Shadow(
+                                offset: const Offset(1.0, 1.0),
+                                blurRadius: 2.0,
+                                color: Colors.black.withOpacity(0.5),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(width: 8),
+                  // Thumbs Down Column (Button + Count)
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      GestureDetector(
+                        onTap: _isUpdatingRating ? null : () => _handleThumbRating(false),
+                        child: Container(
+                          width: 32,
+                          height: 32,
+                          decoration: BoxDecoration(
+                            color: Colors.black.withOpacity(0.4),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(
+                            _userVote == false
+                                ? Icons.thumb_down
+                                : Icons.thumb_down_outlined,
+                            color: _userVote == false
+                                ? Colors.red
+                                : Colors.white.withOpacity(0.9),
+                            size: 18.0,
+                          ),
+                        ),
+                      ),
+                      Transform.translate(
+                        offset: const Offset(0, -4),
+                        child: Text(
+                          (_publicExperience?.thumbsDownCount ?? 0).toString(),
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 12.0,
+                            fontWeight: FontWeight.w500,
+                            shadows: [
+                              Shadow(
+                                offset: const Offset(1.0, 1.0),
+                                blurRadius: 2.0,
+                                color: Colors.black.withOpacity(0.5),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          // --- END: Thumbs Up/Down Rating Buttons ---
+
           // 3. Content (Positioned to add padding)
           Positioned(
             bottom: 0,
@@ -1063,71 +1189,6 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                                     ),
                                   ],
                                 ),
-                              ),
-                              const SizedBox(height: 4),
-
-                              // Thumbs Up/Down Rating
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment
-                                    .center, // Center the rating row
-                                children: [
-                                  // Thumbs Up Button
-                                  IconButton(
-                                    onPressed: () {
-                                      setState(() {
-                                        _userVote = _userVote == true ? null : true;
-                                      });
-                                    },
-                                    icon: Icon(
-                                      _userVote == true
-                                          ? Icons.thumb_up
-                                          : Icons.thumb_up_outlined,
-                                      color: _userVote == true
-                                          ? Colors.green
-                                          : Colors.white.withOpacity(0.7),
-                                    ),
-                                    iconSize: 24.0,
-                                    padding: EdgeInsets.zero,
-                                    constraints: const BoxConstraints(),
-                                  ),
-                                  const SizedBox(width: 16),
-                                  // Thumbs Down Button
-                                  IconButton(
-                                    onPressed: () {
-                                      setState(() {
-                                        _userVote = _userVote == false ? null : false;
-                                      });
-                                    },
-                                    icon: Icon(
-                                      _userVote == false
-                                          ? Icons.thumb_down
-                                          : Icons.thumb_down_outlined,
-                                      color: _userVote == false
-                                          ? Colors.red
-                                          : Colors.white.withOpacity(0.7),
-                                    ),
-                                    iconSize: 24.0,
-                                    padding: EdgeInsets.zero,
-                                    constraints: const BoxConstraints(),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Text(
-                                    '${experience.plendyReviewCount} ratings',
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .bodySmall
-                                        ?.copyWith(
-                                      color: Colors.white,
-                                      shadows: [
-                                        Shadow(
-                                          offset: Offset(1.0, 1.0),
-                                          blurRadius: 2.0,
-                                          color: Colors.black.withOpacity(0.5),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ],
                               ),
                             ],
                           ),
@@ -4801,6 +4862,62 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   }
 
   // --- END: Share bottom sheet ---
+
+  // --- ADDED: Thumb rating update --- START ---
+  Future<void> _handleThumbRating(bool isThumbUp) async {
+    if (_isUpdatingRating || widget.readOnlyPreview) return;
+
+    final bool? previousRating = _userVote;
+    final bool? newRating;
+
+    // Toggle logic: if already selected, remove it; otherwise set it
+    if (isThumbUp) {
+      newRating = previousRating == true ? null : true;
+    } else {
+      newRating = previousRating == false ? null : false;
+    }
+
+    // Optimistically update UI
+    setState(() {
+      _userVote = newRating;
+      _isUpdatingRating = true;
+    });
+
+    try {
+      final updatedExperience = await _experienceService.updateUserThumbRating(
+        _currentExperience.id,
+        newRating,
+        previousRating: previousRating,
+      );
+
+      if (updatedExperience != null && mounted) {
+        setState(() {
+          _currentExperience = updatedExperience;
+          _didDataChange = true;
+        });
+        // Refresh public experience to update rating counts
+        await _loadPublicExperience();
+      }
+    } catch (e) {
+      // Revert on error
+      if (mounted) {
+        setState(() {
+          _userVote = previousRating;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to save rating. Please try again.')),
+        );
+      }
+      debugPrint('_handleThumbRating: Error updating rating: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isUpdatingRating = false;
+        });
+      }
+    }
+  }
+  // --- ADDED: Thumb rating update --- END ---
 }
 
 // --- ADDED Helper class for SliverPersistentHeader (for TabBar) ---

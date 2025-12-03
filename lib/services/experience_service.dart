@@ -2920,6 +2920,141 @@ class ExperienceService {
     }
   }
 
+  // ======= Thumb Rating Operations =======
+
+  /// Updates the user's thumb rating on an experience and syncs with public experience.
+  /// [experienceId] - The ID of the experience to rate
+  /// [newRating] - true = thumbs up, false = thumbs down, null = remove rating
+  /// [previousRating] - The user's previous rating (to correctly adjust counts)
+  /// Returns the updated experience or null on failure.
+  Future<Experience?> updateUserThumbRating(
+    String experienceId,
+    bool? newRating, {
+    bool? previousRating,
+  }) async {
+    if (_currentUserId == null) {
+      debugPrint('updateUserThumbRating: User not authenticated');
+      return null;
+    }
+    
+    if (experienceId.isEmpty) {
+      debugPrint('updateUserThumbRating: Invalid experience ID');
+      return null;
+    }
+
+    try {
+      // Update the experience document with the user's rating
+      await _experiencesCollection.doc(experienceId).update({
+        'userThumbRating': newRating,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      debugPrint('updateUserThumbRating: Updated experience $experienceId with rating: $newRating');
+
+      // Fetch the updated experience to get the placeId for public experience sync
+      final updatedDoc = await _experiencesCollection.doc(experienceId).get();
+      if (!updatedDoc.exists) {
+        debugPrint('updateUserThumbRating: Experience not found after update');
+        return null;
+      }
+
+      final updatedExperience = Experience.fromFirestore(updatedDoc);
+      final String? placeId = updatedExperience.location.placeId;
+
+      // Sync with public experience if placeId exists
+      if (placeId != null && placeId.isNotEmpty) {
+        await _syncThumbRatingWithPublicExperience(
+          placeId: placeId,
+          newRating: newRating,
+          previousRating: previousRating,
+          experienceTemplate: updatedExperience,
+        );
+      }
+
+      return updatedExperience;
+    } catch (e) {
+      debugPrint('updateUserThumbRating: Error updating rating: $e');
+      return null;
+    }
+  }
+
+  /// Syncs the thumb rating change with the public experience counts.
+  /// Adjusts thumbsUpCount and thumbsDownCount based on the rating change.
+  Future<void> _syncThumbRatingWithPublicExperience({
+    required String placeId,
+    required bool? newRating,
+    required bool? previousRating,
+    Experience? experienceTemplate,
+  }) async {
+    try {
+      // Find or create public experience
+      PublicExperience? publicExperience = await findPublicExperienceByPlaceId(placeId);
+      
+      if (publicExperience == null) {
+        // Create new public experience if template is provided
+        if (experienceTemplate == null) {
+          debugPrint('_syncThumbRatingWithPublicExperience: No public experience found and no template provided');
+          return;
+        }
+
+        // Calculate initial counts based on the new rating
+        int initialThumbsUp = newRating == true ? 1 : 0;
+        int initialThumbsDown = newRating == false ? 1 : 0;
+
+        final newPublicExperience = PublicExperience(
+          id: '',
+          name: experienceTemplate.name,
+          location: experienceTemplate.location,
+          placeID: placeId,
+          yelpUrl: experienceTemplate.yelpUrl,
+          website: experienceTemplate.website,
+          allMediaPaths: experienceTemplate.imageUrls,
+          thumbsUpCount: initialThumbsUp,
+          thumbsDownCount: initialThumbsDown,
+        );
+
+        await createPublicExperience(newPublicExperience);
+        debugPrint('_syncThumbRatingWithPublicExperience: Created new public experience with initial rating');
+        return;
+      }
+
+      // Calculate the delta changes for thumbs up and thumbs down
+      int thumbsUpDelta = 0;
+      int thumbsDownDelta = 0;
+
+      // Handle previous rating removal
+      if (previousRating == true) {
+        thumbsUpDelta -= 1;
+      } else if (previousRating == false) {
+        thumbsDownDelta -= 1;
+      }
+
+      // Handle new rating addition
+      if (newRating == true) {
+        thumbsUpDelta += 1;
+      } else if (newRating == false) {
+        thumbsDownDelta += 1;
+      }
+
+      // Only update if there's a change
+      if (thumbsUpDelta != 0 || thumbsDownDelta != 0) {
+        final Map<String, dynamic> updateData = {};
+        
+        if (thumbsUpDelta != 0) {
+          updateData['thumbsUpCount'] = FieldValue.increment(thumbsUpDelta);
+        }
+        if (thumbsDownDelta != 0) {
+          updateData['thumbsDownCount'] = FieldValue.increment(thumbsDownDelta);
+        }
+
+        await _publicExperiencesCollection.doc(publicExperience.id).update(updateData);
+        debugPrint('_syncThumbRatingWithPublicExperience: Updated counts - thumbsUpDelta: $thumbsUpDelta, thumbsDownDelta: $thumbsDownDelta');
+      }
+    } catch (e) {
+      debugPrint('_syncThumbRatingWithPublicExperience: Error syncing rating: $e');
+    }
+  }
+
   // ======= Color Category Operations =======
 
   /// Fetches the user's custom color categories.
