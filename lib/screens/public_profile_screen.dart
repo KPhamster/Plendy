@@ -1,10 +1,14 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:collection/collection.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:http/http.dart' as http;
+import 'package:firebase_app_check/firebase_app_check.dart';
+import '../../firebase_options.dart';
 
 import '../models/experience.dart';
 import '../models/user_category.dart';
@@ -18,6 +22,7 @@ import '../services/message_service.dart';
 import '../widgets/shared_media_preview_modal.dart';
 import '../widgets/share_experience_bottom_sheet.dart';
 import '../models/share_result.dart';
+import 'auth_screen.dart';
 import 'experience_page_screen.dart';
 import 'main_screen.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -113,6 +118,12 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
   Future<bool> _handleBackNavigation() async {
     if (Navigator.of(context).canPop()) {
       Navigator.of(context).pop();
+    } else if (_currentUserId == null) {
+      // Unauthenticated user with no previous screen - go to auth
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const AuthScreen()),
+        (route) => false,
+      );
     } else {
       _navigateToMainScreen();
     }
@@ -199,7 +210,30 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
 
   Future<void> _loadPublicCollections() async {
     if (!mounted) return;
+    
+    // Skip loading collections if profile is private and viewer doesn't have access
+    final bool isPrivate = _profile?.isPrivate ?? false;
+    final bool isOwner = _currentUserId != null && _currentUserId == widget.userId;
+    if (isPrivate && !isOwner && !_isFollowing) {
+      setState(() {
+        _publicCategories = [];
+        _publicColorCategories = [];
+        _categoryExperiences = {};
+        _publicExperienceCount = 0;
+        _isLoadingCollections = false;
+      });
+      return;
+    }
+    
     setState(() => _isLoadingCollections = true);
+    
+    // For unauthenticated users, use REST API
+    final bool isUnauthenticated = _currentUserId == null;
+    if (isUnauthenticated) {
+      await _loadPublicCollectionsViaRest();
+      return;
+    }
+    
     try {
       // Load categories and experiences - color categories may fail due to permissions
       final categoriesSnapshot = await FirebaseFirestore.instance
@@ -347,7 +381,391 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
       });
     }
   }
-
+  
+  /// Load public collections using REST API (for unauthenticated users)
+  Future<void> _loadPublicCollectionsViaRest() async {
+    try {
+      final appCheckToken = await FirebaseAppCheck.instance.getToken(true);
+      final apiKey = DefaultFirebaseOptions.currentPlatform.apiKey;
+      final headers = <String, String>{
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        if (apiKey.isNotEmpty) 'x-goog-api-key': apiKey,
+        if (appCheckToken != null && appCheckToken.isNotEmpty)
+          'X-Firebase-AppCheck': appCheckToken,
+      };
+      
+      const projectId = 'plendy-7df50';
+      
+      // Fetch categories via REST
+      final categoriesUrl = Uri.parse(
+        'https://firestore.googleapis.com/v1/projects/$projectId/databases/(default)/documents/users/${widget.userId}/categories'
+      );
+      final categoriesResp = await http.get(categoriesUrl, headers: headers);
+      
+      // Fetch experiences via REST query with pagination
+      final experiencesQueryUrl = Uri.parse(
+        'https://firestore.googleapis.com/v1/projects/$projectId/databases/(default)/documents:runQuery'
+      );
+      
+      // Fetch all experiences using pagination
+      final List<Map<String, dynamic>> allExperienceResults = [];
+      String? lastDocPath;
+      bool hasMore = true;
+      const int pageSize = 500;
+      
+      while (hasMore) {
+        final Map<String, dynamic> structuredQuery = {
+          'from': [{'collectionId': 'experiences'}],
+          'where': {
+            'fieldFilter': {
+              'field': {'fieldPath': 'createdBy'},
+              'op': 'EQUAL',
+              'value': {'stringValue': widget.userId}
+            }
+          },
+          'orderBy': [
+            {'field': {'fieldPath': '__name__'}, 'direction': 'ASCENDING'}
+          ],
+          'limit': pageSize,
+        };
+        
+        // Add startAfter for pagination
+        if (lastDocPath != null) {
+          structuredQuery['startAt'] = {
+            'values': [{'referenceValue': lastDocPath}],
+            'before': false, // startAfter behavior
+          };
+        }
+        
+        final experiencesPayload = {'structuredQuery': structuredQuery};
+        final experiencesResp = await http.post(
+          experiencesQueryUrl,
+          headers: headers,
+          body: json.encode(experiencesPayload),
+        );
+        
+        if (experiencesResp.statusCode == 200) {
+          final results = json.decode(experiencesResp.body) as List;
+          final pageResults = results.whereType<Map<String, dynamic>>()
+              .where((r) => r.containsKey('document'))
+              .toList();
+          
+          allExperienceResults.addAll(pageResults);
+          
+          if (pageResults.length < pageSize) {
+            hasMore = false;
+          } else {
+            // Get the last document path for the next page
+            final lastDoc = pageResults.last['document'] as Map<String, dynamic>;
+            lastDocPath = lastDoc['name'] as String?;
+            if (lastDocPath == null) {
+              hasMore = false;
+            }
+          }
+        } else {
+          debugPrint('PublicProfileScreen: Experiences query returned ${experiencesResp.statusCode}');
+          hasMore = false;
+        }
+      }
+      
+      debugPrint('PublicProfileScreen: Fetched ${allExperienceResults.length} total experience results via REST');
+      
+      // Parse categories
+      final List<UserCategory> categories = [];
+      if (categoriesResp.statusCode == 200) {
+        final body = json.decode(categoriesResp.body) as Map<String, dynamic>;
+        final docs = (body['documents'] as List?) ?? [];
+        for (final doc in docs) {
+          try {
+            final category = _parseCategoryFromRest(doc as Map<String, dynamic>);
+            if (category != null && !category.isPrivate) {
+              categories.add(category);
+            }
+          } catch (e) {
+            debugPrint('PublicProfileScreen: skipping invalid category via REST - $e');
+          }
+        }
+      }
+      
+      categories.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+      debugPrint('PublicProfileScreen: Loaded ${categories.length} categories via REST');
+      
+      // Parse experiences from paginated results
+      final List<Experience> experiences = [];
+      for (final result in allExperienceResults) {
+        try {
+          final experience = _parseExperienceFromRest(result['document'] as Map<String, dynamic>);
+          if (experience != null && !experience.isPrivate) {
+            experiences.add(experience);
+          }
+        } catch (e) {
+          debugPrint('PublicProfileScreen: skipping invalid experience via REST - $e');
+        }
+      }
+      debugPrint('PublicProfileScreen: Loaded ${experiences.length} public experiences via REST');
+      
+      // Sort experiences alphabetically
+      experiences.sort((a, b) {
+        final aName = a.name.toLowerCase();
+        final bName = b.name.toLowerCase();
+        return aName.compareTo(bName);
+      });
+      final int totalPublicExperiences = experiences.length;
+      
+      // Build color categories list from public experiences
+      final Set<String> colorCategoryIds = {};
+      for (final experience in experiences) {
+        if (experience.colorCategoryId != null && experience.colorCategoryId!.isNotEmpty) {
+          colorCategoryIds.add(experience.colorCategoryId!);
+        }
+        for (final colorId in experience.otherColorCategoryIds) {
+          if (colorId.isNotEmpty) {
+            colorCategoryIds.add(colorId);
+          }
+        }
+      }
+      
+      // Fetch color categories via REST
+      final List<ColorCategory> colorCategories = [];
+      if (colorCategoryIds.isNotEmpty) {
+        try {
+          final colorCategoriesUrl = Uri.parse(
+            'https://firestore.googleapis.com/v1/projects/$projectId/databases/(default)/documents/users/${widget.userId}/color_categories'
+          );
+          final colorCategoriesResp = await http.get(colorCategoriesUrl, headers: headers);
+          
+          if (colorCategoriesResp.statusCode == 200) {
+            final body = json.decode(colorCategoriesResp.body) as Map<String, dynamic>;
+            final docs = (body['documents'] as List?) ?? [];
+            for (final doc in docs) {
+              try {
+                final colorCategory = _parseColorCategoryFromRest(doc as Map<String, dynamic>);
+                if (colorCategory != null && 
+                    !colorCategory.isPrivate && 
+                    colorCategoryIds.contains(colorCategory.id)) {
+                  colorCategories.add(colorCategory);
+                }
+              } catch (e) {
+                debugPrint('PublicProfileScreen: skipping invalid color category via REST - $e');
+              }
+            }
+          }
+        } catch (e) {
+          debugPrint('PublicProfileScreen: Could not load color categories via REST - $e');
+        }
+      }
+      
+      // Build category -> experiences map
+      final Map<String, List<Experience>> catExperiences = {
+        for (final category in categories) category.id: []
+      };
+      final categoryIds = catExperiences.keys.toSet();
+      
+      for (final experience in experiences) {
+        final Set<String> relevantCategoryIds = {
+          if (experience.categoryId != null) experience.categoryId!,
+          ...experience.otherCategories,
+        };
+        for (final categoryId in relevantCategoryIds) {
+          if (!categoryIds.contains(categoryId)) continue;
+          catExperiences[categoryId]!.add(experience);
+        }
+      }
+      
+      // Build color category -> experiences map
+      final Map<String, List<Experience>> colorCatExperiences = {
+        for (final colorCategory in colorCategories) colorCategory.id: []
+      };
+      final validColorCategoryIds = colorCatExperiences.keys.toSet();
+      
+      for (final experience in experiences) {
+        final Set<String> associatedColorIds = {
+          if (experience.colorCategoryId != null && experience.colorCategoryId!.isNotEmpty)
+            experience.colorCategoryId!,
+          ...experience.otherColorCategoryIds.where((id) => id.isNotEmpty),
+        };
+        for (final colorId in associatedColorIds) {
+          if (validColorCategoryIds.contains(colorId)) {
+            colorCatExperiences[colorId]!.add(experience);
+          }
+        }
+      }
+      
+      if (!mounted) return;
+      setState(() {
+        _publicCategories = categories;
+        _publicColorCategories = colorCategories;
+        _categoryExperiences = catExperiences;
+        _publicExperienceCount = totalPublicExperiences;
+        _categoryExperiences.addAll(colorCatExperiences);
+        _isLoadingCollections = false;
+      });
+    } catch (e) {
+      debugPrint('PublicProfileScreen: error loading collections via REST - $e');
+      if (!mounted) return;
+      setState(() {
+        _publicCategories = [];
+        _publicColorCategories = [];
+        _categoryExperiences = {};
+        _isLoadingCollections = false;
+        _publicExperienceCount = 0;
+      });
+    }
+  }
+  
+  /// Parse a UserCategory from Firestore REST API response
+  UserCategory? _parseCategoryFromRest(Map<String, dynamic> doc) {
+    final name = doc['name'] as String?;
+    if (name == null) return null;
+    
+    final fields = (doc['fields'] as Map<String, dynamic>?) ?? {};
+    final docId = name.split('/').last;
+    
+    return UserCategory(
+      id: docId,
+      name: _getStringField(fields, 'name') ?? '',
+      icon: _getStringField(fields, 'icon') ?? '📁',
+      ownerUserId: widget.userId,
+      isPrivate: _getBoolField(fields, 'isPrivate') ?? false,
+    );
+  }
+  
+  /// Parse an Experience from Firestore REST API response
+  Experience? _parseExperienceFromRest(Map<String, dynamic> doc) {
+    final name = doc['name'] as String?;
+    if (name == null) return null;
+    
+    final fields = (doc['fields'] as Map<String, dynamic>?) ?? {};
+    final docId = name.split('/').last;
+    
+    final locFields = _getMapField(fields, 'location') ?? {};
+    final location = Location(
+      placeId: _getStringField(locFields, 'placeId'),
+      latitude: _getDoubleField(locFields, 'latitude') ?? 0.0,
+      longitude: _getDoubleField(locFields, 'longitude') ?? 0.0,
+      address: _getStringField(locFields, 'address'),
+      city: _getStringField(locFields, 'city'),
+      state: _getStringField(locFields, 'state'),
+      country: _getStringField(locFields, 'country'),
+      displayName: _getStringField(locFields, 'displayName'),
+    );
+    
+    return Experience(
+      id: docId,
+      name: _getStringField(fields, 'name') ?? '',
+      description: _getStringField(fields, 'description') ?? '',
+      location: location,
+      categoryId: _getStringField(fields, 'categoryId'),
+      imageUrls: _getStringListField(fields, 'imageUrls'),
+      plendyRating: _getDoubleField(fields, 'plendyRating') ?? 0.0,
+      rating: _getDoubleField(fields, 'plendyRating') ?? 0.0,
+      createdAt: _getTimestampField(fields, 'createdAt') ?? DateTime.now(),
+      updatedAt: _getTimestampField(fields, 'updatedAt') ?? DateTime.now(),
+      colorCategoryId: _getStringField(fields, 'colorCategoryId'),
+      otherCategories: _getStringListField(fields, 'otherCategories'),
+      otherColorCategoryIds: _getStringListField(fields, 'otherColorCategoryIds'),
+      isPrivate: _getBoolField(fields, 'isPrivate') ?? false,
+      categoryIconDenorm: _getStringField(fields, 'categoryIconDenorm'),
+      colorHexDenorm: _getStringField(fields, 'colorHexDenorm'),
+      editorUserIds: _getStringListField(fields, 'editorUserIds'),
+      sharedMediaItemIds: _getStringListField(fields, 'sharedMediaItemIds'),
+    );
+  }
+  
+  /// Parse a ColorCategory from Firestore REST API response
+  ColorCategory? _parseColorCategoryFromRest(Map<String, dynamic> doc) {
+    final name = doc['name'] as String?;
+    if (name == null) return null;
+    
+    final fields = (doc['fields'] as Map<String, dynamic>?) ?? {};
+    final docId = name.split('/').last;
+    
+    // Get color as hex string - try both 'colorHex' and 'color' fields
+    String colorHex = _getStringField(fields, 'colorHex') ?? '';
+    if (colorHex.isEmpty) {
+      // Fallback: try to get color as integer and convert to hex
+      final colorValue = _getIntField(fields, 'color');
+      if (colorValue != null) {
+        colorHex = colorValue.toRadixString(16).padLeft(8, '0').toUpperCase();
+      } else {
+        colorHex = 'FF808080'; // Default gray
+      }
+    }
+    
+    return ColorCategory(
+      id: docId,
+      name: _getStringField(fields, 'name') ?? '',
+      colorHex: colorHex,
+      ownerUserId: widget.userId,
+      isPrivate: _getBoolField(fields, 'isPrivate') ?? false,
+    );
+  }
+  
+  // REST API field parsing helpers
+  String? _getStringField(Map<String, dynamic> fields, String fieldName) {
+    final field = fields[fieldName] as Map<String, dynamic>?;
+    if (field == null) return null;
+    return field['stringValue'] as String?;
+  }
+  
+  bool? _getBoolField(Map<String, dynamic> fields, String fieldName) {
+    final field = fields[fieldName] as Map<String, dynamic>?;
+    if (field == null) return null;
+    return field['booleanValue'] as bool?;
+  }
+  
+  double? _getDoubleField(Map<String, dynamic> fields, String fieldName) {
+    final field = fields[fieldName] as Map<String, dynamic>?;
+    if (field == null) return null;
+    if (field.containsKey('doubleValue')) {
+      return (field['doubleValue'] as num?)?.toDouble();
+    }
+    if (field.containsKey('integerValue')) {
+      return double.tryParse(field['integerValue'] as String? ?? '');
+    }
+    return null;
+  }
+  
+  int? _getIntField(Map<String, dynamic> fields, String fieldName) {
+    final field = fields[fieldName] as Map<String, dynamic>?;
+    if (field == null) return null;
+    if (field.containsKey('integerValue')) {
+      return int.tryParse(field['integerValue'] as String? ?? '');
+    }
+    return null;
+  }
+  
+  DateTime? _getTimestampField(Map<String, dynamic> fields, String fieldName) {
+    final field = fields[fieldName] as Map<String, dynamic>?;
+    if (field == null) return null;
+    final timestamp = field['timestampValue'] as String?;
+    if (timestamp == null) return null;
+    return DateTime.tryParse(timestamp);
+  }
+  
+  List<String> _getStringListField(Map<String, dynamic> fields, String fieldName) {
+    final field = fields[fieldName] as Map<String, dynamic>?;
+    if (field == null) return [];
+    final arrayValue = field['arrayValue'] as Map<String, dynamic>?;
+    if (arrayValue == null) return [];
+    final values = arrayValue['values'] as List?;
+    if (values == null) return [];
+    return values
+        .map((v) => (v as Map<String, dynamic>)['stringValue'] as String?)
+        .where((s) => s != null)
+        .cast<String>()
+        .toList();
+  }
+  
+  Map<String, dynamic>? _getMapField(Map<String, dynamic> fields, String fieldName) {
+    final field = fields[fieldName] as Map<String, dynamic>?;
+    if (field == null) return null;
+    final mapValue = field['mapValue'] as Map<String, dynamic>?;
+    if (mapValue == null) return null;
+    return mapValue['fields'] as Map<String, dynamic>?;
+  }
+  
   Future<void> _shareProfile(UserProfile profile) async {
     if (!mounted) return;
     
@@ -1018,12 +1436,58 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
     final profile = _profile;
     final bool viewingOwnProfile =
         _currentUserId != null && _currentUserId == widget.userId;
+    
+    // Check if profile is private and viewer doesn't have access
+    final bool isPrivateProfile = profile?.isPrivate ?? false;
+    final bool canViewPrivateProfile = viewingOwnProfile || _isFollowing;
+    final bool showPrivateMessage = isPrivateProfile && !canViewPrivateProfile;
 
     Widget content;
     if (_isLoading) {
       content = const Center(child: CircularProgressIndicator());
     } else if (profile == null) {
       content = const Center(child: Text('This profile is not available.'));
+    } else if (showPrivateMessage) {
+      // Show private profile message
+      content = Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              _buildAvatar(profile),
+              const SizedBox(height: 16),
+              if (profile.displayName?.isNotEmpty == true)
+                Text(
+                  profile.displayName!,
+                  style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                ),
+              if (profile.username?.isNotEmpty == true)
+                Text(
+                  '@${profile.username!}',
+                  style: TextStyle(color: Colors.grey[700]),
+                ),
+              const SizedBox(height: 24),
+              const Icon(Icons.lock_outline, size: 48, color: Colors.grey),
+              const SizedBox(height: 16),
+              const Text(
+                'This profile is private',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                _currentUserId == null
+                    ? 'Sign in and follow this user to see their profile.'
+                    : 'Follow this user to see their profile.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.grey[600]),
+              ),
+              const SizedBox(height: 24),
+              _buildFollowButton(),
+            ],
+          ),
+        ),
+      );
     } else {
       final bool hasDisplayName = profile.displayName?.isNotEmpty ?? false;
       final bool hasUsername = profile.username?.isNotEmpty ?? false;

@@ -1,5 +1,6 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -153,6 +154,18 @@ class _ChatScreenState extends State<ChatScreen> {
         builder: (_) => PublicProfileScreen(userId: userId),
       ),
     );
+  }
+
+  void _copyShareLinkToClipboard(String url, String itemType) {
+    Clipboard.setData(ClipboardData(text: url));
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('$itemType link copied to clipboard'),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
   }
 
   void _startEditingTitle(String title) {
@@ -588,6 +601,10 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
             child: InkWell(
               onTap: () => _openPublicProfile(userId),
+              onLongPress: () => _copyShareLinkToClipboard(
+                'https://plendy.app/profile/$userId',
+                'Profile',
+              ),
               borderRadius: BorderRadius.circular(12),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -693,7 +710,7 @@ class _ChatScreenState extends State<ChatScreen> {
                             ),
                             const SizedBox(width: 4),
                             Text(
-                              'Tap to view profile',
+                              'Tap to view profile. Hold to copy link.',
                               style: TextStyle(
                                 fontSize: 12,
                                 color: isMine
@@ -849,6 +866,12 @@ class _ChatScreenState extends State<ChatScreen> {
           child: Stack(
             children: [
               InkWell(
+                onLongPress: message.shareId != null && message.shareId!.isNotEmpty
+                    ? () => _copyShareLinkToClipboard(
+                          'https://plendy.app/shared/${message.shareId}',
+                          'Experience',
+                        )
+                    : null,
                 onTap: () async {
                   if (isDiscoveryPreview) {
                     // Discovery preview: show media preview modal
@@ -1166,6 +1189,12 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
             child: InkWell(
               onTap: () => _openMultiExperiencePreview(message.shareId, snapshots, message.senderId),
+              onLongPress: message.shareId != null && message.shareId!.isNotEmpty
+                  ? () => _copyShareLinkToClipboard(
+                        'https://plendy.app/shared/${message.shareId}',
+                        'Experiences',
+                      )
+                  : null,
               borderRadius: BorderRadius.circular(12),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1304,7 +1333,7 @@ class _ChatScreenState extends State<ChatScreen> {
                             ),
                             const SizedBox(width: 4),
                             Text(
-                              'Tap to view all',
+                              'Tap to view all. Hold to copy link.',
                               style: TextStyle(
                                 fontSize: 12,
                                 color: isMine
@@ -1438,6 +1467,12 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
             child: InkWell(
               onTap: () => _openCategoryPreview(message.shareId, snapshot),
+              onLongPress: message.shareId != null && message.shareId!.isNotEmpty
+                  ? () => _copyShareLinkToClipboard(
+                        'https://plendy.app/shared-category/${message.shareId}',
+                        'Category',
+                      )
+                  : null,
               borderRadius: BorderRadius.circular(12),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1563,7 +1598,7 @@ class _ChatScreenState extends State<ChatScreen> {
                             ),
                             const SizedBox(width: 4),
                             Text(
-                              'Tap to view',
+                              'Tap to view. Hold to copy link.',
                               style: TextStyle(
                                 fontSize: 12,
                                 color: isMine
@@ -1749,6 +1784,12 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
             child: InkWell(
               onTap: () => _openMultiCategoryPreview(message.shareId, snapshots),
+              onLongPress: message.shareId != null && message.shareId!.isNotEmpty
+                  ? () => _copyShareLinkToClipboard(
+                        'https://plendy.app/shared-category/${message.shareId}',
+                        'Categories',
+                      )
+                  : null,
               borderRadius: BorderRadius.circular(12),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1887,7 +1928,7 @@ class _ChatScreenState extends State<ChatScreen> {
                             ),
                             const SizedBox(width: 4),
                             Text(
-                              'Tap to view all',
+                              'Tap to view all. Hold to copy link.',
                               style: TextStyle(
                                 fontSize: 12,
                                 color: isMine
@@ -2057,6 +2098,21 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
             child: InkWell(
               onTap: () => _openEventPreview(message.shareId, snapshot),
+              onLongPress: () {
+                // Use shareToken from event snapshot if available
+                final String? shareToken = snapshot['shareToken'] as String?;
+                if (shareToken != null && shareToken.isNotEmpty) {
+                  _copyShareLinkToClipboard(
+                    'https://plendy.app/shared-event/$shareToken',
+                    'Event',
+                  );
+                } else if (message.shareId != null && message.shareId!.isNotEmpty) {
+                  _copyShareLinkToClipboard(
+                    'https://plendy.app/shared-event/${message.shareId}',
+                    'Event',
+                  );
+                }
+              },
               borderRadius: BorderRadius.circular(12),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -2196,7 +2252,7 @@ class _ChatScreenState extends State<ChatScreen> {
                             ),
                             const SizedBox(width: 4),
                             Text(
-                              'Tap to view',
+                              'Tap to view. Hold to copy link.',
                               style: TextStyle(
                                 fontSize: 12,
                                 color: isMine
