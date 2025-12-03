@@ -1753,24 +1753,36 @@ class CollectionsScreenState extends State<CollectionsScreen>
     });
     final totalSw = Stopwatch()..start();
     
-    // Clear the category permissions cache to ensure fresh data
-    _experienceService.clearCategoryPermissionsCache();
+    // NOTE: Cache is NOT cleared here anymore for performance.
+    // Cache is only cleared when permissions actually change (share/unshare actions).
+    // See clearCategoryPermissionsCache() calls in share-related methods.
 
     final userId = _authService.currentUser?.uid;
     try {
       final fetchSw = Stopwatch()..start();
-      // OPTIMIZED: Use new method that fetches both category types with a single shared permissions query
-      // This eliminates the duplicate _getEditableCategoryPermissionsForCurrentUser() call
-      // that was previously made once for user categories and once for color categories
-      final categoriesResult = await _experienceService.getUserAndColorCategories(includeSharedEditable: true);
+      
+      // OPTIMIZATION: Run all initial queries in parallel instead of sequentially
+      // This saves ~1-2 seconds by overlapping network requests
+      final parallelFutures = await Future.wait([
+        // Future 0: Categories (user + color)
+        _experienceService.getUserAndColorCategories(includeSharedEditable: true),
+        // Future 1: Shared permissions (items shared WITH current user)
+        if (userId != null) _sharingService.getSharedItemsForUser(userId) else Future.value(<SharePermission>[]),
+        // Future 2: Owned permissions (items current user has shared with others) - cached
+        if (userId != null) _sharingService.getOwnedSharePermissions(userId) else Future.value(<SharePermission>[]),
+      ]);
+      
+      final categoriesResult = parallelFutures[0] as ({List<UserCategory> userCategories, List<ColorCategory> colorCategories});
+      final sharedPermissions = parallelFutures[1] as List<SharePermission>;
+      final ownedPermissions = parallelFutures[2] as List<SharePermission>;
       
       if (_perfLogs) {
         fetchSw.stop();
         final ms = fetchSw.elapsedMilliseconds;
         print(
-            '[Perf][Collections] Firestore fetch (categories, color categories) took ${ms}ms');
+            '[Perf][Collections] Parallel fetch (categories, shared perms, owned perms) took ${ms}ms');
         if (ms > 2000) {
-          print('[Perf][Collections] WARNING: Category fetch is slow (>${ms}ms). Consider caching or optimizing queries.');
+          print('[Perf][Collections] WARNING: Initial fetch is slow (>${ms}ms). Check Firestore indexes.');
         }
       }
 
@@ -1784,12 +1796,9 @@ class CollectionsScreenState extends State<CollectionsScreen>
       final Set<String> ownedSharedExperienceIds = {};
 
       if (userId != null) {
+        // Process shared permissions (items shared WITH current user)
         try {
-          print('[Collections] Loading shared permissions for user: $userId');
-          final sharedPermissions =
-              await _sharingService.getSharedItemsForUser(userId);
-          print(
-              '[Collections] Found ${sharedPermissions.length} shared permissions');
+          print('[Collections] Found ${sharedPermissions.length} shared permissions');
           if (sharedPermissions.isNotEmpty) {
             // Prefetch all unique owner names in one batch
             final uniqueOwnerIds =
@@ -1828,46 +1837,34 @@ class CollectionsScreenState extends State<CollectionsScreen>
             }
           }
         } catch (e) {
-          print('[Collections] Failed to load shared permissions: $e');
+          print('[Collections] Failed to process shared permissions: $e');
         }
 
+        // Process owned permissions (items current user has shared with others)
         try {
-          print(
-              '[Collections] Loading owned share permissions for user: $userId');
+          print('[Collections] Found ${ownedPermissions.length} owned share permissions');
           
-          // OPTIMIZED: Only query for categories we actually own, not all 2047+ permissions
           final Set<String> ownCategoryIds =
               ownCategories.map((c) => c.id).toSet();
           final Set<String> ownColorCategoryIds =
               ownColorCategories.map((c) => c.id).toSet();
-          final Set<String> allOwnedCategoryIds = {...ownCategoryIds, ...ownColorCategoryIds};
           
-          if (allOwnedCategoryIds.isNotEmpty) {
-            // Query only for permissions related to our owned categories
-            final ownedPermissions =
-                await _sharingService.getOwnedSharePermissions(userId);
-            print(
-                '[Collections] Found ${ownedPermissions.length} owned share permissions');
-            
-            final Set<String> ownedExperienceIds = {};
-            for (final permission in ownedPermissions) {
-              if (permission.itemType == ShareableItemType.category) {
-                final id = permission.itemId;
-                if (ownCategoryIds.contains(id)) {
-                  ownedSharedCategoryIds.add(id);
-                } else if (ownColorCategoryIds.contains(id)) {
-                  ownedSharedColorCategoryIds.add(id);
-                }
-              } else if (permission.itemType == ShareableItemType.experience) {
-                ownedExperienceIds.add(permission.itemId);
+          final Set<String> ownedExperienceIds = {};
+          for (final permission in ownedPermissions) {
+            if (permission.itemType == ShareableItemType.category) {
+              final id = permission.itemId;
+              if (ownCategoryIds.contains(id)) {
+                ownedSharedCategoryIds.add(id);
+              } else if (ownColorCategoryIds.contains(id)) {
+                ownedSharedColorCategoryIds.add(id);
               }
+            } else if (permission.itemType == ShareableItemType.experience) {
+              ownedExperienceIds.add(permission.itemId);
             }
-            ownedSharedExperienceIds.addAll(ownedExperienceIds);
-          } else {
-            print('[Collections] No owned categories, skipping share permissions query');
           }
+          ownedSharedExperienceIds.addAll(ownedExperienceIds);
         } catch (e) {
-          print('[Collections] Failed to load owned share permissions: $e');
+          print('[Collections] Failed to process owned share permissions: $e');
         }
       }
 
@@ -9334,10 +9331,13 @@ class CollectionsScreenState extends State<CollectionsScreen>
       
       // Only fetch owned experiences on initial load
       if (isInitialLoad) {
+        final expSw = Stopwatch()..start();
         ownedExperiences = await _experienceService.getExperiencesByUser(
           userId,
           limit: 0, // No limit - load all owned experiences
         );
+        expSw.stop();
+        print('[Perf][Collections] getExperiencesByUser took ${expSw.elapsedMilliseconds}ms for ${ownedExperiences.length} experiences');
       }
 
       // Fetch paginated shared experiences with server-side sorting
@@ -10314,6 +10314,7 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
       // Clear the permissions cache since we just modified permissions
       final ExperienceService experienceService = ExperienceService();
       experienceService.clearCategoryPermissionsCache();
+      _sharingService.clearOwnedPermissionsCache();
       
       await _loadShareAccessDetails();
 
@@ -10568,6 +10569,7 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
                         // Clear the permissions cache since we just created a share link
                         final ExperienceService experienceService = ExperienceService();
                         experienceService.clearCategoryPermissionsCache();
+                        _sharingService.clearOwnedPermissionsCache();
                         
                         if (mounted) {
                           Navigator.of(context).pop();
@@ -10797,6 +10799,7 @@ class _BulkShareBottomSheetContentState
                         // Clear the permissions cache since we just created share links
                         final ExperienceService experienceService = ExperienceService();
                         experienceService.clearCategoryPermissionsCache();
+                        SharingService().clearOwnedPermissionsCache();
                         
                         if (!mounted) return;
                         Navigator.of(context).pop();

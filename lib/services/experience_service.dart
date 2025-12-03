@@ -39,6 +39,15 @@ class PublicExperiencePage {
 
 /// Service for managing Experience-related operations
 class ExperienceService {
+  // Singleton pattern - ensures cache persists across all usages
+  static final ExperienceService _instance = ExperienceService._internal();
+  
+  factory ExperienceService() {
+    return _instance;
+  }
+  
+  ExperienceService._internal();
+  
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
 
@@ -64,12 +73,31 @@ class ExperienceService {
   // ADDED: Cache for shared category permissions to avoid duplicate queries
   List<SharePermission>? _cachedCategoryPermissions;
   DateTime? _categoryPermissionsCacheTime;
-  static const Duration _cacheValidDuration = Duration(seconds: 5);
+  static const Duration _cacheValidDuration = Duration(minutes: 5);
+  
+  // Cache for getUserAndColorCategories result (the expensive combined fetch)
+  ({List<UserCategory> userCategories, List<ColorCategory> colorCategories})? _cachedUserAndColorCategories;
+  DateTime? _userAndColorCategoriesCacheTime;
+  String? _userAndColorCategoriesCacheUserId;
+  
+  // In-flight request deduplication - if a fetch is already running, wait for it instead of starting another
+  Future<({List<UserCategory> userCategories, List<ColorCategory> colorCategories})>? _inFlightCategoriesFetch;
+  
+  // Cache for user experiences (the expensive query that loads all owned experiences)
+  List<Experience>? _cachedUserExperiences;
+  String? _cachedUserExperiencesUserId;
+  DateTime? _userExperiencesCacheTime;
+  static const Duration _experiencesCacheValidDuration = Duration(minutes: 2); // Shorter TTL since experiences change more often
+  Future<List<Experience>>? _inFlightUserExperiencesFetch;
   
   /// Clear the permissions cache (call when user logs out or permissions change)
   void clearCategoryPermissionsCache() {
     _cachedCategoryPermissions = null;
     _categoryPermissionsCacheTime = null;
+    // Also clear the full categories cache since it depends on permissions
+    _cachedUserAndColorCategories = null;
+    _userAndColorCategoriesCacheTime = null;
+    _userAndColorCategoriesCacheUserId = null;
   }
 
   /// Fetch a user profile by ID
@@ -1527,6 +1555,10 @@ class ExperienceService {
     final docRef = await _experiencesCollection.add(data);
     debugPrint(
         'createExperience: Created experience ${docRef.id} with ${sharedUserIds.length} shared users');
+    
+    // Invalidate the user experiences cache so Collections shows the new experience
+    clearUserExperiencesCache();
+    
     return docRef.id;
   }
 
@@ -1728,6 +1760,9 @@ class ExperienceService {
     }
 
     await _experiencesCollection.doc(experience.id).update(data);
+    
+    // Invalidate the user experiences cache so Collections shows the updated experience
+    clearUserExperiencesCache();
   }
 
   /// Delete an experience
@@ -1769,6 +1804,9 @@ class ExperienceService {
 
     // Delete the experience document itself
     await _experiencesCollection.doc(experienceId).delete();
+    
+    // Invalidate the user experiences cache so Collections shows the deletion
+    clearUserExperiencesCache();
 
     // Optional: Also delete related reviews, comments, and reels
     // This could be done with a batch or with cloud functions for larger datasets
@@ -2108,8 +2146,71 @@ class ExperienceService {
   }
 
   /// Get experiences created by a specific user
+  /// Results are cached for performance - even partial requests can use the full cache
   Future<List<Experience>> getExperiencesByUser(String userId,
+      {int limit = 50, GetOptions? options, bool forceRefresh = false}) async {
+    
+    final now = DateTime.now();
+    final cacheValid = _cachedUserExperiences != null &&
+        _cachedUserExperiencesUserId == userId &&
+        _userExperiencesCacheTime != null &&
+        now.difference(_userExperiencesCacheTime!) < _experiencesCacheValidDuration;
+    
+    // If we have a valid cache of ALL experiences, we can serve ANY request from it
+    if (!forceRefresh && cacheValid) {
+      if (limit == 0 || limit >= _cachedUserExperiences!.length) {
+        print('[ExperienceService] Using cached user experiences (${_cachedUserExperiences!.length} items)');
+        return _cachedUserExperiences!;
+      } else {
+        // Return subset from cache
+        print('[ExperienceService] Using cached user experiences (returning first $limit of ${_cachedUserExperiences!.length})');
+        return _cachedUserExperiences!.take(limit).toList();
+      }
+    }
+    
+    // In-flight deduplication - if we're already fetching ALL experiences, wait for that
+    if (!forceRefresh && _inFlightUserExperiencesFetch != null) {
+      print('[ExperienceService] Waiting for in-flight user experiences fetch...');
+      try {
+        final result = await _inFlightUserExperiencesFetch!;
+        // Return appropriate subset
+        if (limit == 0 || limit >= result.length) {
+          return result;
+        } else {
+          return result.take(limit).toList();
+        }
+      } catch (e) {
+        print('[ExperienceService] In-flight fetch failed, starting new fetch: $e');
+      }
+    }
+    
+    // For limit=0 (all experiences), fetch and cache
+    if (limit == 0) {
+      _inFlightUserExperiencesFetch = _doGetExperiencesByUser(userId, limit: 0, options: options);
+      try {
+        final result = await _inFlightUserExperiencesFetch!;
+        _inFlightUserExperiencesFetch = null;
+        
+        // Cache the full result
+        _cachedUserExperiences = result;
+        _cachedUserExperiencesUserId = userId;
+        _userExperiencesCacheTime = DateTime.now();
+        
+        return result;
+      } catch (e) {
+        _inFlightUserExperiencesFetch = null;
+        rethrow;
+      }
+    }
+    
+    // For limited requests without cache, just fetch directly (smaller query)
+    return _doGetExperiencesByUser(userId, limit: limit, options: options);
+  }
+  
+  Future<List<Experience>> _doGetExperiencesByUser(String userId,
       {int limit = 50, GetOptions? options}) async {
+    final sw = Stopwatch()..start();
+    
     Query query = _experiencesCollection
         .where('createdBy', isEqualTo: userId)
         .orderBy('createdAt', descending: true);
@@ -2118,8 +2219,20 @@ class ExperienceService {
     }
 
     final snapshot = await query.get(options);
-
-    return snapshot.docs.map((doc) => Experience.fromFirestore(doc)).toList();
+    final experiences = snapshot.docs.map((doc) => Experience.fromFirestore(doc)).toList();
+    
+    sw.stop();
+    print('[ExperienceService] getExperiencesByUser fetched ${experiences.length} experiences in ${sw.elapsedMilliseconds}ms');
+    
+    return experiences;
+  }
+  
+  /// Clear the user experiences cache (call when experiences are added/edited/deleted)
+  void clearUserExperiencesCache() {
+    _cachedUserExperiences = null;
+    _cachedUserExperiencesUserId = null;
+    _userExperiencesCacheTime = null;
+    print('[ExperienceService] Cleared user experiences cache');
   }
 
   /// Page experiences shared with a specific user, using denormalized sharedWithUserIds.
@@ -2903,14 +3016,56 @@ class ExperienceService {
   /// OPTIMIZED: Fetch both user categories and color categories with a single shared permissions query
   /// This avoids duplicate Firestore queries when both are needed simultaneously
   Future<({List<UserCategory> userCategories, List<ColorCategory> colorCategories})> 
-      getUserAndColorCategories({bool includeSharedEditable = false}) async {
+      getUserAndColorCategories({bool includeSharedEditable = false, bool forceRefresh = false}) async {
     final userId = _currentUserId;
-    print("getUserAndColorCategories START - User: $userId | includeSharedEditable: $includeSharedEditable");
+    print("getUserAndColorCategories START - User: $userId | includeSharedEditable: $includeSharedEditable | forceRefresh: $forceRefresh");
     
     if (userId == null) {
       print("getUserAndColorCategories END - No user, returning empty lists.");
       return (userCategories: <UserCategory>[], colorCategories: <ColorCategory>[]);
     }
+    
+    // Check cache first (only when includeSharedEditable=true, which is the slow path)
+    if (includeSharedEditable && !forceRefresh &&
+        _cachedUserAndColorCategories != null &&
+        _userAndColorCategoriesCacheUserId == userId &&
+        _userAndColorCategoriesCacheTime != null &&
+        DateTime.now().difference(_userAndColorCategoriesCacheTime!) < _cacheValidDuration) {
+      print("getUserAndColorCategories - Using cached result (${_cachedUserAndColorCategories!.userCategories.length} user, ${_cachedUserAndColorCategories!.colorCategories.length} color categories)");
+      return _cachedUserAndColorCategories!;
+    }
+    
+    // Request deduplication: if a fetch is already in progress, wait for it instead of starting another
+    if (includeSharedEditable && !forceRefresh && _inFlightCategoriesFetch != null) {
+      print("getUserAndColorCategories - Waiting for in-flight fetch to complete...");
+      try {
+        return await _inFlightCategoriesFetch!;
+      } catch (e) {
+        // If the in-flight request failed, we'll start a new one below
+        print("getUserAndColorCategories - In-flight fetch failed, starting new fetch: $e");
+      }
+    }
+    
+    // Start the actual fetch and track it
+    if (includeSharedEditable && !forceRefresh) {
+      _inFlightCategoriesFetch = _doGetUserAndColorCategories(userId, includeSharedEditable: true);
+      try {
+        final result = await _inFlightCategoriesFetch!;
+        _inFlightCategoriesFetch = null;
+        return result;
+      } catch (e) {
+        _inFlightCategoriesFetch = null;
+        rethrow;
+      }
+    }
+    
+    // Non-shared path or force refresh - just fetch directly
+    return _doGetUserAndColorCategories(userId, includeSharedEditable: includeSharedEditable);
+  }
+  
+  /// Internal method that does the actual fetching
+  Future<({List<UserCategory> userCategories, List<ColorCategory> colorCategories})>
+      _doGetUserAndColorCategories(String userId, {required bool includeSharedEditable}) async {
 
     final fetchSw = Stopwatch()..start();
     
@@ -2955,7 +3110,12 @@ class ExperienceService {
         print("getUserAndColorCategories - No shared permissions, skipping category resolution");
         fetchSw.stop();
         print("getUserAndColorCategories END - Total time: ${fetchSw.elapsedMilliseconds}ms - Returning ${ownedUserCategories.length} user categories (owned: ${ownedUserCategories.length}, shared: 0) and ${ownedColorCategories.length} color categories (owned: ${ownedColorCategories.length}, shared: 0)");
-        return (userCategories: ownedUserCategories, colorCategories: ownedColorCategories);
+        final result = (userCategories: ownedUserCategories, colorCategories: ownedColorCategories);
+        // Cache the result
+        _cachedUserAndColorCategories = result;
+        _userAndColorCategoriesCacheTime = DateTime.now();
+        _userAndColorCategoriesCacheUserId = userId;
+        return result;
       }
 
       if (permissions.isNotEmpty) {
@@ -3058,7 +3218,16 @@ class ExperienceService {
     fetchSw.stop();
     print("getUserAndColorCategories END - Total time: ${fetchSw.elapsedMilliseconds}ms - Returning ${finalUserCategories.length} user categories (owned: ${ownedUserCategories.length}, shared: ${sharedUserCategories.length}) and ${finalColorCategories.length} color categories (owned: ${ownedColorCategories.length}, shared: ${sharedColorCategories.length})");
     
-    return (userCategories: finalUserCategories, colorCategories: finalColorCategories);
+    final result = (userCategories: finalUserCategories, colorCategories: finalColorCategories);
+    
+    // Cache the result when includeSharedEditable is true (the expensive path)
+    if (includeSharedEditable) {
+      _cachedUserAndColorCategories = result;
+      _userAndColorCategoriesCacheTime = DateTime.now();
+      _userAndColorCategoriesCacheUserId = userId;
+    }
+    
+    return result;
   }
 
   /// Initializes the default color categories for a user in Firestore.
