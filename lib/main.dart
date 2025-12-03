@@ -507,6 +507,10 @@ void main() async {
   // Preload user location in the background to keep startup fast
   unawaited(_preloadUserLocation());
 
+  // Preload Collections data in background to warm up Firestore cache
+  // This makes Collections screen load instantly when user navigates to it
+  unawaited(_preloadCollectionsData());
+
   // Initialize sharing service
   // Conditionally initialize SharingService if not on web
   if (!kIsWeb) {
@@ -811,6 +815,49 @@ Future<void> _preloadUserLocation() async {
     // Catch errors silently - we don't want to crash the app or bother the user here.
     print(
         "MAIN: Error during background location preload (expected if permissions not granted yet): $e");
+  }
+}
+
+/// Preload Collections data in background to warm up Firestore cache
+/// This runs the slow permission queries during app startup so Collections loads instantly
+bool _collectionsPreloaded = false; // Ensure we only preload once per app session
+
+Future<void> _preloadCollectionsData() async {
+  try {
+    // Wait for user to be authenticated
+    final auth = FirebaseAuth.instance;
+    
+    // Listen for auth state and preload when user is available (only once)
+    auth.authStateChanges().listen((user) async {
+      if (user != null && !_collectionsPreloaded) {
+        _collectionsPreloaded = true; // Mark as done to avoid duplicate preloads
+        print("MAIN: [Preload] User authenticated, preloading Collections data...");
+        final sw = Stopwatch()..start();
+        
+        try {
+          final experienceService = ExperienceService();
+          final sharingService = SharingService();
+          
+          // Run the slow queries in parallel to warm up caches
+          await Future.wait([
+            // Categories and permissions (~2s)
+            experienceService.getUserAndColorCategories(includeSharedEditable: true),
+            // Share permissions
+            sharingService.getSharedItemsForUser(user.uid),
+            sharingService.getOwnedSharePermissions(user.uid),
+            // User's experiences (~5-10s for 1000+ experiences) - the BIG one
+            experienceService.getExperiencesByUser(user.uid, limit: 0),
+          ]);
+          
+          sw.stop();
+          print("MAIN: [Preload] Collections data preloaded in ${sw.elapsedMilliseconds}ms");
+        } catch (e) {
+          print("MAIN: [Preload] Error preloading Collections data: $e");
+        }
+      }
+    });
+  } catch (e) {
+    print("MAIN: [Preload] Error setting up Collections preload: $e");
   }
 }
 

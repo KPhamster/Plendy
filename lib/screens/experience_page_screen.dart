@@ -6,7 +6,6 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:firebase_app_check/firebase_app_check.dart';
 import '../../firebase_options.dart';
-import 'package:flutter_rating_bar/flutter_rating_bar.dart';
 import '../models/experience.dart';
 import '../models/user_category.dart'; // Import UserCategory
 // TODO: Import your PlaceDetails model and PlacesService
@@ -217,6 +216,10 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   Event? _matchingEvent;
   final EventService _eventService = EventService();
   // --- ADDED: State for event banner --- END ---
+
+  // --- ADDED: State for thumbs up/down rating --- START ---
+  bool? _userVote; // null = no vote, true = thumbs up, false = thumbs down
+  // --- ADDED: State for thumbs up/down rating --- END ---
 
   static const Duration _photoRefreshInterval = Duration(days: 30);
 
@@ -1063,22 +1066,49 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                               ),
                               const SizedBox(height: 4),
 
-                              // Rating
+                              // Thumbs Up/Down Rating
                               Row(
                                 mainAxisAlignment: MainAxisAlignment
                                     .center, // Center the rating row
                                 children: [
-                                  RatingBarIndicator(
-                                    rating: experience
-                                        .plendyRating, // Use Plendy rating
-                                    itemBuilder: (context, index) => const Icon(
-                                      Icons.star,
-                                      color: Colors.amber,
+                                  // Thumbs Up Button
+                                  IconButton(
+                                    onPressed: () {
+                                      setState(() {
+                                        _userVote = _userVote == true ? null : true;
+                                      });
+                                    },
+                                    icon: Icon(
+                                      _userVote == true
+                                          ? Icons.thumb_up
+                                          : Icons.thumb_up_outlined,
+                                      color: _userVote == true
+                                          ? Colors.green
+                                          : Colors.white.withOpacity(0.7),
                                     ),
-                                    unratedColor: Colors.white.withOpacity(0.7),
-                                    itemCount: 5,
-                                    itemSize: 24.0,
-                                    direction: Axis.horizontal,
+                                    iconSize: 24.0,
+                                    padding: EdgeInsets.zero,
+                                    constraints: const BoxConstraints(),
+                                  ),
+                                  const SizedBox(width: 16),
+                                  // Thumbs Down Button
+                                  IconButton(
+                                    onPressed: () {
+                                      setState(() {
+                                        _userVote = _userVote == false ? null : false;
+                                      });
+                                    },
+                                    icon: Icon(
+                                      _userVote == false
+                                          ? Icons.thumb_down
+                                          : Icons.thumb_down_outlined,
+                                      color: _userVote == false
+                                          ? Colors.red
+                                          : Colors.white.withOpacity(0.7),
+                                    ),
+                                    iconSize: 24.0,
+                                    padding: EdgeInsets.zero,
+                                    constraints: const BoxConstraints(),
                                   ),
                                   const SizedBox(width: 8),
                                   Text(

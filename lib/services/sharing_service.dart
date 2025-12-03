@@ -37,6 +37,21 @@ class SharingService {
   bool isShareFlowActive = false; // ADDED: More robust lock for the share flow
   bool _navigatingAwayFromShare = false; // ADDED: Flag for post-save navigation window
 
+  // Cache for owned share permissions
+  List<SharePermission>? _cachedOwnedPermissions;
+  String? _cachedOwnedPermissionsUserId;
+  DateTime? _ownedPermissionsCacheTime;
+  static const Duration _ownedPermissionsCacheValidDuration = Duration(minutes: 5);
+  
+  // Cache for shared items (items shared WITH current user)
+  List<SharePermission>? _cachedSharedItems;
+  String? _cachedSharedItemsUserId;
+  DateTime? _sharedItemsCacheTime;
+  
+  // In-flight request deduplication
+  Future<List<SharePermission>>? _inFlightSharedItemsFetch;
+  Future<List<SharePermission>>? _inFlightOwnedPermissionsFetch;
+
   // ADDED: Public getter for _navigatingAwayFromShare
   bool get isNavigatingAwayFromShare => _navigatingAwayFromShare;
   
@@ -733,7 +748,41 @@ class SharingService {
   }
 
   /// Retrieves all items shared *with* the specified user.
-  Future<List<SharePermission>> getSharedItemsForUser(String userId) async {
+  Future<List<SharePermission>> getSharedItemsForUser(String userId, {bool forceRefresh = false}) async {
+    // Check cache first
+    final now = DateTime.now();
+    if (!forceRefresh &&
+        _cachedSharedItems != null &&
+        _cachedSharedItemsUserId == userId &&
+        _sharedItemsCacheTime != null &&
+        now.difference(_sharedItemsCacheTime!) < _ownedPermissionsCacheValidDuration) {
+      print('SharingService: Using cached shared items (${_cachedSharedItems!.length} items)');
+      return _cachedSharedItems!;
+    }
+    
+    // In-flight deduplication: if a fetch is already running, wait for it
+    if (!forceRefresh && _inFlightSharedItemsFetch != null) {
+      print('SharingService: Waiting for in-flight shared items fetch...');
+      try {
+        return await _inFlightSharedItemsFetch!;
+      } catch (e) {
+        print('SharingService: In-flight fetch failed, starting new fetch: $e');
+      }
+    }
+    
+    // Start the actual fetch
+    _inFlightSharedItemsFetch = _doGetSharedItemsForUser(userId);
+    try {
+      final result = await _inFlightSharedItemsFetch!;
+      _inFlightSharedItemsFetch = null;
+      return result;
+    } catch (e) {
+      _inFlightSharedItemsFetch = null;
+      rethrow;
+    }
+  }
+  
+  Future<List<SharePermission>> _doGetSharedItemsForUser(String userId) async {
     print('SharingService: Getting shared items for user: $userId');
     final snapshot = await _sharePermissionsCollection
         .where('sharedWithUserId', isEqualTo: userId)
@@ -751,12 +800,52 @@ class SharingService {
     for (final perm in permissions) {
       print('SharingService: Permission - itemId: ${perm.itemId}, itemType: ${perm.itemType}, ownerUserId: ${perm.ownerUserId}');
     }
+    
+    // Cache the results
+    _cachedSharedItems = permissions;
+    _cachedSharedItemsUserId = userId;
+    _sharedItemsCacheTime = DateTime.now();
 
     return permissions;
   }
 
   /// Retrieves all share permissions owned by the specified user.
-  Future<List<SharePermission>> getOwnedSharePermissions(String ownerUserId) async {
+  /// Results are cached for 5 minutes to avoid repeated Firestore queries.
+  Future<List<SharePermission>> getOwnedSharePermissions(String ownerUserId, {bool forceRefresh = false}) async {
+    // Check cache first
+    final now = DateTime.now();
+    if (!forceRefresh &&
+        _cachedOwnedPermissions != null &&
+        _cachedOwnedPermissionsUserId == ownerUserId &&
+        _ownedPermissionsCacheTime != null &&
+        now.difference(_ownedPermissionsCacheTime!) < _ownedPermissionsCacheValidDuration) {
+      print('SharingService: Using cached owned share permissions (${_cachedOwnedPermissions!.length} items)');
+      return _cachedOwnedPermissions!;
+    }
+    
+    // In-flight deduplication: if a fetch is already running, wait for it
+    if (!forceRefresh && _inFlightOwnedPermissionsFetch != null) {
+      print('SharingService: Waiting for in-flight owned permissions fetch...');
+      try {
+        return await _inFlightOwnedPermissionsFetch!;
+      } catch (e) {
+        print('SharingService: In-flight fetch failed, starting new fetch: $e');
+      }
+    }
+    
+    // Start the actual fetch
+    _inFlightOwnedPermissionsFetch = _doGetOwnedSharePermissions(ownerUserId);
+    try {
+      final result = await _inFlightOwnedPermissionsFetch!;
+      _inFlightOwnedPermissionsFetch = null;
+      return result;
+    } catch (e) {
+      _inFlightOwnedPermissionsFetch = null;
+      rethrow;
+    }
+  }
+  
+  Future<List<SharePermission>> _doGetOwnedSharePermissions(String ownerUserId) async {
     print('SharingService: Getting owned share permissions for user: $ownerUserId');
     final snapshot = await _sharePermissionsCollection
         .where('ownerUserId', isEqualTo: ownerUserId)
@@ -770,7 +859,32 @@ class SharingService {
 
     permissions.sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
+    // Cache the results
+    _cachedOwnedPermissions = permissions;
+    _cachedOwnedPermissionsUserId = ownerUserId;
+    _ownedPermissionsCacheTime = DateTime.now();
+
     return permissions;
+  }
+
+  /// Clear the owned share permissions cache (call when permissions change)
+  void clearOwnedPermissionsCache() {
+    _cachedOwnedPermissions = null;
+    _cachedOwnedPermissionsUserId = null;
+    _ownedPermissionsCacheTime = null;
+    print('SharingService: Cleared owned permissions cache');
+  }
+  
+  void clearSharedItemsCache() {
+    _cachedSharedItems = null;
+    _cachedSharedItemsUserId = null;
+    _sharedItemsCacheTime = null;
+    print('SharingService: Cleared shared items cache');
+  }
+  
+  void clearAllCaches() {
+    clearOwnedPermissionsCache();
+    clearSharedItemsCache();
   }
 
   /// Retrieves all permissions granted *for* a specific item.
