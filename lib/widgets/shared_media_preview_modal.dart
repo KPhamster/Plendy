@@ -186,25 +186,25 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
   Future<void> _shareMediaDirectly(SharedMediaItem mediaItem) async {
     final String? highlightedUrl =
         mediaItem.path.isNotEmpty ? mediaItem.path : null;
-    final bool? shared = await showShareToFriendsModal(
+    final result = await showShareToFriendsModal(
       context: context,
       subjectLabel: widget.experience.name,
       onSubmit: (recipientIds) async {
-        await _experienceShareService.createDirectShare(
+        return await _experienceShareService.createDirectShare(
           experience: widget.experience,
           toUserIds: recipientIds,
           highlightedMediaUrl: highlightedUrl,
         );
       },
       onSubmitToThreads: (threadIds) async {
-        await _experienceShareService.createDirectShareToThreads(
+        return await _experienceShareService.createDirectShareToThreads(
           experience: widget.experience,
           threadIds: threadIds,
           highlightedMediaUrl: highlightedUrl,
         );
       },
       onSubmitToNewGroupChat: (participantIds) async {
-        await _experienceShareService.createDirectShareToNewGroupChat(
+        return await _experienceShareService.createDirectShareToNewGroupChat(
           experience: widget.experience,
           participantIds: participantIds,
           highlightedMediaUrl: highlightedUrl,
@@ -212,10 +212,8 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
       },
     );
     if (!mounted) return;
-    if (shared == true) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Shared with friends!')),
-      );
+    if (result != null) {
+      showSharedWithFriendsSnackbar(context, result);
     }
   }
 

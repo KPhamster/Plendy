@@ -934,7 +934,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
           // --- ADDED: Positioned Back Button ---
           // Show when not in read-only preview, or when opened from discovery screen
           // (discovery screen sets publicExperienceId, share preview sets shareBannerFromUserId)
-          if (!widget.readOnlyPreview || widget.publicExperienceId != null)
+          if (!widget.readOnlyPreview || widget.publicExperienceId != null || widget.shareBannerFromUserId != null)
             Positioned(
               // Position accounting for status bar height + padding
               top: MediaQuery.of(context).padding.top + 8.0,
@@ -4528,25 +4528,25 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     if (!mounted) return;
     final String? highlightedUrl =
         mediaItem.path.isNotEmpty ? mediaItem.path : null;
-    final bool? shared = await showShareToFriendsModal(
+    final result = await showShareToFriendsModal(
       context: context,
       subjectLabel: _currentExperience.name,
       onSubmit: (recipientIds) async {
-        await _experienceShareService.createDirectShare(
+        return await _experienceShareService.createDirectShare(
           experience: _currentExperience,
           toUserIds: recipientIds,
           highlightedMediaUrl: highlightedUrl,
         );
       },
       onSubmitToThreads: (threadIds) async {
-        await _experienceShareService.createDirectShareToThreads(
+        return await _experienceShareService.createDirectShareToThreads(
           experience: _currentExperience,
           threadIds: threadIds,
           highlightedMediaUrl: highlightedUrl,
         );
       },
       onSubmitToNewGroupChat: (participantIds) async {
-        await _experienceShareService.createDirectShareToNewGroupChat(
+        return await _experienceShareService.createDirectShareToNewGroupChat(
           experience: _currentExperience,
           participantIds: participantIds,
           highlightedMediaUrl: highlightedUrl,
@@ -4554,10 +4554,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       },
     );
     if (!mounted) return;
-    if (shared == true) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Shared with friends!')),
-      );
+    if (result != null) {
+      showSharedWithFriendsSnackbar(context, result);
     }
   }
 
@@ -4613,33 +4611,31 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
 
   Future<void> _openDirectShareDialog() async {
     if (!mounted) return;
-    final bool? shared = await showShareToFriendsModal(
+    final result = await showShareToFriendsModal(
       context: context,
       subjectLabel: _currentExperience.name,
       onSubmit: (recipientIds) async {
-        await _experienceShareService.createDirectShare(
+        return await _experienceShareService.createDirectShare(
           experience: _currentExperience,
           toUserIds: recipientIds,
         );
       },
       onSubmitToThreads: (threadIds) async {
-        await _experienceShareService.createDirectShareToThreads(
+        return await _experienceShareService.createDirectShareToThreads(
           experience: _currentExperience,
           threadIds: threadIds,
         );
       },
       onSubmitToNewGroupChat: (participantIds) async {
-        await _experienceShareService.createDirectShareToNewGroupChat(
+        return await _experienceShareService.createDirectShareToNewGroupChat(
           experience: _currentExperience,
           participantIds: participantIds,
         );
       },
     );
     if (!mounted) return;
-    if (shared == true) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Shared with friends!')),
-      );
+    if (result != null) {
+      showSharedWithFriendsSnackbar(context, result);
     }
   }
 

@@ -8,9 +8,98 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/app_constants.dart';
 import '../models/message_thread.dart';
+import '../models/share_result.dart';
 import '../models/user_profile.dart';
+import '../screens/chat_screen.dart';
 import '../services/message_service.dart';
 import '../services/user_service.dart';
+
+/// Shows a snackbar with "Shared with friends!" message and a "View message" action
+/// that navigates to the message thread when tapped.
+void showSharedWithFriendsSnackbar(
+  BuildContext context,
+  DirectShareResult? result,
+) {
+  if (result == null || !result.hasThreads) {
+    // Fallback to simple snackbar if no thread info available
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Shared with friends!')),
+    );
+    return;
+  }
+
+  final currentUserId = FirebaseAuth.instance.currentUser?.uid;
+  if (currentUserId == null) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Shared with friends!')),
+    );
+    return;
+  }
+
+  final threadId = result.firstThreadId!;
+
+  // Use personalized message for single recipient
+  final messageText = result.isSingleRecipient && result.singleRecipientDisplayName != null
+      ? 'Shared with ${result.singleRecipientDisplayName}!'
+      : 'Shared with friends!';
+
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      content: Row(
+        children: [
+          Expanded(
+            child: Text(messageText),
+          ),
+          const SizedBox(width: 8),
+          TextButton(
+            onPressed: () async {
+              // Dismiss the snackbar first
+              ScaffoldMessenger.of(context).hideCurrentSnackBar();
+              
+              try {
+                // Fetch the thread from Firestore
+                final threadDoc = await FirebaseFirestore.instance
+                    .collection('message_threads')
+                    .doc(threadId)
+                    .get();
+
+                if (!threadDoc.exists) {
+                  return;
+                }
+
+                final thread = MessageThread.fromFirestore(threadDoc);
+
+                if (!context.mounted) return;
+
+                // Navigate to the chat screen
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => ChatScreen(
+                      thread: thread,
+                      currentUserId: currentUserId,
+                    ),
+                  ),
+                );
+              } catch (e) {
+                debugPrint('Failed to navigate to message thread: $e');
+              }
+            },
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: const Text(
+              'View message',
+              style: TextStyle(fontWeight: FontWeight.w600),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
 
 typedef ShareBottomSheetCreateLinkCallback = Future<void> Function({
   required String shareMode,
@@ -154,11 +243,11 @@ class _ShareExperienceBottomSheetContentState
   }
 }
 
-typedef ShareToFriendsSubmit = Future<void> Function(List<String> userIds);
-typedef ShareToThreadsSubmit = Future<void> Function(List<String> threadIds);
-typedef ShareToGroupChatSubmit = Future<void> Function(List<String> userIds);
+typedef ShareToFriendsSubmit = Future<DirectShareResult> Function(List<String> userIds);
+typedef ShareToThreadsSubmit = Future<DirectShareResult> Function(List<String> threadIds);
+typedef ShareToGroupChatSubmit = Future<DirectShareResult> Function(List<String> userIds);
 
-Future<bool?> showShareToFriendsModal({
+Future<DirectShareResult?> showShareToFriendsModal({
   required BuildContext context,
   required ShareToFriendsSubmit onSubmit,
   ShareToThreadsSubmit? onSubmitToThreads,
@@ -170,7 +259,7 @@ Future<bool?> showShareToFriendsModal({
   Map<String, UserProfile> initialSelectedProfiles = const {},
   Map<String, String> disabledUserReasons = const {},
 }) {
-  return showModalBottomSheet<bool>(
+  return showModalBottomSheet<DirectShareResult>(
     context: context,
     isScrollControlled: true,
     backgroundColor: Colors.white,
@@ -571,9 +660,9 @@ class _ShareToFriendsSheetState extends State<ShareToFriendsSheet> {
       _isSubmitting = true;
     });
     try {
-      await widget.onSubmit(_selectedProfiles.keys.toList());
+      final result = await widget.onSubmit(_selectedProfiles.keys.toList());
       if (!mounted) return;
-      Navigator.of(context).pop(true);
+      Navigator.of(context).pop(result);
     } catch (e) {
       debugPrint('ShareToFriendsSheet: submit failed: $e');
       if (mounted) {
@@ -659,9 +748,9 @@ class _ShareToFriendsSheetState extends State<ShareToFriendsSheet> {
       _isSubmitting = true;
     });
     try {
-      await widget.onSubmitToNewGroupChat!(_selectedProfiles.keys.toList());
+      final result = await widget.onSubmitToNewGroupChat!(_selectedProfiles.keys.toList());
       if (!mounted) return;
-      Navigator.of(context).pop(true);
+      Navigator.of(context).pop(result);
     } catch (e) {
       debugPrint('ShareToFriendsSheet: group chat submit failed: $e');
       if (mounted) {
@@ -694,9 +783,9 @@ class _ShareToFriendsSheetState extends State<ShareToFriendsSheet> {
       _isSubmitting = true;
     });
     try {
-      await widget.onSubmitToThreads!(_selectedThreadIds.toList());
+      final result = await widget.onSubmitToThreads!(_selectedThreadIds.toList());
       if (!mounted) return;
-      Navigator.of(context).pop(true);
+      Navigator.of(context).pop(result);
     } catch (e) {
       debugPrint('ShareToFriendsSheet: thread submit failed: $e');
       if (mounted) {
@@ -817,7 +906,7 @@ class _ShareToFriendsSheetState extends State<ShareToFriendsSheet> {
           const SizedBox(width: 8),
           IconButton(
             icon: const Icon(Icons.close),
-            onPressed: () => Navigator.of(context).pop(false),
+            onPressed: () => Navigator.of(context).pop(null),
           ),
         ],
       ),

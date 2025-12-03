@@ -29,7 +29,10 @@ import '../models/public_experience.dart';
 import '../config/app_constants.dart';
 import '../models/event.dart';
 import '../services/event_service.dart';
+import '../services/experience_share_service.dart';
 import '../widgets/event_editor_modal.dart';
+import '../widgets/share_experience_bottom_sheet.dart';
+import 'package:share_plus/share_plus.dart';
 
 // Helper function to parse hex color string
 Color _parseColor(String hexColor) {
@@ -6384,6 +6387,89 @@ class _MapScreenState extends State<MapScreen> {
   }
   // --- END: Helper method to launch map location --- //
 
+  // --- ADDED: Share selected experience ---
+  Future<void> _shareSelectedExperience() async {
+    if (!mounted || _tappedExperience == null) return;
+    
+    final Experience experience = _tappedExperience!;
+    
+    await showShareExperienceBottomSheet(
+      context: context,
+      onDirectShare: () => _directShareExperience(experience),
+      onCreateLink: ({
+        required String shareMode,
+        required bool giveEditAccess,
+      }) =>
+          _createLinkShareForExperience(
+        experience,
+        shareMode: shareMode,
+        giveEditAccess: giveEditAccess,
+      ),
+    );
+  }
+
+  Future<void> _directShareExperience(Experience experience) async {
+    if (!mounted) return;
+    final ExperienceShareService shareService = ExperienceShareService();
+    final result = await showShareToFriendsModal(
+      context: context,
+      subjectLabel: experience.name,
+      onSubmit: (recipientIds) async {
+        return await shareService.createDirectShare(
+          experience: experience,
+          toUserIds: recipientIds,
+        );
+      },
+      onSubmitToThreads: (threadIds) async {
+        return await shareService.createDirectShareToThreads(
+          experience: experience,
+          threadIds: threadIds,
+        );
+      },
+      onSubmitToNewGroupChat: (participantIds) async {
+        return await shareService.createDirectShareToNewGroupChat(
+          experience: experience,
+          participantIds: participantIds,
+        );
+      },
+    );
+    if (!mounted) return;
+    if (result != null) {
+      showSharedWithFriendsSnackbar(context, result);
+    }
+  }
+
+  Future<void> _createLinkShareForExperience(
+    Experience experience, {
+    required String shareMode,
+    required bool giveEditAccess,
+  }) async {
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    final ExperienceShareService shareService = ExperienceShareService();
+    try {
+      final DateTime expiresAt = DateTime.now().add(const Duration(days: 30));
+      final String url = await shareService.createLinkShare(
+        experience: experience,
+        expiresAt: expiresAt,
+        linkMode: shareMode,
+        grantEdit: giveEditAccess,
+      );
+      if (!mounted) return;
+      Navigator.of(context).pop(); // Close the bottom sheet
+      await Share.share('Check out this experience from Plendy! $url');
+    } catch (e) {
+      if (mounted) {
+        messenger.showSnackBar(
+          const SnackBar(
+            content: Text('Unable to generate a share link. Please try again.'),
+          ),
+        );
+      }
+    }
+  }
+  // --- END: Share selected experience ---
+
   // --- ADDED: Search functionality from LocationPickerScreen ---
 
   // Helper method to calculate distance between coordinates (copied from LocationPickerScreen)
@@ -8032,6 +8118,19 @@ class _MapScreenState extends State<MapScreen> {
                                     child: Row(
                                       mainAxisSize: MainAxisSize.min,
                                       children: [
+                                        // Share button - only show when experience is selected
+                                        if (_tappedExperience != null)
+                                          Transform.translate(
+                                            offset: kIsWeb ? const Offset(0, 0) : const Offset(0, 0),
+                                            child: IconButton(
+                                              onPressed: () => _shareSelectedExperience(),
+                                              icon: const Icon(Icons.share_outlined, color: Colors.blue, size: 28),
+                                              tooltip: 'Share',
+                                              padding: EdgeInsets.zero,
+                                              constraints: const BoxConstraints(),
+                                            ),
+                                          ),
+                                        if (_tappedExperience != null && kIsWeb) const SizedBox(width: 12),
                                         Transform.translate(
                                           offset: kIsWeb ? const Offset(0, 0) : const Offset(-6, 0),
                                           child: IconButton(

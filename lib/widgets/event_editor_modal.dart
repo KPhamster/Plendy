@@ -28,6 +28,7 @@ import '../screens/events_screen.dart';
 import '../screens/auth_screen.dart';
 import '../screens/main_screen.dart';
 import 'share_experience_bottom_sheet.dart';
+import '../models/share_result.dart';
 
 class EventEditorResult {
   final Event? savedEvent;
@@ -2201,7 +2202,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
                     avatar: const Icon(
                       Icons.share_outlined,
                       size: 18,
-                      color: Colors.black87,
+                      color: Colors.blue,
                     ),
                     label: const SizedBox.shrink(),
                     labelPadding: EdgeInsets.zero,
@@ -3592,12 +3593,12 @@ class _EventEditorModalState extends State<EventEditorModal> {
 
     final title = _titleController.text.trim();
 
-    final bool? shared = await showShareToFriendsModal(
+    final result = await showShareToFriendsModal(
       context: context,
       subjectLabel: title.isEmpty ? null : title,
       actionButtonLabel: 'Share',
       onSubmit: (recipientIds) async {
-        await _sendEventShareMessages(
+        return await _sendEventShareMessages(
           senderId: user.uid,
           recipientIds: recipientIds,
           link: link,
@@ -3605,7 +3606,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
         );
       },
       onSubmitToThreads: (threadIds) async {
-        await _sendEventShareToThreads(
+        return await _sendEventShareToThreads(
           senderId: user.uid,
           threadIds: threadIds,
           link: link,
@@ -3613,7 +3614,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
         );
       },
       onSubmitToNewGroupChat: (participantIds) async {
-        await _sendEventShareToNewGroupChat(
+        return await _sendEventShareToNewGroupChat(
           senderId: user.uid,
           participantIds: participantIds,
           link: link,
@@ -3622,89 +3623,162 @@ class _EventEditorModalState extends State<EventEditorModal> {
       },
     );
 
-    if (shared == true && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Shared with friends!')),
-      );
+    if (result != null && mounted) {
+      showSharedWithFriendsSnackbar(context, result);
     }
   }
 
-  Future<void> _sendEventShareMessages({
+  /// Build a snapshot of the current event for sharing
+  Map<String, dynamic> _buildEventSnapshot() {
+    final List<Map<String, dynamic>> experienceSnapshots = [];
+    for (final entry in _currentEvent.experiences) {
+      if (entry.isEventOnly) {
+        // Event-only experience (inline data)
+        if (entry.inlineName != null && entry.inlineName!.isNotEmpty) {
+          experienceSnapshots.add({
+            'experienceId': '',
+            'name': entry.inlineName ?? 'Untitled',
+            'description': entry.inlineDescription ?? '',
+            'location': entry.inlineLocation != null ? {
+              'displayName': entry.inlineLocation!.displayName,
+              'address': entry.inlineLocation!.address,
+              'city': entry.inlineLocation!.city,
+              'state': entry.inlineLocation!.state,
+              'country': entry.inlineLocation!.country,
+              'latitude': entry.inlineLocation!.latitude,
+              'longitude': entry.inlineLocation!.longitude,
+            } : null,
+            'categoryIconDenorm': entry.inlineCategoryIconDenorm,
+            'colorHexDenorm': entry.inlineColorHexDenorm,
+          });
+        }
+      } else {
+        // Saved experience - look it up from available experiences
+        final exp = _availableExperiences.firstWhereOrNull(
+          (e) => e.id == entry.experienceId,
+        );
+        if (exp != null) {
+          experienceSnapshots.add({
+            'experienceId': exp.id,
+            'name': exp.name,
+            'description': exp.description,
+            'location': {
+              'displayName': exp.location.displayName,
+              'address': exp.location.address,
+              'city': exp.location.city,
+              'state': exp.location.state,
+              'country': exp.location.country,
+              'latitude': exp.location.latitude,
+              'longitude': exp.location.longitude,
+            },
+            'categoryIconDenorm': exp.categoryIconDenorm,
+            'colorHexDenorm': exp.colorHexDenorm,
+          });
+        }
+      }
+    }
+
+    return {
+      'eventId': _currentEvent.id,
+      'name': _titleController.text.trim(),
+      'description': _descriptionController.text.trim(),
+      'startDate': _currentEvent.startDateTime.toIso8601String(),
+      'endDate': _currentEvent.endDateTime.toIso8601String(),
+      'shareToken': _currentEvent.shareToken,
+      'experiences': experienceSnapshots,
+    };
+  }
+
+  Future<DirectShareResult> _sendEventShareMessages({
     required String senderId,
     required List<String> recipientIds,
     required String link,
     required String title,
   }) async {
-    if (recipientIds.isEmpty) return;
-    final message =
-        'Check out this event${title.isNotEmpty ? ': $title' : ''}\n$link';
+    if (recipientIds.isEmpty) return DirectShareResult(threadIds: []);
+    
+    final eventSnapshot = _buildEventSnapshot();
+    final shareId = 'event_${_currentEvent.id}_${DateTime.now().millisecondsSinceEpoch}';
 
+    final List<String> threadIds = [];
     for (final recipientId in recipientIds) {
       try {
         final thread = await _messageService.createOrGetThread(
           currentUserId: senderId,
           participantIds: [recipientId],
         );
-        await _messageService.sendMessage(
+        await _messageService.sendEventShareMessage(
           threadId: thread.id,
           senderId: senderId,
-          text: message,
+          eventSnapshot: eventSnapshot,
+          shareId: shareId,
         );
+        threadIds.add(thread.id);
       } catch (e) {
         debugPrint(
             'EventEditorModal: Failed to share event with $recipientId: $e');
       }
     }
+    return DirectShareResult(threadIds: threadIds);
   }
 
-  Future<void> _sendEventShareToThreads({
+  Future<DirectShareResult> _sendEventShareToThreads({
     required String senderId,
     required List<String> threadIds,
     required String link,
     required String title,
   }) async {
-    if (threadIds.isEmpty) return;
-    final message =
-        'Check out this event${title.isNotEmpty ? ': $title' : ''}\n$link';
+    if (threadIds.isEmpty) return DirectShareResult(threadIds: []);
+    
+    final eventSnapshot = _buildEventSnapshot();
+    final shareId = 'event_${_currentEvent.id}_${DateTime.now().millisecondsSinceEpoch}';
 
+    final List<String> successThreadIds = [];
     for (final threadId in threadIds) {
       try {
-        await _messageService.sendMessage(
+        await _messageService.sendEventShareMessage(
           threadId: threadId,
           senderId: senderId,
-          text: message,
+          eventSnapshot: eventSnapshot,
+          shareId: shareId,
         );
+        successThreadIds.add(threadId);
       } catch (e) {
         debugPrint(
             'EventEditorModal: Failed to share event to thread $threadId: $e');
       }
     }
+    return DirectShareResult(threadIds: successThreadIds);
   }
 
-  Future<void> _sendEventShareToNewGroupChat({
+  Future<DirectShareResult> _sendEventShareToNewGroupChat({
     required String senderId,
     required List<String> participantIds,
     required String link,
     required String title,
   }) async {
-    if (participantIds.isEmpty) return;
-    final message =
-        'Check out this event${title.isNotEmpty ? ': $title' : ''}\n$link';
+    if (participantIds.isEmpty) return DirectShareResult(threadIds: []);
+    
+    final eventSnapshot = _buildEventSnapshot();
+    final shareId = 'event_${_currentEvent.id}_${DateTime.now().millisecondsSinceEpoch}';
 
     try {
       final thread = await _messageService.createOrGetThread(
         currentUserId: senderId,
         participantIds: participantIds,
       );
-      await _messageService.sendMessage(
+      await _messageService.sendEventShareMessage(
         threadId: thread.id,
         senderId: senderId,
-        text: message,
+        eventSnapshot: eventSnapshot,
+        shareId: shareId,
       );
+      return DirectShareResult.single(thread.id);
     } catch (e) {
       debugPrint(
           'EventEditorModal: Failed to create group chat for event share: $e');
     }
+    return DirectShareResult(threadIds: []);
   }
 
   Location _buildLocationForMapNavigation(Experience experience) {
@@ -4449,6 +4523,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
       context: context,
       onSubmit: (userIds) async {
         await _handleCollaboratorSelection(userIds);
+        return DirectShareResult(threadIds: []);
       },
       subjectLabel: titleText.isEmpty ? null : titleText,
       titleText: 'Add collaborators with edit access',
@@ -4474,6 +4549,7 @@ class _EventEditorModalState extends State<EventEditorModal> {
       context: context,
       onSubmit: (userIds) async {
         await _handleInviteSelection(userIds);
+        return DirectShareResult(threadIds: []);
       },
       subjectLabel: titleText.isEmpty ? null : titleText,
       titleText: 'Add people with view access',

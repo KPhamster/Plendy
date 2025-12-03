@@ -5,16 +5,20 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../models/chat_message.dart';
 import '../models/color_category.dart';
+import '../models/event.dart';
 import '../models/experience.dart';
 import '../models/message_thread.dart';
 import '../models/message_thread_participant.dart';
 import '../models/shared_media_item.dart';
 import '../models/user_category.dart';
+import '../services/event_service.dart';
 import '../services/experience_service.dart';
 import '../services/message_service.dart';
+import '../widgets/event_editor_modal.dart';
 import '../widgets/shared_media_preview_modal.dart';
 import 'experience_page_screen.dart';
 import 'public_profile_screen.dart';
+import 'share_preview_screen.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({
@@ -122,12 +126,13 @@ class _ChatScreenState extends State<ChatScreen> {
     if (!_scrollController.hasClients) {
       return;
     }
+    // With reverse: true on ListView, position 0 is the bottom (newest messages)
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_scrollController.hasClients) {
         return;
       }
       _scrollController.animateTo(
-        _scrollController.position.maxScrollExtent,
+        0,
         duration: const Duration(milliseconds: 300),
         curve: Curves.easeOut,
       );
@@ -351,16 +356,19 @@ class _ChatScreenState extends State<ChatScreen> {
                       return _buildEmptyThread(thread);
                     }
 
-                    WidgetsBinding.instance
-                        .addPostFrameCallback((_) => _scrollToBottom());
-
+                    // Use reverse: true so the list starts at the bottom
+                    // and new messages appear at the bottom naturally
                     return ListView.builder(
                       controller: _scrollController,
+                      reverse: true,
                       padding: const EdgeInsets.symmetric(
                           vertical: 12, horizontal: 16),
                       itemCount: messages.length,
                       itemBuilder: (context, index) {
-                        final message = messages[index];
+                        // Since reverse is true, we need to reverse the index
+                        // to display messages in chronological order (oldest at top)
+                        final reversedIndex = messages.length - 1 - index;
+                        final message = messages[reversedIndex];
                         final isMine = message.senderId == widget.currentUserId;
                         final sender = thread.participant(message.senderId);
                         return _buildMessageBubble(message, isMine, sender);
@@ -399,7 +407,32 @@ class _ChatScreenState extends State<ChatScreen> {
     bool isMine,
     MessageThreadParticipant? sender,
   ) {
-    // For experience share messages, use a special card layout
+    // For profile share messages, use a special card layout
+    if (message.isProfileShare) {
+      return _buildProfileShareCard(message, isMine, sender);
+    }
+    
+    // For multi-experience share messages, use a special card layout
+    if (message.isMultiExperienceShare) {
+      return _buildMultiExperienceShareCard(message, isMine, sender);
+    }
+    
+    // For multi-category share messages, use a special card layout
+    if (message.isMultiCategoryShare) {
+      return _buildMultiCategoryShareCard(message, isMine, sender);
+    }
+    
+    // For category share messages, use a special card layout
+    if (message.isCategoryShare) {
+      return _buildCategoryShareCard(message, isMine, sender);
+    }
+    
+    // For event share messages, use a special card layout
+    if (message.isEventShare) {
+      return _buildEventShareCard(message, isMine, sender);
+    }
+    
+    // For single experience share messages, use a special card layout
     if (message.isExperienceShare) {
       return _buildExperienceShareCard(message, isMine, sender);
     }
@@ -485,6 +518,229 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+
+  Widget _buildProfileShareCard(
+    ChatMessage message,
+    bool isMine,
+    MessageThreadParticipant? sender,
+  ) {
+    final alignment = isMine ? Alignment.centerRight : Alignment.centerLeft;
+    final snapshot = message.profileSnapshot;
+
+    if (snapshot == null) {
+      return Align(
+        alignment: alignment,
+        child: Container(
+          margin: const EdgeInsets.symmetric(vertical: 4),
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.grey.shade200,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: const Text('Shared a profile'),
+        ),
+      );
+    }
+
+    final String userId = snapshot['userId'] as String? ?? '';
+    final String? displayName = snapshot['displayName'] as String?;
+    final String? username = snapshot['username'] as String?;
+    final String? photoURL = snapshot['photoURL'] as String?;
+    final String? bio = snapshot['bio'] as String?;
+
+    // Determine what name to show
+    final String profileName = displayName?.isNotEmpty == true
+        ? displayName!
+        : (username?.isNotEmpty == true ? '@$username' : 'Plendy User');
+    final String? subtitleText = displayName?.isNotEmpty == true && username?.isNotEmpty == true
+        ? '@$username'
+        : null;
+
+    final card = Container(
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      constraints: BoxConstraints(
+        maxWidth: MediaQuery.of(context).size.width * 0.75,
+      ),
+      child: Column(
+        crossAxisAlignment:
+            isMine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (!isMine)
+            Padding(
+              padding: const EdgeInsets.only(left: 8, bottom: 4),
+              child: Text(
+                '${sender?.displayLabel(fallback: 'Someone') ?? 'Someone'} shared a profile',
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.black54,
+                ),
+              ),
+            ),
+          Card(
+            elevation: 2,
+            color: isMine
+                ? Theme.of(context).primaryColor
+                : Colors.grey.shade100,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: InkWell(
+              onTap: () => _openPublicProfile(userId),
+              borderRadius: BorderRadius.circular(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Header with profile picture
+                  Container(
+                    height: 120,
+                    width: double.infinity,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: const BorderRadius.vertical(
+                        top: Radius.circular(12),
+                      ),
+                    ),
+                    child: Center(
+                      child: CircleAvatar(
+                        radius: 40,
+                        backgroundImage: photoURL != null && photoURL.isNotEmpty
+                            ? NetworkImage(photoURL)
+                            : null,
+                        backgroundColor: Colors.grey.shade300,
+                        child: photoURL == null || photoURL.isEmpty
+                            ? Text(
+                                profileName.isNotEmpty
+                                    ? profileName[0].toUpperCase()
+                                    : '?',
+                                style: const TextStyle(
+                                  fontSize: 32,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.black54,
+                                ),
+                              )
+                            : null,
+                      ),
+                    ),
+                  ),
+                  // Profile info
+                  Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Header
+                        Text(
+                          'Shared Profile',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: isMine
+                                ? Colors.white70
+                                : Colors.grey.shade600,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          profileName,
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                            color: isMine ? Colors.white : Colors.black87,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        if (subtitleText != null) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            subtitleText,
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: isMine
+                                  ? Colors.white70
+                                  : Colors.grey.shade600,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                        if (bio != null && bio.isNotEmpty) ...[
+                          const SizedBox(height: 8),
+                          Text(
+                            bio,
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: isMine
+                                  ? Colors.white70
+                                  : Colors.grey.shade700,
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.person_outline,
+                              size: 14,
+                              color: isMine
+                                  ? Colors.white70
+                                  : Colors.grey.shade600,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              'Tap to view profile',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: isMine
+                                    ? Colors.white70
+                                    : Colors.grey.shade600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (isMine) {
+      return Align(
+        alignment: alignment,
+        child: card,
+      );
+    }
+
+    final avatarParticipant =
+        sender ?? MessageThreadParticipant(id: message.senderId);
+
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          _buildParticipantAvatar(
+            avatarParticipant,
+            size: 34,
+            onTap: () => _openPublicProfile(avatarParticipant.id),
+          ),
+          const SizedBox(width: 8),
+          Flexible(child: card),
+        ],
+      ),
+    );
+  }
 
   Widget _buildExperienceShareCard(
     ChatMessage message,
@@ -717,6 +973,19 @@ class _ChatScreenState extends State<ChatScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
+                          // Header
+                          Text(
+                            isDiscoveryPreview ? 'Shared Discovery' : 'Shared Experience',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: isMine
+                                  ? Colors.white70
+                                  : Colors.grey.shade600,
+                              letterSpacing: 0.5,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
                           Row(
                             children: [
                               Expanded(
@@ -808,6 +1077,1313 @@ class _ChatScreenState extends State<ChatScreen> {
     ),
   );
 }
+
+  Widget _buildMultiExperienceShareCard(
+    ChatMessage message,
+    bool isMine,
+    MessageThreadParticipant? sender,
+  ) {
+    final alignment = isMine ? Alignment.centerRight : Alignment.centerLeft;
+    final snapshots = message.experienceSnapshots;
+
+    if (snapshots == null || snapshots.isEmpty) {
+      // Fallback if snapshots are missing
+      return Align(
+        alignment: alignment,
+        child: Container(
+          margin: const EdgeInsets.symmetric(vertical: 4),
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.grey.shade200,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: const Text('Shared multiple experiences'),
+        ),
+      );
+    }
+
+    final int count = snapshots.length;
+    
+    // Get the first 3 experience names for preview
+    final previewNames = snapshots
+        .take(3)
+        .map((s) {
+          final snap = s['snapshot'] as Map<String, dynamic>?;
+          return snap?['name'] as String? ?? 'Experience';
+        })
+        .toList();
+    
+    // Get first experience's image for the card thumbnail
+    String? thumbnailUrl;
+    String? firstIcon;
+    Color? firstColor;
+    for (final s in snapshots) {
+      final snap = s['snapshot'] as Map<String, dynamic>?;
+      if (snap != null) {
+        // Try to get category icon and color
+        firstIcon ??= snap['categoryIconDenorm'] as String?;
+        final colorHex = snap['colorHexDenorm'] as String?;
+        if (colorHex != null && firstColor == null) {
+          firstColor = _parseColorHex(colorHex);
+        }
+        // Try to get image
+        final image = snap['image'] as String?;
+        if (image != null && image.isNotEmpty && thumbnailUrl == null) {
+          thumbnailUrl = image;
+        }
+      }
+    }
+
+    final card = Container(
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      constraints: BoxConstraints(
+        maxWidth: MediaQuery.of(context).size.width * 0.75,
+      ),
+      child: Column(
+        crossAxisAlignment:
+            isMine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (!isMine)
+            Padding(
+              padding: const EdgeInsets.only(left: 8, bottom: 4),
+              child: Text(
+                '${sender?.displayLabel(fallback: 'Someone') ?? 'Someone'} shared $count experiences',
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.black54,
+                ),
+              ),
+            ),
+          Card(
+            elevation: 2,
+            color: isMine
+                ? Theme.of(context).primaryColor
+                : Colors.grey.shade300,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: InkWell(
+              onTap: () => _openMultiExperiencePreview(message.shareId, snapshots, message.senderId),
+              borderRadius: BorderRadius.circular(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Thumbnail/icon header
+                  Container(
+                    height: 100,
+                    width: double.infinity,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: const BorderRadius.vertical(
+                        top: Radius.circular(12),
+                      ),
+                    ),
+                    child: Center(
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          // Show icon or count badge
+                          Container(
+                            width: 56,
+                            height: 56,
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            alignment: Alignment.center,
+                            child: Text(
+                              firstIcon ?? '📍',
+                              style: const TextStyle(fontSize: 28),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          // Count badge
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withOpacity(0.6),
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            child: Text(
+                              '$count experiences',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  // Experience names preview
+                  Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Header
+                        Text(
+                          'Shared Experiences',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: isMine
+                                ? Colors.white70
+                                : Colors.grey.shade600,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          '$count experiences',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                            color: isMine ? Colors.white : Colors.black87,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        ...previewNames.map((name) => Padding(
+                          padding: const EdgeInsets.only(top: 2),
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.place_outlined,
+                                size: 14,
+                                color: isMine
+                                    ? Colors.white70
+                                    : Colors.grey.shade600,
+                              ),
+                              const SizedBox(width: 4),
+                              Expanded(
+                                child: Text(
+                                  name,
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    color: isMine
+                                        ? Colors.white70
+                                        : Colors.grey.shade700,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ),
+                        )),
+                        if (count > 3)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: Text(
+                              '+ ${count - 3} more',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontStyle: FontStyle.italic,
+                                color: isMine
+                                    ? Colors.white70
+                                    : Colors.grey.shade600,
+                              ),
+                            ),
+                          ),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.touch_app_outlined,
+                              size: 14,
+                              color: isMine
+                                  ? Colors.white70
+                                  : Colors.grey.shade600,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              'Tap to view all',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: isMine
+                                    ? Colors.white70
+                                    : Colors.grey.shade600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (isMine) {
+      return Align(
+        alignment: alignment,
+        child: card,
+      );
+    }
+
+    final avatarParticipant =
+        sender ?? MessageThreadParticipant(id: message.senderId);
+
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          _buildParticipantAvatar(
+            avatarParticipant,
+            size: 34,
+            onTap: () => _openPublicProfile(avatarParticipant.id),
+          ),
+          const SizedBox(width: 8),
+          Flexible(child: card),
+        ],
+      ),
+    );
+  }
+
+  Color? _parseColorHex(String? colorHex) {
+    if (colorHex == null || colorHex.isEmpty) return null;
+    try {
+      String normalized = colorHex.toUpperCase().replaceAll('#', '');
+      if (normalized.length == 6) {
+        normalized = 'FF$normalized';
+      }
+      if (normalized.length == 8) {
+        return Color(int.parse('0x$normalized'));
+      }
+    } catch (_) {
+      return null;
+    }
+    return null;
+  }
+
+  Widget _buildCategoryShareCard(
+    ChatMessage message,
+    bool isMine,
+    MessageThreadParticipant? sender,
+  ) {
+    final alignment = isMine ? Alignment.centerRight : Alignment.centerLeft;
+    final snapshot = message.categorySnapshot;
+
+    if (snapshot == null) {
+      return Align(
+        alignment: alignment,
+        child: Container(
+          margin: const EdgeInsets.symmetric(vertical: 4),
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.grey.shade200,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: const Text('Shared a category'),
+        ),
+      );
+    }
+
+    final String categoryName = snapshot['name'] as String? ?? 'Category';
+    final String? icon = snapshot['icon'] as String?;
+    final int? colorValue = snapshot['color'] as int?;
+    final String categoryType = snapshot['categoryType'] as String? ?? 'user';
+    final String accessMode = snapshot['accessMode'] as String? ?? 'view';
+    final List<dynamic> experiences = snapshot['experiences'] as List<dynamic>? ?? [];
+    final int experienceCount = experiences.length;
+
+    // Determine display color
+    Color displayColor;
+    if (colorValue != null) {
+      displayColor = Color(colorValue);
+    } else {
+      displayColor = Theme.of(context).primaryColor;
+    }
+
+    final card = Container(
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      constraints: BoxConstraints(
+        maxWidth: MediaQuery.of(context).size.width * 0.75,
+      ),
+      child: Column(
+        crossAxisAlignment:
+            isMine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (!isMine)
+            Padding(
+              padding: const EdgeInsets.only(left: 8, bottom: 4),
+              child: Text(
+                '${sender?.displayLabel(fallback: 'Someone') ?? 'Someone'} shared a category',
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.black54,
+                ),
+              ),
+            ),
+          Card(
+            elevation: 2,
+            color: isMine ? Theme.of(context).primaryColor : Colors.grey.shade100,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: InkWell(
+              onTap: () => _openCategoryPreview(message.shareId, snapshot),
+              borderRadius: BorderRadius.circular(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Header with category icon/color
+                  Container(
+                    height: 80,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: const BorderRadius.vertical(
+                        top: Radius.circular(12),
+                      ),
+                    ),
+                    child: Center(
+                      child: categoryType == 'color'
+                          ? Container(
+                              width: 48,
+                              height: 48,
+                              decoration: BoxDecoration(
+                                color: displayColor,
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: Colors.white,
+                                  width: 3,
+                                ),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withOpacity(0.2),
+                                    blurRadius: 4,
+                                    offset: const Offset(0, 2),
+                                  ),
+                                ],
+                              ),
+                            )
+                          : Text(
+                              icon ?? '📁',
+                              style: const TextStyle(fontSize: 40),
+                            ),
+                    ),
+                  ),
+                  // Category info
+                  Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Header
+                        Text(
+                          categoryType == 'color' ? 'Shared Color Category' : 'Shared Category',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: isMine
+                                ? Colors.white70
+                                : Colors.grey.shade600,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          categoryName,
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                            color: isMine ? Colors.white : Colors.black87,
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.place_outlined,
+                              size: 14,
+                              color: isMine
+                                  ? Colors.white70
+                                  : Colors.grey.shade600,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              '$experienceCount experience${experienceCount == 1 ? '' : 's'}',
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: isMine
+                                    ? Colors.white70
+                                    : Colors.grey.shade700,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            Icon(
+                              accessMode == 'edit' ? Icons.edit_outlined : Icons.visibility_outlined,
+                              size: 14,
+                              color: isMine
+                                  ? Colors.white70
+                                  : Colors.grey.shade600,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              accessMode == 'edit' ? 'Edit access' : 'View access',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: isMine
+                                    ? Colors.white70
+                                    : Colors.grey.shade600,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.touch_app_outlined,
+                              size: 14,
+                              color: isMine
+                                  ? Colors.white70
+                                  : Colors.grey.shade600,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              'Tap to view',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: isMine
+                                    ? Colors.white70
+                                    : Colors.grey.shade600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (isMine) {
+      return Align(
+        alignment: alignment,
+        child: card,
+      );
+    }
+
+    final avatarParticipant =
+        sender ?? MessageThreadParticipant(id: message.senderId);
+
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          _buildParticipantAvatar(
+            avatarParticipant,
+            size: 34,
+            onTap: () => _openPublicProfile(avatarParticipant.id),
+          ),
+          const SizedBox(width: 8),
+          Flexible(child: card),
+        ],
+      ),
+    );
+  }
+
+  void _openCategoryPreview(String? shareId, Map<String, dynamic> snapshot) {
+    // For now, show a snackbar indicating this feature is coming
+    // In the future, this could navigate to a category preview screen
+    final String categoryName = snapshot['name'] as String? ?? 'Category';
+    final List<dynamic> experiences = snapshot['experiences'] as List<dynamic>? ?? [];
+    
+    if (experiences.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Category "$categoryName" has no experiences to show')),
+      );
+      return;
+    }
+
+    // Convert experiences to the format expected by SharePreviewScreen
+    final List<Map<String, dynamic>> experienceSnapshots = experiences
+        .whereType<Map<String, dynamic>>()
+        .map((exp) => {
+              'experienceId': exp['experienceId'] ?? '',
+              'snapshot': exp,
+            })
+        .toList();
+
+    // Navigate to SharePreviewScreen with the experiences from the category
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => SharePreviewScreen(
+          token: shareId ?? '',
+          preloadedSnapshots: experienceSnapshots,
+          preloadedFromUserId: widget.thread.participantIds.firstWhere(
+            (id) => id != widget.currentUserId,
+            orElse: () => '',
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _openMultiExperiencePreview(
+    String? shareId,
+    List<Map<String, dynamic>> snapshots,
+    String senderId,
+  ) {
+    if (snapshots.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Unable to open shared experiences')),
+      );
+      return;
+    }
+    
+    // Navigate to SharePreviewScreen with pre-loaded snapshots
+    // This avoids the need to fetch from Firestore again
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => SharePreviewScreen(
+          token: shareId ?? '',
+          preloadedSnapshots: snapshots,
+          preloadedFromUserId: senderId,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMultiCategoryShareCard(
+    ChatMessage message,
+    bool isMine,
+    MessageThreadParticipant? sender,
+  ) {
+    final alignment = isMine ? Alignment.centerRight : Alignment.centerLeft;
+    final snapshots = message.categorySnapshots;
+
+    if (snapshots == null || snapshots.isEmpty) {
+      return Align(
+        alignment: alignment,
+        child: Container(
+          margin: const EdgeInsets.symmetric(vertical: 4),
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.grey.shade200,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: const Text('Shared multiple categories'),
+        ),
+      );
+    }
+
+    final int count = snapshots.length;
+    
+    // Get the first 3 category names for preview
+    final previewNames = snapshots
+        .take(3)
+        .map((s) => s['name'] as String? ?? 'Category')
+        .toList();
+    
+    // Get first category's icon/color for the card header
+    String? firstIcon;
+    Color? firstColor;
+    for (final s in snapshots) {
+      firstIcon ??= s['icon'] as String?;
+      final colorValue = s['color'] as int?;
+      if (colorValue != null && firstColor == null) {
+        firstColor = Color(colorValue);
+      }
+      if (firstIcon != null && firstColor != null) break;
+    }
+
+    final card = Container(
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      constraints: BoxConstraints(
+        maxWidth: MediaQuery.of(context).size.width * 0.75,
+      ),
+      child: Column(
+        crossAxisAlignment:
+            isMine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (!isMine)
+            Padding(
+              padding: const EdgeInsets.only(left: 8, bottom: 4),
+              child: Text(
+                '${sender?.displayLabel(fallback: 'Someone') ?? 'Someone'} shared $count categories',
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.black54,
+                ),
+              ),
+            ),
+          Card(
+            elevation: 2,
+            color: isMine
+                ? Theme.of(context).primaryColor
+                : Colors.grey.shade100,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: InkWell(
+              onTap: () => _openMultiCategoryPreview(message.shareId, snapshots),
+              borderRadius: BorderRadius.circular(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Header with category icons
+                  Container(
+                    height: 100,
+                    width: double.infinity,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: const BorderRadius.vertical(
+                        top: Radius.circular(12),
+                      ),
+                    ),
+                    child: Center(
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          // Show icon or category badge
+                          Container(
+                            width: 56,
+                            height: 56,
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            alignment: Alignment.center,
+                            child: Text(
+                              firstIcon ?? '📁',
+                              style: const TextStyle(fontSize: 28),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          // Count badge
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withOpacity(0.6),
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            child: Text(
+                              '$count categories',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  // Category names preview
+                  Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Header
+                        Text(
+                          'Shared Categories',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: isMine
+                                ? Colors.white70
+                                : Colors.grey.shade600,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          '$count categories',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                            color: isMine ? Colors.white : Colors.black87,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        ...previewNames.map((name) => Padding(
+                          padding: const EdgeInsets.only(top: 2),
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.folder_outlined,
+                                size: 14,
+                                color: isMine
+                                    ? Colors.white70
+                                    : Colors.grey.shade600,
+                              ),
+                              const SizedBox(width: 4),
+                              Expanded(
+                                child: Text(
+                                  name,
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    color: isMine
+                                        ? Colors.white70
+                                        : Colors.grey.shade700,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ),
+                        )),
+                        if (count > 3)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: Text(
+                              '+ ${count - 3} more',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontStyle: FontStyle.italic,
+                                color: isMine
+                                    ? Colors.white70
+                                    : Colors.grey.shade600,
+                              ),
+                            ),
+                          ),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.touch_app_outlined,
+                              size: 14,
+                              color: isMine
+                                  ? Colors.white70
+                                  : Colors.grey.shade600,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              'Tap to view all',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: isMine
+                                    ? Colors.white70
+                                    : Colors.grey.shade600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (isMine) {
+      return Align(
+        alignment: alignment,
+        child: card,
+      );
+    }
+
+    final avatarParticipant =
+        sender ?? MessageThreadParticipant(id: message.senderId);
+
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          _buildParticipantAvatar(
+            avatarParticipant,
+            size: 34,
+            onTap: () => _openPublicProfile(avatarParticipant.id),
+          ),
+          const SizedBox(width: 8),
+          Flexible(child: card),
+        ],
+      ),
+    );
+  }
+
+  void _openMultiCategoryPreview(String? shareId, List<Map<String, dynamic>> snapshots) {
+    if (snapshots.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No categories to display')),
+      );
+      return;
+    }
+
+    // Combine all experiences from all categories
+    final List<Map<String, dynamic>> allExperiences = [];
+    for (final categorySnapshot in snapshots) {
+      final experiences = categorySnapshot['experiences'] as List<dynamic>? ?? [];
+      for (final exp in experiences) {
+        if (exp is Map<String, dynamic>) {
+          allExperiences.add({
+            'experienceId': exp['experienceId'] ?? '',
+            'snapshot': exp,
+          });
+        }
+      }
+    }
+
+    if (allExperiences.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No experiences in the shared categories')),
+      );
+      return;
+    }
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => SharePreviewScreen(
+          token: shareId ?? '',
+          preloadedSnapshots: allExperiences,
+          preloadedFromUserId: widget.thread.participantIds.firstWhere(
+            (id) => id != widget.currentUserId,
+            orElse: () => '',
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEventShareCard(
+    ChatMessage message,
+    bool isMine,
+    MessageThreadParticipant? sender,
+  ) {
+    final alignment = isMine ? Alignment.centerRight : Alignment.centerLeft;
+    final snapshot = message.eventSnapshot;
+
+    if (snapshot == null) {
+      return Align(
+        alignment: alignment,
+        child: Container(
+          margin: const EdgeInsets.symmetric(vertical: 4),
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.grey.shade200,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: const Text('Shared an event'),
+        ),
+      );
+    }
+
+    final String eventName = snapshot['name'] as String? ?? 'Event';
+    final String? eventDescription = snapshot['description'] as String?;
+    final String? startDateStr = snapshot['startDate'] as String?;
+    final String? endDateStr = snapshot['endDate'] as String?;
+    final List<dynamic> experiences = snapshot['experiences'] as List<dynamic>? ?? [];
+    final int experienceCount = experiences.length;
+
+    // Parse date for display
+    String dateDisplay = '';
+    if (startDateStr != null) {
+      try {
+        final startDate = DateTime.parse(startDateStr);
+        final months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        dateDisplay = '${months[startDate.month - 1]} ${startDate.day}, ${startDate.year}';
+        if (endDateStr != null && endDateStr != startDateStr) {
+          final endDate = DateTime.parse(endDateStr);
+          dateDisplay += ' - ${months[endDate.month - 1]} ${endDate.day}, ${endDate.year}';
+        }
+      } catch (_) {
+        // Keep dateDisplay empty if parsing fails
+      }
+    }
+
+    final card = Container(
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      constraints: BoxConstraints(
+        maxWidth: MediaQuery.of(context).size.width * 0.75,
+      ),
+      child: Column(
+        crossAxisAlignment:
+            isMine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (!isMine)
+            Padding(
+              padding: const EdgeInsets.only(left: 8, bottom: 4),
+              child: Text(
+                '${sender?.displayLabel(fallback: 'Someone') ?? 'Someone'} shared an event',
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.black54,
+                ),
+              ),
+            ),
+          Card(
+            elevation: 2,
+            color: isMine
+                ? Theme.of(context).primaryColor
+                : Colors.grey.shade100,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: InkWell(
+              onTap: () => _openEventPreview(message.shareId, snapshot),
+              borderRadius: BorderRadius.circular(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Header with calendar icon
+                  Container(
+                    height: 80,
+                    width: double.infinity,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: const BorderRadius.vertical(
+                        top: Radius.circular(12),
+                      ),
+                    ),
+                    child: Center(
+                      child: Container(
+                        width: 56,
+                        height: 56,
+                        decoration: BoxDecoration(
+                          color: Colors.orange.shade100,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: Colors.orange.shade300,
+                            width: 2,
+                          ),
+                        ),
+                        child: Icon(
+                          Icons.event,
+                          size: 32,
+                          color: Colors.orange.shade700,
+                        ),
+                      ),
+                    ),
+                  ),
+                  // Event info
+                  Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Header
+                        Text(
+                          'Shared Event',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: isMine
+                                ? Colors.white70
+                                : Colors.grey.shade600,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          eventName,
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                            color: isMine ? Colors.white : Colors.black87,
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        if (dateDisplay.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Row(
+                            children: [
+                              Icon(
+                                Icons.calendar_today_outlined,
+                                size: 14,
+                                color: isMine
+                                    ? Colors.white70
+                                    : Colors.grey.shade600,
+                              ),
+                              const SizedBox(width: 4),
+                              Expanded(
+                                child: Text(
+                                  dateDisplay,
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    color: isMine
+                                        ? Colors.white70
+                                        : Colors.grey.shade700,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                        if (eventDescription != null && eventDescription.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            eventDescription,
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: isMine
+                                  ? Colors.white70
+                                  : Colors.grey.shade700,
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.place_outlined,
+                              size: 14,
+                              color: isMine
+                                  ? Colors.white70
+                                  : Colors.grey.shade600,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              '$experienceCount experience${experienceCount == 1 ? '' : 's'}',
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: isMine
+                                    ? Colors.white70
+                                    : Colors.grey.shade700,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.touch_app_outlined,
+                              size: 14,
+                              color: isMine
+                                  ? Colors.white70
+                                  : Colors.grey.shade600,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              'Tap to view',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: isMine
+                                    ? Colors.white70
+                                    : Colors.grey.shade600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (isMine) {
+      return Align(
+        alignment: alignment,
+        child: card,
+      );
+    }
+
+    final avatarParticipant =
+        sender ?? MessageThreadParticipant(id: message.senderId);
+
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          _buildParticipantAvatar(
+            avatarParticipant,
+            size: 34,
+            onTap: () => _openPublicProfile(avatarParticipant.id),
+          ),
+          const SizedBox(width: 8),
+          Flexible(child: card),
+        ],
+      ),
+    );
+  }
+
+  void _openEventPreview(String? shareId, Map<String, dynamic> snapshot) async {
+    final String eventId = snapshot['eventId'] as String? ?? '';
+    final String shareToken = snapshot['shareToken'] as String? ?? '';
+
+    if (eventId.isEmpty && shareToken.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Unable to load event')),
+      );
+      return;
+    }
+
+    // Show loading
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const AlertDialog(
+        content: Row(
+          children: [
+            CircularProgressIndicator(),
+            SizedBox(width: 16),
+            Text('Loading event...'),
+          ],
+        ),
+      ),
+    );
+
+    try {
+      final eventService = EventService();
+      final experienceService = ExperienceService();
+
+      // Get the event by ID or share token
+      Event? event;
+      if (shareToken.isNotEmpty) {
+        event = await eventService.getEventByShareToken(shareToken);
+      } else if (eventId.isNotEmpty) {
+        event = await eventService.getEvent(eventId);
+      }
+
+      if (event == null) {
+        if (mounted) {
+          Navigator.of(context).pop(); // Close loading
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Event not found')),
+          );
+        }
+        return;
+      }
+
+      // Get experiences and categories
+      final experienceIds = event.experiences
+          .map((entry) => entry.experienceId)
+          .where((id) => id.isNotEmpty)
+          .toList();
+
+      List<Experience> experiences = [];
+      if (experienceIds.isNotEmpty) {
+        experiences = await experienceService.getExperiencesByIds(experienceIds);
+      }
+
+      // Fetch the planner's categories for proper category icon display
+      List<UserCategory> categories = [];
+      List<ColorCategory> colorCategories = [];
+
+      // Collect all category IDs from experiences and event entries
+      final Set<String> categoryIds = {};
+      final Set<String> colorCategoryIds = {};
+
+      for (final exp in experiences) {
+        if (exp.categoryId != null && exp.categoryId!.isNotEmpty) {
+          categoryIds.add(exp.categoryId!);
+        }
+        categoryIds.addAll(exp.otherCategories.where((id) => id.isNotEmpty));
+
+        if (exp.colorCategoryId != null && exp.colorCategoryId!.isNotEmpty) {
+          colorCategoryIds.add(exp.colorCategoryId!);
+        }
+        colorCategoryIds.addAll(exp.otherColorCategoryIds.where((id) => id.isNotEmpty));
+      }
+
+      for (final entry in event.experiences) {
+        if (entry.inlineCategoryId != null && entry.inlineCategoryId!.isNotEmpty) {
+          categoryIds.add(entry.inlineCategoryId!);
+        }
+        categoryIds.addAll(entry.inlineOtherCategoryIds.where((id) => id.isNotEmpty));
+
+        if (entry.inlineColorCategoryId != null && entry.inlineColorCategoryId!.isNotEmpty) {
+          colorCategoryIds.add(entry.inlineColorCategoryId!);
+        }
+        colorCategoryIds.addAll(entry.inlineOtherColorCategoryIds.where((id) => id.isNotEmpty));
+      }
+
+      // Fetch the planner's categories by IDs
+      try {
+        if (categoryIds.isNotEmpty) {
+          categories = await experienceService.getUserCategoriesByOwnerAndIds(
+            event.plannerUserId,
+            categoryIds.toList(),
+          );
+        }
+      } catch (e) {
+        debugPrint('ChatScreen: Failed to fetch planner categories for event ${event.id}: $e');
+      }
+
+      try {
+        if (colorCategoryIds.isNotEmpty) {
+          colorCategories = await experienceService.getColorCategoriesByOwnerAndIds(
+            event.plannerUserId,
+            colorCategoryIds.toList(),
+          );
+        }
+      } catch (e) {
+        debugPrint('ChatScreen: Failed to fetch planner color categories for event ${event.id}: $e');
+      }
+
+      if (mounted) {
+        Navigator.of(context).pop(); // Close loading
+
+        // Navigate to EventEditorModal in read-only mode
+        await Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => EventEditorModal(
+              event: event!,
+              experiences: experiences,
+              categories: categories,
+              colorCategories: colorCategories,
+              isReadOnly: true, // View-only mode
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.of(context).pop(); // Close loading
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error loading event: $e')),
+        );
+      }
+    }
+  }
 
   Widget _buildMessageText(
     ChatMessage message,

@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:collection/collection.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../models/experience.dart';
 import '../models/user_category.dart';
@@ -13,7 +14,10 @@ import '../models/shared_media_item.dart';
 import '../services/auth_service.dart';
 import '../services/user_service.dart';
 import '../services/experience_service.dart';
+import '../services/message_service.dart';
 import '../widgets/shared_media_preview_modal.dart';
+import '../widgets/share_experience_bottom_sheet.dart';
+import '../models/share_result.dart';
 import 'experience_page_screen.dart';
 import 'main_screen.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -342,6 +346,146 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
         _publicExperienceCount = 0;
       });
     }
+  }
+
+  Future<void> _shareProfile(UserProfile profile) async {
+    if (!mounted) return;
+    
+    await showShareExperienceBottomSheet(
+      context: context,
+      titleText: 'Share Profile',
+      onDirectShare: () => _directShareProfile(profile),
+      onCreateLink: ({
+        required String shareMode,
+        required bool giveEditAccess,
+      }) =>
+          _createLinkShareForProfile(profile),
+    );
+  }
+
+  Future<void> _directShareProfile(UserProfile profile) async {
+    if (!mounted) return;
+    
+    final String displayName = profile.displayName ?? profile.username ?? 'User';
+    
+    final result = await showShareToFriendsModal(
+      context: context,
+      subjectLabel: displayName,
+      onSubmit: (recipientIds) async {
+        final threadIds = await _sendProfileShareToUsers(profile, recipientIds);
+        return DirectShareResult(threadIds: threadIds);
+      },
+      onSubmitToThreads: (threadIds) async {
+        final successThreadIds = await _sendProfileShareToThreads(profile, threadIds);
+        return DirectShareResult(threadIds: successThreadIds);
+      },
+      onSubmitToNewGroupChat: (participantIds) async {
+        final threadId = await _sendProfileShareToNewGroupChat(profile, participantIds);
+        return DirectShareResult(threadIds: threadId != null ? [threadId] : []);
+      },
+    );
+    
+    if (!mounted) return;
+    if (result != null) {
+      showSharedWithFriendsSnackbar(context, result);
+    }
+  }
+
+  Map<String, dynamic> _buildProfileSnapshot(UserProfile profile) {
+    return {
+      'userId': profile.id,
+      'displayName': profile.displayName,
+      'username': profile.username,
+      'photoURL': profile.photoURL,
+      'bio': profile.bio,
+    };
+  }
+
+  Future<List<String>> _sendProfileShareToUsers(
+    UserProfile profile,
+    List<String> recipientIds,
+  ) async {
+    if (_currentUserId == null) return [];
+    final messageService = MessageService();
+    final profileSnapshot = _buildProfileSnapshot(profile);
+    final List<String> threadIds = [];
+    
+    for (final recipientId in recipientIds) {
+      try {
+        final thread = await messageService.createOrGetThread(
+          currentUserId: _currentUserId!,
+          participantIds: [recipientId],
+        );
+        await messageService.sendProfileShareMessage(
+          threadId: thread.id,
+          senderId: _currentUserId!,
+          profileSnapshot: profileSnapshot,
+        );
+        threadIds.add(thread.id);
+      } catch (e) {
+        debugPrint('Failed to send profile share to $recipientId: $e');
+      }
+    }
+    return threadIds;
+  }
+
+  Future<List<String>> _sendProfileShareToThreads(
+    UserProfile profile,
+    List<String> threadIds,
+  ) async {
+    if (_currentUserId == null) return [];
+    final messageService = MessageService();
+    final profileSnapshot = _buildProfileSnapshot(profile);
+    final List<String> successThreadIds = [];
+    
+    for (final threadId in threadIds) {
+      try {
+        await messageService.sendProfileShareMessage(
+          threadId: threadId,
+          senderId: _currentUserId!,
+          profileSnapshot: profileSnapshot,
+        );
+        successThreadIds.add(threadId);
+      } catch (e) {
+        debugPrint('Failed to send profile share to thread $threadId: $e');
+      }
+    }
+    return successThreadIds;
+  }
+
+  Future<String?> _sendProfileShareToNewGroupChat(
+    UserProfile profile,
+    List<String> participantIds,
+  ) async {
+    if (_currentUserId == null) return null;
+    final messageService = MessageService();
+    final profileSnapshot = _buildProfileSnapshot(profile);
+    
+    try {
+      final thread = await messageService.createOrGetThread(
+        currentUserId: _currentUserId!,
+        participantIds: participantIds,
+      );
+      await messageService.sendProfileShareMessage(
+        threadId: thread.id,
+        senderId: _currentUserId!,
+        profileSnapshot: profileSnapshot,
+      );
+      return thread.id;
+    } catch (e) {
+      debugPrint('Failed to create group chat for profile share: $e');
+      return null;
+    }
+  }
+
+  Future<void> _createLinkShareForProfile(UserProfile profile) async {
+    if (!mounted) return;
+    
+    final String displayName = profile.displayName ?? profile.username ?? 'this user';
+    final String profileUrl = 'https://plendy.app/profile/${profile.id}';
+    
+    Navigator.of(context).pop(); // Close the bottom sheet
+    await Share.share('Check out $displayName\'s profile on Plendy! $profileUrl');
   }
 
   Future<void> _handleFollowButton() async {
@@ -969,6 +1113,14 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
           backgroundColor: Colors.white,
           foregroundColor: Colors.black,
           elevation: 0,
+          actions: [
+            if (profile != null)
+              IconButton(
+                icon: const Icon(Icons.share_outlined, color: Colors.blue),
+                tooltip: 'Share Profile',
+                onPressed: () => _shareProfile(profile),
+              ),
+          ],
         ),
         body: SafeArea(child: content),
       ),

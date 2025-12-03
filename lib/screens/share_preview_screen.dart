@@ -15,8 +15,19 @@ import 'main_screen.dart';
 
 class SharePreviewScreen extends StatelessWidget {
   final String token;
+  
+  /// Optional pre-loaded experience snapshots for direct shares from chat
+  final List<Map<String, dynamic>>? preloadedSnapshots;
+  
+  /// Optional sender user ID for pre-loaded shares
+  final String? preloadedFromUserId;
 
-  const SharePreviewScreen({super.key, required this.token});
+  const SharePreviewScreen({
+    super.key,
+    required this.token,
+    this.preloadedSnapshots,
+    this.preloadedFromUserId,
+  });
 
   void _navigateToMain(BuildContext context) {
     Navigator.of(context).pushAndRemoveUntil(
@@ -24,82 +35,162 @@ class SharePreviewScreen extends StatelessWidget {
       (route) => false,
     );
   }
+  
+  /// Build payload from pre-loaded snapshots (for direct shares from chat)
+  _PreviewPayload? _buildPayloadFromPreloaded() {
+    if (preloadedSnapshots == null || preloadedSnapshots!.isEmpty) {
+      return null;
+    }
+    
+    final List<_PreviewExperienceItem> experiences = [];
+    for (int i = 0; i < preloadedSnapshots!.length; i++) {
+      final raw = preloadedSnapshots![i];
+      final Map<String, dynamic> snap = 
+          (raw['snapshot'] as Map<String, dynamic>?) ?? const {};
+      final Map<String, dynamic> mappedItem = {
+        'shareId': 'preloaded_$i',
+        'experienceId': raw['experienceId'],
+        'snapshot': snap,
+      };
+      final Experience exp = _experienceFromMapped(mappedItem);
+      final List<SharedMediaItem> mediaItems = _mediaItemsFromSnapshot(snap, exp);
+      experiences.add(
+        _PreviewExperienceItem(
+          experience: exp,
+          mediaItems: mediaItems,
+        ),
+      );
+    }
+    
+    return _PreviewPayload.multi(
+      experiences: experiences,
+      fromUserId: preloadedFromUserId ?? '',
+      shareType: null,
+      accessMode: null,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
+    // Check if we have pre-loaded data (from direct share in chat)
+    final _PreviewPayload? preloadedPayload = _buildPayloadFromPreloaded();
+    final bool usePreloaded = preloadedPayload != null;
+    
     return PopScope(
-      canPop: false,
+      canPop: !kIsWeb,
       onPopInvokedWithResult: (didPop, result) {
         if (didPop) {
           return;
         }
-        _navigateToMain(context);
+        if (kIsWeb) {
+          _navigateToMain(context);
+        }
       },
-      child: Scaffold(
-        appBar: AppBar(
-          leading: kIsWeb ? IconButton(
-            icon: const Icon(Icons.arrow_back),
-            onPressed: () => _navigateToMain(context),
-          ) : null,
-          title:
-              const Text('Shared Experience', style: TextStyle(fontSize: 16)),
-          actions: [
-            if (kIsWeb)
-              Padding(
-                padding: const EdgeInsets.only(right: 8.0),
-                child: TextButton.icon(
-                  style: TextButton.styleFrom(foregroundColor: Colors.black),
-                  icon: const Icon(Icons.open_in_new, color: Colors.black),
-                  label: const Text('Open in Plendy',
-                      style: TextStyle(color: Colors.black)),
-                  onPressed: () => _handleOpenInApp(context),
-                ),
-              ),
-          ],
-        ),
-        body: FutureBuilder<_PreviewPayload>(
-          future: _fetchExperienceFromShare(token),
-          builder: (context, snapshot) {
-            if (snapshot.connectionState == ConnectionState.waiting) {
-              return const Center(child: CircularProgressIndicator());
-            }
-            if (snapshot.hasError) {
-              return Center(child: Text('Error: ${snapshot.error}'));
-            }
-            if (!snapshot.hasData) {
-              return const Center(child: Text('This share isn\'t available.'));
-            }
-            final payload = snapshot.data!;
-            if (payload.isMulti) {
-              if (payload.multiExperiences.isEmpty) {
-                return const Center(
-                  child: Text('No experiences were included in this share.'),
-                );
-              }
-              return _MultiExperiencePreviewList(
-                experiences: payload.multiExperiences,
-                fromUserId: payload.fromUserId,
-                shareType: payload.shareType,
-                accessMode: payload.accessMode,
-              );
-            }
-            final experience = payload.experience!;
-            final placeholderCategory = UserCategory(
-                id: 'shared', name: 'Shared', icon: '🌐', ownerUserId: '');
-            return ExperiencePageScreen(
-              experience: experience,
-              category: placeholderCategory,
-              userColorCategories: const <ColorCategory>[],
-              initialMediaItems: payload.mediaItems,
-              // Put the screen into read-only mode so destructive actions are hidden
-              readOnlyPreview: true,
-              shareBannerFromUserId: payload.fromUserId,
-              sharePreviewType: payload.shareType,
-              shareAccessMode: payload.accessMode,
-            );
-          },
-        ),
+      child: usePreloaded
+          ? _buildScaffoldWithPayload(context, preloadedPayload)
+          : FutureBuilder<_PreviewPayload>(
+              future: _fetchExperienceFromShare(token),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return _buildLoadingScaffold(context);
+                }
+                if (snapshot.hasError) {
+                  return _buildErrorScaffold(context, snapshot.error.toString());
+                }
+                if (!snapshot.hasData) {
+                  return _buildErrorScaffold(context, 'This share isn\'t available.');
+                }
+                return _buildScaffoldWithPayload(context, snapshot.data!);
+              },
+            ),
+    );
+  }
+  
+  Widget _buildLoadingScaffold(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.white,
+      appBar: AppBar(
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.black,
+        title: const Text('Shared Experience', style: TextStyle(fontSize: 16)),
       ),
+      body: const Center(child: CircularProgressIndicator()),
+    );
+  }
+  
+  Widget _buildErrorScaffold(BuildContext context, String error) {
+    return Scaffold(
+      backgroundColor: Colors.white,
+      appBar: AppBar(
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.black,
+        title: const Text('Shared Experience', style: TextStyle(fontSize: 16)),
+      ),
+      body: Center(child: Text(error)),
+    );
+  }
+  
+  Widget _buildScaffoldWithPayload(BuildContext context, _PreviewPayload payload) {
+    final bool isMulti = payload.isMulti;
+    
+    return Scaffold(
+      backgroundColor: Colors.white,
+      appBar: AppBar(
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.black,
+        leading: kIsWeb ? IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () => _navigateToMain(context),
+        ) : null,
+        title: Text(
+          isMulti ? 'Shared Experiences' : 'Shared Experience',
+          style: const TextStyle(fontSize: 16),
+        ),
+        actions: [
+          if (kIsWeb)
+            Padding(
+              padding: const EdgeInsets.only(right: 8.0),
+              child: TextButton.icon(
+                style: TextButton.styleFrom(foregroundColor: Colors.black),
+                icon: const Icon(Icons.open_in_new, color: Colors.black),
+                label: const Text('Open in Plendy',
+                    style: TextStyle(color: Colors.black)),
+                onPressed: () => _handleOpenInApp(context),
+              ),
+            ),
+        ],
+      ),
+      body: _buildBody(payload),
+    );
+  }
+  
+  Widget _buildBody(_PreviewPayload payload) {
+    if (payload.isMulti) {
+      if (payload.multiExperiences.isEmpty) {
+        return const Center(
+          child: Text('No experiences were included in this share.'),
+        );
+      }
+      return _MultiExperiencePreviewList(
+        experiences: payload.multiExperiences,
+        fromUserId: payload.fromUserId,
+        shareType: payload.shareType,
+        accessMode: payload.accessMode,
+      );
+    }
+    final experience = payload.experience!;
+    final placeholderCategory = UserCategory(
+        id: 'shared', name: 'Shared', icon: '🌐', ownerUserId: '');
+    return ExperiencePageScreen(
+      experience: experience,
+      category: placeholderCategory,
+      userColorCategories: const <ColorCategory>[],
+      initialMediaItems: payload.mediaItems,
+      // Put the screen into read-only mode so destructive actions are hidden
+      readOnlyPreview: true,
+      shareBannerFromUserId: payload.fromUserId,
+      sharePreviewType: payload.shareType,
+      shareAccessMode: payload.accessMode,
     );
   }
 
@@ -192,6 +283,24 @@ class SharePreviewScreen extends StatelessWidget {
         return _payloadFromMapped(mapped);
       }
       // fall through to token query
+    }
+
+    // Check if token looks like a Firestore document ID (longer than typical 12-char token)
+    // Direct shares use document IDs which are ~20 characters with alphanumeric
+    final bool looksLikeDocId = token.length >= 20 && 
+        RegExp(r'^[a-zA-Z0-9]+$').hasMatch(token);
+    
+    if (looksLikeDocId) {
+      // Try fetching directly by document ID first (for direct shares)
+      final docUrl = Uri.parse(
+          'https://firestore.googleapis.com/v1/projects/$projectId/databases/(default)/documents/experience_shares/$token');
+      final resp = await http.get(docUrl, headers: headers);
+      if (resp.statusCode == 200) {
+        final body = json.decode(resp.body) as Map<String, dynamic>;
+        final mapped = _mapRestDoc(body);
+        return _payloadFromMapped(mapped);
+      }
+      // If direct fetch fails, fall through to token query
     }
 
     final runQueryUrl = Uri.parse(
@@ -384,6 +493,8 @@ class SharePreviewScreen extends StatelessWidget {
       editorUserIds: const <String>[],
       colorCategoryId: null,
       otherCategories: const <String>[],
+      categoryIconDenorm: snap['categoryIconDenorm'] as String?,
+      colorHexDenorm: snap['colorHexDenorm'] as String?,
     );
   }
 
@@ -611,39 +722,41 @@ class _MultiExperiencePreviewListState
   }
 
   Widget _buildThumbnail(_PreviewExperienceItem item) {
-    final String? imageUrl = item.primaryImage;
-    final BorderRadius borderRadius = BorderRadius.circular(8);
-    if (imageUrl == null || imageUrl.isEmpty) {
-      return Container(
-        width: 72,
-        height: 72,
-        decoration: BoxDecoration(
-          color: Colors.grey.shade200,
-          borderRadius: borderRadius,
-        ),
-        child: const Icon(Icons.photo_outlined, color: Colors.grey),
-      );
-    }
-    return ClipRRect(
-      borderRadius: borderRadius,
-      child: Image.network(
-        imageUrl,
-        width: 72,
-        height: 72,
-        fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) {
-          return Container(
-            width: 72,
-            height: 72,
-            decoration: BoxDecoration(
-              color: Colors.grey.shade200,
-              borderRadius: borderRadius,
-            ),
-            child: const Icon(Icons.photo_outlined, color: Colors.grey),
-          );
-        },
+    final String categoryIcon = item.experience.categoryIconDenorm ?? '📍';
+    final Color backgroundColor = _parseColorFromExperience(item.experience);
+    
+    return Container(
+      width: 56,
+      height: 56,
+      decoration: BoxDecoration(
+        color: backgroundColor,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      alignment: Alignment.center,
+      child: Text(
+        categoryIcon,
+        style: const TextStyle(fontSize: 28),
       ),
     );
+  }
+
+  Color _parseColorFromExperience(Experience experience) {
+    final String? colorHex = experience.colorHexDenorm;
+    if (colorHex == null || colorHex.isEmpty) {
+      return Colors.grey.shade300;
+    }
+    try {
+      String normalized = colorHex.toUpperCase().replaceAll('#', '');
+      if (normalized.length == 6) {
+        normalized = 'FF$normalized';
+      }
+      if (normalized.length == 8) {
+        return Color(int.parse('0x$normalized')).withOpacity(0.5);
+      }
+    } catch (_) {
+      return Colors.grey.shade300;
+    }
+    return Colors.grey.shade300;
   }
 
   @override
@@ -655,7 +768,7 @@ class _MultiExperiencePreviewListState
     final ThemeData theme = Theme.of(context);
     final String bannerText =
         _isLoadingSender ? 'Loading shared experiences...' : _bannerText();
-    final Color bannerColor = theme.colorScheme.surfaceVariant;
+    final Color bannerColor = Colors.white;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -682,6 +795,7 @@ class _MultiExperiencePreviewListState
               return Card(
                 margin: EdgeInsets.zero,
                 clipBehavior: Clip.antiAlias,
+                color: Colors.grey.shade100,
                 child: InkWell(
                   onTap: () => _openExperience(context, item),
                   child: Padding(

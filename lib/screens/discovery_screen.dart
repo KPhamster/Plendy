@@ -35,6 +35,7 @@ import 'experience_page_screen.dart';
 import 'map_screen.dart';
 import '../widgets/web_media_preview_card.dart';
 import '../widgets/share_experience_bottom_sheet.dart';
+import '../models/share_result.dart';
 
 class DiscoveryScreen extends StatefulWidget {
   const DiscoveryScreen({
@@ -1763,17 +1764,16 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
+          Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 8,
             children: [
-              Expanded(
-                child: Text(
-                  experience.name,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 20,
-                    fontWeight: FontWeight.w600,
-                  ),
+              Text(
+                experience.name,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
               FutureBuilder<List<Experience>>(
@@ -1786,7 +1786,8 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
                   return TextButton(
                     onPressed: () => _showLinkedExperiencesDialog(item),
                     style: TextButton.styleFrom(
-                      foregroundColor: Colors.white,
+                      foregroundColor: Colors.black,
+                      backgroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(
                           horizontal: 8, vertical: 4),
                       minimumSize: const Size(0, 0),
@@ -1862,7 +1863,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
         ),
         const SizedBox(height: 16),
         _buildActionButton(
-          icon: Icons.ios_share,
+          icon: Icons.share_outlined,
           label: 'Share',
           onPressed: _isShareInProgress ? null : () => _handleShareTapped(item),
         ),
@@ -2819,12 +2820,10 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
     await showShareExperienceBottomSheet(
       context: context,
       onDirectShare: () async {
-        final bool? shared = await _shareDiscoveryItemWithFriends(item);
+        final result = await _shareDiscoveryItemWithFriends(item);
         if (!mounted) return;
-        if (shared == true) {
-          messenger.showSnackBar(
-            const SnackBar(content: Text('Shared with friends!')),
-          );
+        if (result != null) {
+          showSharedWithFriendsSnackbar(context, result);
         }
       },
       onCreateLink: (
@@ -2870,8 +2869,8 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
     );
   }
 
-  Future<bool?> _shareDiscoveryItemWithFriends(_DiscoveryFeedItem item) async {
-    if (!mounted) return false;
+  Future<DirectShareResult?> _shareDiscoveryItemWithFriends(_DiscoveryFeedItem item) async {
+    if (!mounted) return null;
 
     final Experience baseExperience =
         item.experience.toExperienceDraft().copyWith(
@@ -2881,11 +2880,11 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
               ),
             );
 
-    final bool? shared = await showShareToFriendsModal(
+    final result = await showShareToFriendsModal(
       context: context,
       subjectLabel: item.experience.name,
       onSubmit: (recipientIds) async {
-        await _experienceShareService.createDirectShare(
+        return await _experienceShareService.createDirectShare(
           experience: baseExperience,
           toUserIds: recipientIds,
           highlightedMediaUrl:
@@ -2893,21 +2892,21 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
         );
       },
       onSubmitToThreads: (threadIds) async {
-        await _experienceShareService.createDirectShareToThreads(
+        return await _experienceShareService.createDirectShareToThreads(
           experience: baseExperience,
           threadIds: threadIds,
           highlightedMediaUrl: item.mediaUrl,
         );
       },
       onSubmitToNewGroupChat: (participantIds) async {
-        await _experienceShareService.createDirectShareToNewGroupChat(
+        return await _experienceShareService.createDirectShareToNewGroupChat(
           experience: baseExperience,
           participantIds: participantIds,
           highlightedMediaUrl: item.mediaUrl,
         );
       },
     );
-    return shared;
+    return result;
   }
 
   List<String> _buildShareImageList(String selectedUrl, List<String> allUrls) {
