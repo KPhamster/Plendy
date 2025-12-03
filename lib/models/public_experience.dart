@@ -11,6 +11,9 @@ class PublicExperience {
   final String? yelpUrl;
   final String? website;
   final List<String> allMediaPaths; // List of media URLs/paths
+  // Aggregated thumbs up/down counts from all users
+  final int thumbsUpCount;
+  final int thumbsDownCount;
 
   PublicExperience({
     required this.id,
@@ -20,6 +23,8 @@ class PublicExperience {
     this.yelpUrl,
     this.website,
     required this.allMediaPaths,
+    this.thumbsUpCount = 0,
+    this.thumbsDownCount = 0,
   });
 
   // CopyWith method for immutability
@@ -31,6 +36,8 @@ class PublicExperience {
     String? yelpUrl,
     String? website,
     List<String>? allMediaPaths,
+    int? thumbsUpCount,
+    int? thumbsDownCount,
   }) {
     return PublicExperience(
       id: id ?? this.id,
@@ -40,6 +47,8 @@ class PublicExperience {
       yelpUrl: yelpUrl ?? this.yelpUrl,
       website: website ?? this.website,
       allMediaPaths: allMediaPaths ?? this.allMediaPaths,
+      thumbsUpCount: thumbsUpCount ?? this.thumbsUpCount,
+      thumbsDownCount: thumbsDownCount ?? this.thumbsDownCount,
     );
   }
 
@@ -52,6 +61,8 @@ class PublicExperience {
       'yelpUrl': yelpUrl,
       'website': website,
       'allMediaPaths': allMediaPaths,
+      'thumbsUpCount': thumbsUpCount,
+      'thumbsDownCount': thumbsDownCount,
       // id is not stored in the document data itself
     };
   }
@@ -69,6 +80,8 @@ class PublicExperience {
       website: data['website'], // Can be null
       allMediaPaths: List<String>.from(
           data['allMediaPaths'] ?? []), // Handle potential null
+      thumbsUpCount: data['thumbsUpCount'] ?? 0,
+      thumbsDownCount: data['thumbsDownCount'] ?? 0,
     );
   }
 
@@ -83,6 +96,8 @@ class PublicExperience {
       yelpUrl: map['yelpUrl'],
       website: map['website'],
       allMediaPaths: List<String>.from(map['allMediaPaths'] ?? []),
+      thumbsUpCount: map['thumbsUpCount'] ?? 0,
+      thumbsDownCount: map['thumbsDownCount'] ?? 0,
     );
   }
 
@@ -155,7 +170,7 @@ class PublicExperience {
   // Optional: toString for debugging
   @override
   String toString() {
-    return 'PublicExperience(id: $id, name: $name, placeID: $placeID, location: ${location.address}, paths: ${allMediaPaths.length})';
+    return 'PublicExperience(id: $id, name: $name, placeID: $placeID, location: ${location.address}, paths: ${allMediaPaths.length}, thumbsUp: $thumbsUpCount, thumbsDown: $thumbsDownCount)';
   }
 
   // Optional: Equality and hashCode
@@ -171,7 +186,9 @@ class PublicExperience {
         other.yelpUrl == yelpUrl &&
         other.website == website &&
         // Compare lists for equality (order matters)
-        ListEquality().equals(other.allMediaPaths, allMediaPaths);
+        ListEquality().equals(other.allMediaPaths, allMediaPaths) &&
+        other.thumbsUpCount == thumbsUpCount &&
+        other.thumbsDownCount == thumbsDownCount;
   }
 
   @override
@@ -183,7 +200,9 @@ class PublicExperience {
         yelpUrl.hashCode ^
         website.hashCode ^
         // Generate hash code for list
-        ListEquality().hash(allMediaPaths);
+        ListEquality().hash(allMediaPaths) ^
+        thumbsUpCount.hashCode ^
+        thumbsDownCount.hashCode;
   }
 }
 
