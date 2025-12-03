@@ -23,90 +23,6 @@ class _MessagesScreenState extends State<MessagesScreen> {
     _messageService = MessageService();
   }
 
-  Future<void> _debugFcm(BuildContext context) async {
-    final authService = Provider.of<AuthService>(context, listen: false);
-    
-    // Check FCM permissions
-    await authService.checkAndRequestFcmPermissions();
-    
-    // Get debug info
-    final debugInfo = await authService.getFcmDebugInfo();
-    
-    if (!mounted) return;
-    
-    // Show debug info dialog
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('FCM Debug Info'),
-        content: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text('User ID: ${debugInfo['userId'] ?? 'N/A'}'),
-              const SizedBox(height: 8),
-              Text('Permission Status: ${debugInfo['permissionStatus'] ?? 'N/A'}'),
-              const SizedBox(height: 8),
-              Text('Has Token: ${debugInfo['hasToken'] ?? false}'),
-              const SizedBox(height: 8),
-              Text('Token Preview: ${debugInfo['tokenPreview'] ?? 'N/A'}'),
-              const SizedBox(height: 8),
-              Text('Tokens in Firestore: ${debugInfo['tokensInFirestore'] ?? 0}'),
-              const SizedBox(height: 8),
-              if (debugInfo['tokensInFirestore'] != null && debugInfo['tokensInFirestore'] > 1) ...[
-                const Text(
-                  '⚠️ Multiple tokens detected!',
-                  style: TextStyle(color: Colors.orange, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 8),
-              ],
-              if (debugInfo['error'] != null) ...[
-                const Text('Error:', style: TextStyle(color: Colors.red)),
-                Text('${debugInfo['error']}', style: const TextStyle(color: Colors.red)),
-              ],
-              const SizedBox(height: 16),
-              if (debugInfo['permissionStatus'] == 'AuthorizationStatus.denied') ...[
-                const Text(
-                  'Notifications are disabled!\nGo to:\nSettings > Apps > Plendy > Notifications\nAnd enable notifications.',
-                  style: TextStyle(color: Colors.orange, fontWeight: FontWeight.bold),
-                ),
-              ] else if (debugInfo['permissionStatus'] == 'AuthorizationStatus.authorized') ...[
-                const Text(
-                  '✅ Notifications are enabled!',
-                  style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold),
-                ),
-              ],
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () async {
-              final scaffoldMessenger = ScaffoldMessenger.of(context);
-              Navigator.pop(context);
-              
-              scaffoldMessenger.showSnackBar(
-                const SnackBar(content: Text('Cleaning up tokens... Check logs')),
-              );
-              
-              await authService.cleanupDuplicateFcmTokens();
-              
-              scaffoldMessenger.showSnackBar(
-                const SnackBar(content: Text('Token cleanup complete!')),
-              );
-            },
-            child: const Text('Deep Clean Tokens'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Close'),
-          ),
-        ],
-      ),
-    );
-  }
-
   Future<void> _openNewChat(BuildContext context, String currentUserId) async {
     final thread = await Navigator.push<MessageThread>(
       context,
@@ -155,16 +71,10 @@ class _MessagesScreenState extends State<MessagesScreen> {
         backgroundColor: Colors.white,
         foregroundColor: Colors.black,
         title: const Text('Messages'),
-        actions: [
-          // Debug button for FCM
-          IconButton(
-            icon: const Icon(Icons.notifications_active),
-            onPressed: () => _debugFcm(context),
-            tooltip: 'Debug FCM Notifications',
-          ),
-        ],
       ),
       floatingActionButton: FloatingActionButton(
+        backgroundColor: Theme.of(context).primaryColor,
+        foregroundColor: Colors.white,
         onPressed: () => _openNewChat(context, currentUser.uid),
         child: const Icon(Icons.message),
       ),

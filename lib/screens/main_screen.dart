@@ -241,6 +241,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Colors.white,
       body: IndexedStack(
         index: _selectedIndex,
         children: _screens,
@@ -266,7 +267,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                   icon: const Icon(Icons.person),
                   showDot: notificationService.hasAnyUnseen,
                 ),
-                label: 'Profile',
+                label: 'Me',
               ),
             ],
             currentIndex: _selectedIndex,
