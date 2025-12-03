@@ -43,6 +43,7 @@ import 'package:app_links/app_links.dart';
 import 'package:firebase_app_check/firebase_app_check.dart';
 import 'screens/share_preview_screen.dart';
 import 'screens/category_share_preview_screen.dart';
+import 'screens/public_profile_screen.dart';
 import 'providers/discovery_share_coordinator.dart';
 import 'screens/discovery_share_preview_screen.dart';
 
@@ -834,6 +835,7 @@ class _MyAppState extends State<MyApp> {
       _initialDiscoveryShareToken; // NEW: Track initial discovery share token from URL
   String? _initialEventShareToken; // Track initial event share token from URL
   String? _initialExperienceShareToken; // Track initial experience share token from URL
+  String? _initialProfileUserId; // Track initial profile user ID from URL
   static const int _maxNavigatorPushRetries = 12;
 
   void _pushRouteWhenReady(WidgetBuilder builder,
@@ -1037,6 +1039,17 @@ class _MyAppState extends State<MyApp> {
               });
               print(
                   "MAIN: Detected initial experience share token from URL: $token");
+            }
+          }
+          // Check for profile link
+          else if (firstSegment == 'profile' && segments.length > 1) {
+            final userId = segments[1];
+            if (userId.isNotEmpty) {
+              setState(() {
+                _initialProfileUserId = userId;
+              });
+              print(
+                  "MAIN: Detected initial profile user ID from URL: $userId");
             }
           }
         }
@@ -1392,6 +1405,17 @@ class _MyAppState extends State<MyApp> {
       } else {
         print('DeepLink: Event share token missing or empty.');
       }
+    } else if (firstSegment == 'profile') {
+      final String? userId = segments.length > 1 ? segments[1] : null;
+      print('DeepLink: Profile - userId: ' + userId.toString());
+      if (userId != null && userId.isNotEmpty) {
+        _pushRouteWhenReady(
+          (_) => PublicProfileScreen(userId: userId),
+          settings: RouteSettings(name: '/profile/$userId'),
+        );
+      } else {
+        print('DeepLink: Profile userId missing or empty.');
+      }
     } else {
       print('DeepLink: No handler for path segments: ' + segments.toString());
     }
@@ -1590,6 +1614,15 @@ class _MyAppState extends State<MyApp> {
       print(
           "MAIN BUILD DEBUG: Showing SharePreviewScreen for token: $_initialExperienceShareToken");
       return SharePreviewScreen(token: _initialExperienceShareToken!);
+    }
+
+    // NEW: Prioritize profile preview on web (for unauthenticated users)
+    if (kIsWeb &&
+        _initialProfileUserId != null &&
+        _initialProfileUserId!.isNotEmpty) {
+      print(
+          "MAIN BUILD DEBUG: Showing PublicProfileScreen for userId: $_initialProfileUserId");
+      return PublicProfileScreen(userId: _initialProfileUserId!);
     }
 
     // If we have shared files, show ReceiveShareScreen

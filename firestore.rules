@@ -33,9 +33,10 @@ service cloud.firestore {
 
       // Rules for followers subcollection
       match /followers/{followerId} {
-        // Allow any authenticated user to read follower docs so public profiles can
+        // Allow anyone to read follower docs so public profiles can
         // display accurate counts/lists (docs only contain follower IDs).
-        allow read: if request.auth != null;
+        // This is safe as follower docs only contain IDs, no sensitive data.
+        allow read: if true;
         
         // Allow creating/deleting a follower document if:
         // 1. The requester is the one trying to follow (followerId = request.auth.uid)
@@ -49,8 +50,9 @@ service cloud.firestore {
 
       // Rules for following subcollection
       match /following/{followingId} {
-        // Allow any authenticated user to read following docs for accurate counts/lists.
-        allow read: if request.auth != null;
+        // Allow anyone to read following docs for public profile counts/lists.
+        // This is safe as following docs only contain IDs, no sensitive data.
+        allow read: if true;
 
         // Allow creating/deleting a following document if:
         // 1. The requester is the one who is doing the following (userId = request.auth.uid)
@@ -96,7 +98,8 @@ service cloud.firestore {
       
       // For list/query operations: Allow anyone with reasonable limits
       // This enables unauthenticated users to view experiences in shared events
-      allow list: if request.auth != null || request.query.limit <= 50;
+      // and public profile pages (increased limit to 500 for public profiles)
+      allow list: if request.auth != null || request.query.limit <= 500;
       
       allow create: if request.auth != null;
       // Allow updates by creator or any current editor listed in the document
@@ -170,7 +173,11 @@ service cloud.firestore {
     }
 
     match /sharedMediaItems/{mediaItemId} {
-      allow read, write: if request.auth != null;
+      // Allow authenticated users full read access
+      // Allow public access to non-private media items for public profile viewing
+      allow read: if request.auth != null || 
+                     (resource.data.isPrivate == false || !('isPrivate' in resource.data));
+      allow write: if request.auth != null;
     }
 
     match /message_threads/{threadId} {

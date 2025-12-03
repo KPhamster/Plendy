@@ -1,7 +1,11 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:firebase_app_check/firebase_app_check.dart';
+import '../../firebase_options.dart';
 import 'package:flutter_rating_bar/flutter_rating_bar.dart';
 import '../models/experience.dart';
 import '../models/user_category.dart'; // Import UserCategory
@@ -3689,7 +3693,17 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     try {
       final mediaIds = _currentExperience.sharedMediaItemIds;
       if (mediaIds.isNotEmpty) {
-        final items = await _experienceService.getSharedMediaItems(mediaIds);
+        List<SharedMediaItem> items;
+        
+        // Check if user is authenticated - if not, use REST API
+        final bool isAuthenticated = _authService.currentUser != null;
+        if (isAuthenticated) {
+          items = await _experienceService.getSharedMediaItems(mediaIds);
+        } else {
+          // Fetch via REST API for unauthenticated users
+          items = await _fetchMediaItemsViaRest(mediaIds);
+        }
+        
         // ADDED: Sort fetched items by createdAt descending
         items.sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
@@ -3730,6 +3744,96 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
         });
       }
     }
+  }
+  
+  /// Fetch media items via REST API for unauthenticated users
+  Future<List<SharedMediaItem>> _fetchMediaItemsViaRest(List<String> mediaIds) async {
+    if (mediaIds.isEmpty) return [];
+    
+    final String projectId = DefaultFirebaseOptions.currentPlatform.projectId;
+    final String? appCheckToken = await FirebaseAppCheck.instance.getToken(true);
+    final String apiKey = DefaultFirebaseOptions.currentPlatform.apiKey;
+    
+    final headers = {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      if (apiKey.isNotEmpty) 'x-goog-api-key': apiKey,
+      if (appCheckToken != null && appCheckToken.isNotEmpty)
+        'X-Firebase-AppCheck': appCheckToken,
+    };
+    
+    final List<SharedMediaItem> items = [];
+    
+    // Fetch each media item individually (Firestore REST doesn't support "in" queries well)
+    for (final mediaId in mediaIds) {
+      try {
+        final url = Uri.parse(
+          'https://firestore.googleapis.com/v1/projects/$projectId/databases/(default)/documents/sharedMediaItems/$mediaId'
+        );
+        final response = await http.get(url, headers: headers);
+        
+        if (response.statusCode == 200) {
+          final doc = json.decode(response.body) as Map<String, dynamic>;
+          final item = _parseMediaItemFromRest(doc, mediaId);
+          if (item != null) {
+            items.add(item);
+          }
+        } else {
+          debugPrint('ExperiencePageScreen: Failed to fetch media item $mediaId: ${response.statusCode}');
+        }
+      } catch (e) {
+        debugPrint('ExperiencePageScreen: Error fetching media item $mediaId via REST: $e');
+      }
+    }
+    
+    return items;
+  }
+  
+  /// Parse a SharedMediaItem from Firestore REST response
+  SharedMediaItem? _parseMediaItemFromRest(Map<String, dynamic> doc, String mediaId) {
+    final fields = (doc['fields'] as Map<String, dynamic>?) ?? {};
+    
+    String? getStringField(String fieldName) {
+      final field = fields[fieldName] as Map<String, dynamic>?;
+      return field?['stringValue'] as String?;
+    }
+    
+    bool? getBoolField(String fieldName) {
+      final field = fields[fieldName] as Map<String, dynamic>?;
+      return field?['booleanValue'] as bool?;
+    }
+    
+    DateTime? getTimestampField(String fieldName) {
+      final field = fields[fieldName] as Map<String, dynamic>?;
+      final timestampValue = field?['timestampValue'] as String?;
+      if (timestampValue == null) return null;
+      return DateTime.tryParse(timestampValue);
+    }
+    
+    List<String> getStringListField(String fieldName) {
+      final field = fields[fieldName] as Map<String, dynamic>?;
+      if (field == null) return [];
+      final arrayValue = field['arrayValue'] as Map<String, dynamic>?;
+      if (arrayValue == null) return [];
+      final values = arrayValue['values'] as List<dynamic>?;
+      if (values == null) return [];
+      return values
+          .map((v) => (v as Map<String, dynamic>?)?['stringValue'] as String?)
+          .whereType<String>()
+          .toList();
+    }
+    
+    final path = getStringField('path') ?? '';
+    if (path.isEmpty) return null;
+    
+    return SharedMediaItem(
+      id: mediaId,
+      path: path,
+      ownerUserId: getStringField('ownerUserId') ?? '',
+      experienceIds: getStringListField('experienceIds'),
+      createdAt: getTimestampField('createdAt') ?? DateTime.now(),
+      isPrivate: getBoolField('isPrivate') ?? false,
+    );
   }
 
   Future<void> _toggleContentSource() async {
