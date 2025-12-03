@@ -54,6 +54,8 @@ import 'event_experience_selector_screen.dart'; // ADDED: Import for EventExperi
 import '../widgets/event_editor_modal.dart'; // ADDED: Import for EventEditorModal
 import '../models/event.dart'; // ADDED: Import for Event
 import '../services/event_service.dart';
+import '../widgets/share_experience_bottom_sheet.dart';
+import '../models/share_result.dart';
 
 // Helper classes for shared data
 class _SharedCategoryData {
@@ -3192,8 +3194,8 @@ class CollectionsScreenState extends State<CollectionsScreen>
                   value: 'share',
                   enabled: canManageCategory,
                   child: const ListTile(
-                    leading: Icon(Icons.ios_share),
-                    title: Text('Share'),
+                    leading: Icon(Icons.share_outlined, color: Colors.blue),
+                    title: Text('Share', style: TextStyle(color: Colors.blue)),
                   ),
                 ),
               ];
@@ -4254,8 +4256,11 @@ class CollectionsScreenState extends State<CollectionsScreen>
                                                   // In selection mode, always use compact icon-only to avoid overflow
                                                   return IconButton(
                                                     tooltip: 'Share',
-                                                    icon: const Icon(
-                                                        Icons.ios_share),
+                                                    icon: Icon(
+                                                        Icons.share_outlined,
+                                                        color: selectedCount == 0
+                                                            ? Colors.grey
+                                                            : Colors.blue),
                                                     onPressed: onSharePressed,
                                                   );
                                                 },
@@ -4512,7 +4517,11 @@ class CollectionsScreenState extends State<CollectionsScreen>
                                           IconButton(
                                             tooltip:
                                                 'Share selected experiences',
-                                            icon: const Icon(Icons.ios_share),
+                                            icon: Icon(
+                                                Icons.share_outlined,
+                                                color: selectedCount == 0
+                                                    ? Colors.grey
+                                                    : Colors.blue),
                                             onPressed: selectedCount == 0
                                                 ? null
                                                 : () {
@@ -5953,8 +5962,8 @@ class CollectionsScreenState extends State<CollectionsScreen>
                       value: 'share',
                       enabled: canManageCategory,
                       child: const ListTile(
-                        leading: Icon(Icons.ios_share),
-                        title: Text('Share'),
+                        leading: Icon(Icons.share_outlined, color: Colors.blue),
+                        title: Text('Share', style: TextStyle(color: Colors.blue)),
                       ),
                     ),
                     PopupMenuItem<String>(
@@ -6296,236 +6305,142 @@ class CollectionsScreenState extends State<CollectionsScreen>
         .where(
             (experience) => _sharedExperiencePermissions[experience.id] == null)
         .toList();
-    final List<Experience> restrictedExperiences = selectedExperiences
-        .where(
-            (experience) => _sharedExperiencePermissions[experience.id] != null)
-        .toList();
 
     if (shareableExperiences.isEmpty) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
               content: Text(
-                  'You can only create shareable links for experiences you own.')),
+                  'You can only share experiences you own.')),
         );
       }
       return;
     }
 
-    setState(() {
-      _isLoading = true;
-    });
+    final int count = shareableExperiences.length;
+    final String titleText = count == 1
+        ? 'Share Experience'
+        : 'Share $count Experiences';
 
+    await showShareExperienceBottomSheet(
+      context: context,
+      titleText: titleText,
+      onDirectShare: () => _directShareSelectedExperiences(shareableExperiences),
+      onCreateLink: ({
+        required String shareMode,
+        required bool giveEditAccess,
+      }) => _createLinkShareForSelectedExperiences(
+        shareableExperiences,
+        shareMode: shareMode,
+        giveEditAccess: giveEditAccess,
+      ),
+    );
+  }
+
+  Future<void> _directShareSelectedExperiences(List<Experience> experiences) async {
+    if (!mounted) return;
+    
+    final String subjectLabel = experiences.length == 1
+        ? experiences.first.name
+        : '${experiences.length} experiences';
+    
     final ExperienceShareService shareService = ExperienceShareService();
-    final List<MapEntry<Experience, String>> createdLinks = [];
-    final List<String> errors = [];
-    String? bulkUrl;
-    List<Experience> bulkExperiences = const <Experience>[];
-
-    if (shareableExperiences.length > 1) {
-      bulkExperiences = List<Experience>.from(shareableExperiences);
-      try {
-        bulkUrl = await shareService.createLinkShareForMultiple(
-          experiences: shareableExperiences,
-          expiresAt: DateTime.now().add(const Duration(days: 30)),
-          grantEdit: false,
-        );
-      } catch (e) {
-        errors.add('Multi-share: $e');
-      }
-    } else {
-      final Experience experience = shareableExperiences.first;
-      try {
-        final String url = await shareService.createLinkShare(
-          experience: experience,
-          expiresAt: DateTime.now().add(const Duration(days: 30)),
-          linkMode: 'separate_copy',
-          grantEdit: false,
-        );
-        createdLinks.add(MapEntry(experience, url));
-      } catch (e) {
-        errors.add('${experience.name}: $e');
-      }
-    }
-
-    if (!mounted) {
-      return;
-    }
-
-    setState(() {
-      _isLoading = false;
-    });
-
-    final scaffoldMessenger = ScaffoldMessenger.of(context);
-
-    if (bulkUrl != null) {
-      final String multiUrl = bulkUrl!;
-      await showDialog<void>(
-        context: context,
-        builder: (ctx) {
-          return AlertDialog(
-            title: const Text('Shareable link created'),
-            content: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    'Included experiences (${bulkExperiences.length}):',
-                    style: Theme.of(ctx).textTheme.bodyMedium,
-                  ),
-                  const SizedBox(height: 8),
-                  ...bulkExperiences.map(
-                    (exp) => Padding(
-                      padding: const EdgeInsets.only(bottom: 4.0),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Icon(Icons.check_circle_outline,
-                              size: 16, color: Colors.green),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              exp.name,
-                              style:
-                                  const TextStyle(fontWeight: FontWeight.w600),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    'Share link',
-                    style: Theme.of(ctx).textTheme.bodyMedium,
-                  ),
-                  const SizedBox(height: 4),
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child: SelectableText(
-                          multiUrl,
-                          style: const TextStyle(fontSize: 13),
-                        ),
-                      ),
-                      IconButton(
-                        tooltip: 'Copy link',
-                        icon: const Icon(Icons.copy),
-                        onPressed: () async {
-                          await Clipboard.setData(
-                            ClipboardData(text: multiUrl),
-                          );
-                          scaffoldMessenger.showSnackBar(
-                            const SnackBar(content: Text('Link copied')),
-                          );
-                        },
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () async {
-                  await Share.share(multiUrl);
-                  Navigator.of(ctx).pop();
-                },
-                child: const Text('Share'),
-              ),
-              TextButton(
-                onPressed: () => Navigator.of(ctx).pop(),
-                child: const Text('Close'),
-              ),
-            ],
+    final bool isMultiple = experiences.length > 1;
+    
+    final result = await showShareToFriendsModal(
+      context: context,
+      subjectLabel: subjectLabel,
+      onSubmit: (recipientIds) async {
+        if (isMultiple) {
+          // Share multiple experiences as a single card
+          return await shareService.createDirectShareForMultiple(
+            experiences: experiences,
+            toUserIds: recipientIds,
           );
-        },
-      );
-    } else if (createdLinks.isNotEmpty) {
-      await showDialog<void>(
-        context: context,
-        builder: (ctx) {
-          return AlertDialog(
-            title: Text(createdLinks.length == 1
-                ? 'Shareable link created'
-                : 'Shareable links created'),
-            content: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: createdLinks.map((entry) {
-                  return ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: Text(
-                      entry.key.name,
-                      style: const TextStyle(fontWeight: FontWeight.w600),
-                    ),
-                    subtitle: Padding(
-                      padding: const EdgeInsets.only(top: 4.0),
-                      child: SelectableText(
-                        entry.value,
-                        style: const TextStyle(fontSize: 13),
-                      ),
-                    ),
-                    trailing: IconButton(
-                      tooltip: 'Copy link',
-                      icon: const Icon(Icons.copy),
-                      onPressed: () async {
-                        await Clipboard.setData(
-                          ClipboardData(text: entry.value),
-                        );
-                        scaffoldMessenger.showSnackBar(
-                          SnackBar(
-                            content:
-                                Text('Link copied for "${entry.key.name}".'),
-                          ),
-                        );
-                      },
-                    ),
-                  );
-                }).toList(),
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(ctx).pop(),
-                child: const Text('Close'),
-              ),
-            ],
+        } else {
+          // Single experience share
+          return await shareService.createDirectShare(
+            experience: experiences.first,
+            toUserIds: recipientIds,
           );
-        },
+        }
+      },
+      onSubmitToThreads: (threadIds) async {
+        if (isMultiple) {
+          return await shareService.createDirectShareForMultipleToThreads(
+            experiences: experiences,
+            threadIds: threadIds,
+          );
+        } else {
+          return await shareService.createDirectShareToThreads(
+            experience: experiences.first,
+            threadIds: threadIds,
+          );
+        }
+      },
+      onSubmitToNewGroupChat: (participantIds) async {
+        if (isMultiple) {
+          return await shareService.createDirectShareForMultipleToNewGroupChat(
+            experiences: experiences,
+            participantIds: participantIds,
+          );
+        } else {
+          return await shareService.createDirectShareToNewGroupChat(
+            experience: experiences.first,
+            participantIds: participantIds,
+          );
+        }
+      },
+    );
+    
+    if (!mounted) return;
+    if (result != null) {
+      showSharedWithFriendsSnackbar(context, result);
+    }
+  }
+
+  Future<void> _createLinkShareForSelectedExperiences(
+    List<Experience> experiences, {
+    required String shareMode,
+    required bool giveEditAccess,
+  }) async {
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(
+      const SnackBar(content: Text('Creating shareable link...')),
+    );
+    
+    try {
+      final ExperienceShareService shareService = ExperienceShareService();
+      final DateTime expiresAt = DateTime.now().add(const Duration(days: 30));
+      
+      String url;
+      if (experiences.length > 1) {
+        url = await shareService.createLinkShareForMultiple(
+          experiences: experiences,
+          expiresAt: expiresAt,
+          grantEdit: giveEditAccess,
+        );
+      } else {
+        url = await shareService.createLinkShare(
+          experience: experiences.first,
+          expiresAt: expiresAt,
+          linkMode: shareMode,
+          grantEdit: giveEditAccess,
+        );
+      }
+      
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      
+      final int count = experiences.length;
+      final String shareText = count == 1
+          ? 'Check out this experience from Plendy! $url'
+          : 'Check out these $count experiences from Plendy! $url';
+      await Share.share(shareText);
+    } catch (e) {
+      messenger.showSnackBar(
+        SnackBar(content: Text('Failed to create link: $e')),
       );
-    }
-
-    final List<String> messageParts = [];
-    if (bulkUrl != null) {
-      final int count = bulkExperiences.length;
-      messageParts.add(
-          'Created 1 shareable link for $count ${count == 1 ? 'experience' : 'experiences'}');
-    } else if (createdLinks.isNotEmpty) {
-      messageParts.add(
-          'Created ${createdLinks.length} ${createdLinks.length == 1 ? 'shareable link' : 'shareable links'}');
-    }
-    if (restrictedExperiences.isNotEmpty) {
-      messageParts.add(
-          'Skipped ${restrictedExperiences.length} shared ${restrictedExperiences.length == 1 ? 'experience' : 'experiences'} you do not own');
-    }
-    if (errors.isNotEmpty) {
-      final String errorText = errors.first;
-      final int remaining = errors.length - 1;
-      final String suffix = remaining > 0
-          ? ' (and $remaining more issue${remaining == 1 ? '' : 's'})'
-          : '';
-      messageParts.add('Some links failed: $errorText$suffix');
-    }
-
-    if (messageParts.isNotEmpty && mounted) {
-      final String message = messageParts.join('. ');
-      final String displayMessage =
-          message.endsWith('.') ? message : '$message.';
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(displayMessage)));
     }
   }
 
@@ -7504,8 +7419,8 @@ class CollectionsScreenState extends State<CollectionsScreen>
                   value: 'share',
                   enabled: canManageCategory,
                   child: const ListTile(
-                    leading: Icon(Icons.ios_share),
-                    title: Text('Share'),
+                    leading: Icon(Icons.share_outlined, color: Colors.blue),
+                    title: Text('Share', style: TextStyle(color: Colors.blue)),
                   ),
                 ),
               ];
@@ -7737,8 +7652,8 @@ class CollectionsScreenState extends State<CollectionsScreen>
                       value: 'share',
                       enabled: canManageCategory,
                       child: const ListTile(
-                        leading: Icon(Icons.ios_share),
-                        title: Text('Share'),
+                        leading: Icon(Icons.share_outlined, color: Colors.blue),
+                        title: Text('Share', style: TextStyle(color: Colors.blue)),
                       ),
                     ),
                     PopupMenuItem<String>(
@@ -8585,6 +8500,22 @@ class CollectionsScreenState extends State<CollectionsScreen>
         alignment: Alignment.center,
         children: [
           circleAvatar,
+          // Share button
+          if (associatedExperiences.isNotEmpty)
+            Positioned(
+              right: showPrivacyToggle ? 48 : 0,
+              child: Tooltip(
+                message: 'Share',
+                child: GestureDetector(
+                  onTap: () => _shareContentItem(group),
+                  child: const Icon(
+                    Icons.share_outlined,
+                    color: Colors.blue,
+                    size: 22,
+                  ),
+                ),
+              ),
+            ),
           if (showPrivacyToggle)
             Positioned(
               right: 0,
@@ -8748,6 +8679,97 @@ class CollectionsScreenState extends State<CollectionsScreen>
         ],
       ),
     );
+  }
+
+  /// Share a content item (media) with friends or create a link
+  Future<void> _shareContentItem(GroupedContentItem group) async {
+    if (!mounted || group.associatedExperiences.isEmpty) return;
+
+    // Use the first associated experience for sharing
+    final Experience experience = group.associatedExperiences.first;
+    final String? highlightedMediaUrl =
+        group.mediaItem.path.isNotEmpty ? group.mediaItem.path : null;
+
+    await showShareExperienceBottomSheet(
+      context: context,
+      onDirectShare: () => _directShareContentItem(experience, highlightedMediaUrl),
+      onCreateLink: ({
+        required String shareMode,
+        required bool giveEditAccess,
+      }) =>
+          _createLinkShareForContentItem(
+        experience,
+        shareMode: shareMode,
+        giveEditAccess: giveEditAccess,
+      ),
+    );
+  }
+
+  Future<void> _directShareContentItem(
+    Experience experience,
+    String? highlightedMediaUrl,
+  ) async {
+    if (!mounted) return;
+    final ExperienceShareService shareService = ExperienceShareService();
+    final result = await showShareToFriendsModal(
+      context: context,
+      subjectLabel: experience.name,
+      onSubmit: (recipientIds) async {
+        return await shareService.createDirectShare(
+          experience: experience,
+          toUserIds: recipientIds,
+          highlightedMediaUrl: highlightedMediaUrl,
+        );
+      },
+      onSubmitToThreads: (threadIds) async {
+        return await shareService.createDirectShareToThreads(
+          experience: experience,
+          threadIds: threadIds,
+          highlightedMediaUrl: highlightedMediaUrl,
+        );
+      },
+      onSubmitToNewGroupChat: (participantIds) async {
+        return await shareService.createDirectShareToNewGroupChat(
+          experience: experience,
+          participantIds: participantIds,
+          highlightedMediaUrl: highlightedMediaUrl,
+        );
+      },
+    );
+    if (!mounted) return;
+    if (result != null) {
+      showSharedWithFriendsSnackbar(context, result);
+    }
+  }
+
+  Future<void> _createLinkShareForContentItem(
+    Experience experience, {
+    required String shareMode,
+    required bool giveEditAccess,
+  }) async {
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    final ExperienceShareService shareService = ExperienceShareService();
+    try {
+      final DateTime expiresAt = DateTime.now().add(const Duration(days: 30));
+      final String url = await shareService.createLinkShare(
+        experience: experience,
+        expiresAt: expiresAt,
+        linkMode: shareMode,
+        grantEdit: giveEditAccess,
+      );
+      if (!mounted) return;
+      Navigator.of(context).pop(); // Close the bottom sheet
+      await Share.share('Check out this experience from Plendy! $url');
+    } catch (e) {
+      if (mounted) {
+        messenger.showSnackBar(
+          const SnackBar(
+            content: Text('Unable to generate a share link. Please try again.'),
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _toggleGroupedContentPrivacy(GroupedContentItem group) async {
@@ -9638,19 +9660,176 @@ class CollectionsScreenState extends State<CollectionsScreen>
     List<UserCategory>? userCategories,
     List<ColorCategory>? colorCategories,
   }) {
-    showModalBottomSheet(
+    final int count = (userCategories?.length ?? 0) + (colorCategories?.length ?? 0);
+    final String titleText = count == 1
+        ? 'Share Category'
+        : 'Share $count Categories';
+
+    showShareExperienceBottomSheet(
       context: context,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      titleText: titleText,
+      onDirectShare: () => _directShareSelectedCategories(
+        userCategories: userCategories,
+        colorCategories: colorCategories,
       ),
-      builder: (ctx) {
-        return _BulkShareBottomSheetContent(
-          userCategories: userCategories,
-          colorCategories: colorCategories,
-        );
+      onCreateLink: ({
+        required String shareMode,
+        required bool giveEditAccess,
+      }) => _createLinkShareForSelectedCategories(
+        userCategories: userCategories,
+        colorCategories: colorCategories,
+        giveEditAccess: giveEditAccess,
+      ),
+    );
+  }
+
+  Future<void> _directShareSelectedCategories({
+    List<UserCategory>? userCategories,
+    List<ColorCategory>? colorCategories,
+  }) async {
+    if (!mounted) return;
+    
+    final int userCount = userCategories?.length ?? 0;
+    final int colorCount = colorCategories?.length ?? 0;
+    final int totalCount = userCount + colorCount;
+    
+    if (totalCount == 0) return;
+    
+    final String subjectLabel = totalCount == 1
+        ? (userCategories?.firstOrNull?.name ?? colorCategories?.firstOrNull?.name ?? 'Category')
+        : '$totalCount categories';
+    
+    final CategoryShareService shareService = CategoryShareService();
+    final bool isMultiple = totalCount > 1;
+    
+    final result = await showShareToFriendsModal(
+      context: context,
+      subjectLabel: subjectLabel,
+      onSubmit: (recipientIds) async {
+        if (isMultiple) {
+          // Share multiple categories as a single card
+          return await shareService.createDirectShareForMultipleCategories(
+            userCategories: userCategories ?? [],
+            colorCategories: colorCategories ?? [],
+            toUserIds: recipientIds,
+          );
+        } else if (userCount == 1) {
+          return await shareService.createDirectShareForCategory(
+            category: userCategories!.first,
+            toUserIds: recipientIds,
+          );
+        } else if (colorCount == 1) {
+          return await shareService.createDirectShareForColorCategory(
+            colorCategory: colorCategories!.first,
+            toUserIds: recipientIds,
+          );
+        }
+        return DirectShareResult(threadIds: []);
+      },
+      onSubmitToThreads: (threadIds) async {
+        if (isMultiple) {
+          return await shareService.createDirectShareForMultipleCategoriesToThreads(
+            userCategories: userCategories ?? [],
+            colorCategories: colorCategories ?? [],
+            threadIds: threadIds,
+          );
+        } else if (userCount == 1) {
+          return await shareService.createDirectShareForCategoryToThreads(
+            category: userCategories!.first,
+            threadIds: threadIds,
+          );
+        } else if (colorCount == 1) {
+          return await shareService.createDirectShareForColorCategoryToThreads(
+            colorCategory: colorCategories!.first,
+            threadIds: threadIds,
+          );
+        }
+        return DirectShareResult(threadIds: []);
+      },
+      onSubmitToNewGroupChat: (participantIds) async {
+        if (isMultiple) {
+          return await shareService.createDirectShareForMultipleCategoriesToNewGroupChat(
+            userCategories: userCategories ?? [],
+            colorCategories: colorCategories ?? [],
+            participantIds: participantIds,
+          );
+        } else if (userCount == 1) {
+          return await shareService.createDirectShareForCategoryToNewGroupChat(
+            category: userCategories!.first,
+            participantIds: participantIds,
+          );
+        } else if (colorCount == 1) {
+          return await shareService.createDirectShareForColorCategoryToNewGroupChat(
+            colorCategory: colorCategories!.first,
+            participantIds: participantIds,
+          );
+        }
+        return DirectShareResult(threadIds: []);
       },
     );
+    
+    if (!mounted) return;
+    if (result != null) {
+      showSharedWithFriendsSnackbar(context, result);
+    }
+  }
+
+  Future<void> _createLinkShareForSelectedCategories({
+    List<UserCategory>? userCategories,
+    List<ColorCategory>? colorCategories,
+    required bool giveEditAccess,
+  }) async {
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(
+      const SnackBar(content: Text('Creating shareable link...')),
+    );
+    
+    try {
+      final CategoryShareService shareService = CategoryShareService();
+      final DateTime expiresAt = DateTime.now().add(const Duration(days: 30));
+      final String accessMode = giveEditAccess ? 'edit' : 'view';
+      String url;
+      
+      final int userCount = userCategories?.length ?? 0;
+      final int colorCount = colorCategories?.length ?? 0;
+      
+      if (userCount + colorCount > 1) {
+        // Multiple categories - use bulk share
+        url = await shareService.createLinkShareForMultiple(
+          userCategories: userCategories ?? [],
+          colorCategories: colorCategories ?? [],
+          accessMode: accessMode,
+          expiresAt: expiresAt,
+        );
+      } else if (userCount == 1) {
+        url = await shareService.createLinkShareForCategory(
+          category: userCategories!.first,
+          accessMode: accessMode,
+          expiresAt: expiresAt,
+        );
+      } else if (colorCount == 1) {
+        url = await shareService.createLinkShareForColorCategory(
+          colorCategory: colorCategories!.first,
+          accessMode: accessMode,
+          expiresAt: expiresAt,
+        );
+      } else {
+        throw Exception('No categories selected');
+      }
+      
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      
+      final int count = userCount + colorCount;
+      final String shareText = count == 1
+          ? 'Check out this category from Plendy! $url'
+          : 'Check out these $count categories from Plendy! $url';
+      await Share.share(shareText);
+    } catch (e) {
+      messenger.showSnackBar(
+        SnackBar(content: Text('Failed to create link: $e')),
+      );
+    }
   }
 }
 
@@ -10155,69 +10334,6 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
       );
     }
   }
-  void _showShareUrlOptions(BuildContext context, String url) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (ctx) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('Share link',
-                    style:
-                        TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
-                const SizedBox(height: 8),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.grey[100],
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(url, style: const TextStyle(fontSize: 14)),
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    ElevatedButton.icon(
-                      onPressed: () async {
-                        await Share.share(url);
-                        if (ctx.mounted) Navigator.of(ctx).pop();
-                      },
-                      icon: const Icon(Icons.ios_share),
-                      label: const Text('Share'),
-                      style: ElevatedButton.styleFrom(
-                          backgroundColor: Theme.of(ctx).primaryColor,
-                          foregroundColor: Colors.white),
-                    ),
-                    const SizedBox(width: 12),
-                    OutlinedButton.icon(
-                      onPressed: () async {
-                        await Clipboard.setData(ClipboardData(text: url));
-                        if (ctx.mounted) {
-                          Navigator.of(ctx).pop();
-                          ScaffoldMessenger.of(ctx).showSnackBar(
-                              const SnackBar(content: Text('Link copied')));
-                        }
-                      },
-                      icon: const Icon(Icons.copy),
-                      label: const Text('Copy'),
-                    ),
-                  ],
-                )
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -10337,10 +10453,73 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
             ListTile(
               leading: const Icon(Icons.send_outlined),
               title: const Text('Share to Plendy friends'),
-              onTap: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Coming soon.')),
+              onTap: () async {
+                final bool grantEdit = _shareMode == 'edit_access';
+                final String accessMode = grantEdit ? 'edit' : 'view';
+                final String categoryName = widget.userCategory?.name ?? 
+                    widget.colorCategory?.name ?? 'Category';
+                
+                Navigator.of(context).pop(); // Close the bottom sheet first
+                
+                final result = await showShareToFriendsModal(
+                  context: context,
+                  subjectLabel: categoryName,
+                  onSubmit: (recipientIds) async {
+                    final shareService = CategoryShareService();
+                    if (widget.userCategory != null) {
+                      return await shareService.createDirectShareForCategory(
+                        category: widget.userCategory!,
+                        toUserIds: recipientIds,
+                        accessMode: accessMode,
+                      );
+                    } else if (widget.colorCategory != null) {
+                      return await shareService.createDirectShareForColorCategory(
+                        colorCategory: widget.colorCategory!,
+                        toUserIds: recipientIds,
+                        accessMode: accessMode,
+                      );
+                    }
+                    return DirectShareResult(threadIds: []);
+                  },
+                  onSubmitToThreads: (threadIds) async {
+                    final shareService = CategoryShareService();
+                    if (widget.userCategory != null) {
+                      return await shareService.createDirectShareForCategoryToThreads(
+                        category: widget.userCategory!,
+                        threadIds: threadIds,
+                        accessMode: accessMode,
+                      );
+                    } else if (widget.colorCategory != null) {
+                      return await shareService.createDirectShareForColorCategoryToThreads(
+                        colorCategory: widget.colorCategory!,
+                        threadIds: threadIds,
+                        accessMode: accessMode,
+                      );
+                    }
+                    return DirectShareResult(threadIds: []);
+                  },
+                  onSubmitToNewGroupChat: (participantIds) async {
+                    final shareService = CategoryShareService();
+                    if (widget.userCategory != null) {
+                      return await shareService.createDirectShareForCategoryToNewGroupChat(
+                        category: widget.userCategory!,
+                        participantIds: participantIds,
+                        accessMode: accessMode,
+                      );
+                    } else if (widget.colorCategory != null) {
+                      return await shareService.createDirectShareForColorCategoryToNewGroupChat(
+                        colorCategory: widget.colorCategory!,
+                        participantIds: participantIds,
+                        accessMode: accessMode,
+                      );
+                    }
+                    return DirectShareResult(threadIds: []);
+                  },
                 );
+                
+                if (result != null && context.mounted) {
+                  showSharedWithFriendsSnackbar(context, result);
+                }
               },
             ),
             ListTile(
@@ -10358,13 +10537,17 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
                   : () async {
                       setState(() => _creating = true);
                       final bool grantEdit = _shareMode == 'edit_access';
+                      final messenger = ScaffoldMessenger.of(context);
+                      messenger.showSnackBar(
+                        const SnackBar(content: Text('Creating shareable link...')),
+                      );
                       try {
                         final DateTime expiresAt =
                             DateTime.now().add(const Duration(days: 30));
                         final shareService = CategoryShareService();
                         late final String url;
-                        final BuildContext rootContext =
-                            Navigator.of(context, rootNavigator: true).context;
+                        final String categoryName = widget.userCategory?.name ?? 
+                            widget.colorCategory?.name ?? 'category';
                         if (widget.userCategory != null) {
                           url = await shareService.createLinkShareForCategory(
                             category: widget.userCategory!,
@@ -10389,16 +10572,14 @@ class _ShareBottomSheetContentState extends State<_ShareBottomSheetContent> {
                         if (mounted) {
                           Navigator.of(context).pop();
                         }
-                        _showShareUrlOptions(rootContext, url);
+                        // Open system share sheet directly (consistent with experience share)
+                        await Share.share('Check out my "$categoryName" category on Plendy! $url');
                       } catch (e) {
-                        if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text(
-                                  'Failed to create link: ' + e.toString()),
-                            ),
-                          );
-                        }
+                        messenger.showSnackBar(
+                          SnackBar(
+                            content: Text('Failed to create link: $e'),
+                          ),
+                        );
                       } finally {
                         if (mounted) setState(() => _creating = false);
                       }

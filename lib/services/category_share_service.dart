@@ -5,14 +5,20 @@ import '../models/user_category.dart';
 import '../models/color_category.dart';
 import '../models/experience.dart';
 import '../models/enums/share_enums.dart';
+import '../models/share_result.dart';
+import '../models/user_profile.dart';
 import 'experience_service.dart';
 import 'sharing_service.dart';
+import 'message_service.dart';
+import 'user_service.dart';
 
 class CategoryShareService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final ExperienceService _experienceService = ExperienceService();
   final SharingService _sharingService = SharingService();
+  final MessageService _messageService = MessageService();
+  final UserService _userService = UserService();
 
   CollectionReference get _shares => _firestore.collection('category_shares');
 
@@ -99,7 +105,7 @@ class CategoryShareService {
     final List<Experience> exps =
         await _collectShareableExperiences(category: category);
     final List<Map<String, dynamic>> experienceSnapshots =
-        exps.map((e) => _buildExperienceSnapshot(e)).toList();
+        exps.map((e) => _buildExperienceSnapshot(e, categoryIcon: category.icon)).toList();
 
     final data = {
       'fromUserId': userId,
@@ -134,8 +140,10 @@ class CategoryShareService {
     // Build experiences snapshot for this color category
     final List<Experience> exps =
         await _collectShareableExperiences(colorCategory: colorCategory);
+    // Convert color to hex string for the snapshot
+    final String colorHex = '#${colorCategory.color.value.toRadixString(16).padLeft(8, '0').substring(2)}';
     final List<Map<String, dynamic>> experienceSnapshots =
-        exps.map((e) => _buildExperienceSnapshot(e)).toList();
+        exps.map((e) => _buildExperienceSnapshot(e, colorHex: colorHex)).toList();
 
     final data = {
       'fromUserId': userId,
@@ -178,7 +186,7 @@ class CategoryShareService {
       final List<Experience> exps =
           await _collectShareableExperiences(category: category);
       final List<Map<String, dynamic>> experienceSnapshots =
-          exps.map((e) => _buildExperienceSnapshot(e)).toList();
+          exps.map((e) => _buildExperienceSnapshot(e, categoryIcon: category.icon)).toList();
       userCategorySnapshots.add({
         'id': category.id,
         'name': category.name,
@@ -191,8 +199,9 @@ class CategoryShareService {
     for (final colorCategory in colorCategories) {
       final List<Experience> exps =
           await _collectShareableExperiences(colorCategory: colorCategory);
+      final String colorHex = '#${colorCategory.color.value.toRadixString(16).padLeft(8, '0').substring(2)}';
       final List<Map<String, dynamic>> experienceSnapshots =
-          exps.map((e) => _buildExperienceSnapshot(e)).toList();
+          exps.map((e) => _buildExperienceSnapshot(e, colorHex: colorHex)).toList();
       colorCategorySnapshots.add({
         'id': colorCategory.id,
         'name': colorCategory.name,
@@ -294,7 +303,15 @@ class CategoryShareService {
     }
   }
 
-  Map<String, dynamic> _buildExperienceSnapshot(Experience exp) {
+  Map<String, dynamic> _buildExperienceSnapshot(
+    Experience exp, {
+    String? categoryIcon,
+    String? colorHex,
+  }) {
+    // Use provided category icon/color, or fall back to experience's denormalized values
+    final String? finalCategoryIcon = categoryIcon ?? exp.categoryIconDenorm;
+    final String? finalColorHex = colorHex ?? exp.colorHexDenorm;
+    
     return {
       'experienceId': exp.id,
       'name': exp.name,
@@ -304,6 +321,8 @@ class CategoryShareService {
       'plendyRating': exp.plendyRating,
       'googleRating': exp.googleRating,
       'googleReviewCount': exp.googleReviewCount,
+      'categoryIconDenorm': finalCategoryIcon,
+      'colorHexDenorm': finalColorHex,
       'location': {
         'displayName': exp.location.displayName,
         'address': exp.location.address,
@@ -316,5 +335,775 @@ class CategoryShareService {
         'website': exp.location.website,
       },
     };
+  }
+
+  /// Create a direct share for a UserCategory to specific users
+  Future<DirectShareResult> createDirectShareForCategory({
+    required UserCategory category,
+    required List<String> toUserIds,
+    String accessMode = 'view', // 'view' | 'edit'
+  }) async {
+    final userId = _currentUserId;
+    if (userId == null) throw Exception('User not authenticated');
+    if (toUserIds.isEmpty) throw Exception('No recipients provided');
+
+    // Build category snapshot with experiences
+    final List<Experience> exps =
+        await _collectShareableExperiences(category: category);
+    final List<Map<String, dynamic>> experienceSnapshots =
+        exps.map((e) => _buildExperienceSnapshot(e, categoryIcon: category.icon)).toList();
+
+    final categorySnapshot = {
+      'name': category.name,
+      'icon': category.icon,
+      'categoryId': category.id,
+      'categoryType': 'user',
+      'accessMode': accessMode,
+      'experiences': experienceSnapshots,
+    };
+
+    final data = {
+      'fromUserId': userId,
+      'toUserIds': toUserIds,
+      'visibility': 'direct',
+      'accessMode': accessMode,
+      'categoryType': 'user',
+      'categoryId': category.id,
+      'snapshot': categorySnapshot,
+      'createdAt': FieldValue.serverTimestamp(),
+    };
+
+    final shareDocRef = await _shares.add(data);
+
+    // Grant share permissions to recipients
+    for (final recipientId in toUserIds) {
+      try {
+        await grantSharedCategoryToUser(
+          categoryId: category.id,
+          ownerUserId: userId,
+          targetUserId: recipientId,
+          accessMode: accessMode,
+          experienceIds: exps.map((e) => e.id).toList(),
+        );
+      } catch (e) {
+        print('Failed to grant category share to $recipientId: $e');
+      }
+    }
+
+    // Track thread IDs and recipient profiles for navigation
+    final List<String> threadIds = [];
+    final List<UserProfile> recipientProfiles = [];
+
+    // If there's only one recipient, fetch their profile for personalized messaging
+    if (toUserIds.length == 1) {
+      try {
+        final profile = await _userService.getUserProfile(toUserIds.first);
+        if (profile != null) {
+          recipientProfiles.add(profile);
+        }
+      } catch (e) {
+        // Ignore profile fetch errors - we'll just use generic messaging
+        print('Failed to fetch recipient profile: $e');
+      }
+    }
+
+    // Send message to each recipient
+    for (final recipientId in toUserIds) {
+      try {
+        final thread = await _messageService.createOrGetThread(
+          currentUserId: userId,
+          participantIds: [recipientId],
+        );
+        await _messageService.sendCategoryShareMessage(
+          threadId: thread.id,
+          senderId: userId,
+          categorySnapshot: categorySnapshot,
+          shareId: shareDocRef.id,
+        );
+        threadIds.add(thread.id);
+      } catch (e) {
+        print('Failed to send category share message to $recipientId: $e');
+      }
+    }
+
+    return DirectShareResult(
+      threadIds: threadIds,
+      recipientProfiles: recipientProfiles,
+    );
+  }
+
+  /// Create a direct share for a ColorCategory to specific users
+  Future<DirectShareResult> createDirectShareForColorCategory({
+    required ColorCategory colorCategory,
+    required List<String> toUserIds,
+    String accessMode = 'view', // 'view' | 'edit'
+  }) async {
+    final userId = _currentUserId;
+    if (userId == null) throw Exception('User not authenticated');
+    if (toUserIds.isEmpty) throw Exception('No recipients provided');
+
+    // Build category snapshot with experiences
+    final List<Experience> exps =
+        await _collectShareableExperiences(colorCategory: colorCategory);
+    final String colorHex = '#${colorCategory.color.value.toRadixString(16).padLeft(8, '0').substring(2)}';
+    final List<Map<String, dynamic>> experienceSnapshots =
+        exps.map((e) => _buildExperienceSnapshot(e, colorHex: colorHex)).toList();
+
+    final categorySnapshot = {
+      'name': colorCategory.name,
+      'color': colorCategory.color.value,
+      'categoryId': colorCategory.id,
+      'categoryType': 'color',
+      'accessMode': accessMode,
+      'experiences': experienceSnapshots,
+    };
+
+    final data = {
+      'fromUserId': userId,
+      'toUserIds': toUserIds,
+      'visibility': 'direct',
+      'accessMode': accessMode,
+      'categoryType': 'color',
+      'colorCategoryId': colorCategory.id,
+      'snapshot': categorySnapshot,
+      'createdAt': FieldValue.serverTimestamp(),
+    };
+
+    final shareDocRef = await _shares.add(data);
+
+    // Grant share permissions to recipients
+    for (final recipientId in toUserIds) {
+      try {
+        await grantSharedCategoryToUser(
+          categoryId: colorCategory.id,
+          ownerUserId: userId,
+          targetUserId: recipientId,
+          accessMode: accessMode,
+          experienceIds: exps.map((e) => e.id).toList(),
+        );
+      } catch (e) {
+        print('Failed to grant color category share to $recipientId: $e');
+      }
+    }
+
+    // Track thread IDs and recipient profiles for navigation
+    final List<String> threadIds = [];
+    final List<UserProfile> recipientProfiles = [];
+
+    // If there's only one recipient, fetch their profile for personalized messaging
+    if (toUserIds.length == 1) {
+      try {
+        final profile = await _userService.getUserProfile(toUserIds.first);
+        if (profile != null) {
+          recipientProfiles.add(profile);
+        }
+      } catch (e) {
+        // Ignore profile fetch errors - we'll just use generic messaging
+        print('Failed to fetch recipient profile: $e');
+      }
+    }
+
+    // Send message to each recipient
+    for (final recipientId in toUserIds) {
+      try {
+        final thread = await _messageService.createOrGetThread(
+          currentUserId: userId,
+          participantIds: [recipientId],
+        );
+        await _messageService.sendCategoryShareMessage(
+          threadId: thread.id,
+          senderId: userId,
+          categorySnapshot: categorySnapshot,
+          shareId: shareDocRef.id,
+        );
+        threadIds.add(thread.id);
+      } catch (e) {
+        print('Failed to send color category share message to $recipientId: $e');
+      }
+    }
+
+    return DirectShareResult(
+      threadIds: threadIds,
+      recipientProfiles: recipientProfiles,
+    );
+  }
+
+  /// Create a direct share for a category to existing threads
+  Future<DirectShareResult> createDirectShareForCategoryToThreads({
+    required UserCategory category,
+    required List<String> threadIds,
+    String accessMode = 'view',
+  }) async {
+    final userId = _currentUserId;
+    if (userId == null) throw Exception('User not authenticated');
+    if (threadIds.isEmpty) throw Exception('No threads provided');
+
+    // Build category snapshot with experiences
+    final List<Experience> exps =
+        await _collectShareableExperiences(category: category);
+    final List<Map<String, dynamic>> experienceSnapshots =
+        exps.map((e) => _buildExperienceSnapshot(e, categoryIcon: category.icon)).toList();
+
+    final categorySnapshot = {
+      'name': category.name,
+      'icon': category.icon,
+      'categoryId': category.id,
+      'categoryType': 'user',
+      'accessMode': accessMode,
+      'experiences': experienceSnapshots,
+    };
+
+    final data = {
+      'fromUserId': userId,
+      'toThreadIds': threadIds,
+      'visibility': 'direct',
+      'accessMode': accessMode,
+      'categoryType': 'user',
+      'categoryId': category.id,
+      'snapshot': categorySnapshot,
+      'createdAt': FieldValue.serverTimestamp(),
+    };
+
+    final shareDocRef = await _shares.add(data);
+
+    // Track successful thread IDs
+    final List<String> successThreadIds = [];
+
+    // Send message to each thread
+    for (final threadId in threadIds) {
+      try {
+        await _messageService.sendCategoryShareMessage(
+          threadId: threadId,
+          senderId: userId,
+          categorySnapshot: categorySnapshot,
+          shareId: shareDocRef.id,
+        );
+        successThreadIds.add(threadId);
+      } catch (e) {
+        print('Failed to send category share message to thread $threadId: $e');
+      }
+    }
+
+    return DirectShareResult(threadIds: successThreadIds);
+  }
+
+  /// Create a direct share for a color category to existing threads
+  Future<DirectShareResult> createDirectShareForColorCategoryToThreads({
+    required ColorCategory colorCategory,
+    required List<String> threadIds,
+    String accessMode = 'view',
+  }) async {
+    final userId = _currentUserId;
+    if (userId == null) throw Exception('User not authenticated');
+    if (threadIds.isEmpty) throw Exception('No threads provided');
+
+    // Build category snapshot with experiences
+    final List<Experience> exps =
+        await _collectShareableExperiences(colorCategory: colorCategory);
+    final String colorHex = '#${colorCategory.color.value.toRadixString(16).padLeft(8, '0').substring(2)}';
+    final List<Map<String, dynamic>> experienceSnapshots =
+        exps.map((e) => _buildExperienceSnapshot(e, colorHex: colorHex)).toList();
+
+    final categorySnapshot = {
+      'name': colorCategory.name,
+      'color': colorCategory.color.value,
+      'categoryId': colorCategory.id,
+      'categoryType': 'color',
+      'accessMode': accessMode,
+      'experiences': experienceSnapshots,
+    };
+
+    final data = {
+      'fromUserId': userId,
+      'toThreadIds': threadIds,
+      'visibility': 'direct',
+      'accessMode': accessMode,
+      'categoryType': 'color',
+      'colorCategoryId': colorCategory.id,
+      'snapshot': categorySnapshot,
+      'createdAt': FieldValue.serverTimestamp(),
+    };
+
+    final shareDocRef = await _shares.add(data);
+
+    // Track successful thread IDs
+    final List<String> successThreadIds = [];
+
+    // Send message to each thread
+    for (final threadId in threadIds) {
+      try {
+        await _messageService.sendCategoryShareMessage(
+          threadId: threadId,
+          senderId: userId,
+          categorySnapshot: categorySnapshot,
+          shareId: shareDocRef.id,
+        );
+        successThreadIds.add(threadId);
+      } catch (e) {
+        print('Failed to send color category share message to thread $threadId: $e');
+      }
+    }
+
+    return DirectShareResult(threadIds: successThreadIds);
+  }
+
+  /// Create a direct share for a category to a new group chat
+  Future<DirectShareResult> createDirectShareForCategoryToNewGroupChat({
+    required UserCategory category,
+    required List<String> participantIds,
+    String accessMode = 'view',
+  }) async {
+    final userId = _currentUserId;
+    if (userId == null) throw Exception('User not authenticated');
+    if (participantIds.isEmpty) throw Exception('No participants provided');
+
+    // Build category snapshot with experiences
+    final List<Experience> exps =
+        await _collectShareableExperiences(category: category);
+    final List<Map<String, dynamic>> experienceSnapshots =
+        exps.map((e) => _buildExperienceSnapshot(e, categoryIcon: category.icon)).toList();
+
+    final categorySnapshot = {
+      'name': category.name,
+      'icon': category.icon,
+      'categoryId': category.id,
+      'categoryType': 'user',
+      'accessMode': accessMode,
+      'experiences': experienceSnapshots,
+    };
+
+    // Create the group thread first
+    final thread = await _messageService.createOrGetThread(
+      currentUserId: userId,
+      participantIds: participantIds,
+    );
+
+    final data = {
+      'fromUserId': userId,
+      'toUserIds': participantIds,
+      'toThreadId': thread.id,
+      'visibility': 'direct',
+      'accessMode': accessMode,
+      'categoryType': 'user',
+      'categoryId': category.id,
+      'isGroupShare': true,
+      'snapshot': categorySnapshot,
+      'createdAt': FieldValue.serverTimestamp(),
+    };
+
+    final shareDocRef = await _shares.add(data);
+
+    // Grant share permissions to all participants
+    for (final recipientId in participantIds) {
+      try {
+        await grantSharedCategoryToUser(
+          categoryId: category.id,
+          ownerUserId: userId,
+          targetUserId: recipientId,
+          accessMode: accessMode,
+          experienceIds: exps.map((e) => e.id).toList(),
+        );
+      } catch (e) {
+        print('Failed to grant category share to $recipientId: $e');
+      }
+    }
+
+    // Send message to the group thread
+    await _messageService.sendCategoryShareMessage(
+      threadId: thread.id,
+      senderId: userId,
+      categorySnapshot: categorySnapshot,
+      shareId: shareDocRef.id,
+    );
+
+    return DirectShareResult.single(thread.id);
+  }
+
+  /// Create a direct share for a color category to a new group chat
+  Future<DirectShareResult> createDirectShareForColorCategoryToNewGroupChat({
+    required ColorCategory colorCategory,
+    required List<String> participantIds,
+    String accessMode = 'view',
+  }) async {
+    final userId = _currentUserId;
+    if (userId == null) throw Exception('User not authenticated');
+    if (participantIds.isEmpty) throw Exception('No participants provided');
+
+    // Build category snapshot with experiences
+    final List<Experience> exps =
+        await _collectShareableExperiences(colorCategory: colorCategory);
+    final String colorHex = '#${colorCategory.color.value.toRadixString(16).padLeft(8, '0').substring(2)}';
+    final List<Map<String, dynamic>> experienceSnapshots =
+        exps.map((e) => _buildExperienceSnapshot(e, colorHex: colorHex)).toList();
+
+    final categorySnapshot = {
+      'name': colorCategory.name,
+      'color': colorCategory.color.value,
+      'categoryId': colorCategory.id,
+      'categoryType': 'color',
+      'accessMode': accessMode,
+      'experiences': experienceSnapshots,
+    };
+
+    // Create the group thread first
+    final thread = await _messageService.createOrGetThread(
+      currentUserId: userId,
+      participantIds: participantIds,
+    );
+
+    final data = {
+      'fromUserId': userId,
+      'toUserIds': participantIds,
+      'toThreadId': thread.id,
+      'visibility': 'direct',
+      'accessMode': accessMode,
+      'categoryType': 'color',
+      'colorCategoryId': colorCategory.id,
+      'isGroupShare': true,
+      'snapshot': categorySnapshot,
+      'createdAt': FieldValue.serverTimestamp(),
+    };
+
+    final shareDocRef = await _shares.add(data);
+
+    // Grant share permissions to all participants
+    for (final recipientId in participantIds) {
+      try {
+        await grantSharedCategoryToUser(
+          categoryId: colorCategory.id,
+          ownerUserId: userId,
+          targetUserId: recipientId,
+          accessMode: accessMode,
+          experienceIds: exps.map((e) => e.id).toList(),
+        );
+      } catch (e) {
+        print('Failed to grant color category share to $recipientId: $e');
+      }
+    }
+
+    // Send message to the group thread
+    await _messageService.sendCategoryShareMessage(
+      threadId: thread.id,
+      senderId: userId,
+      categorySnapshot: categorySnapshot,
+      shareId: shareDocRef.id,
+    );
+
+    return DirectShareResult.single(thread.id);
+  }
+
+  /// Create a direct share for multiple categories to specific users
+  Future<DirectShareResult> createDirectShareForMultipleCategories({
+    List<UserCategory> userCategories = const [],
+    List<ColorCategory> colorCategories = const [],
+    required List<String> toUserIds,
+    String accessMode = 'view',
+  }) async {
+    final userId = _currentUserId;
+    if (userId == null) throw Exception('User not authenticated');
+    if (toUserIds.isEmpty) throw Exception('No recipients provided');
+    if (userCategories.isEmpty && colorCategories.isEmpty) {
+      throw Exception('No categories selected');
+    }
+
+    // Build snapshots for all categories
+    final List<Map<String, dynamic>> categorySnapshots = [];
+
+    for (final category in userCategories) {
+      final List<Experience> exps =
+          await _collectShareableExperiences(category: category);
+      final List<Map<String, dynamic>> experienceSnapshots =
+          exps.map((e) => _buildExperienceSnapshot(e, categoryIcon: category.icon)).toList();
+      categorySnapshots.add({
+        'name': category.name,
+        'icon': category.icon,
+        'categoryId': category.id,
+        'categoryType': 'user',
+        'accessMode': accessMode,
+        'experiences': experienceSnapshots,
+      });
+    }
+
+    for (final colorCategory in colorCategories) {
+      final List<Experience> exps =
+          await _collectShareableExperiences(colorCategory: colorCategory);
+      final String colorHex = '#${colorCategory.color.value.toRadixString(16).padLeft(8, '0').substring(2)}';
+      final List<Map<String, dynamic>> experienceSnapshots =
+          exps.map((e) => _buildExperienceSnapshot(e, colorHex: colorHex)).toList();
+      categorySnapshots.add({
+        'name': colorCategory.name,
+        'color': colorCategory.color.value,
+        'categoryId': colorCategory.id,
+        'categoryType': 'color',
+        'accessMode': accessMode,
+        'experiences': experienceSnapshots,
+      });
+    }
+
+    final data = {
+      'fromUserId': userId,
+      'toUserIds': toUserIds,
+      'visibility': 'direct',
+      'accessMode': accessMode,
+      'categoryType': 'multi',
+      'userCategoryIds': userCategories.map((c) => c.id).toList(),
+      'colorCategoryIds': colorCategories.map((c) => c.id).toList(),
+      'categorySnapshots': categorySnapshots,
+      'createdAt': FieldValue.serverTimestamp(),
+    };
+
+    final shareDocRef = await _shares.add(data);
+
+    // Grant share permissions to recipients for all categories
+    for (final recipientId in toUserIds) {
+      for (final category in userCategories) {
+        try {
+          final exps = await _collectShareableExperiences(category: category);
+          await grantSharedCategoryToUser(
+            categoryId: category.id,
+            ownerUserId: userId,
+            targetUserId: recipientId,
+            accessMode: accessMode,
+            experienceIds: exps.map((e) => e.id).toList(),
+          );
+        } catch (e) {
+          print('Failed to grant category share to $recipientId: $e');
+        }
+      }
+      for (final colorCategory in colorCategories) {
+        try {
+          final exps = await _collectShareableExperiences(colorCategory: colorCategory);
+          await grantSharedCategoryToUser(
+            categoryId: colorCategory.id,
+            ownerUserId: userId,
+            targetUserId: recipientId,
+            accessMode: accessMode,
+            experienceIds: exps.map((e) => e.id).toList(),
+          );
+        } catch (e) {
+          print('Failed to grant color category share to $recipientId: $e');
+        }
+      }
+    }
+
+    // Track thread IDs
+    final List<String> threadIds = [];
+
+    // Send message to each recipient
+    for (final recipientId in toUserIds) {
+      try {
+        final thread = await _messageService.createOrGetThread(
+          currentUserId: userId,
+          participantIds: [recipientId],
+        );
+        await _messageService.sendMultiCategoryShareMessage(
+          threadId: thread.id,
+          senderId: userId,
+          categorySnapshots: categorySnapshots,
+          shareId: shareDocRef.id,
+        );
+        threadIds.add(thread.id);
+      } catch (e) {
+        print('Failed to send multi-category share message to $recipientId: $e');
+      }
+    }
+
+    return DirectShareResult(threadIds: threadIds);
+  }
+
+  /// Create a direct share for multiple categories to existing threads
+  Future<DirectShareResult> createDirectShareForMultipleCategoriesToThreads({
+    List<UserCategory> userCategories = const [],
+    List<ColorCategory> colorCategories = const [],
+    required List<String> threadIds,
+    String accessMode = 'view',
+  }) async {
+    final userId = _currentUserId;
+    if (userId == null) throw Exception('User not authenticated');
+    if (threadIds.isEmpty) throw Exception('No threads provided');
+    if (userCategories.isEmpty && colorCategories.isEmpty) {
+      throw Exception('No categories selected');
+    }
+
+    // Build snapshots for all categories
+    final List<Map<String, dynamic>> categorySnapshots = [];
+
+    for (final category in userCategories) {
+      final List<Experience> exps =
+          await _collectShareableExperiences(category: category);
+      final List<Map<String, dynamic>> experienceSnapshots =
+          exps.map((e) => _buildExperienceSnapshot(e, categoryIcon: category.icon)).toList();
+      categorySnapshots.add({
+        'name': category.name,
+        'icon': category.icon,
+        'categoryId': category.id,
+        'categoryType': 'user',
+        'accessMode': accessMode,
+        'experiences': experienceSnapshots,
+      });
+    }
+
+    for (final colorCategory in colorCategories) {
+      final List<Experience> exps =
+          await _collectShareableExperiences(colorCategory: colorCategory);
+      final String colorHex = '#${colorCategory.color.value.toRadixString(16).padLeft(8, '0').substring(2)}';
+      final List<Map<String, dynamic>> experienceSnapshots =
+          exps.map((e) => _buildExperienceSnapshot(e, colorHex: colorHex)).toList();
+      categorySnapshots.add({
+        'name': colorCategory.name,
+        'color': colorCategory.color.value,
+        'categoryId': colorCategory.id,
+        'categoryType': 'color',
+        'accessMode': accessMode,
+        'experiences': experienceSnapshots,
+      });
+    }
+
+    final data = {
+      'fromUserId': userId,
+      'toThreadIds': threadIds,
+      'visibility': 'direct',
+      'accessMode': accessMode,
+      'categoryType': 'multi',
+      'userCategoryIds': userCategories.map((c) => c.id).toList(),
+      'colorCategoryIds': colorCategories.map((c) => c.id).toList(),
+      'categorySnapshots': categorySnapshots,
+      'createdAt': FieldValue.serverTimestamp(),
+    };
+
+    final shareDocRef = await _shares.add(data);
+
+    // Track successful thread IDs
+    final List<String> successThreadIds = [];
+
+    // Send message to each thread
+    for (final threadId in threadIds) {
+      try {
+        await _messageService.sendMultiCategoryShareMessage(
+          threadId: threadId,
+          senderId: userId,
+          categorySnapshots: categorySnapshots,
+          shareId: shareDocRef.id,
+        );
+        successThreadIds.add(threadId);
+      } catch (e) {
+        print('Failed to send multi-category share message to thread $threadId: $e');
+      }
+    }
+
+    return DirectShareResult(threadIds: successThreadIds);
+  }
+
+  /// Create a direct share for multiple categories to a new group chat
+  Future<DirectShareResult> createDirectShareForMultipleCategoriesToNewGroupChat({
+    List<UserCategory> userCategories = const [],
+    List<ColorCategory> colorCategories = const [],
+    required List<String> participantIds,
+    String accessMode = 'view',
+  }) async {
+    final userId = _currentUserId;
+    if (userId == null) throw Exception('User not authenticated');
+    if (participantIds.isEmpty) throw Exception('No participants provided');
+    if (userCategories.isEmpty && colorCategories.isEmpty) {
+      throw Exception('No categories selected');
+    }
+
+    // Build snapshots for all categories
+    final List<Map<String, dynamic>> categorySnapshots = [];
+
+    for (final category in userCategories) {
+      final List<Experience> exps =
+          await _collectShareableExperiences(category: category);
+      final List<Map<String, dynamic>> experienceSnapshots =
+          exps.map((e) => _buildExperienceSnapshot(e, categoryIcon: category.icon)).toList();
+      categorySnapshots.add({
+        'name': category.name,
+        'icon': category.icon,
+        'categoryId': category.id,
+        'categoryType': 'user',
+        'accessMode': accessMode,
+        'experiences': experienceSnapshots,
+      });
+    }
+
+    for (final colorCategory in colorCategories) {
+      final List<Experience> exps =
+          await _collectShareableExperiences(colorCategory: colorCategory);
+      final String colorHex = '#${colorCategory.color.value.toRadixString(16).padLeft(8, '0').substring(2)}';
+      final List<Map<String, dynamic>> experienceSnapshots =
+          exps.map((e) => _buildExperienceSnapshot(e, colorHex: colorHex)).toList();
+      categorySnapshots.add({
+        'name': colorCategory.name,
+        'color': colorCategory.color.value,
+        'categoryId': colorCategory.id,
+        'categoryType': 'color',
+        'accessMode': accessMode,
+        'experiences': experienceSnapshots,
+      });
+    }
+
+    // Create the group thread first
+    final thread = await _messageService.createOrGetThread(
+      currentUserId: userId,
+      participantIds: participantIds,
+    );
+
+    final data = {
+      'fromUserId': userId,
+      'toUserIds': participantIds,
+      'toThreadId': thread.id,
+      'visibility': 'direct',
+      'accessMode': accessMode,
+      'categoryType': 'multi',
+      'userCategoryIds': userCategories.map((c) => c.id).toList(),
+      'colorCategoryIds': colorCategories.map((c) => c.id).toList(),
+      'isGroupShare': true,
+      'categorySnapshots': categorySnapshots,
+      'createdAt': FieldValue.serverTimestamp(),
+    };
+
+    final shareDocRef = await _shares.add(data);
+
+    // Grant share permissions to all participants for all categories
+    for (final recipientId in participantIds) {
+      for (final category in userCategories) {
+        try {
+          final exps = await _collectShareableExperiences(category: category);
+          await grantSharedCategoryToUser(
+            categoryId: category.id,
+            ownerUserId: userId,
+            targetUserId: recipientId,
+            accessMode: accessMode,
+            experienceIds: exps.map((e) => e.id).toList(),
+          );
+        } catch (e) {
+          print('Failed to grant category share to $recipientId: $e');
+        }
+      }
+      for (final colorCategory in colorCategories) {
+        try {
+          final exps = await _collectShareableExperiences(colorCategory: colorCategory);
+          await grantSharedCategoryToUser(
+            categoryId: colorCategory.id,
+            ownerUserId: userId,
+            targetUserId: recipientId,
+            accessMode: accessMode,
+            experienceIds: exps.map((e) => e.id).toList(),
+          );
+        } catch (e) {
+          print('Failed to grant color category share to $recipientId: $e');
+        }
+      }
+    }
+
+    // Send message to the group thread
+    await _messageService.sendMultiCategoryShareMessage(
+      threadId: thread.id,
+      senderId: userId,
+      categorySnapshots: categorySnapshots,
+      shareId: shareDocRef.id,
+    );
+
+    return DirectShareResult.single(thread.id);
   }
 }
