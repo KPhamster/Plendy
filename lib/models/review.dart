@@ -4,10 +4,11 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 class Review {
   final String id;
   final String experienceId;
+  final String placeId; // Place ID for public experience association
   final String userId;
   final String? userName; // Display name of the reviewer
   final String? userPhotoUrl; // Profile photo URL of the reviewer
-  final double rating; // 1-5 rating
+  final bool? isPositive; // true = thumbs up, false = thumbs down, null = no rating
   final String content; // Review text
   final List<String> imageUrls; // Optional photos attached to the review
   final int likeCount; // Number of likes this review has received
@@ -18,10 +19,11 @@ class Review {
   Review({
     required this.id,
     required this.experienceId,
+    this.placeId = '',
     required this.userId,
     this.userName,
     this.userPhotoUrl,
-    required this.rating,
+    this.isPositive,
     required this.content,
     this.imageUrls = const [],
     this.likeCount = 0,
@@ -30,6 +32,9 @@ class Review {
     required this.updatedAt,
   });
 
+  // Legacy getter for backward compatibility
+  double get rating => isPositive == true ? 5.0 : (isPositive == false ? 1.0 : 0.0);
+
   /// Create a Review from Firestore data
   factory Review.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
@@ -37,10 +42,11 @@ class Review {
     return Review(
       id: doc.id,
       experienceId: data['experienceId'] ?? '',
+      placeId: data['placeId'] ?? '',
       userId: data['userId'] ?? '',
       userName: data['userName'],
       userPhotoUrl: data['userPhotoUrl'],
-      rating: _parseRating(data['rating']),
+      isPositive: _parseIsPositive(data['isPositive'], data['rating']),
       content: data['content'] ?? '',
       imageUrls: _parseStringList(data['imageUrls']),
       likeCount: data['likeCount'] ?? 0,
@@ -54,10 +60,11 @@ class Review {
   Map<String, dynamic> toMap() {
     return {
       'experienceId': experienceId,
+      'placeId': placeId,
       'userId': userId,
       'userName': userName,
       'userPhotoUrl': userPhotoUrl,
-      'rating': rating,
+      'isPositive': isPositive,
       'content': content,
       'imageUrls': imageUrls,
       'likeCount': likeCount,
@@ -70,10 +77,12 @@ class Review {
   /// Create a copy of this Review with updated fields
   Review copyWith({
     String? experienceId,
+    String? placeId,
     String? userId,
     String? userName,
     String? userPhotoUrl,
-    double? rating,
+    bool? isPositive,
+    bool clearIsPositive = false,
     String? content,
     List<String>? imageUrls,
     int? likeCount,
@@ -83,10 +92,11 @@ class Review {
     return Review(
       id: id,
       experienceId: experienceId ?? this.experienceId,
+      placeId: placeId ?? this.placeId,
       userId: userId ?? this.userId,
       userName: userName ?? this.userName,
       userPhotoUrl: userPhotoUrl ?? this.userPhotoUrl,
-      rating: rating ?? this.rating,
+      isPositive: clearIsPositive ? null : (isPositive ?? this.isPositive),
       content: content ?? this.content,
       imageUrls: imageUrls ?? this.imageUrls,
       likeCount: likeCount ?? this.likeCount,
@@ -96,19 +106,33 @@ class Review {
     );
   }
 
-  /// Helper method to parse rating values
-  static double _parseRating(dynamic value) {
-    if (value == null) return 0.0;
-    
-    if (value is int) {
-      return value.toDouble();
-    } else if (value is double) {
-      return value;
-    } else if (value is String) {
-      return double.tryParse(value) ?? 0.0;
+  /// Helper method to parse isPositive from Firestore
+  /// Also handles legacy rating field for backward compatibility
+  static bool? _parseIsPositive(dynamic isPositiveValue, dynamic ratingValue) {
+    // First try the new isPositive field
+    if (isPositiveValue != null) {
+      if (isPositiveValue is bool) {
+        return isPositiveValue;
+      }
     }
     
-    return 0.0;
+    // Fall back to legacy rating field
+    if (ratingValue != null) {
+      double rating = 0.0;
+      if (ratingValue is int) {
+        rating = ratingValue.toDouble();
+      } else if (ratingValue is double) {
+        rating = ratingValue;
+      } else if (ratingValue is String) {
+        rating = double.tryParse(ratingValue) ?? 0.0;
+      }
+      
+      // Convert: 4-5 = positive, 1-2 = negative, 3 = neutral (null)
+      if (rating >= 4.0) return true;
+      if (rating <= 2.0) return false;
+    }
+    
+    return null;
   }
   
   /// Helper method to parse string lists
