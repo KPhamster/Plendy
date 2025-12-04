@@ -9570,8 +9570,12 @@ class CollectionsScreenState extends State<CollectionsScreen>
       _isExperiencesLoading = false;
     }
 
-    // OPTIMIZED: Don't preload content here - let it load lazily when user visits Content tab
-    // The tab listener will trigger startContentPreload() when needed
+    // OPTIMIZED: Preload content in the background after experiences are loaded
+    // This way content is ready by the time user switches to Content tab
+    if (experiencesLoaded && _experiences.isNotEmpty) {
+      // Fire and forget - don't await, let it load in background
+      unawaited(_loadGroupedContent());
+    }
     
     // Load events for experience banners
     _loadEventsForExperiences(userId);

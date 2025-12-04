@@ -90,6 +90,12 @@ class ExperienceService {
   static const Duration _experiencesCacheValidDuration = Duration(minutes: 2); // Shorter TTL since experiences change more often
   Future<List<Experience>>? _inFlightUserExperiencesFetch;
   
+  // Cache for SharedMediaItems (keyed by ID for efficient lookups and updates)
+  Map<String, SharedMediaItem>? _cachedSharedMediaItems;
+  String? _cachedSharedMediaItemsUserId;
+  DateTime? _sharedMediaItemsCacheTime;
+  static const Duration _sharedMediaItemsCacheValidDuration = Duration(minutes: 5);
+  
   /// Clear the permissions cache (call when user logs out or permissions change)
   void clearCategoryPermissionsCache() {
     _cachedCategoryPermissions = null;
@@ -952,6 +958,11 @@ class ExperienceService {
       final docRef = await _sharedMediaItemsCollection.add(data);
       print(
           "createSharedMediaItem: Successfully created item with ID: ${docRef.id}");
+      
+      // Optimistically add to cache with the new ID
+      final createdItem = item.copyWith(id: docRef.id);
+      updateCachedSharedMediaItem(createdItem);
+      
       return docRef.id;
     } catch (e) {
       print("Error creating shared media item for path '${item.path}': $e");
@@ -1142,25 +1153,67 @@ class ExperienceService {
   }
 
   /// Fetches multiple SharedMediaItem documents by their IDs.
+  /// Uses cache when available and only fetches missing items from Firestore.
   /// Handles Firestore 'in' query limits by chunking.
   Future<List<SharedMediaItem>> getSharedMediaItems(
-      List<String> mediaItemIds) async {
+      List<String> mediaItemIds, {bool forceRefresh = false}) async {
     if (mediaItemIds.isEmpty) {
       return [];
     }
 
+    final userId = _currentUserId;
+    final sw = Stopwatch()..start();
+    
     // Deduplicate IDs just in case
     final uniqueIds = mediaItemIds.toSet().toList();
+    
+    // Check cache validity
+    final now = DateTime.now();
+    final cacheValid = !forceRefresh &&
+        _cachedSharedMediaItems != null &&
+        _cachedSharedMediaItemsUserId == userId &&
+        _sharedMediaItemsCacheTime != null &&
+        now.difference(_sharedMediaItemsCacheTime!) < _sharedMediaItemsCacheValidDuration;
+    
+    // Separate IDs into cached and missing
+    final List<SharedMediaItem> cachedResults = [];
+    final List<String> missingIds = [];
+    
+    if (cacheValid) {
+      for (final id in uniqueIds) {
+        final cached = _cachedSharedMediaItems![id];
+        if (cached != null) {
+          cachedResults.add(cached);
+        } else {
+          missingIds.add(id);
+        }
+      }
+      
+      // If all items are cached, return immediately
+      if (missingIds.isEmpty) {
+        sw.stop();
+        print('[ExperienceService] getSharedMediaItems: All ${cachedResults.length} items from cache in ${sw.elapsedMilliseconds}ms');
+        return cachedResults;
+      }
+      
+      print('[ExperienceService] getSharedMediaItems: ${cachedResults.length} from cache, ${missingIds.length} to fetch');
+    } else {
+      // No valid cache, fetch all
+      missingIds.addAll(uniqueIds);
+      // Initialize cache for this user
+      _cachedSharedMediaItems = {};
+      _cachedSharedMediaItemsUserId = userId;
+    }
 
     // Firestore 'in' query limit (currently 30, previously 10)
     const chunkSize = 30;
-    // Split into chunks
+    // Split missing IDs into chunks
     final List<List<String>> chunks = [];
-    for (int i = 0; i < uniqueIds.length; i += chunkSize) {
-      final end = (i + chunkSize) > uniqueIds.length
-          ? uniqueIds.length
+    for (int i = 0; i < missingIds.length; i += chunkSize) {
+      final end = (i + chunkSize) > missingIds.length
+          ? missingIds.length
           : (i + chunkSize);
-      final chunk = uniqueIds.sublist(i, end);
+      final chunk = missingIds.sublist(i, end);
       if (chunk.isNotEmpty) {
         chunks.add(chunk);
       }
@@ -1168,7 +1221,7 @@ class ExperienceService {
 
     // Limit concurrency so we don't overwhelm device or Firestore
     const int maxConcurrent = 6;
-    final List<SharedMediaItem> results = [];
+    final List<SharedMediaItem> fetchedResults = [];
 
     for (int i = 0; i < chunks.length; i += maxConcurrent) {
       final batch = chunks.sublist(
@@ -1192,11 +1245,23 @@ class ExperienceService {
 
       final batchResults = await Future.wait(futures);
       for (final r in batchResults) {
-        results.addAll(r);
+        fetchedResults.addAll(r);
       }
     }
+    
+    // Add fetched items to cache
+    if (_cachedSharedMediaItems != null && _cachedSharedMediaItemsUserId == userId) {
+      for (final item in fetchedResults) {
+        _cachedSharedMediaItems![item.id] = item;
+      }
+      _sharedMediaItemsCacheTime = DateTime.now();
+    }
+    
+    sw.stop();
+    final totalResults = [...cachedResults, ...fetchedResults];
+    print('[ExperienceService] getSharedMediaItems: Fetched ${fetchedResults.length} items in ${sw.elapsedMilliseconds}ms (total: ${totalResults.length}, cache size: ${_cachedSharedMediaItems?.length ?? 0})');
 
-    return results;
+    return totalResults;
   }
 
   /// Deletes a SharedMediaItem and removes its ID from all linked Experiences.
@@ -1242,6 +1307,9 @@ class ExperienceService {
       await batch.commit();
       print(
           "Successfully deleted MediaItem $mediaItemId and unlinked from experiences.");
+      
+      // Optimistically remove from cache
+      removeCachedSharedMediaItem(mediaItemId);
     } catch (e) {
       print(
           "Error committing batch delete/unlink for MediaItem $mediaItemId: $e");
@@ -2292,6 +2360,66 @@ class ExperienceService {
     print('[ExperienceService] Optimistically removed experience from cache: $experienceId');
     // Refresh the cache timestamp to extend validity
     _userExperiencesCacheTime = DateTime.now();
+  }
+  
+  // ======= SharedMediaItems Cache Methods =======
+  
+  /// Clear the shared media items cache
+  void clearSharedMediaItemsCache() {
+    _cachedSharedMediaItems = null;
+    _cachedSharedMediaItemsUserId = null;
+    _sharedMediaItemsCacheTime = null;
+    print('[ExperienceService] Cleared shared media items cache');
+  }
+  
+  /// Update or add a single SharedMediaItem in the cache (optimistic update).
+  void updateCachedSharedMediaItem(SharedMediaItem item) {
+    final userId = _currentUserId;
+    if (userId == null) return;
+    
+    // Only update cache if it exists and belongs to the current user
+    if (_cachedSharedMediaItems == null || _cachedSharedMediaItemsUserId != userId) {
+      print('[ExperienceService] SharedMediaItems cache not initialized, skipping optimistic update');
+      return;
+    }
+    
+    _cachedSharedMediaItems![item.id] = item;
+    _sharedMediaItemsCacheTime = DateTime.now();
+    print('[ExperienceService] Optimistically updated cached SharedMediaItem: ${item.id}');
+  }
+  
+  /// Remove a single SharedMediaItem from the cache (optimistic delete).
+  void removeCachedSharedMediaItem(String mediaItemId) {
+    final userId = _currentUserId;
+    if (userId == null) return;
+    
+    // Only update cache if it exists and belongs to the current user
+    if (_cachedSharedMediaItems == null || _cachedSharedMediaItemsUserId != userId) {
+      print('[ExperienceService] SharedMediaItems cache not initialized, skipping optimistic delete');
+      return;
+    }
+    
+    _cachedSharedMediaItems!.remove(mediaItemId);
+    _sharedMediaItemsCacheTime = DateTime.now();
+    print('[ExperienceService] Optimistically removed SharedMediaItem from cache: $mediaItemId');
+  }
+  
+  /// Add multiple SharedMediaItems to the cache (for bulk preloading).
+  void addToSharedMediaItemsCache(List<SharedMediaItem> items) {
+    final userId = _currentUserId;
+    if (userId == null) return;
+    
+    // Initialize cache if needed
+    if (_cachedSharedMediaItems == null || _cachedSharedMediaItemsUserId != userId) {
+      _cachedSharedMediaItems = {};
+      _cachedSharedMediaItemsUserId = userId;
+    }
+    
+    for (final item in items) {
+      _cachedSharedMediaItems![item.id] = item;
+    }
+    _sharedMediaItemsCacheTime = DateTime.now();
+    print('[ExperienceService] Added ${items.length} items to SharedMediaItems cache (total: ${_cachedSharedMediaItems!.length})');
   }
 
   /// Page experiences shared with a specific user, using denormalized sharedWithUserIds.
@@ -3690,3 +3818,4 @@ class ExperienceService {
 
   // Add more helper methods as needed
 }
+
