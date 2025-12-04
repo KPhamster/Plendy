@@ -1556,8 +1556,15 @@ class ExperienceService {
     debugPrint(
         'createExperience: Created experience ${docRef.id} with ${sharedUserIds.length} shared users');
     
-    // Invalidate the user experiences cache so Collections shows the new experience
-    clearUserExperiencesCache();
+    // Optimistically update the cache with the new experience instead of clearing it
+    // Fetch the created experience to get server-set fields (timestamps, etc.)
+    final createdExperience = await getExperience(docRef.id);
+    if (createdExperience != null) {
+      updateCachedExperience(createdExperience);
+    } else {
+      // Fallback: if we can't fetch, clear cache to force refresh
+      clearUserExperiencesCache();
+    }
     
     return docRef.id;
   }
@@ -1761,8 +1768,15 @@ class ExperienceService {
 
     await _experiencesCollection.doc(experience.id).update(data);
     
-    // Invalidate the user experiences cache so Collections shows the updated experience
-    clearUserExperiencesCache();
+    // Optimistically update the cache with the modified experience instead of clearing it
+    // We need to fetch the updated experience to get server-set fields (updatedAt timestamp)
+    final updatedExperience = await getExperience(experience.id);
+    if (updatedExperience != null) {
+      updateCachedExperience(updatedExperience);
+    } else {
+      // Fallback: if we can't fetch, clear cache to force refresh
+      clearUserExperiencesCache();
+    }
   }
 
   /// Delete an experience
@@ -1805,8 +1819,8 @@ class ExperienceService {
     // Delete the experience document itself
     await _experiencesCollection.doc(experienceId).delete();
     
-    // Invalidate the user experiences cache so Collections shows the deletion
-    clearUserExperiencesCache();
+    // Optimistically remove from cache instead of clearing the entire cache
+    removeCachedExperience(experienceId);
 
     // Optional: Also delete related reviews, comments, and reels
     // This could be done with a batch or with cloud functions for larger datasets
@@ -2234,6 +2248,51 @@ class ExperienceService {
     _userExperiencesCacheTime = null;
     print('[ExperienceService] Cleared user experiences cache');
   }
+  
+  /// Update a single experience in the cache (optimistic update).
+  /// If the experience doesn't exist in the cache, it will be added.
+  /// This avoids refetching all experiences when only one changed.
+  void updateCachedExperience(Experience experience) {
+    final userId = _currentUserId;
+    if (userId == null) return;
+    
+    // Only update cache if it exists and belongs to the current user
+    if (_cachedUserExperiences == null || _cachedUserExperiencesUserId != userId) {
+      print('[ExperienceService] Cache not initialized for user, skipping optimistic update');
+      return;
+    }
+    
+    final index = _cachedUserExperiences!.indexWhere((e) => e.id == experience.id);
+    if (index >= 0) {
+      // Update existing experience
+      _cachedUserExperiences![index] = experience;
+      print('[ExperienceService] Optimistically updated cached experience: ${experience.id}');
+    } else {
+      // Add new experience at the beginning (most recently updated)
+      _cachedUserExperiences!.insert(0, experience);
+      print('[ExperienceService] Optimistically added new experience to cache: ${experience.id}');
+    }
+    // Refresh the cache timestamp to extend validity
+    _userExperiencesCacheTime = DateTime.now();
+  }
+  
+  /// Remove a single experience from the cache (optimistic delete).
+  /// This avoids refetching all experiences when only one was deleted.
+  void removeCachedExperience(String experienceId) {
+    final userId = _currentUserId;
+    if (userId == null) return;
+    
+    // Only update cache if it exists and belongs to the current user
+    if (_cachedUserExperiences == null || _cachedUserExperiencesUserId != userId) {
+      print('[ExperienceService] Cache not initialized for user, skipping optimistic delete');
+      return;
+    }
+    
+    _cachedUserExperiences!.removeWhere((e) => e.id == experienceId);
+    print('[ExperienceService] Optimistically removed experience from cache: $experienceId');
+    // Refresh the cache timestamp to extend validity
+    _userExperiencesCacheTime = DateTime.now();
+  }
 
   /// Page experiences shared with a specific user, using denormalized sharedWithUserIds.
   /// Returns both items and the last DocumentSnapshot for pagination.
@@ -2575,6 +2634,36 @@ class ExperienceService {
         .get();
 
     return snapshot.docs.map((doc) => Review.fromFirestore(doc)).toList();
+  }
+
+  /// Get reviews for a place (by placeId) - for public experience reviews
+  Future<List<Review>> getReviewsForPlace(
+    String placeId, {
+    int limit = 50,
+  }) async {
+    if (placeId.isEmpty) return [];
+    
+    final snapshot = await _reviewsCollection
+        .where('placeId', isEqualTo: placeId)
+        .orderBy('createdAt', descending: true)
+        .limit(limit)
+        .get();
+
+    return snapshot.docs.map((doc) => Review.fromFirestore(doc)).toList();
+  }
+
+  /// Check if user has already reviewed this place
+  Future<Review?> getUserReviewForPlace(String placeId) async {
+    if (_currentUserId == null || placeId.isEmpty) return null;
+    
+    final snapshot = await _reviewsCollection
+        .where('placeId', isEqualTo: placeId)
+        .where('userId', isEqualTo: _currentUserId)
+        .limit(1)
+        .get();
+
+    if (snapshot.docs.isEmpty) return null;
+    return Review.fromFirestore(snapshot.docs.first);
   }
 
   /// Update an existing review
