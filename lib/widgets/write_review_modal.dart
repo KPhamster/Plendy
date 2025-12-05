@@ -159,11 +159,13 @@ class _WriteReviewModalState extends State<WriteReviewModal> {
               maxHeight: availableHeight > 400 ? availableHeight : 400, // Minimum height of 400
             ),
             padding: const EdgeInsets.all(20),
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
+            child: GestureDetector(
+              onTap: () => FocusScope.of(context).unfocus(),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
             // Header
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -344,7 +346,8 @@ class _WriteReviewModalState extends State<WriteReviewModal> {
                 ],
               ),
             ),
-          );
+          ),
+        );
         },
       ),
     );

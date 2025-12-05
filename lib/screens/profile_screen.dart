@@ -11,6 +11,7 @@ import 'browser_signin_screen.dart';
 import 'messages_screen.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'tutorials_screen.dart';
+import 'reviews_screen.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -305,6 +306,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                   MaterialPageRoute(
                                     builder: (context) =>
                                         const TutorialsScreen(),
+                                  ),
+                                );
+                              },
+                            ),
+                            ListTile(
+                              leading: const Icon(Icons.thumb_up_outlined),
+                              title: const Text('Reviews'),
+                              onTap: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) =>
+                                        const ReviewsScreen(),
                                   ),
                                 );
                               },
