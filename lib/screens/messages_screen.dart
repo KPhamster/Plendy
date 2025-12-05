@@ -4,6 +4,7 @@ import '../models/message_thread.dart';
 import '../models/message_thread_participant.dart';
 import '../services/auth_service.dart';
 import '../services/message_service.dart';
+import '../widgets/cached_profile_avatar.dart';
 import 'chat_screen.dart';
 import 'new_message_thread_screen.dart';
 
@@ -191,14 +192,9 @@ class _MessagesScreenState extends State<MessagesScreen> {
 
     if (participants.length == 1) {
       final participant = participants.first;
-      return CircleAvatar(
-        backgroundImage:
-            participant.photoUrl != null && participant.photoUrl!.isNotEmpty
-                ? NetworkImage(participant.photoUrl!)
-                : null,
-        child: (participant.photoUrl == null || participant.photoUrl!.isEmpty)
-            ? Text(_initials(participant.displayLabel(fallback: 'U')))
-            : null,
+      return CachedProfileAvatar(
+        photoUrl: participant.photoUrl,
+        fallbackText: _initials(participant.displayLabel(fallback: 'U')),
       );
     }
 

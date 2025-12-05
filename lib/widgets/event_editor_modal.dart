@@ -20,6 +20,7 @@ import '../services/google_maps_service.dart';
 import '../services/event_notification_queue_service.dart';
 import '../services/message_service.dart';
 import '../widgets/shared_media_preview_modal.dart';
+import '../widgets/cached_profile_avatar.dart';
 import '../screens/event_experience_selector_screen.dart';
 import '../screens/location_picker_screen.dart';
 import '../screens/experience_page_screen.dart';
@@ -4466,13 +4467,6 @@ class _EventEditorModalState extends State<EventEditorModal> {
   }
 
   Widget _buildUserAvatar(UserProfile? profile, {double size = 40}) {
-    if (profile?.photoURL != null && profile!.photoURL!.isNotEmpty) {
-      return CircleAvatar(
-        radius: size / 2,
-        backgroundImage: NetworkImage(profile.photoURL!),
-      );
-    }
-
     // Use first letter of display name with colored background
     final displayName = profile?.displayName ?? profile?.username ?? '?';
     final firstLetter =
@@ -4480,17 +4474,12 @@ class _EventEditorModalState extends State<EventEditorModal> {
 
     final color = _getUserColor(profile?.id ?? '');
 
-    return CircleAvatar(
+    return CachedProfileAvatar(
+      photoUrl: profile?.photoURL,
       radius: size / 2,
+      fallbackText: firstLetter,
       backgroundColor: color,
-      child: Text(
-        firstLetter,
-        style: TextStyle(
-          color: Colors.white,
-          fontWeight: FontWeight.bold,
-          fontSize: size / 2.5,
-        ),
-      ),
+      textColor: Colors.white,
     );
   }
 

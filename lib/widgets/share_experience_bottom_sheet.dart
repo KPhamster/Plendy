@@ -13,6 +13,7 @@ import '../models/user_profile.dart';
 import '../screens/chat_screen.dart';
 import '../services/message_service.dart';
 import '../services/user_service.dart';
+import 'cached_profile_avatar.dart';
 
 /// Shows a snackbar with "Shared with friends!" message and a "View message" action
 /// that navigates to the message thread when tapped.
@@ -1126,15 +1127,10 @@ class _ShareToFriendsSheetState extends State<ShareToFriendsSheet> {
 
     if (others.isNotEmpty) {
       final participant = others.first;
-      final photoUrl = participant.photoUrl;
-      if (photoUrl != null && photoUrl.isNotEmpty) {
-        return CircleAvatar(
-          backgroundImage: NetworkImage(photoUrl),
-        );
-      }
       final name = participant.displayName ?? participant.username ?? '';
-      return CircleAvatar(
-        child: Text(name.isNotEmpty ? name[0].toUpperCase() : '?'),
+      return CachedProfileAvatar(
+        photoUrl: participant.photoUrl,
+        fallbackText: name.isNotEmpty ? name[0].toUpperCase() : '?',
       );
     }
 
@@ -1154,11 +1150,11 @@ class _ShareToFriendsSheetState extends State<ShareToFriendsSheet> {
             padding: const EdgeInsets.only(right: 8.0),
             child: Chip(
               label: Text(display),
-              avatar: profile.photoURL != null && profile.photoURL!.isNotEmpty
-                  ? CircleAvatar(
-                      backgroundImage: NetworkImage(profile.photoURL!),
-                    )
-                  : null,
+              avatar: CachedProfileAvatar(
+                photoUrl: profile.photoURL,
+                radius: 12,
+                fallbackText: display.isNotEmpty ? display[0].toUpperCase() : null,
+              ),
               deleteIcon: const Icon(Icons.close),
               onDeleted: () {
                 setState(() {
@@ -1236,15 +1232,10 @@ class _ShareToFriendsSheetState extends State<ShareToFriendsSheet> {
         );
         return ListTile(
           enabled: !isDisabled,
-          leading: profile.photoURL != null && profile.photoURL!.isNotEmpty
-              ? CircleAvatar(
-                  backgroundImage: NetworkImage(profile.photoURL!),
-                )
-              : CircleAvatar(
-                  child: Text(
-                    title.isNotEmpty ? title[0].toUpperCase() : '?',
-                  ),
-                ),
+          leading: CachedProfileAvatar(
+            photoUrl: profile.photoURL,
+            fallbackText: title.isNotEmpty ? title[0].toUpperCase() : '?',
+          ),
           title: Text(title),
           subtitle: subtitle,
           trailing: isDisabled

@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart'; // Added for FieldValue
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -254,21 +255,33 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                     child: Stack(
                       clipBehavior: Clip.none,
                       children: [
-                        CircleAvatar(
-                          radius: 50,
-                          backgroundImage: _imageFile != null
-                              ? FileImage(_imageFile!)
-                              : (_authService.currentUser?.photoURL != null &&
-                                      _authService.currentUser!.photoURL!.isNotEmpty
-                                  ? NetworkImage(
-                                      _authService.currentUser!.photoURL!)
-                                  : null) as ImageProvider?,
-                          child: (_imageFile == null &&
-                                  (_authService.currentUser?.photoURL == null ||
-                                      _authService.currentUser!.photoURL!.isEmpty)
-                              ? const Icon(Icons.camera_alt, size: 50)
-                              : null),
-                        ),
+                        _imageFile != null
+                            ? CircleAvatar(
+                                radius: 50,
+                                backgroundImage: FileImage(_imageFile!),
+                              )
+                            : (_authService.currentUser?.photoURL != null &&
+                                    _authService.currentUser!.photoURL!.isNotEmpty
+                                ? ClipOval(
+                                    child: CachedNetworkImage(
+                                      imageUrl: _authService.currentUser!.photoURL!,
+                                      width: 100,
+                                      height: 100,
+                                      fit: BoxFit.cover,
+                                      placeholder: (context, url) => const CircleAvatar(
+                                        radius: 50,
+                                        child: Icon(Icons.camera_alt, size: 50),
+                                      ),
+                                      errorWidget: (context, url, error) => const CircleAvatar(
+                                        radius: 50,
+                                        child: Icon(Icons.camera_alt, size: 50),
+                                      ),
+                                    ),
+                                  )
+                                : const CircleAvatar(
+                                    radius: 50,
+                                    child: Icon(Icons.camera_alt, size: 50),
+                                  )),
                         Positioned(
                           bottom: 0,
                           right: 0,

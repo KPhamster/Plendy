@@ -15,6 +15,7 @@ import '../models/user_category.dart';
 import '../services/event_service.dart';
 import '../services/experience_service.dart';
 import '../services/message_service.dart';
+import '../widgets/cached_profile_avatar.dart';
 import '../widgets/event_editor_modal.dart';
 import '../widgets/shared_media_preview_modal.dart';
 import 'experience_page_screen.dart';
@@ -620,24 +621,12 @@ class _ChatScreenState extends State<ChatScreen> {
                       ),
                     ),
                     child: Center(
-                      child: CircleAvatar(
+                      child: CachedProfileAvatar(
+                        photoUrl: photoURL,
                         radius: 40,
-                        backgroundImage: photoURL != null && photoURL.isNotEmpty
-                            ? NetworkImage(photoURL)
-                            : null,
-                        backgroundColor: Colors.grey.shade300,
-                        child: photoURL == null || photoURL.isEmpty
-                            ? Text(
-                                profileName.isNotEmpty
-                                    ? profileName[0].toUpperCase()
-                                    : '?',
-                                style: const TextStyle(
-                                  fontSize: 32,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.black54,
-                                ),
-                              )
-                            : null,
+                        fallbackText: profileName.isNotEmpty
+                            ? profileName[0].toUpperCase()
+                            : '?',
                       ),
                     ),
                   ),
@@ -2605,18 +2594,6 @@ class _ChatScreenState extends State<ChatScreen> {
     double size = 40,
     VoidCallback? onTap,
   }) {
-    final photoUrl = participant.photoUrl;
-    final radius = size / 2;
-    if (photoUrl != null && photoUrl.isNotEmpty) {
-      return _wrapAvatar(
-        CircleAvatar(
-          radius: radius,
-          backgroundImage: NetworkImage(photoUrl),
-        ),
-        onTap,
-      );
-    }
-
     final label = participant.displayLabel(fallback: 'Friend').trim();
     final sanitized = label.replaceAll('@', '').trim();
     final initialSource = sanitized.isNotEmpty ? sanitized : label;
@@ -2624,17 +2601,10 @@ class _ChatScreenState extends State<ChatScreen> {
         initialSource.isNotEmpty ? initialSource[0].toUpperCase() : '?';
 
     return _wrapAvatar(
-      CircleAvatar(
-        radius: radius,
-        backgroundColor: Colors.grey.shade300,
-        child: Text(
-          initial,
-          style: TextStyle(
-            fontWeight: FontWeight.w600,
-            color: Colors.black,
-            fontSize: radius * 0.9,
-          ),
-        ),
+      CachedProfileAvatar(
+        photoUrl: participant.photoUrl,
+        radius: size / 2,
+        fallbackText: initial,
       ),
       onTap,
     );

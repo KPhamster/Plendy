@@ -7,6 +7,7 @@ import '../services/notification_state_service.dart'; // Import NotificationStat
 import '../widgets/user_list_tab.dart';
 // Import the search delegate
 import '../widgets/notification_dot.dart'; // Import NotificationDot
+import '../widgets/cached_profile_avatar.dart';
 import '../models/user_profile.dart'; // Import UserProfile for search result type
 // Reusing for action button logic for now
 import 'follow_requests_screen.dart'; // Import FollowRequestsScreen
@@ -383,13 +384,9 @@ class _MyPeopleScreenState extends State<MyPeopleScreen>
                             bool showUsernameAsSubtitle = userProfile.displayName?.isNotEmpty ?? false; 
 
                             return ListTile(
-                              leading: CircleAvatar(
-                                backgroundImage: userProfile.photoURL != null
-                                    ? NetworkImage(userProfile.photoURL!)
-                                    : null,
-                                child: userProfile.photoURL == null
-                                    ? const Icon(Icons.person)
-                                    : null,
+                              leading: CachedProfileAvatar(
+                                photoUrl: userProfile.photoURL,
+                                fallbackText: displayName.isNotEmpty ? displayName[0].toUpperCase() : null,
                               ),
                               title: Text(displayName),
                               subtitle: showUsernameAsSubtitle ? Text(username) : null,
