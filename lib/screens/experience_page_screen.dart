@@ -1702,7 +1702,26 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                 if (!widget.readOnlyPreview) ...[
                   const SizedBox(width: 4), // Spacing
 
-                  // 3. Edit Button
+                  // 3. Event Button (Create Event with this Experience)
+                  ActionChip(
+                    avatar: Icon(
+                      Icons.event_outlined,
+                      color: Colors.deepPurple,
+                      size: 18,
+                    ),
+                    label: const SizedBox.shrink(),
+                    labelPadding: EdgeInsets.zero,
+                    onPressed: _openEventEditorWithExperience,
+                    tooltip: 'Create Event',
+                    backgroundColor: Colors.white,
+                    shape: StadiumBorder(
+                        side: BorderSide(color: Colors.grey.shade300)),
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    padding: const EdgeInsets.all(4),
+                  ),
+                  const SizedBox(width: 4), // Spacing
+
+                  // 4. Edit Button
                   ActionChip(
                     avatar: Icon(
                       Icons.edit_outlined,
@@ -4349,6 +4368,88 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Could not open event: $e')),
+        );
+      }
+    }
+  }
+
+  /// Open the event editor modal with current experience pre-added to itinerary
+  Future<void> _openEventEditorWithExperience() async {
+    try {
+      final userId = _authService.currentUser?.uid;
+      if (userId == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Please sign in to create an event.'),
+            ),
+          );
+        }
+        return;
+      }
+
+      // Create an EventExperienceEntry for the current experience
+      final experienceEntry = EventExperienceEntry(
+        experienceId: _currentExperience.id,
+      );
+
+      // Create default event times
+      final now = DateTime.now();
+      final defaultStart = DateTime(now.year, now.month, now.day, now.hour, 0);
+      final defaultEnd = defaultStart.add(const Duration(hours: 1));
+
+      // Create a new event with this experience in the itinerary
+      final newEvent = Event(
+        id: '',
+        title: '',
+        description: '',
+        startDateTime: defaultStart,
+        endDateTime: defaultEnd,
+        plannerUserId: userId,
+        createdAt: now,
+        updatedAt: now,
+        experiences: [experienceEntry],
+      );
+
+      // Fetch categories if not already loaded
+      List<UserCategory> categories = _userCategories;
+      List<ColorCategory> colorCategories = widget.userColorCategories;
+
+      if (categories.isEmpty || colorCategories.isEmpty) {
+        final result = await _experienceService.getUserAndColorCategories(
+          includeSharedEditable: true,
+        );
+        categories = result.userCategories;
+        colorCategories = result.colorCategories;
+      }
+
+      if (!mounted) return;
+
+      // Open the event editor modal
+      final result = await Navigator.of(context).push<EventEditorResult>(
+        MaterialPageRoute(
+          builder: (ctx) => EventEditorModal(
+            event: newEvent,
+            experiences: [_currentExperience],
+            categories: categories,
+            colorCategories: colorCategories,
+          ),
+          fullscreenDialog: true,
+        ),
+      );
+
+      if (!mounted) return;
+
+      if (result != null && result.wasSaved && result.savedEvent != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Event created successfully')),
+        );
+      }
+    } catch (e) {
+      debugPrint('_openEventEditorWithExperience: Error creating event: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not create event: $e')),
         );
       }
     }
