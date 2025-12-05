@@ -1235,7 +1235,7 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
                   ],
                 ),
               ),
-              SizedBox(height: 16),
+              SizedBox(height: _cardData.selectedOtherCategoryIds.isNotEmpty ? 16 : 1),
 
               // Other Categories Selection
               Column(
@@ -1351,7 +1351,7 @@ class _AddExperienceModalState extends State<AddExperienceModal> {
                   ],
                 ),
               ),
-              SizedBox(height: 16),
+              SizedBox(height: _cardData.selectedOtherColorCategoryIds.isNotEmpty ? 16 : 1),
 
               // Other Color Categories Selection
               Column(
