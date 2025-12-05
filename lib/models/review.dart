@@ -125,8 +125,8 @@ class Review {
         rating = ratingValue;
       } else if (ratingValue is String) {
         rating = double.tryParse(ratingValue) ?? 0.0;
-      }
-      
+    }
+    
       // Convert: 4-5 = positive, 1-2 = negative, 3 = neutral (null)
       if (rating >= 4.0) return true;
       if (rating <= 2.0) return false;

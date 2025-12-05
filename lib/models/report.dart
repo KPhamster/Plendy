@@ -19,6 +19,8 @@ class Report extends Equatable {
   // Additional context
   final String? reportedUserId; // User ID of content creator
   final String? publicExperienceId; // Original public experience ID if from discovery
+  final String? offenderId; // User ID of the offender (e.g., review author being reported)
+  final String? reviewId; // Review ID if reporting a review
 
   // Review information
   final String? reviewedBy; // Admin/moderator user ID
@@ -46,6 +48,8 @@ class Report extends Equatable {
     this.status = statusPending,
     this.reportedUserId,
     this.publicExperienceId,
+    this.offenderId,
+    this.reviewId,
     this.reviewedBy,
     this.reviewedAt,
     this.reviewNotes,
@@ -65,6 +69,8 @@ class Report extends Equatable {
         status,
         reportedUserId,
         publicExperienceId,
+        offenderId,
+        reviewId,
         reviewedBy,
         reviewedAt,
         reviewNotes,
@@ -84,6 +90,8 @@ class Report extends Equatable {
       status: map['status'] ?? statusPending,
       reportedUserId: map['reportedUserId'],
       publicExperienceId: map['publicExperienceId'],
+      offenderId: map['offenderId'],
+      reviewId: map['reviewId'],
       reviewedBy: map['reviewedBy'],
       reviewedAt: _parseNullableTimestamp(map['reviewedAt']),
       reviewNotes: map['reviewNotes'],
@@ -111,6 +119,8 @@ class Report extends Equatable {
       'status': status,
       if (reportedUserId != null) 'reportedUserId': reportedUserId,
       if (publicExperienceId != null) 'publicExperienceId': publicExperienceId,
+      if (offenderId != null) 'offenderId': offenderId,
+      if (reviewId != null) 'reviewId': reviewId,
       if (reviewedBy != null) 'reviewedBy': reviewedBy,
       if (reviewedAt != null) 'reviewedAt': Timestamp.fromDate(reviewedAt!),
       if (reviewNotes != null) 'reviewNotes': reviewNotes,
@@ -162,6 +172,8 @@ class Report extends Equatable {
     String? status,
     String? reportedUserId,
     String? publicExperienceId,
+    String? offenderId,
+    String? reviewId,
     String? reviewedBy,
     DateTime? reviewedAt,
     String? reviewNotes,
@@ -179,6 +191,8 @@ class Report extends Equatable {
       status: status ?? this.status,
       reportedUserId: reportedUserId ?? this.reportedUserId,
       publicExperienceId: publicExperienceId ?? this.publicExperienceId,
+      offenderId: offenderId ?? this.offenderId,
+      reviewId: reviewId ?? this.reviewId,
       reviewedBy: reviewedBy ?? this.reviewedBy,
       reviewedAt: reviewedAt ?? this.reviewedAt,
       reviewNotes: reviewNotes ?? this.reviewNotes,

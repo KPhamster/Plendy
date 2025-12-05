@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show Platform;
+import 'dart:io' show File, Platform;
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -63,6 +63,7 @@ import '../widgets/web_media_preview_card.dart'; // ADDED: Import for WebMediaPr
 import '../widgets/share_experience_bottom_sheet.dart';
 import '../widgets/save_to_experiences_modal.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import '../models/report.dart';
 import '../services/report_service.dart';
 import '../widgets/privacy_toggle_button.dart';
@@ -308,8 +309,10 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     super.initState();
     // Initialize local state with initial experience data
     _currentExperience = widget.experience;
-    // Initialize user vote from the experience's saved rating
-    _userVote = widget.experience.userThumbRating;
+    // Don't initialize _userVote here - we need to verify if the current user
+    // is an editor first. This will be set in _loadCurrentUserAndCategories
+    // to avoid showing another user's rating as if it were our own.
+    _userVote = null;
 
     _tabController =
         TabController(length: 3, vsync: this); // Initialize TabController
@@ -770,6 +773,18 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
           _currentUserId = userId;
           _isLoadingAuth = false;
         });
+        
+        // Set _userVote based on whether current user is an editor of this experience
+        // Only show the experience's userThumbRating if the current user is an editor
+        // This prevents showing another user's rating as if it were our own
+        if (userId != null && _currentExperience.editorUserIds.contains(userId)) {
+          setState(() {
+            _userVote = _currentExperience.userThumbRating;
+          });
+        } else if (userId != null) {
+          // User is logged in but not an editor - try to load their own rating for this place
+          _loadUserRatingForPlace();
+        }
       }
     } catch (e) {
       print("Error getting current user ID: $e");
@@ -797,6 +812,37 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
             _mergeAdditionalUserCategories(fetchedCategories);
         _isLoadingCategories = false;
       });
+    }
+  }
+  
+  /// Loads the current user's thumb rating for this place
+  /// Checks both the user's own experience and the public experience for their rating
+  Future<void> _loadUserRatingForPlace() async {
+    final String? placeId = _currentExperience.location.placeId;
+    if (placeId == null || placeId.isEmpty || _currentUserId == null) return;
+    
+    try {
+      // First, try to find the user's own experience for this placeId
+      final userExperience = await _experienceService.findUserExperienceByPlaceId(
+        _currentUserId!,
+        placeId,
+      );
+      if (userExperience != null && mounted) {
+        setState(() {
+          _userVote = userExperience.userThumbRating;
+        });
+        return;
+      }
+      
+      // If no own experience, check if they have a rating on the public experience
+      final publicRating = await _experienceService.getUserRatingForPlace(placeId);
+      if (publicRating != null && mounted) {
+        setState(() {
+          _userVote = publicRating;
+        });
+      }
+    } catch (e) {
+      debugPrint('Failed to load user rating for place: $e');
     }
   }
 
@@ -982,9 +1028,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
             ),
 
           // --- ADDED: Positioned Back Button ---
-          // Show when not in read-only preview, or when opened from discovery screen
-          // (discovery screen sets publicExperienceId, share preview sets shareBannerFromUserId)
-          if (!widget.readOnlyPreview || widget.publicExperienceId != null || widget.shareBannerFromUserId != null)
+          // Always show back button on mobile (non-web) platforms
+          if (!kIsWeb)
             Positioned(
               // Position accounting for status bar height + padding
               top: MediaQuery.of(context).padding.top + 8.0,
@@ -1061,7 +1106,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
           // --- END: Positioned Overflow Menu (3-dot) ---
 
           // --- ADDED: Thumbs Up/Down Rating Buttons (Bottom-Right) ---
-          if (!widget.readOnlyPreview)
+          // Show for all authenticated users, regardless of read-only status
+          if (_currentUserId != null)
             Positioned(
               bottom: 16.0,
               right: 16.0,
@@ -3025,26 +3071,30 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
 
   // Builds the Reviews Tab ListView
   Widget _buildReviewsTab(BuildContext context) {
+    // Allow authenticated users to rate and review, regardless of edit access
+    final bool canInteract = _currentUserId != null;
+    
     return Container(
       color: Colors.white,
-      child: Column(
-        children: [
-          // Rating buttons at the top center
-          if (!widget.readOnlyPreview)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 16.0),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  // Thumbs Up Column (Button + Count)
-                  Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      GestureDetector(
-                        onTap: _isUpdatingRating ? null : () => _handleThumbRating(true),
+      child: CustomScrollView(
+        slivers: [
+          // Rating buttons at the top center (available for all authenticated users)
+          if (canInteract)
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.only(top: 24.0, bottom: 16.0, left: 16.0, right: 16.0),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    // Thumbs Up Column (Button + Count)
+                    Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        GestureDetector(
+                          onTap: _isUpdatingRating ? null : () => _handleThumbRating(true),
                         child: Container(
-                          width: 96,
-                          height: 96,
+                          width: 48,
+                          height: 48,
                           decoration: BoxDecoration(
                             color: Colors.black.withOpacity(0.2),
                             shape: BoxShape.circle,
@@ -3056,17 +3106,17 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                             color: _userVote == true
                                 ? Colors.green
                                 : Colors.white.withOpacity(0.9),
-                            size: 54.0,
+                            size: 27.0,
                           ),
                         ),
-                      ),
+                        ),
                       Transform.translate(
-                        offset: const Offset(0, 8),
+                        offset: const Offset(0, 4),
                         child: Text(
                           (_publicExperience?.thumbsUpCount ?? 0).toString(),
                           style: TextStyle(
                             color: Colors.black,
-                            fontSize: 36.0,
+                            fontSize: 18.0,
                             fontWeight: FontWeight.w500,
                             shadows: [
                               Shadow(
@@ -3077,41 +3127,41 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                             ],
                           ),
                         ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(width: 24),
-                  // Thumbs Down Column (Button + Count)
-                  Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      GestureDetector(
-                        onTap: _isUpdatingRating ? null : () => _handleThumbRating(false),
-                        child: Container(
-                          width: 96,
-                          height: 96,
-                          decoration: BoxDecoration(
-                            color: Colors.black.withOpacity(0.2),
-                            shape: BoxShape.circle,
-                          ),
-                          child: Icon(
-                            _userVote == false
-                                ? Icons.thumb_down
-                                : Icons.thumb_down_outlined,
-                            color: _userVote == false
-                                ? Colors.red
-                                : Colors.white.withOpacity(0.9),
-                            size: 54.0,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(width: 24),
+                    // Thumbs Down Column (Button + Count)
+                    Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        GestureDetector(
+                          onTap: _isUpdatingRating ? null : () => _handleThumbRating(false),
+                          child: Container(
+                            width: 48,
+                            height: 48,
+                            decoration: BoxDecoration(
+                              color: Colors.black.withOpacity(0.2),
+                              shape: BoxShape.circle,
+                            ),
+                            child: Icon(
+                              _userVote == false
+                                  ? Icons.thumb_down
+                                  : Icons.thumb_down_outlined,
+                              color: _userVote == false
+                                  ? Colors.red
+                                  : Colors.white.withOpacity(0.9),
+                              size: 27.0,
+                            ),
                           ),
                         ),
-                      ),
                       Transform.translate(
-                        offset: const Offset(0, 8),
+                        offset: const Offset(0, 4),
                         child: Text(
                           (_publicExperience?.thumbsDownCount ?? 0).toString(),
                           style: TextStyle(
                             color: Colors.black,
-                            fontSize: 36.0,
+                            fontSize: 18.0,
                             fontWeight: FontWeight.w500,
                             shadows: [
                               Shadow(
@@ -3122,75 +3172,93 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                             ],
                           ),
                         ),
-                      ),
-                    ],
-                  ),
-                ],
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ),
-          // Write Review Button
-          if (!widget.readOnlyPreview)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-              child: SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: _isSubmittingReview ? null : _showWriteReviewModal,
-                  icon: Icon(_userReview != null ? Icons.edit : Icons.rate_review),
-                  label: Text(_userReview != null ? 'Edit Your Review' : 'Write a Review'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Theme.of(context).primaryColor,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
+          // Write Review Button (available for all authenticated users)
+          if (canInteract)
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.only(left: 16.0, right: 16.0, top: 8.0, bottom: 16.0),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: _isSubmittingReview ? null : _showWriteReviewModal,
+                    icon: Icon(_userReview != null ? Icons.edit : Icons.rate_review),
+                    label: Text(_userReview != null ? 'Edit Your Review' : 'Write a Review'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Theme.of(context).primaryColor,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
                     ),
                   ),
                 ),
               ),
             ),
           // Divider
-          if (!widget.readOnlyPreview)
-            const Divider(height: 1),
+          if (canInteract)
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 16.0),
+                child: const Divider(height: 1),
+              ),
+            ),
           // Reviews list
-          Expanded(
-            child: _isLoadingReviews
-                ? const Center(child: CircularProgressIndicator())
-                : _reviews.isEmpty
-                    ? Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.reviews_outlined, size: 64, color: Colors.grey[400]),
-                            const SizedBox(height: 16),
-                            Text(
-                              'No reviews yet',
-                              style: TextStyle(
-                                fontSize: 18,
-                                color: Colors.grey[600],
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              'Be the first to share your experience!',
-                              style: TextStyle(
-                                fontSize: 14,
-                                color: Colors.grey[500],
-                              ),
-                            ),
-                          ],
+          if (_isLoadingReviews)
+            SliverToBoxAdapter(
+              child: SizedBox(
+                height: 200,
+                child: const Center(child: CircularProgressIndicator()),
+              ),
+            )
+          else if (_reviews.isEmpty)
+            SliverToBoxAdapter(
+              child: SizedBox(
+                height: 250,
+                child: Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.reviews_outlined, size: 64, color: Colors.grey[400]),
+                      const SizedBox(height: 16),
+                      Text(
+                        'No reviews yet',
+                        style: TextStyle(
+                          fontSize: 18,
+                          color: Colors.grey[600],
+                          fontWeight: FontWeight.w500,
                         ),
-                      )
-                    : ListView.builder(
-                        padding: const EdgeInsets.symmetric(vertical: 8),
-                        itemCount: _reviews.length,
-                        itemBuilder: (context, index) {
-                          final review = _reviews[index];
-                          return _buildReviewCard(review);
-                        },
                       ),
-          ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Be the first to share your experience!',
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: Colors.grey[500],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            )
+          else
+            SliverList(
+              delegate: SliverChildBuilderDelegate(
+                (context, index) {
+                  final review = _reviews[index];
+                  return _buildReviewCard(review);
+                },
+                childCount: _reviews.length,
+              ),
+            ),
         ],
       ),
     );
@@ -3201,16 +3269,38 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     showDialog(
       context: context,
       builder: (context) => WriteReviewModal(
-        initialRating: _userReview?.isPositive,
+        initialRating: _userVote, // Use the experience thumb rating, not review rating
         initialContent: _userReview?.content ?? '',
+        initialImageUrls: _userReview?.imageUrls ?? [],
         isEditing: _userReview != null,
         onSubmit: _handleReviewSubmit,
       ),
     );
   }
 
+  /// Uploads review images to Firebase Storage and returns the download URLs
+  Future<List<String>> _uploadReviewImages(List<File> images, String reviewId) async {
+    final List<String> uploadedUrls = [];
+    
+    for (int i = 0; i < images.length; i++) {
+      final file = images[i];
+      final fileName = '${DateTime.now().millisecondsSinceEpoch}_$i.jpg';
+      final ref = FirebaseStorage.instance
+          .ref()
+          .child('review_photos')
+          .child(reviewId)
+          .child(fileName);
+      
+      await ref.putFile(file);
+      final url = await ref.getDownloadURL();
+      uploadedUrls.add(url);
+    }
+    
+    return uploadedUrls;
+  }
+
   /// Handles review submission (create or update)
-  Future<void> _handleReviewSubmit(bool? isPositive, String content) async {
+  Future<void> _handleReviewSubmit(bool? isPositive, String content, List<File> newImages, List<String> existingImageUrls) async {
     final placeId = _currentExperience.location.placeId ?? '';
     final currentUser = FirebaseAuth.instance.currentUser;
     
@@ -3222,15 +3312,25 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
 
     try {
       if (_userReview != null) {
+        // Upload new images
+        List<String> newImageUrls = [];
+        if (newImages.isNotEmpty) {
+          newImageUrls = await _uploadReviewImages(newImages, _userReview!.id);
+        }
+        
+        // Combine existing and new image URLs
+        final allImageUrls = [...existingImageUrls, ...newImageUrls];
+        
         // Update existing review
         final updatedReview = _userReview!.copyWith(
           isPositive: isPositive,
           content: content,
+          imageUrls: allImageUrls,
           updatedAt: DateTime.now(),
         );
         await _experienceService.updateReview(updatedReview);
       } else {
-        // Create new review
+        // Create new review first to get the ID
         final newReview = Review(
           id: '', // Will be assigned by Firestore
           experienceId: _currentExperience.id,
@@ -3243,7 +3343,37 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
           createdAt: DateTime.now(),
           updatedAt: DateTime.now(),
         );
-        await _experienceService.addReview(newReview);
+        
+        // Add the review first to get the ID
+        final reviewId = await _experienceService.addReview(newReview);
+        
+        // Upload images if any
+        if (newImages.isNotEmpty) {
+          final imageUrls = await _uploadReviewImages(newImages, reviewId);
+          
+          // Update review with image URLs
+          final reviewWithImages = newReview.copyWith(imageUrls: imageUrls);
+          // Need to create a review with the correct ID for updating
+          final reviewToUpdate = Review(
+            id: reviewId,
+            experienceId: reviewWithImages.experienceId,
+            placeId: reviewWithImages.placeId,
+            userId: reviewWithImages.userId,
+            userName: reviewWithImages.userName,
+            userPhotoUrl: reviewWithImages.userPhotoUrl,
+            isPositive: reviewWithImages.isPositive,
+            content: reviewWithImages.content,
+            imageUrls: imageUrls,
+            createdAt: reviewWithImages.createdAt,
+            updatedAt: DateTime.now(),
+          );
+          await _experienceService.updateReview(reviewToUpdate);
+        }
+      }
+
+      // Update user's thumb rating to match the review rating
+      if (_userVote != isPositive) {
+        await _setThumbRatingDirectly(isPositive);
       }
 
       // Refresh reviews list
@@ -3264,6 +3394,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
       elevation: 1,
+      color: const Color.fromARGB(225, 250, 250, 250), // Very light grey background
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: Padding(
         padding: const EdgeInsets.all(12),
@@ -3333,47 +3464,88 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                     ],
                   ),
                 ),
-                // Rating Icon
-                if (review.isPositive != null)
-                  Icon(
-                    review.isPositive! ? Icons.thumb_up : Icons.thumb_down,
-                    color: review.isPositive! ? Colors.green : Colors.red,
-                    size: 20,
-                  ),
-                // Edit/Delete for current user
-                if (isCurrentUserReview && !widget.readOnlyPreview)
-                  PopupMenuButton<String>(
-                    icon: const Icon(Icons.more_vert, size: 20),
-                    onSelected: (value) {
-                      if (value == 'edit') {
-                        _showWriteReviewModal();
-                      } else if (value == 'delete') {
-                        _confirmDeleteReview(review);
-                      }
-                    },
-                    itemBuilder: (context) => [
-                      const PopupMenuItem(
-                        value: 'edit',
-                        child: Row(
-                          children: [
-                            Icon(Icons.edit, size: 18),
-                            SizedBox(width: 8),
-                            Text('Edit'),
-                          ],
-                        ),
+                // Rating Icon and Three-dot Menu
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Rating Icon
+                    if (review.isPositive != null)
+                      Icon(
+                        review.isPositive! ? Icons.thumb_up : Icons.thumb_down,
+                        color: review.isPositive! ? Colors.green : Colors.red,
+                        size: 20,
                       ),
-                      const PopupMenuItem(
-                        value: 'delete',
-                        child: Row(
-                          children: [
-                            Icon(Icons.delete, size: 18, color: Colors.red),
-                            SizedBox(width: 8),
-                            Text('Delete', style: TextStyle(color: Colors.red)),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
+                    // Three-dot menu for all reviews
+                    PopupMenuButton<String>(
+                      color: Colors.white,
+                      icon: const Icon(Icons.more_vert, size: 20),
+                      onSelected: (value) {
+                        if (value == 'edit') {
+                          _showWriteReviewModal();
+                        } else if (value == 'delete') {
+                          _confirmDeleteReview(review);
+                        } else if (value == 'report') {
+                          _showReviewReportDialog(review);
+                        }
+                      },
+                      itemBuilder: (context) {
+                        final List<PopupMenuEntry<String>> menuItems = [];
+
+                        if (isCurrentUserReview) {
+                          // Current user's review - show Edit/Delete
+                          // Users can always edit/delete their own reviews regardless of readOnlyPreview
+                          menuItems.addAll([
+                            const PopupMenuItem(
+                              value: 'edit',
+                              child: Material(
+                                color: Colors.white,
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.edit, size: 18),
+                                    SizedBox(width: 8),
+                                    Text('Edit'),
+                                  ],
+                                ),
+                              ),
+                            ),
+                            const PopupMenuItem(
+                              value: 'delete',
+                              child: Material(
+                                color: Colors.white,
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.delete, size: 18, color: Colors.red),
+                                    SizedBox(width: 8),
+                                    Text('Delete', style: TextStyle(color: Colors.red)),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ]);
+                        } else {
+                          // Other user's review - show Report option
+                          menuItems.add(
+                            const PopupMenuItem(
+                              value: 'report',
+                              child: Material(
+                                color: Colors.white,
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.report_outlined, size: 18),
+                                    SizedBox(width: 8),
+                                    Text('Report'),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          );
+                        }
+
+                        return menuItems;
+                      },
+                    ),
+                  ],
+                ),
               ],
             ),
             const SizedBox(height: 12),
@@ -3385,6 +3557,141 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                 height: 1.4,
               ),
             ),
+            // Review Photos
+            if (review.imageUrls.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              _buildReviewPhotoGallery(review.imageUrls),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Builds a photo gallery for review images (like Yelp/Amazon)
+  Widget _buildReviewPhotoGallery(List<String> imageUrls) {
+    if (imageUrls.isEmpty) return const SizedBox.shrink();
+    
+    return SizedBox(
+      height: 100,
+      child: ListView.builder(
+        scrollDirection: Axis.horizontal,
+        itemCount: imageUrls.length,
+        itemBuilder: (context, index) {
+          return GestureDetector(
+            onTap: () => _showFullScreenReviewImage(imageUrls, index),
+            child: Container(
+              width: 100,
+              height: 100,
+              margin: EdgeInsets.only(right: index < imageUrls.length - 1 ? 8 : 0),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(8),
+                color: Colors.grey[200],
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: Image.network(
+                  imageUrls[index],
+                  fit: BoxFit.cover,
+                  loadingBuilder: (context, child, loadingProgress) {
+                    if (loadingProgress == null) return child;
+                    return Center(
+                      child: CircularProgressIndicator(
+                        value: loadingProgress.expectedTotalBytes != null
+                            ? loadingProgress.cumulativeBytesLoaded /
+                                loadingProgress.expectedTotalBytes!
+                            : null,
+                        strokeWidth: 2,
+                      ),
+                    );
+                  },
+                  errorBuilder: (context, error, stackTrace) {
+                    return const Center(
+                      child: Icon(Icons.broken_image, color: Colors.grey),
+                    );
+                  },
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  /// Shows a full-screen image viewer for review photos
+  void _showFullScreenReviewImage(List<String> imageUrls, int initialIndex) {
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        backgroundColor: Colors.black,
+        insetPadding: EdgeInsets.zero,
+        child: Stack(
+          children: [
+            // Image PageView
+            PageView.builder(
+              controller: PageController(initialPage: initialIndex),
+              itemCount: imageUrls.length,
+              itemBuilder: (context, index) {
+                return InteractiveViewer(
+                  child: Center(
+                    child: Image.network(
+                      imageUrls[index],
+                      fit: BoxFit.contain,
+                      loadingBuilder: (context, child, loadingProgress) {
+                        if (loadingProgress == null) return child;
+                        return Center(
+                          child: CircularProgressIndicator(
+                            value: loadingProgress.expectedTotalBytes != null
+                                ? loadingProgress.cumulativeBytesLoaded /
+                                    loadingProgress.expectedTotalBytes!
+                                : null,
+                            color: Colors.white,
+                          ),
+                        );
+                      },
+                      errorBuilder: (context, error, stackTrace) {
+                        return const Center(
+                          child: Icon(Icons.broken_image, color: Colors.white, size: 48),
+                        );
+                      },
+                    ),
+                  ),
+                );
+              },
+            ),
+            // Close button
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 8,
+              right: 8,
+              child: IconButton(
+                onPressed: () => Navigator.of(context).pop(),
+                icon: const Icon(Icons.close, color: Colors.white, size: 28),
+                style: IconButton.styleFrom(
+                  backgroundColor: Colors.black.withOpacity(0.5),
+                ),
+              ),
+            ),
+            // Page indicator
+            if (imageUrls.length > 1)
+              Positioned(
+                bottom: MediaQuery.of(context).padding.bottom + 16,
+                left: 0,
+                right: 0,
+                child: Center(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.5),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      '${initialIndex + 1} / ${imageUrls.length}',
+                      style: const TextStyle(color: Colors.white, fontSize: 14),
+                    ),
+                  ),
+                ),
+              ),
           ],
         ),
       ),
@@ -3418,6 +3725,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
+        backgroundColor: Colors.white,
         title: const Text('Delete Review'),
         content: const Text('Are you sure you want to delete your review? This action cannot be undone.'),
         actions: [
@@ -4807,7 +5115,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                       dense: true,
                     ),
                     RadioListTile<String>(
-                      title: const Text('Incorrect Information'),
+                      title: const Text('Incorrect information'),
                       value: 'incorrect',
                       groupValue: selectedReason,
                       onChanged: isSubmitting
@@ -5011,6 +5319,263 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
       );
     } catch (e) {
       debugPrint('ExperiencePageScreen: Failed to submit report: $e');
+      if (!mounted) return;
+      setSubmitting(false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Failed to submit report. Please try again.'),
+          duration: Duration(seconds: 3),
+        ),
+      );
+    }
+  }
+
+  void _showReviewReportDialog(Review review) {
+    String? selectedReason;
+    final TextEditingController explanationController = TextEditingController();
+    bool isSubmitting = false;
+
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              backgroundColor: Colors.white,
+              surfaceTintColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              title: const Text(
+                'What would you like to report about this review?',
+                style: TextStyle(fontSize: 18),
+              ),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    RadioListTile<String>(
+                      title: const Text('Inappropriate content'),
+                      value: 'inappropriate',
+                      groupValue: selectedReason,
+                      onChanged: isSubmitting
+                          ? null
+                          : (value) {
+                              setState(() {
+                                selectedReason = value;
+                              });
+                            },
+                      contentPadding: EdgeInsets.zero,
+                      dense: true,
+                    ),
+                    RadioListTile<String>(
+                      title: const Text('Spam or fake review'),
+                      value: 'spam',
+                      groupValue: selectedReason,
+                      onChanged: isSubmitting
+                          ? null
+                          : (value) {
+                              setState(() {
+                                selectedReason = value;
+                              });
+                            },
+                      contentPadding: EdgeInsets.zero,
+                      dense: true,
+                    ),
+                    RadioListTile<String>(
+                      title: const Text('Harassment or bullying'),
+                      value: 'harassment',
+                      groupValue: selectedReason,
+                      onChanged: isSubmitting
+                          ? null
+                          : (value) {
+                              setState(() {
+                                selectedReason = value;
+                              });
+                            },
+                      contentPadding: EdgeInsets.zero,
+                      dense: true,
+                    ),
+                    RadioListTile<String>(
+                      title: const Text('Other'),
+                      value: 'other',
+                      groupValue: selectedReason,
+                      onChanged: isSubmitting
+                          ? null
+                          : (value) {
+                              setState(() {
+                                selectedReason = value;
+                              });
+                            },
+                      contentPadding: EdgeInsets.zero,
+                      dense: true,
+                    ),
+                    const SizedBox(height: 16),
+                    const Text(
+                      'Please explain:',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.black87,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: explanationController,
+                      maxLines: 4,
+                      enabled: !isSubmitting,
+                      decoration: InputDecoration(
+                        hintText: 'Provide additional details...',
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        contentPadding: const EdgeInsets.all(12),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: isSubmitting
+                      ? null
+                      : () {
+                          explanationController.dispose();
+                          Navigator.of(dialogContext).pop();
+                        },
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  onPressed: isSubmitting
+                      ? null
+                      : () async {
+                          await _handleReviewReportSubmit(
+                            dialogContext: dialogContext,
+                            review: review,
+                            selectedReason: selectedReason,
+                            explanationController: explanationController,
+                            setSubmitting: (value) {
+                              setState(() {
+                                isSubmitting = value;
+                              });
+                            },
+                          );
+                        },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Theme.of(context).primaryColor,
+                    foregroundColor: Colors.white,
+                  ),
+                  child: isSubmitting
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Text('Submit'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _handleReviewReportSubmit({
+    required BuildContext dialogContext,
+    required Review review,
+    required String? selectedReason,
+    required TextEditingController explanationController,
+    required void Function(bool) setSubmitting,
+  }) async {
+    if (selectedReason == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please select a reason for your report.'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+      return;
+    }
+
+    setSubmitting(true);
+
+    final currentUser = _authService.currentUser;
+    if (currentUser == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('You must be signed in to report a review.'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+      setSubmitting(false);
+      return;
+    }
+
+    try {
+      // Check for existing report on this review
+      final existingReport = await _reportService.findExistingReviewReport(
+        userId: currentUser.uid,
+        reviewId: review.id,
+      );
+
+      if (existingReport != null) {
+        if (!mounted) return;
+        explanationController.dispose();
+        Navigator.of(dialogContext).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+                'You have already reported this review recently. Thank you for your feedback.'),
+            duration: Duration(seconds: 3),
+          ),
+        );
+        return;
+      }
+
+      final deviceInfo = _getDeviceInfo();
+
+      final report = Report(
+        id: '',
+        userId: currentUser.uid,
+        screenReported: 'experience_review',
+        previewURL: '',
+        experienceId: _currentExperience.id,
+        reportType: selectedReason,
+        details: explanationController.text.trim(),
+        createdAt: DateTime.now(),
+        offenderId: review.userId,
+        reviewId: review.id,
+        publicExperienceId: widget.publicExperienceId,
+        deviceInfo: deviceInfo,
+      );
+
+      await _reportService.submitReport(report);
+
+      if (!mounted) return;
+      explanationController.dispose();
+      Navigator.of(dialogContext).pop();
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Report submitted. Thank you for your feedback!'),
+          duration: Duration(seconds: 3),
+        ),
+      );
+
+      debugPrint(
+        'ExperiencePageScreen: Review report submitted for review ${review.id}',
+      );
+    } catch (e) {
+      debugPrint('ExperiencePageScreen: Failed to submit review report: $e');
       if (!mounted) return;
       setSubmitting(false);
       ScaffoldMessenger.of(context).showSnackBar(
@@ -5280,8 +5845,122 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   // --- END: Share bottom sheet ---
 
   // --- ADDED: Thumb rating update --- START ---
+
+  /// Sets thumb rating directly without toggle logic (used when syncing with review)
+  Future<void> _setThumbRatingDirectly(bool? isPositive) async {
+    if (_isUpdatingRating) return;
+    
+    // Check if user is authenticated
+    if (_currentUserId == null) return;
+
+    final bool? previousRating = _userVote;
+    final bool? newRating = isPositive;
+
+    // Only update if different
+    if (previousRating == newRating) return;
+
+    // Optimistically update UI
+    setState(() {
+      _userVote = newRating;
+      _isUpdatingRating = true;
+    });
+
+    try {
+      final String? placeId = _currentExperience.location.placeId;
+      
+      // Check if current user is an editor of this specific experience document
+      final bool isEditor = _currentExperience.editorUserIds.contains(_currentUserId);
+      
+      if (isEditor) {
+        // User owns/edits this experience - update it directly
+        final updatedExperience = await _experienceService.updateUserThumbRating(
+          _currentExperience.id,
+          newRating,
+          previousRating: previousRating,
+        );
+
+        // Update the experience with new rating if successful
+        if (updatedExperience != null && mounted) {
+          setState(() {
+            _currentExperience = updatedExperience;
+          });
+        }
+      } else if (placeId != null && placeId.isNotEmpty) {
+        // User doesn't edit this experience - try to find their own experience for this place
+        Experience? userExperience;
+        try {
+          userExperience = await _experienceService.findUserExperienceByPlaceId(
+            _currentUserId!,
+            placeId,
+          );
+        } catch (e) {
+          debugPrint('_setThumbRatingDirectly: Error finding user experience: $e');
+          // Continue with public-only update
+        }
+        
+        if (userExperience != null) {
+          // User has their own experience for this place - update that
+          try {
+            await _experienceService.updateUserThumbRating(
+              userExperience.id,
+              newRating,
+              previousRating: userExperience.userThumbRating,
+            );
+          } catch (e) {
+            debugPrint('_setThumbRatingDirectly: Error updating user experience, falling back to public: $e');
+            // Fall back to public-only update
+            await _experienceService.updatePublicExperienceRatingOnly(
+              placeId,
+              newRating,
+              previousRating: previousRating,
+              experienceTemplate: _currentExperience,
+            );
+          }
+        } else {
+          // User doesn't have their own experience - just update public counts
+          await _experienceService.updatePublicExperienceRatingOnly(
+            placeId,
+            newRating,
+            previousRating: previousRating,
+            experienceTemplate: _currentExperience,
+          );
+        }
+      }
+
+      // Update public experience counts
+      if (mounted) {
+        await _loadPublicExperience();
+      }
+    } catch (e) {
+      // Revert on error
+      debugPrint('_setThumbRatingDirectly: Error: $e');
+      if (mounted) {
+        setState(() {
+          _userVote = previousRating;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to save rating. Please try again.')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isUpdatingRating = false;
+        });
+      }
+    }
+  }
+
   Future<void> _handleThumbRating(bool isThumbUp) async {
-    if (_isUpdatingRating || widget.readOnlyPreview) return;
+    if (_isUpdatingRating) return;
+    
+    // Check if user is authenticated
+    if (_currentUserId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please sign in to rate this experience')),
+      );
+      return;
+    }
 
     final bool? previousRating = _userVote;
     final bool? newRating;
@@ -5300,22 +5979,74 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     });
 
     try {
-      final updatedExperience = await _experienceService.updateUserThumbRating(
-        _currentExperience.id,
-        newRating,
-        previousRating: previousRating,
-      );
+      final String? placeId = _currentExperience.location.placeId;
+      
+      // Check if current user is an editor of this specific experience document
+      final bool isEditor = _currentExperience.editorUserIds.contains(_currentUserId);
+      
+      if (isEditor) {
+        // User owns/edits this experience - update it directly
+        final updatedExperience = await _experienceService.updateUserThumbRating(
+          _currentExperience.id,
+          newRating,
+          previousRating: previousRating,
+        );
 
-      if (updatedExperience != null && mounted) {
-        setState(() {
-          _currentExperience = updatedExperience;
-          _didDataChange = true;
-        });
-        // Refresh public experience to update rating counts
+        if (updatedExperience != null && mounted) {
+          setState(() {
+            _currentExperience = updatedExperience;
+            _didDataChange = true;
+          });
+        }
+      } else if (placeId != null && placeId.isNotEmpty) {
+        // User doesn't edit this experience - try to find their own experience for this place
+        Experience? userExperience;
+        try {
+          userExperience = await _experienceService.findUserExperienceByPlaceId(
+            _currentUserId!,
+            placeId,
+          );
+        } catch (e) {
+          debugPrint('_handleThumbRating: Error finding user experience: $e');
+          // Continue with public-only update
+        }
+        
+        if (userExperience != null) {
+          // User has their own experience for this place - update that
+          try {
+            await _experienceService.updateUserThumbRating(
+              userExperience.id,
+              newRating,
+              previousRating: userExperience.userThumbRating,
+            );
+          } catch (e) {
+            debugPrint('_handleThumbRating: Error updating user experience, falling back to public: $e');
+            // Fall back to public-only update
+            await _experienceService.updatePublicExperienceRatingOnly(
+              placeId,
+              newRating,
+              previousRating: previousRating,
+              experienceTemplate: _currentExperience,
+            );
+          }
+        } else {
+          // User doesn't have their own experience - just update public counts
+          await _experienceService.updatePublicExperienceRatingOnly(
+            placeId,
+            newRating,
+            previousRating: previousRating,
+            experienceTemplate: _currentExperience,
+          );
+        }
+      }
+      
+      // Refresh public experience to update rating counts
+      if (mounted) {
         await _loadPublicExperience();
       }
     } catch (e) {
       // Revert on error
+      debugPrint('_handleThumbRating: Error updating rating: $e');
       if (mounted) {
         setState(() {
           _userVote = previousRating;
@@ -5324,7 +6055,6 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
           const SnackBar(content: Text('Failed to save rating. Please try again.')),
         );
       }
-      debugPrint('_handleThumbRating: Error updating rating: $e');
     } finally {
       if (mounted) {
         setState(() {

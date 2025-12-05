@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../models/shared_media_compat.dart';
 import 'package:share_handler/share_handler.dart';
 import '../services/sharing_service.dart';
+import '../services/experience_service.dart';
 import '../services/notification_state_service.dart';
 import '../widgets/notification_dot.dart';
 import 'collections_screen.dart';
@@ -23,6 +25,7 @@ class MainScreen extends StatefulWidget {
 class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   late int _selectedIndex;
   final SharingService _sharingService = SharingService();
+  final ExperienceService _experienceService = ExperienceService();
   final GlobalKey<DiscoveryScreenState> _discoveryKey =
       GlobalKey<DiscoveryScreenState>();
   final GlobalKey<CollectionsScreenState> _collectionsKey =
@@ -49,6 +52,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _collectionsKey.currentState?.startContentPreload();
+      // Preload public experiences for Discovery tab in background
+      unawaited(_experienceService.preloadPublicExperiences());
     });
     if (_sharingService.isNavigatingAwayFromShare) {
       _sharingService.shareNavigationComplete();

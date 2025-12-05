@@ -630,6 +630,10 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
 
   Future<void> refreshFeed() async {
     if (!mounted) return;
+    
+    // Clear the public experiences cache to force fresh data
+    _experienceService.clearPublicExperiencesCache();
+    
     setState(() {
       _publicExperiences.clear();
       _feedItems.clear();
