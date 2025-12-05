@@ -15,8 +15,7 @@ import '../services/google_maps_service.dart';
 import 'package:url_launcher/url_launcher.dart'; // ADDED: Import url_launcher
 // TODO: Import Review/Comment models if needed for display
 import '../models/review.dart';
-import '../models/comment.dart';
-import '../services/experience_service.dart'; // For fetching reviews/comments
+import '../services/experience_service.dart'; // For fetching reviews
 // REMOVED: FontAwesome import (no longer needed for Yelp icon)
 // import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 // RE-ADDED: Import Instagram Preview Widget
@@ -147,13 +146,9 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   // Tab Controller State
   late TabController _tabController;
   bool _isLoadingReviews = true;
-  bool _isLoadingComments = true;
   List<Review> _reviews = [];
-  List<Comment> _comments = [];
   Review? _userReview; // The current user's review for this place
   bool _isSubmittingReview = false;
-  // TODO: Add state for comment count if fetching separately
-  int _commentCount = 0; // Placeholder
   // ADDED: State for fetched media items
   bool _isLoadingMedia = true;
   List<SharedMediaItem> _mediaItems = [];
@@ -327,10 +322,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
 
     _fetchPlaceDetails();
     _fetchReviews(); // Fetch reviews on init
-    _fetchComments(); // Fetch comments on init
     _loadCurrentUserAndCategories(); // Fetch current user and categories
     _loadPublicExperience(); // Fetch public experience for rating counts
-    // TODO: Fetch comment count if needed
     // If preview media were provided, use them and skip fetching
     if (widget.initialMediaItems != null) {
       _mediaItems = List<SharedMediaItem>.from(widget.initialMediaItems!);
@@ -729,32 +722,6 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     }
   }
 
-  // ADDED: Method to fetch comments
-  Future<void> _fetchComments() async {
-    setState(() {
-      _isLoadingComments = true;
-    });
-    try {
-      // Fetch only top-level comments for the count/list initially
-      final comments = await _experienceService
-          .getCommentsForExperience(_currentExperience.id);
-      if (mounted) {
-        setState(() {
-          _comments = comments;
-          _commentCount = comments.length; // Update count based on fetched list
-          _isLoadingComments = false;
-        });
-      }
-    } catch (e) {
-      print("Error fetching comments: $e");
-      if (mounted) {
-        setState(() {
-          _isLoadingComments = false;
-          // Optionally show error message in the tab
-        });
-      }
-    }
-  }
 
   // REMOVED: Helper to fetch Instagram Thumbnail
   // Future<String?> _fetchInstagramThumbnailUrl(String reelUrl) async { ... }
@@ -1311,7 +1278,6 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     final mediaCount =
         isMediaTabLoading ? '...' : activeMediaItems.length.toString();
     final reviewCount = _isLoadingReviews ? '...' : _reviews.length.toString();
-    final commentCount = _isLoadingComments ? '...' : _commentCount.toString();
 
     // Prepare the tab bar once so we can use its preferred height
     final TabBar tabBar = TabBar(
@@ -1327,10 +1293,6 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
         Tab(
           icon: Icon(Icons.star_border_outlined),
           text: 'Reviews ($reviewCount)',
-        ),
-        Tab(
-          icon: Icon(Icons.comment_outlined),
-          text: 'Comments ($commentCount)',
         ),
       ],
     );
@@ -1414,7 +1376,6 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                 // Pass fetched media items to _buildMediaTab
                 _buildMediaTab(context, activeMediaItems),
                 _buildReviewsTab(context),
-                _buildCommentsTab(context),
               ],
             ),
           ),
@@ -1721,48 +1682,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                 ),
                 const SizedBox(width: 4), // Spacing
 
-                // 2. Google Button (View on Google Maps)
-                ActionChip(
-                  avatar: Icon(
-                    FontAwesomeIcons.google, // Google icon
-                    color: const Color(0xFF4285F4), // Official Google Blue
-                    size: 18,
-                  ),
-                  label: const SizedBox.shrink(),
-                  labelPadding: EdgeInsets.zero,
-                  onPressed: () =>
-                      _launchMapLocation(_currentExperience.location),
-                  tooltip: 'View on Map',
-                  backgroundColor: Colors.white,
-                  shape: StadiumBorder(
-                      side: BorderSide(color: Colors.grey.shade300)),
-                  materialTapTargetSize:
-                      MaterialTapTargetSize.shrinkWrap, // Reduce tap area
-                  padding: const EdgeInsets.all(4), // Adjust padding
-                ),
-                const SizedBox(width: 4), // Spacing
-
-                // 3. Yelp Button (Icon Only)
-                ActionChip(
-                  avatar: const Icon(
-                    FontAwesomeIcons.yelp,
-                    color: Color(0xFFd32323), // Yelp Red
-                    size: 18,
-                  ),
-                  label: const SizedBox.shrink(),
-                  labelPadding: EdgeInsets.zero,
-                  onPressed: _launchYelpSearch,
-                  tooltip: 'Search on Yelp',
-                  backgroundColor: Colors.white,
-                  shape: StadiumBorder(
-                      side: BorderSide(color: Colors.grey.shade300)),
-                  materialTapTargetSize:
-                      MaterialTapTargetSize.shrinkWrap, // Reduce tap area
-                  padding: const EdgeInsets.all(4), // Adjust padding
-                ),
-                const SizedBox(width: 4), // Spacing
-
-                // 4. Share Button
+                // 2. Share Button
                 ActionChip(
                   avatar: Icon(
                     Icons.share_outlined,
@@ -1782,7 +1702,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                 if (!widget.readOnlyPreview) ...[
                   const SizedBox(width: 4), // Spacing
 
-                  // 5. Edit Button
+                  // 3. Edit Button
                   ActionChip(
                     avatar: Icon(
                       Icons.edit_outlined,
@@ -2181,9 +2101,6 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     final reviewCount = _isLoadingReviews
         ? '...'
         : _reviews.length.toString(); // Show loading indicator or count
-    final commentCount = _isLoadingComments
-        ? '...'
-        : _commentCount.toString(); // Show loading indicator or count
 
     // Define a fixed height for the TabBarView content area
     const double tabContentHeight = 400.0; // Adjust as needed
@@ -2208,10 +2125,6 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                 icon: Icon(Icons.star_border_outlined),
                 text: 'Reviews ($reviewCount)',
               ),
-              Tab(
-                icon: Icon(Icons.comment_outlined),
-                text: 'Comments ($commentCount)',
-              ),
             ],
           ),
         ),
@@ -2223,7 +2136,6 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
               // Pass fetched media items
               _buildMediaTab(context, effectiveMediaItems),
               _buildReviewsTab(context),
-              _buildCommentsTab(context),
             ],
           ),
         ),
@@ -3755,37 +3667,6 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     }
   }
 
-  // Builds the Comments Tab ListView
-  Widget _buildCommentsTab(BuildContext context) {
-    if (_isLoadingComments) {
-      return Container(
-        color: Colors.white,
-        child: const Center(child: CircularProgressIndicator()),
-      );
-    }
-    if (_comments.isEmpty) {
-      return Container(
-        color: Colors.white,
-        child: const Center(child: Text('No comments yet.')),
-      );
-    }
-
-    return Container(
-      color: Colors.white,
-      child: ListView.builder(
-        itemCount: _comments.length,
-        itemBuilder: (context, index) {
-          final comment = _comments[index];
-          // TODO: Create a proper CommentListItem widget
-          return ListTile(
-            title: Text(comment.content),
-            subtitle: Text(
-                'By: ${comment.userName ?? comment.userId} - ${comment.createdAt.toLocal()}'),
-          );
-        },
-      ),
-    );
-  }
 
   // --- End Tabbed Content Widgets ---
 
@@ -3810,45 +3691,54 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 12.0, horizontal: 8.0),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceAround,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _buildActionItem(
-            context,
-            Icons.star_outline,
-            'Add Review',
-            () {
-              // TODO: Navigate to Add Review Screen/Modal
-              print('Add Review tapped');
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                    content:
-                        Text('Add Review functionality not yet implemented.')),
-              );
-            },
+          Expanded(
+            child: _buildActionItem(
+              context,
+              Icon(Icons.phone_outlined),
+              'Call Venue',
+              // Disable button if no phone number
+              phoneNumber != null && phoneNumber.isNotEmpty
+                  ? () => _launchPhoneCall(phoneNumber)
+                  : null, // Pass null if no number
+            ),
           ),
-          _buildActionItem(
-            context,
-            Icons.phone_outlined,
-            'Call Venue',
-            // Disable button if no phone number
-            phoneNumber != null && phoneNumber.isNotEmpty
-                ? () => _launchPhoneCall(phoneNumber)
-                : null, // Pass null if no number
+          Expanded(
+            child: _buildActionItem(
+              context,
+              Icon(Icons.language_outlined),
+              'Website',
+              // Disable button if no website URI
+              websiteUri != null && websiteUri.isNotEmpty
+                  ? () => _launchUrl(websiteUri)
+                  : null, // Pass null if no URI
+            ),
           ),
-          _buildActionItem(
-            context,
-            Icons.language_outlined,
-            'Website',
-            // Disable button if no website URI
-            websiteUri != null && websiteUri.isNotEmpty
-                ? () => _launchUrl(websiteUri)
-                : null, // Pass null if no URI
+          Expanded(
+            child: _buildActionItem(
+              context,
+              Icon(FontAwesomeIcons.yelp,
+                  color: const Color(0xFFd32323), size: 28),
+              'Yelp',
+              _launchYelpSearch,
+            ),
           ),
-          _buildActionItem(
-            context,
-            Icons.directions_outlined,
-            'Directions',
-            () => _launchDirections(location),
+          Expanded(
+            child: _buildActionItem(
+              context,
+              Icon(Icons.map_outlined),
+              'Google Maps',
+              () => _launchMapLocation(location),
+            ),
+          ),
+          Expanded(
+            child: _buildActionItem(
+              context,
+              Icon(Icons.directions_outlined),
+              'Directions',
+              () => _launchDirections(location),
+            ),
           ),
         ],
       ),
@@ -3857,21 +3747,26 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
 
   // Builds a single tappable action item (icon + label)
   Widget _buildActionItem(
-      BuildContext context, IconData icon, String label, VoidCallback? onTap) {
+      BuildContext context, Widget icon, String label, VoidCallback? onTap) {
     final bool enabled = onTap != null;
     final Color iconColor =
         enabled ? Theme.of(context).primaryColor : Colors.grey;
     final Color labelColor = enabled ? Colors.black87 : Colors.grey;
 
+    // Apply color to Material Icons, but keep FontAwesome icons as-is (they have their own colors)
+    final Widget coloredIcon = icon is Icon
+        ? Icon(icon.icon, color: iconColor, size: 28)
+        : icon;
+
     return InkWell(
       onTap: onTap, // onTap will be null if disabled
       borderRadius: BorderRadius.circular(8.0),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
+        padding: const EdgeInsets.symmetric(horizontal: 2.0, vertical: 4.0),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, color: iconColor, size: 28),
+            coloredIcon,
             const SizedBox(height: 4),
             Text(
               label,
