@@ -5298,6 +5298,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
         createdAt: DateTime.now(),
         reportedUserId: _currentExperience.createdBy,
         publicExperienceId: publicExperienceIdForReport,
+        offenderId: _currentExperience.createdBy, // Creator of the experience
         deviceInfo: deviceInfo,
       );
 
