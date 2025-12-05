@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../models/user_profile.dart';
 import '../services/user_service.dart';
 import '../services/auth_service.dart';
+import 'cached_profile_avatar.dart';
 
 class UserSearchDelegate extends SearchDelegate<UserProfile?> {
   final UserService userService;
@@ -100,16 +101,13 @@ class UserSearchDelegate extends SearchDelegate<UserProfile?> {
             bool isCurrentlyFollowing = _isFollowingStatus[userProfile.id] ?? false;
             bool isLoadingButton = _isButtonLoading[userProfile.id] ?? false;
 
+            final username = userProfile.username ?? 'Unknown Username';
             return ListTile(
-              leading: CircleAvatar(
-                backgroundImage: userProfile.photoURL != null
-                    ? NetworkImage(userProfile.photoURL!)
-                    : null,
-                child: userProfile.photoURL == null
-                    ? const Icon(Icons.person)
-                    : null,
+              leading: CachedProfileAvatar(
+                photoUrl: userProfile.photoURL,
+                fallbackText: username.isNotEmpty ? username[0].toUpperCase() : null,
               ),
-              title: Text(userProfile.username ?? 'Unknown Username'),
+              title: Text(username),
               subtitle: Text(userProfile.id == currentUserId ? "You" : userProfile.displayName ?? 'No display name'),
               trailing: isCurrentUser
                   ? null

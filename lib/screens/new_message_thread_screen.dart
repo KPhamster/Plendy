@@ -8,6 +8,7 @@ import '../models/user_profile.dart';
 import '../services/auth_service.dart';
 import '../services/message_service.dart';
 import '../services/user_service.dart';
+import '../widgets/cached_profile_avatar.dart';
 
 class NewMessageThreadScreen extends StatefulWidget {
   const NewMessageThreadScreen({
@@ -278,10 +279,11 @@ class _NewMessageThreadScreenState extends State<NewMessageThreadScreen> {
                     padding: const EdgeInsets.only(right: 8.0),
                     child: Chip(
                       label: Text(name),
-                      avatar: profile.photoURL != null
-                          ? CircleAvatar(
-                              backgroundImage: NetworkImage(profile.photoURL!))
-                          : null,
+                      avatar: CachedProfileAvatar(
+                        photoUrl: profile.photoURL,
+                        radius: 12,
+                        fallbackText: name.isNotEmpty ? name[0].toUpperCase() : null,
+                      ),
                       deleteIcon: const Icon(Icons.close),
                       onDeleted: () {
                         setState(() {
@@ -349,10 +351,10 @@ class _NewMessageThreadScreenState extends State<NewMessageThreadScreen> {
             profile.username != null ? '@' + profile.username! : null;
 
         return ListTile(
-          leading: profile.photoURL != null && profile.photoURL!.isNotEmpty
-              ? CircleAvatar(backgroundImage: NetworkImage(profile.photoURL!))
-              : CircleAvatar(
-                  child: Text(title.isNotEmpty ? title[0].toUpperCase() : '?')),
+          leading: CachedProfileAvatar(
+            photoUrl: profile.photoURL,
+            fallbackText: title.isNotEmpty ? title[0].toUpperCase() : '?',
+          ),
           title: Text(title),
           subtitle: subtitle != null ? Text(subtitle) : null,
           trailing: Icon(

@@ -41,6 +41,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../services/auth_service.dart';
 // ADDED: Import the new edit modal (we will create this file next)
 import '../widgets/edit_experience_modal.dart';
+import '../widgets/cached_profile_avatar.dart';
 // ADDED: Import for SystemUiOverlayStyle
 import 'package:flutter/services.dart';
 import '../models/shared_media_item.dart'; // ADDED Import
@@ -3405,18 +3406,10 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
             Row(
               children: [
                 // Avatar
-                CircleAvatar(
+                CachedProfileAvatar(
+                  photoUrl: review.userPhotoUrl,
                   radius: 20,
-                  backgroundColor: Colors.grey[200],
-                  backgroundImage: review.userPhotoUrl != null
-                      ? NetworkImage(review.userPhotoUrl!)
-                      : null,
-                  child: review.userPhotoUrl == null
-                      ? Text(
-                          (review.userName ?? 'A').substring(0, 1).toUpperCase(),
-                          style: const TextStyle(fontWeight: FontWeight.bold),
-                        )
-                      : null,
+                  fallbackText: (review.userName ?? 'A').substring(0, 1).toUpperCase(),
                 ),
                 const SizedBox(width: 12),
                 // Name and Time

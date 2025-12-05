@@ -15,12 +15,14 @@ import '../models/user_category.dart';
 import '../models/user_profile.dart';
 import '../models/color_category.dart';
 import '../models/shared_media_item.dart';
+import '../models/review.dart';
 import '../services/auth_service.dart';
 import '../services/user_service.dart';
 import '../services/experience_service.dart';
 import '../services/message_service.dart';
 import '../widgets/shared_media_preview_modal.dart';
 import '../widgets/share_experience_bottom_sheet.dart';
+import '../widgets/cached_profile_avatar.dart';
 import '../models/share_result.dart';
 import 'auth_screen.dart';
 import 'experience_page_screen.dart';
@@ -78,10 +80,19 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
   UserCategory? _selectedCategory;
   ColorCategory? _selectedColorCategory;
   bool _showingColorCategories = false;
-  
+
   // Media cache for experience content previews
   final Map<String, List<SharedMediaItem>> _experienceMediaCache = {};
   final Set<String> _mediaPrefetchInFlight = {};
+
+  // User reviews
+  List<Review> _userReviews = [];
+  bool _isLoadingReviews = false;
+  // Cache for experience data associated with reviews
+  final Map<String, Experience> _reviewExperienceCache = {};
+  // Cache for categories from other users (experience owners)
+  final Map<String, UserCategory> _externalCategoryCache = {};
+  final Map<String, ColorCategory> _externalColorCategoryCache = {};
 
   @override
   void initState() {
@@ -137,18 +148,18 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
 
     try {
       final profile = await _userService.getUserProfile(widget.userId);
-      
+
       // Try to load followers/following, but handle permission errors gracefully
       List<String> followers = [];
       List<String> following = [];
-      
+
       try {
         followers = await _userService.getFollowerIds(widget.userId);
       } catch (e) {
         debugPrint('Error getting follower IDs: $e');
         // Continue with empty list
       }
-      
+
       try {
         following = await _userService.getFollowingIds(widget.userId);
       } catch (e) {
@@ -167,14 +178,14 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
         } catch (e) {
           debugPrint('Error checking if following: $e');
         }
-        
+
         try {
           ownerFollowsViewer =
               await _userService.isFollowing(widget.userId, viewerId);
         } catch (e) {
           debugPrint('Error checking if owner follows viewer: $e');
         }
-        
+
         try {
           hasPendingRequest =
               await _userService.hasPendingRequest(viewerId, widget.userId);
@@ -195,7 +206,11 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
         _hasPendingRequest = hasPendingRequest;
         _isLoading = false;
       });
-      await _loadPublicCollections();
+      // Load collections and reviews in parallel
+      await Future.wait([
+        _loadPublicCollections(),
+        _loadUserReviews(),
+      ]);
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -210,10 +225,11 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
 
   Future<void> _loadPublicCollections() async {
     if (!mounted) return;
-    
+
     // Skip loading collections if profile is private and viewer doesn't have access
     final bool isPrivate = _profile?.isPrivate ?? false;
-    final bool isOwner = _currentUserId != null && _currentUserId == widget.userId;
+    final bool isOwner =
+        _currentUserId != null && _currentUserId == widget.userId;
     if (isPrivate && !isOwner && !_isFollowing) {
       setState(() {
         _publicCategories = [];
@@ -224,16 +240,16 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
       });
       return;
     }
-    
+
     setState(() => _isLoadingCollections = true);
-    
+
     // For unauthenticated users, use REST API
     final bool isUnauthenticated = _currentUserId == null;
     if (isUnauthenticated) {
       await _loadPublicCollectionsViaRest();
       return;
     }
-    
+
     try {
       // Load categories and experiences - color categories may fail due to permissions
       final categoriesSnapshot = await FirebaseFirestore.instance
@@ -259,8 +275,8 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
         }
       }
 
-      categories.sort(
-          (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+      categories
+          .sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
 
       // Parse experiences first
       final List<Experience> experiences = [];
@@ -303,17 +319,17 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
       if (colorCategoryIds.isNotEmpty) {
         try {
           // Fetch color categories from their owner using the service
-          final fetchedColors = await _experienceService
-              .getColorCategoriesByOwnerAndIds(
+          final fetchedColors =
+              await _experienceService.getColorCategoriesByOwnerAndIds(
                   widget.userId, colorCategoryIds.toList());
-          
+
           // Only include non-private color categories
           for (final colorCategory in fetchedColors) {
             if (!colorCategory.isPrivate) {
               colorCategories.add(colorCategory);
             }
           }
-          
+
           debugPrint(
               'PublicProfileScreen: Loaded ${colorCategories.length} public color categories from experiences');
         } catch (e) {
@@ -349,8 +365,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
           if (experience.colorCategoryId != null &&
               experience.colorCategoryId!.isNotEmpty)
             experience.colorCategoryId!,
-          ...experience.otherColorCategoryIds
-              .where((id) => id.isNotEmpty),
+          ...experience.otherColorCategoryIds.where((id) => id.isNotEmpty),
         };
         for (final colorId in associatedColorIds) {
           if (validColorCategoryIds.contains(colorId)) {
@@ -381,7 +396,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
       });
     }
   }
-  
+
   /// Load public collections using REST API (for unauthenticated users)
   Future<void> _loadPublicCollectionsViaRest() async {
     try {
@@ -394,29 +409,29 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
         if (appCheckToken != null && appCheckToken.isNotEmpty)
           'X-Firebase-AppCheck': appCheckToken,
       };
-      
+
       const projectId = 'plendy-7df50';
-      
+
       // Fetch categories via REST
       final categoriesUrl = Uri.parse(
-        'https://firestore.googleapis.com/v1/projects/$projectId/databases/(default)/documents/users/${widget.userId}/categories'
-      );
+          'https://firestore.googleapis.com/v1/projects/$projectId/databases/(default)/documents/users/${widget.userId}/categories');
       final categoriesResp = await http.get(categoriesUrl, headers: headers);
-      
+
       // Fetch experiences via REST query with pagination
       final experiencesQueryUrl = Uri.parse(
-        'https://firestore.googleapis.com/v1/projects/$projectId/databases/(default)/documents:runQuery'
-      );
-      
+          'https://firestore.googleapis.com/v1/projects/$projectId/databases/(default)/documents:runQuery');
+
       // Fetch all experiences using pagination
       final List<Map<String, dynamic>> allExperienceResults = [];
       String? lastDocPath;
       bool hasMore = true;
       const int pageSize = 500;
-      
+
       while (hasMore) {
         final Map<String, dynamic> structuredQuery = {
-          'from': [{'collectionId': 'experiences'}],
+          'from': [
+            {'collectionId': 'experiences'}
+          ],
           'where': {
             'fieldFilter': {
               'field': {'fieldPath': 'createdBy'},
@@ -425,52 +440,61 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
             }
           },
           'orderBy': [
-            {'field': {'fieldPath': '__name__'}, 'direction': 'ASCENDING'}
+            {
+              'field': {'fieldPath': '__name__'},
+              'direction': 'ASCENDING'
+            }
           ],
           'limit': pageSize,
         };
-        
+
         // Add startAfter for pagination
         if (lastDocPath != null) {
           structuredQuery['startAt'] = {
-            'values': [{'referenceValue': lastDocPath}],
+            'values': [
+              {'referenceValue': lastDocPath}
+            ],
             'before': false, // startAfter behavior
           };
         }
-        
+
         final experiencesPayload = {'structuredQuery': structuredQuery};
         final experiencesResp = await http.post(
           experiencesQueryUrl,
           headers: headers,
           body: json.encode(experiencesPayload),
         );
-        
+
         if (experiencesResp.statusCode == 200) {
           final results = json.decode(experiencesResp.body) as List;
-          final pageResults = results.whereType<Map<String, dynamic>>()
+          final pageResults = results
+              .whereType<Map<String, dynamic>>()
               .where((r) => r.containsKey('document'))
               .toList();
-          
+
           allExperienceResults.addAll(pageResults);
-          
+
           if (pageResults.length < pageSize) {
             hasMore = false;
           } else {
             // Get the last document path for the next page
-            final lastDoc = pageResults.last['document'] as Map<String, dynamic>;
+            final lastDoc =
+                pageResults.last['document'] as Map<String, dynamic>;
             lastDocPath = lastDoc['name'] as String?;
             if (lastDocPath == null) {
               hasMore = false;
             }
           }
         } else {
-          debugPrint('PublicProfileScreen: Experiences query returned ${experiencesResp.statusCode}');
+          debugPrint(
+              'PublicProfileScreen: Experiences query returned ${experiencesResp.statusCode}');
           hasMore = false;
         }
       }
-      
-      debugPrint('PublicProfileScreen: Fetched ${allExperienceResults.length} total experience results via REST');
-      
+
+      debugPrint(
+          'PublicProfileScreen: Fetched ${allExperienceResults.length} total experience results via REST');
+
       // Parse categories
       final List<UserCategory> categories = [];
       if (categoriesResp.statusCode == 200) {
@@ -478,33 +502,40 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
         final docs = (body['documents'] as List?) ?? [];
         for (final doc in docs) {
           try {
-            final category = _parseCategoryFromRest(doc as Map<String, dynamic>);
+            final category =
+                _parseCategoryFromRest(doc as Map<String, dynamic>);
             if (category != null && !category.isPrivate) {
               categories.add(category);
             }
           } catch (e) {
-            debugPrint('PublicProfileScreen: skipping invalid category via REST - $e');
+            debugPrint(
+                'PublicProfileScreen: skipping invalid category via REST - $e');
           }
         }
       }
-      
-      categories.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-      debugPrint('PublicProfileScreen: Loaded ${categories.length} categories via REST');
-      
+
+      categories
+          .sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+      debugPrint(
+          'PublicProfileScreen: Loaded ${categories.length} categories via REST');
+
       // Parse experiences from paginated results
       final List<Experience> experiences = [];
       for (final result in allExperienceResults) {
         try {
-          final experience = _parseExperienceFromRest(result['document'] as Map<String, dynamic>);
+          final experience = _parseExperienceFromRest(
+              result['document'] as Map<String, dynamic>);
           if (experience != null && !experience.isPrivate) {
             experiences.add(experience);
           }
         } catch (e) {
-          debugPrint('PublicProfileScreen: skipping invalid experience via REST - $e');
+          debugPrint(
+              'PublicProfileScreen: skipping invalid experience via REST - $e');
         }
       }
-      debugPrint('PublicProfileScreen: Loaded ${experiences.length} public experiences via REST');
-      
+      debugPrint(
+          'PublicProfileScreen: Loaded ${experiences.length} public experiences via REST');
+
       // Sort experiences alphabetically
       experiences.sort((a, b) {
         final aName = a.name.toLowerCase();
@@ -512,11 +543,12 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
         return aName.compareTo(bName);
       });
       final int totalPublicExperiences = experiences.length;
-      
+
       // Build color categories list from public experiences
       final Set<String> colorCategoryIds = {};
       for (final experience in experiences) {
-        if (experience.colorCategoryId != null && experience.colorCategoryId!.isNotEmpty) {
+        if (experience.colorCategoryId != null &&
+            experience.colorCategoryId!.isNotEmpty) {
           colorCategoryIds.add(experience.colorCategoryId!);
         }
         for (final colorId in experience.otherColorCategoryIds) {
@@ -525,43 +557,47 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
           }
         }
       }
-      
+
       // Fetch color categories via REST
       final List<ColorCategory> colorCategories = [];
       if (colorCategoryIds.isNotEmpty) {
         try {
           final colorCategoriesUrl = Uri.parse(
-            'https://firestore.googleapis.com/v1/projects/$projectId/databases/(default)/documents/users/${widget.userId}/color_categories'
-          );
-          final colorCategoriesResp = await http.get(colorCategoriesUrl, headers: headers);
-          
+              'https://firestore.googleapis.com/v1/projects/$projectId/databases/(default)/documents/users/${widget.userId}/color_categories');
+          final colorCategoriesResp =
+              await http.get(colorCategoriesUrl, headers: headers);
+
           if (colorCategoriesResp.statusCode == 200) {
-            final body = json.decode(colorCategoriesResp.body) as Map<String, dynamic>;
+            final body =
+                json.decode(colorCategoriesResp.body) as Map<String, dynamic>;
             final docs = (body['documents'] as List?) ?? [];
             for (final doc in docs) {
               try {
-                final colorCategory = _parseColorCategoryFromRest(doc as Map<String, dynamic>);
-                if (colorCategory != null && 
-                    !colorCategory.isPrivate && 
+                final colorCategory =
+                    _parseColorCategoryFromRest(doc as Map<String, dynamic>);
+                if (colorCategory != null &&
+                    !colorCategory.isPrivate &&
                     colorCategoryIds.contains(colorCategory.id)) {
                   colorCategories.add(colorCategory);
                 }
               } catch (e) {
-                debugPrint('PublicProfileScreen: skipping invalid color category via REST - $e');
+                debugPrint(
+                    'PublicProfileScreen: skipping invalid color category via REST - $e');
               }
             }
           }
         } catch (e) {
-          debugPrint('PublicProfileScreen: Could not load color categories via REST - $e');
+          debugPrint(
+              'PublicProfileScreen: Could not load color categories via REST - $e');
         }
       }
-      
+
       // Build category -> experiences map
       final Map<String, List<Experience>> catExperiences = {
         for (final category in categories) category.id: []
       };
       final categoryIds = catExperiences.keys.toSet();
-      
+
       for (final experience in experiences) {
         final Set<String> relevantCategoryIds = {
           if (experience.categoryId != null) experience.categoryId!,
@@ -572,16 +608,17 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
           catExperiences[categoryId]!.add(experience);
         }
       }
-      
+
       // Build color category -> experiences map
       final Map<String, List<Experience>> colorCatExperiences = {
         for (final colorCategory in colorCategories) colorCategory.id: []
       };
       final validColorCategoryIds = colorCatExperiences.keys.toSet();
-      
+
       for (final experience in experiences) {
         final Set<String> associatedColorIds = {
-          if (experience.colorCategoryId != null && experience.colorCategoryId!.isNotEmpty)
+          if (experience.colorCategoryId != null &&
+              experience.colorCategoryId!.isNotEmpty)
             experience.colorCategoryId!,
           ...experience.otherColorCategoryIds.where((id) => id.isNotEmpty),
         };
@@ -591,7 +628,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
           }
         }
       }
-      
+
       if (!mounted) return;
       setState(() {
         _publicCategories = categories;
@@ -602,7 +639,8 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
         _isLoadingCollections = false;
       });
     } catch (e) {
-      debugPrint('PublicProfileScreen: error loading collections via REST - $e');
+      debugPrint(
+          'PublicProfileScreen: error loading collections via REST - $e');
       if (!mounted) return;
       setState(() {
         _publicCategories = [];
@@ -613,15 +651,132 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
       });
     }
   }
-  
+
+  /// Load reviews posted by this user
+  Future<void> _loadUserReviews() async {
+    if (!mounted) return;
+
+    // Skip loading reviews if profile is private and viewer doesn't have access
+    final bool isPrivate = _profile?.isPrivate ?? false;
+    final bool isOwner =
+        _currentUserId != null && _currentUserId == widget.userId;
+    if (isPrivate && !isOwner && !_isFollowing) {
+      setState(() {
+        _userReviews = [];
+        _isLoadingReviews = false;
+      });
+      return;
+    }
+
+    setState(() => _isLoadingReviews = true);
+
+    try {
+      final reviews = await _experienceService.getReviewsByUser(widget.userId);
+
+      // Fetch experience data for each review
+      final Set<String> experienceIds = reviews
+          .map((r) => r.experienceId)
+          .where((id) => id.isNotEmpty)
+          .toSet();
+
+      for (final expId in experienceIds) {
+        if (!_reviewExperienceCache.containsKey(expId)) {
+          try {
+            final experience = await _experienceService.getExperience(expId);
+            if (experience != null) {
+              _reviewExperienceCache[expId] = experience;
+
+              // If denormalized fields are missing, fetch category from owner
+              await _fetchExperienceCategoryIfNeeded(experience);
+            }
+          } catch (e) {
+            debugPrint(
+                'PublicProfileScreen: Could not load experience $expId for review - $e');
+          }
+        }
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _userReviews = reviews;
+        _isLoadingReviews = false;
+      });
+    } catch (e) {
+      debugPrint('PublicProfileScreen: error loading user reviews - $e');
+      if (!mounted) return;
+      setState(() {
+        _userReviews = [];
+        _isLoadingReviews = false;
+      });
+    }
+  }
+
+  /// Fetch category and color category from experience owner if denormalized fields are missing
+  Future<void> _fetchExperienceCategoryIfNeeded(Experience experience) async {
+    final ownerId = experience.createdBy;
+    if (ownerId == null || ownerId.isEmpty) return;
+
+    // Check if we need to fetch category
+    final bool needsCategory = (experience.categoryIconDenorm == null ||
+            experience.categoryIconDenorm!.isEmpty) &&
+        experience.categoryId != null &&
+        experience.categoryId!.isNotEmpty &&
+        !_externalCategoryCache.containsKey(experience.categoryId);
+
+    // Check if we need to fetch color category
+    final bool needsColorCategory = (experience.colorHexDenorm == null ||
+            experience.colorHexDenorm!.isEmpty) &&
+        experience.colorCategoryId != null &&
+        experience.colorCategoryId!.isNotEmpty &&
+        !_externalColorCategoryCache.containsKey(experience.colorCategoryId);
+
+    if (!needsCategory && !needsColorCategory) return;
+
+    try {
+      // Fetch category from owner's categories subcollection
+      if (needsCategory && experience.categoryId != null) {
+        final categoryDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(ownerId)
+            .collection('categories')
+            .doc(experience.categoryId)
+            .get();
+
+        if (categoryDoc.exists) {
+          final category = UserCategory.fromFirestore(categoryDoc);
+          _externalCategoryCache[experience.categoryId!] = category;
+        }
+      }
+
+      // Fetch color category from owner's color_categories subcollection
+      if (needsColorCategory && experience.colorCategoryId != null) {
+        final colorCategoryDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(ownerId)
+            .collection('color_categories')
+            .doc(experience.colorCategoryId)
+            .get();
+
+        if (colorCategoryDoc.exists) {
+          final colorCategory = ColorCategory.fromFirestore(colorCategoryDoc);
+          _externalColorCategoryCache[experience.colorCategoryId!] =
+              colorCategory;
+        }
+      }
+    } catch (e) {
+      debugPrint(
+          'PublicProfileScreen: Could not fetch category info for experience ${experience.id} - $e');
+    }
+  }
+
   /// Parse a UserCategory from Firestore REST API response
   UserCategory? _parseCategoryFromRest(Map<String, dynamic> doc) {
     final name = doc['name'] as String?;
     if (name == null) return null;
-    
+
     final fields = (doc['fields'] as Map<String, dynamic>?) ?? {};
     final docId = name.split('/').last;
-    
+
     return UserCategory(
       id: docId,
       name: _getStringField(fields, 'name') ?? '',
@@ -630,15 +785,15 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
       isPrivate: _getBoolField(fields, 'isPrivate') ?? false,
     );
   }
-  
+
   /// Parse an Experience from Firestore REST API response
   Experience? _parseExperienceFromRest(Map<String, dynamic> doc) {
     final name = doc['name'] as String?;
     if (name == null) return null;
-    
+
     final fields = (doc['fields'] as Map<String, dynamic>?) ?? {};
     final docId = name.split('/').last;
-    
+
     final locFields = _getMapField(fields, 'location') ?? {};
     final location = Location(
       placeId: _getStringField(locFields, 'placeId'),
@@ -650,7 +805,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
       country: _getStringField(locFields, 'country'),
       displayName: _getStringField(locFields, 'displayName'),
     );
-    
+
     return Experience(
       id: docId,
       name: _getStringField(fields, 'name') ?? '',
@@ -664,7 +819,8 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
       updatedAt: _getTimestampField(fields, 'updatedAt') ?? DateTime.now(),
       colorCategoryId: _getStringField(fields, 'colorCategoryId'),
       otherCategories: _getStringListField(fields, 'otherCategories'),
-      otherColorCategoryIds: _getStringListField(fields, 'otherColorCategoryIds'),
+      otherColorCategoryIds:
+          _getStringListField(fields, 'otherColorCategoryIds'),
       isPrivate: _getBoolField(fields, 'isPrivate') ?? false,
       categoryIconDenorm: _getStringField(fields, 'categoryIconDenorm'),
       colorHexDenorm: _getStringField(fields, 'colorHexDenorm'),
@@ -672,15 +828,15 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
       sharedMediaItemIds: _getStringListField(fields, 'sharedMediaItemIds'),
     );
   }
-  
+
   /// Parse a ColorCategory from Firestore REST API response
   ColorCategory? _parseColorCategoryFromRest(Map<String, dynamic> doc) {
     final name = doc['name'] as String?;
     if (name == null) return null;
-    
+
     final fields = (doc['fields'] as Map<String, dynamic>?) ?? {};
     final docId = name.split('/').last;
-    
+
     // Get color as hex string - try both 'colorHex' and 'color' fields
     String colorHex = _getStringField(fields, 'colorHex') ?? '';
     if (colorHex.isEmpty) {
@@ -692,7 +848,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
         colorHex = 'FF808080'; // Default gray
       }
     }
-    
+
     return ColorCategory(
       id: docId,
       name: _getStringField(fields, 'name') ?? '',
@@ -701,20 +857,20 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
       isPrivate: _getBoolField(fields, 'isPrivate') ?? false,
     );
   }
-  
+
   // REST API field parsing helpers
   String? _getStringField(Map<String, dynamic> fields, String fieldName) {
     final field = fields[fieldName] as Map<String, dynamic>?;
     if (field == null) return null;
     return field['stringValue'] as String?;
   }
-  
+
   bool? _getBoolField(Map<String, dynamic> fields, String fieldName) {
     final field = fields[fieldName] as Map<String, dynamic>?;
     if (field == null) return null;
     return field['booleanValue'] as bool?;
   }
-  
+
   double? _getDoubleField(Map<String, dynamic> fields, String fieldName) {
     final field = fields[fieldName] as Map<String, dynamic>?;
     if (field == null) return null;
@@ -726,7 +882,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
     }
     return null;
   }
-  
+
   int? _getIntField(Map<String, dynamic> fields, String fieldName) {
     final field = fields[fieldName] as Map<String, dynamic>?;
     if (field == null) return null;
@@ -735,7 +891,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
     }
     return null;
   }
-  
+
   DateTime? _getTimestampField(Map<String, dynamic> fields, String fieldName) {
     final field = fields[fieldName] as Map<String, dynamic>?;
     if (field == null) return null;
@@ -743,8 +899,9 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
     if (timestamp == null) return null;
     return DateTime.tryParse(timestamp);
   }
-  
-  List<String> _getStringListField(Map<String, dynamic> fields, String fieldName) {
+
+  List<String> _getStringListField(
+      Map<String, dynamic> fields, String fieldName) {
     final field = fields[fieldName] as Map<String, dynamic>?;
     if (field == null) return [];
     final arrayValue = field['arrayValue'] as Map<String, dynamic>?;
@@ -757,18 +914,19 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
         .cast<String>()
         .toList();
   }
-  
-  Map<String, dynamic>? _getMapField(Map<String, dynamic> fields, String fieldName) {
+
+  Map<String, dynamic>? _getMapField(
+      Map<String, dynamic> fields, String fieldName) {
     final field = fields[fieldName] as Map<String, dynamic>?;
     if (field == null) return null;
     final mapValue = field['mapValue'] as Map<String, dynamic>?;
     if (mapValue == null) return null;
     return mapValue['fields'] as Map<String, dynamic>?;
   }
-  
+
   Future<void> _shareProfile(UserProfile profile) async {
     if (!mounted) return;
-    
+
     await showShareExperienceBottomSheet(
       context: context,
       titleText: 'Share Profile',
@@ -783,9 +941,10 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
 
   Future<void> _directShareProfile(UserProfile profile) async {
     if (!mounted) return;
-    
-    final String displayName = profile.displayName ?? profile.username ?? 'User';
-    
+
+    final String displayName =
+        profile.displayName ?? profile.username ?? 'User';
+
     final result = await showShareToFriendsModal(
       context: context,
       subjectLabel: displayName,
@@ -794,15 +953,17 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
         return DirectShareResult(threadIds: threadIds);
       },
       onSubmitToThreads: (threadIds) async {
-        final successThreadIds = await _sendProfileShareToThreads(profile, threadIds);
+        final successThreadIds =
+            await _sendProfileShareToThreads(profile, threadIds);
         return DirectShareResult(threadIds: successThreadIds);
       },
       onSubmitToNewGroupChat: (participantIds) async {
-        final threadId = await _sendProfileShareToNewGroupChat(profile, participantIds);
+        final threadId =
+            await _sendProfileShareToNewGroupChat(profile, participantIds);
         return DirectShareResult(threadIds: threadId != null ? [threadId] : []);
       },
     );
-    
+
     if (!mounted) return;
     if (result != null) {
       showSharedWithFriendsSnackbar(context, result);
@@ -827,7 +988,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
     final messageService = MessageService();
     final profileSnapshot = _buildProfileSnapshot(profile);
     final List<String> threadIds = [];
-    
+
     for (final recipientId in recipientIds) {
       try {
         final thread = await messageService.createOrGetThread(
@@ -855,7 +1016,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
     final messageService = MessageService();
     final profileSnapshot = _buildProfileSnapshot(profile);
     final List<String> successThreadIds = [];
-    
+
     for (final threadId in threadIds) {
       try {
         await messageService.sendProfileShareMessage(
@@ -878,7 +1039,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
     if (_currentUserId == null) return null;
     final messageService = MessageService();
     final profileSnapshot = _buildProfileSnapshot(profile);
-    
+
     try {
       final thread = await messageService.createOrGetThread(
         currentUserId: _currentUserId!,
@@ -898,12 +1059,14 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
 
   Future<void> _createLinkShareForProfile(UserProfile profile) async {
     if (!mounted) return;
-    
-    final String displayName = profile.displayName ?? profile.username ?? 'this user';
+
+    final String displayName =
+        profile.displayName ?? profile.username ?? 'this user';
     final String profileUrl = 'https://plendy.app/profile/${profile.id}';
-    
+
     Navigator.of(context).pop(); // Close the bottom sheet
-    await Share.share('Check out $displayName\'s profile on Plendy! $profileUrl');
+    await Share.share(
+        'Check out $displayName\'s profile on Plendy! $profileUrl');
   }
 
   Future<void> _handleFollowButton() async {
@@ -982,7 +1145,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
         ),
       ),
     );
-    
+
     if (result == true && mounted) {
       // Reload data if changes were made
       await _loadPublicCollections();
@@ -1000,8 +1163,8 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-                content:
-                    Text('No saved content available yet for this experience.')),
+                content: Text(
+                    'No saved content available yet for this experience.')),
           );
         }
         return;
@@ -1106,24 +1269,13 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
   }
 
   Widget _buildAvatar(UserProfile profile) {
-    final photoURL = profile.photoURL;
     final fallbackLetter = _getProfileInitial(profile);
 
-    return CircleAvatar(
+    return CachedProfileAvatar(
+      photoUrl: profile.photoURL,
       radius: 60,
-      backgroundImage: (photoURL != null && photoURL.isNotEmpty)
-          ? NetworkImage(photoURL)
-          : null,
+      fallbackText: fallbackLetter,
       backgroundColor: Theme.of(context).primaryColor.withOpacity(0.1),
-      child: (photoURL == null || photoURL.isEmpty)
-          ? Text(
-              fallbackLetter,
-              style: const TextStyle(
-                  fontSize: 40,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.black87),
-            )
-          : null,
     );
   }
 
@@ -1164,28 +1316,12 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
   }
 
   Widget _buildProfileAvatar(UserProfile profile, {double size = 40}) {
-    final radius = size / 2;
-    final photoUrl = profile.photoURL;
-    if (photoUrl != null && photoUrl.isNotEmpty) {
-      return CircleAvatar(
-        radius: radius,
-        backgroundImage: NetworkImage(photoUrl),
-      );
-    }
-
     final fallbackLetter = _getProfileInitial(profile);
 
-    return CircleAvatar(
-      radius: radius,
-      backgroundColor: Colors.grey.shade300,
-      child: Text(
-        fallbackLetter,
-        style: TextStyle(
-          fontWeight: FontWeight.w600,
-          color: Colors.black87,
-          fontSize: radius * 0.9,
-        ),
-      ),
+    return CachedProfileAvatar(
+      photoUrl: profile.photoURL,
+      radius: size / 2,
+      fallbackText: fallbackLetter,
     );
   }
 
@@ -1436,7 +1572,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
     final profile = _profile;
     final bool viewingOwnProfile =
         _currentUserId != null && _currentUserId == widget.userId;
-    
+
     // Check if profile is private and viewer doesn't have access
     final bool isPrivateProfile = profile?.isPrivate ?? false;
     final bool canViewPrivateProfile = viewingOwnProfile || _isFollowing;
@@ -1460,7 +1596,8 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
               if (profile.displayName?.isNotEmpty == true)
                 Text(
                   profile.displayName!,
-                  style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                  style: const TextStyle(
+                      fontSize: 22, fontWeight: FontWeight.bold),
                 ),
               if (profile.username?.isNotEmpty == true)
                 Text(
@@ -1621,12 +1758,352 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
             controller: _tabController,
             children: [
               _buildCollectionTab(),
-              const Center(child: Text('Reviews coming soon.')),
+              _buildReviewsTab(),
             ],
           ),
         ),
       ],
     );
+  }
+
+  /// Build the reviews tab showing all reviews posted by this user
+  Widget _buildReviewsTab() {
+    if (_isLoadingReviews) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (_userReviews.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.rate_review_outlined, size: 48, color: Colors.grey[400]),
+            const SizedBox(height: 16),
+            Text(
+              'No reviews yet',
+              style: TextStyle(
+                fontSize: 16,
+                color: Colors.grey[600],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return ListView.builder(
+      itemCount: _userReviews.length + 1,
+      itemBuilder: (context, index) {
+        if (index == 0) {
+          return _buildReviewCountHeader(_userReviews.length);
+        }
+        final review = _userReviews[index - 1];
+        return _buildUserReviewCard(review);
+      },
+    );
+  }
+
+  /// Build the header showing total review count
+  Widget _buildReviewCountHeader(int count) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+      decoration: const BoxDecoration(color: Colors.white),
+      child: Text(
+        '$count ${count == 1 ? 'Review' : 'Reviews'}',
+        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w400,
+              color: Colors.grey,
+            ),
+        textAlign: TextAlign.center,
+      ),
+    );
+  }
+
+  /// Build a review card that shows experience info instead of user info
+  Widget _buildUserReviewCard(Review review) {
+    final experience = _reviewExperienceCache[review.experienceId];
+    final timeAgo = _formatTimeAgo(review.createdAt);
+
+    // Get category icon and color from experience
+    String categoryIcon = '📍';
+    Color leadingBoxColor = Colors.grey.withOpacity(0.3);
+
+    if (experience != null) {
+      // Try to get icon from denormalized field first
+      if (experience.categoryIconDenorm != null &&
+          experience.categoryIconDenorm!.isNotEmpty) {
+        categoryIcon = experience.categoryIconDenorm!;
+      } else if (experience.categoryId != null) {
+        // Try profile owner's categories first
+        final category = _publicCategories.firstWhereOrNull(
+          (cat) => cat.id == experience.categoryId,
+        );
+        if (category != null) {
+          categoryIcon = category.icon;
+        } else {
+          // Fallback to external category cache (from experience owner)
+          final externalCategory =
+              _externalCategoryCache[experience.categoryId];
+          if (externalCategory != null) {
+            categoryIcon = externalCategory.icon;
+          }
+        }
+      }
+
+      // Get color from denormalized field first
+      if (experience.colorHexDenorm != null &&
+          experience.colorHexDenorm!.isNotEmpty) {
+        leadingBoxColor =
+            _parseColor(experience.colorHexDenorm!).withOpacity(0.5);
+      } else if (experience.colorCategoryId != null) {
+        // Try profile owner's color categories first
+        final colorCategory = _publicColorCategories.firstWhereOrNull(
+          (cc) => cc.id == experience.colorCategoryId,
+        );
+        if (colorCategory != null) {
+          leadingBoxColor = colorCategory.color.withOpacity(0.5);
+        } else {
+          // Fallback to external color category cache (from experience owner)
+          final externalColorCategory =
+              _externalColorCategoryCache[experience.colorCategoryId];
+          if (externalColorCategory != null) {
+            leadingBoxColor = externalColorCategory.color.withOpacity(0.5);
+          }
+        }
+      }
+    }
+
+    // Experience name and address
+    final String experienceName = experience?.name ?? 'Unknown Experience';
+    final String? experienceAddress = experience?.location.address;
+
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      elevation: 1,
+      color: const Color.fromARGB(225, 250, 250, 250),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Header: Category icon box, Experience name, Address, Time
+            InkWell(
+              onTap: experience != null
+                  ? () => _navigateToExperienceFromReview(experience)
+                  : null,
+              borderRadius: BorderRadius.circular(8),
+              child: Row(
+                children: [
+                  // Category icon box (replaces user avatar)
+                  Container(
+                    width: 44,
+                    height: 44,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: leadingBoxColor,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      categoryIcon,
+                      style: const TextStyle(fontSize: 22),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  // Experience Name and Address (replaces user name)
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          experienceName,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 14,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        if (experienceAddress != null &&
+                            experienceAddress.isNotEmpty) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            experienceAddress,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey[600],
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                        const SizedBox(height: 2),
+                        Text(
+                          timeAgo,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.grey[500],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  // Rating Icon
+                  if (review.isPositive != null)
+                    Icon(
+                      review.isPositive! ? Icons.thumb_up : Icons.thumb_down,
+                      color: review.isPositive! ? Colors.green : Colors.red,
+                      size: 18,
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            // Review Content
+            Text(
+              review.content,
+              style: const TextStyle(
+                fontSize: 14,
+                height: 1.4,
+              ),
+            ),
+            // Review Photos
+            if (review.imageUrls.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              _buildReviewPhotoGallery(review.imageUrls),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Navigate to experience page from a review card
+  Future<void> _navigateToExperienceFromReview(Experience experience) async {
+    // Find the category for this experience
+    final UserCategory? category = _publicCategories.firstWhereOrNull(
+      (cat) => cat.id == experience.categoryId,
+    );
+
+    // Create a fallback category if not found
+    final UserCategory displayCategory = category ??
+        UserCategory(
+          id: experience.categoryId ?? '',
+          name: 'Uncategorized',
+          icon: experience.categoryIconDenorm ?? '📍',
+          ownerUserId: widget.userId,
+        );
+
+    await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ExperiencePageScreen(
+          experience: experience,
+          category: displayCategory,
+          userColorCategories: _publicColorCategories,
+          additionalUserCategories: _publicCategories,
+          readOnlyPreview: true,
+        ),
+      ),
+    );
+  }
+
+  /// Build a photo gallery for review images
+  Widget _buildReviewPhotoGallery(List<String> imageUrls) {
+    if (imageUrls.isEmpty) return const SizedBox.shrink();
+
+    return SizedBox(
+      height: 80,
+      child: ListView.builder(
+        scrollDirection: Axis.horizontal,
+        itemCount: imageUrls.length,
+        itemBuilder: (context, index) {
+          return GestureDetector(
+            onTap: () => _showFullScreenReviewImage(imageUrls, index),
+            child: Container(
+              width: 80,
+              height: 80,
+              margin:
+                  EdgeInsets.only(right: index < imageUrls.length - 1 ? 8 : 0),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(8),
+                image: DecorationImage(
+                  image: NetworkImage(imageUrls[index]),
+                  fit: BoxFit.cover,
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  /// Show full screen review image viewer
+  void _showFullScreenReviewImage(List<String> imageUrls, int initialIndex) {
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        backgroundColor: Colors.black,
+        insetPadding: EdgeInsets.zero,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            PageView.builder(
+              controller: PageController(initialPage: initialIndex),
+              itemCount: imageUrls.length,
+              itemBuilder: (context, index) {
+                return InteractiveViewer(
+                  child: Center(
+                    child: Image.network(
+                      imageUrls[index],
+                      fit: BoxFit.contain,
+                      loadingBuilder: (context, child, progress) {
+                        if (progress == null) return child;
+                        return const Center(
+                          child: CircularProgressIndicator(color: Colors.white),
+                        );
+                      },
+                    ),
+                  ),
+                );
+              },
+            ),
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 8,
+              right: 8,
+              child: IconButton(
+                icon: const Icon(Icons.close, color: Colors.white, size: 28),
+                onPressed: () => Navigator.of(context).pop(),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Format a DateTime as a human-readable time ago string
+  String _formatTimeAgo(DateTime dateTime) {
+    final now = DateTime.now();
+    final difference = now.difference(dateTime);
+
+    if (difference.inDays > 365) {
+      final years = (difference.inDays / 365).floor();
+      return '$years ${years == 1 ? 'year' : 'years'} ago';
+    } else if (difference.inDays > 30) {
+      final months = (difference.inDays / 30).floor();
+      return '$months ${months == 1 ? 'month' : 'months'} ago';
+    } else if (difference.inDays > 0) {
+      return '${difference.inDays} ${difference.inDays == 1 ? 'day' : 'days'} ago';
+    } else if (difference.inHours > 0) {
+      return '${difference.inHours} ${difference.inHours == 1 ? 'hour' : 'hours'} ago';
+    } else if (difference.inMinutes > 0) {
+      return '${difference.inMinutes} ${difference.inMinutes == 1 ? 'minute' : 'minutes'} ago';
+    } else {
+      return 'Just now';
+    }
   }
 
   Widget _buildCollectionTab() {
@@ -1647,7 +2124,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
                     final String toggleLabel = _showingColorCategories
                         ? 'Categories'
                         : 'Color Categories';
-                    
+
                     void onToggle() {
                       setState(() {
                         _showingColorCategories = !_showingColorCategories;
@@ -1692,7 +2169,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
     if (_selectedCategory != null) {
       return _buildSelectedCategoryExperiencesView();
     }
-    
+
     // Show selected color category's experiences
     if (_selectedColorCategory != null) {
       return _buildSelectedColorCategoryExperiencesView();
@@ -1861,7 +2338,8 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
     );
   }
 
-  Widget _buildExperienceListItem(Experience experience, UserCategory category) {
+  Widget _buildExperienceListItem(
+      Experience experience, UserCategory category) {
     // Determine the true primary category for the experience
     final UserCategory? primaryCategory = _publicCategories.firstWhereOrNull(
       (cat) => cat.id == experience.categoryId,
@@ -1871,7 +2349,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
 
     // Get the full address
     final fullAddress = experience.location.address;
-    
+
     // Determine leading box background color from color category with opacity
     final colorCategoryForBox = _publicColorCategories.firstWhereOrNull(
       (cc) => cc.id == experience.colorCategoryId,
@@ -1892,7 +2370,8 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
 
     final List<ColorCategory> otherColorCategories = experience
         .otherColorCategoryIds
-        .map((id) => _publicColorCategories.firstWhereOrNull((cc) => cc.id == id))
+        .map((id) =>
+            _publicColorCategories.firstWhereOrNull((cc) => cc.id == id))
         .whereType<ColorCategory>()
         .toList();
     final bool hasOtherCategories = experience.otherCategories.isNotEmpty;
@@ -2100,7 +2579,8 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
     }
 
     if (_publicColorCategories.isEmpty) {
-      return const Center(child: Text('No public color categories to share yet.'));
+      return const Center(
+          child: Text('No public color categories to share yet.'));
     }
 
     final bool isDesktopWeb = MediaQuery.of(context).size.width > 600;
@@ -2137,7 +2617,8 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
               delegate: SliverChildBuilderDelegate(
                 (context, index) {
                   final colorCategory = _publicColorCategories[index];
-                  final experiences = _categoryExperiences[colorCategory.id] ?? [];
+                  final experiences =
+                      _categoryExperiences[colorCategory.id] ?? [];
                   final bool isSelected =
                       _selectedColorCategory?.id == colorCategory.id;
 
@@ -2356,7 +2837,8 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
 
   Widget _buildSelectedColorCategoryExperiencesView() {
     final colorCategory = _selectedColorCategory!;
-    final experiences = _categoryExperiences[colorCategory.id] ?? <Experience>[];
+    final experiences =
+        _categoryExperiences[colorCategory.id] ?? <Experience>[];
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -2422,8 +2904,8 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
                     final experience = experiences[index - 1];
                     // Use fallback category for navigation
                     final category = _publicCategories.firstWhereOrNull(
-                      (cat) => cat.id == experience.categoryId,
-                    ) ??
+                          (cat) => cat.id == experience.categoryId,
+                        ) ??
                         UserCategory(
                           id: experience.categoryId ?? '',
                           name: 'Uncategorized',

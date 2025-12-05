@@ -6,6 +6,7 @@ import '../services/auth_service.dart';
 import '../services/user_service.dart';
 import '../services/notification_state_service.dart'; // Import NotificationStateService
 import '../widgets/notification_dot.dart'; // Import NotificationDot
+import '../widgets/cached_profile_avatar.dart';
 import 'my_people_screen.dart'; // Import MyPeopleScreen
 
 class FollowRequestsScreen extends StatefulWidget {
@@ -162,19 +163,16 @@ class _FollowRequestsScreenState extends State<FollowRequestsScreen> {
                       builder: (context, notificationService, child) {
                         bool isUnseen = notificationService.unseenFollowRequestIds.contains(userProfile.id);
                         
+                        final displayName = userProfile.displayName ?? userProfile.username ?? 'Unknown User';
                         return ListTile(
                           leading: ProfilePictureNotificationDot(
-                            profilePicture: CircleAvatar(
-                              backgroundImage: userProfile.photoURL != null
-                                  ? NetworkImage(userProfile.photoURL!)
-                                  : null,
-                              child: userProfile.photoURL == null
-                                  ? const Icon(Icons.person)
-                                  : null,
+                            profilePicture: CachedProfileAvatar(
+                              photoUrl: userProfile.photoURL,
+                              fallbackText: displayName.isNotEmpty ? displayName[0].toUpperCase() : null,
                             ),
                             showDot: isUnseen,
                           ),
-                          title: Text(userProfile.displayName ?? userProfile.username ?? 'Unknown User'),
+                          title: Text(displayName),
                           subtitle: Text('@${userProfile.username ?? 'unknown'}'),
                           trailing: isProcessing 
                             ? const SizedBox(width: 24, height: 24, child:CircularProgressIndicator(strokeWidth: 2.0))

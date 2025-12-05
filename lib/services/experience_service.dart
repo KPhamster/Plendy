@@ -41,13 +41,13 @@ class PublicExperiencePage {
 class ExperienceService {
   // Singleton pattern - ensures cache persists across all usages
   static final ExperienceService _instance = ExperienceService._internal();
-  
+
   factory ExperienceService() {
     return _instance;
   }
-  
+
   ExperienceService._internal();
-  
+
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
 
@@ -69,40 +69,50 @@ class ExperienceService {
 
   // User-related operations
   String? get _currentUserId => _auth.currentUser?.uid;
-  
+
   // ADDED: Cache for shared category permissions to avoid duplicate queries
   List<SharePermission>? _cachedCategoryPermissions;
   DateTime? _categoryPermissionsCacheTime;
   static const Duration _cacheValidDuration = Duration(minutes: 5);
-  
+
   // Cache for getUserAndColorCategories result (the expensive combined fetch)
-  ({List<UserCategory> userCategories, List<ColorCategory> colorCategories})? _cachedUserAndColorCategories;
+  ({
+    List<UserCategory> userCategories,
+    List<ColorCategory> colorCategories
+  })? _cachedUserAndColorCategories;
   DateTime? _userAndColorCategoriesCacheTime;
   String? _userAndColorCategoriesCacheUserId;
-  
+
   // In-flight request deduplication - if a fetch is already running, wait for it instead of starting another
-  Future<({List<UserCategory> userCategories, List<ColorCategory> colorCategories})>? _inFlightCategoriesFetch;
-  
+  Future<
+      ({
+        List<UserCategory> userCategories,
+        List<ColorCategory> colorCategories
+      })>? _inFlightCategoriesFetch;
+
   // Cache for user experiences (the expensive query that loads all owned experiences)
   List<Experience>? _cachedUserExperiences;
   String? _cachedUserExperiencesUserId;
   DateTime? _userExperiencesCacheTime;
-  static const Duration _experiencesCacheValidDuration = Duration(minutes: 2); // Shorter TTL since experiences change more often
+  static const Duration _experiencesCacheValidDuration =
+      Duration(minutes: 2); // Shorter TTL since experiences change more often
   Future<List<Experience>>? _inFlightUserExperiencesFetch;
-  
+
   // Cache for SharedMediaItems (keyed by ID for efficient lookups and updates)
   Map<String, SharedMediaItem>? _cachedSharedMediaItems;
   String? _cachedSharedMediaItemsUserId;
   DateTime? _sharedMediaItemsCacheTime;
-  static const Duration _sharedMediaItemsCacheValidDuration = Duration(minutes: 5);
-  
+  static const Duration _sharedMediaItemsCacheValidDuration =
+      Duration(minutes: 5);
+
   // Cache for public experiences (Discovery feed)
   List<PublicExperience>? _cachedPublicExperiences;
   DateTime? _publicExperiencesCacheTime;
-  static const Duration _publicExperiencesCacheValidDuration = Duration(minutes: 30);
+  static const Duration _publicExperiencesCacheValidDuration =
+      Duration(minutes: 30);
   DocumentSnapshot<Object?>? _cachedPublicExperiencesLastDoc;
   bool _cachedPublicExperiencesHasMore = true;
-  
+
   /// Clear the permissions cache (call when user logs out or permissions change)
   void clearCategoryPermissionsCache() {
     _cachedCategoryPermissions = null;
@@ -206,7 +216,7 @@ class ExperienceService {
       print(
           '_getEditableCategoryPermissionsForCurrentUser - Fetching from Firestore...');
       final fetchSw = Stopwatch()..start();
-      
+
       // Fetch BOTH view and edit permissions so users can see categories shared with them regardless of access level
       // PERFORMANCE NOTE: If this query is slow (>1s), ensure you have a composite index:
       //   Collection: share_permissions
@@ -221,23 +231,26 @@ class ExperienceService {
           .map((doc) => SharePermission.fromFirestore(doc))
           .where((permission) => permission.ownerUserId != currentUserId)
           .toList();
-      
+
       fetchSw.stop();
       final ms = fetchSw.elapsedMilliseconds;
       print(
           '_getEditableCategoryPermissionsForCurrentUser - Fetched ${permissions.length} permissions in ${ms}ms');
-      
+
       // Log slow queries to help diagnose index issues
       if (ms > 1000) {
-        print('⚠️ WARNING: Permissions query is slow (${ms}ms for ${snapshot.docs.length} docs).');
-        print('   Ensure Firestore composite index exists: sharedWithUserId + itemType');
-        print('   See: https://console.firebase.google.com/project/_/firestore/indexes');
+        print(
+            '⚠️ WARNING: Permissions query is slow (${ms}ms for ${snapshot.docs.length} docs).');
+        print(
+            '   Ensure Firestore composite index exists: sharedWithUserId + itemType');
+        print(
+            '   See: https://console.firebase.google.com/project/_/firestore/indexes');
       }
-      
+
       // Cache the results
       _cachedCategoryPermissions = permissions;
       _categoryPermissionsCacheTime = now;
-      
+
       return permissions;
     } catch (e) {
       debugPrint(
@@ -731,27 +744,28 @@ class ExperienceService {
     bool forceRefresh = false,
   }) async {
     final sw = Stopwatch()..start();
-    
+
     // On initial load (no startAfter), check if we have valid cached data
     if (startAfter == null && !forceRefresh && isPublicExperiencesCacheValid) {
       final cached = _cachedPublicExperiences!;
       final paginationState = cachedPublicExperiencesPaginationState;
-      
+
       sw.stop();
-      print('[ExperienceService] fetchPublicExperiencesPage: Returning ${cached.length} cached public experiences in ${sw.elapsedMilliseconds}ms');
-      
+      print(
+          '[ExperienceService] fetchPublicExperiencesPage: Returning ${cached.length} cached public experiences in ${sw.elapsedMilliseconds}ms');
+
       return PublicExperiencePage(
         experiences: cached,
         lastDocument: paginationState?.lastDoc,
         hasMore: paginationState?.hasMore ?? false,
       );
     }
-    
+
     // Clear cache on force refresh
     if (forceRefresh && startAfter == null) {
       clearPublicExperiencesCache();
     }
-    
+
     try {
       Query query = _publicExperiencesCollection
           .orderBy(FieldPath.documentId)
@@ -769,16 +783,17 @@ class ExperienceService {
       final DocumentSnapshot<Object?>? lastDoc =
           snapshot.docs.isNotEmpty ? snapshot.docs.last : null;
       final hasMore = snapshot.docs.length == limit;
-      
+
       // Add to cache
       addToPublicExperiencesCache(
         experiences,
         lastDoc: lastDoc,
         hasMore: hasMore,
       );
-      
+
       sw.stop();
-      print('[ExperienceService] fetchPublicExperiencesPage: Fetched ${experiences.length} public experiences from Firestore in ${sw.elapsedMilliseconds}ms');
+      print(
+          '[ExperienceService] fetchPublicExperiencesPage: Fetched ${experiences.length} public experiences from Firestore in ${sw.elapsedMilliseconds}ms');
 
       return PublicExperiencePage(
         experiences: experiences,
@@ -852,7 +867,8 @@ class ExperienceService {
   /// Finds a user's own Experience document for a given placeId.
   /// This is useful when viewing someone else's experience but needing
   /// to check if the current user has their own saved experience for the same place.
-  Future<Experience?> findUserExperienceByPlaceId(String userId, String placeId) async {
+  Future<Experience?> findUserExperienceByPlaceId(
+      String userId, String placeId) async {
     if (userId.isEmpty || placeId.isEmpty) {
       debugPrint('findUserExperienceByPlaceId: userId or placeId is empty.');
       return null;
@@ -1032,11 +1048,11 @@ class ExperienceService {
       final docRef = await _sharedMediaItemsCollection.add(data);
       print(
           "createSharedMediaItem: Successfully created item with ID: ${docRef.id}");
-      
+
       // Optimistically add to cache with the new ID
       final createdItem = item.copyWith(id: docRef.id);
       updateCachedSharedMediaItem(createdItem);
-      
+
       return docRef.id;
     } catch (e) {
       print("Error creating shared media item for path '${item.path}': $e");
@@ -1059,8 +1075,7 @@ class ExperienceService {
     }
   }
 
-  Future<List<SharedMediaItem>> getSharedMediaItemsByPath(
-      String path) async {
+  Future<List<SharedMediaItem>> getSharedMediaItemsByPath(String path) async {
     if (path.isEmpty) return [];
     try {
       final snapshot = await _sharedMediaItemsCollection
@@ -1079,8 +1094,7 @@ class ExperienceService {
       String placeId, String mediaPath) async {
     if (placeId.isEmpty || mediaPath.isEmpty) return;
     try {
-      final publicExperience =
-          await findPublicExperienceByPlaceId(placeId);
+      final publicExperience = await findPublicExperienceByPlaceId(placeId);
       if (publicExperience == null) {
         debugPrint(
             'removeMediaPathFromPublicExperienceByPlaceId: No public experience for placeId $placeId');
@@ -1102,8 +1116,7 @@ class ExperienceService {
       {Experience? experienceTemplate}) async {
     if (placeId.isEmpty || mediaPath.isEmpty) return;
     try {
-      final publicExperience =
-          await findPublicExperienceByPlaceId(placeId);
+      final publicExperience = await findPublicExperienceByPlaceId(placeId);
       if (publicExperience == null) {
         if (experienceTemplate == null) {
           debugPrint(
@@ -1229,30 +1242,31 @@ class ExperienceService {
   /// Fetches multiple SharedMediaItem documents by their IDs.
   /// Uses cache when available and only fetches missing items from Firestore.
   /// Handles Firestore 'in' query limits by chunking.
-  Future<List<SharedMediaItem>> getSharedMediaItems(
-      List<String> mediaItemIds, {bool forceRefresh = false}) async {
+  Future<List<SharedMediaItem>> getSharedMediaItems(List<String> mediaItemIds,
+      {bool forceRefresh = false}) async {
     if (mediaItemIds.isEmpty) {
       return [];
     }
 
     final userId = _currentUserId;
     final sw = Stopwatch()..start();
-    
+
     // Deduplicate IDs just in case
     final uniqueIds = mediaItemIds.toSet().toList();
-    
+
     // Check cache validity
     final now = DateTime.now();
     final cacheValid = !forceRefresh &&
         _cachedSharedMediaItems != null &&
         _cachedSharedMediaItemsUserId == userId &&
         _sharedMediaItemsCacheTime != null &&
-        now.difference(_sharedMediaItemsCacheTime!) < _sharedMediaItemsCacheValidDuration;
-    
+        now.difference(_sharedMediaItemsCacheTime!) <
+            _sharedMediaItemsCacheValidDuration;
+
     // Separate IDs into cached and missing
     final List<SharedMediaItem> cachedResults = [];
     final List<String> missingIds = [];
-    
+
     if (cacheValid) {
       for (final id in uniqueIds) {
         final cached = _cachedSharedMediaItems![id];
@@ -1262,15 +1276,17 @@ class ExperienceService {
           missingIds.add(id);
         }
       }
-      
+
       // If all items are cached, return immediately
       if (missingIds.isEmpty) {
         sw.stop();
-        print('[ExperienceService] getSharedMediaItems: All ${cachedResults.length} items from cache in ${sw.elapsedMilliseconds}ms');
+        print(
+            '[ExperienceService] getSharedMediaItems: All ${cachedResults.length} items from cache in ${sw.elapsedMilliseconds}ms');
         return cachedResults;
       }
-      
-      print('[ExperienceService] getSharedMediaItems: ${cachedResults.length} from cache, ${missingIds.length} to fetch');
+
+      print(
+          '[ExperienceService] getSharedMediaItems: ${cachedResults.length} from cache, ${missingIds.length} to fetch');
     } else {
       // No valid cache, fetch all
       missingIds.addAll(uniqueIds);
@@ -1322,18 +1338,20 @@ class ExperienceService {
         fetchedResults.addAll(r);
       }
     }
-    
+
     // Add fetched items to cache
-    if (_cachedSharedMediaItems != null && _cachedSharedMediaItemsUserId == userId) {
+    if (_cachedSharedMediaItems != null &&
+        _cachedSharedMediaItemsUserId == userId) {
       for (final item in fetchedResults) {
         _cachedSharedMediaItems![item.id] = item;
       }
       _sharedMediaItemsCacheTime = DateTime.now();
     }
-    
+
     sw.stop();
     final totalResults = [...cachedResults, ...fetchedResults];
-    print('[ExperienceService] getSharedMediaItems: Fetched ${fetchedResults.length} items in ${sw.elapsedMilliseconds}ms (total: ${totalResults.length}, cache size: ${_cachedSharedMediaItems?.length ?? 0})');
+    print(
+        '[ExperienceService] getSharedMediaItems: Fetched ${fetchedResults.length} items in ${sw.elapsedMilliseconds}ms (total: ${totalResults.length}, cache size: ${_cachedSharedMediaItems?.length ?? 0})');
 
     return totalResults;
   }
@@ -1381,7 +1399,7 @@ class ExperienceService {
       await batch.commit();
       print(
           "Successfully deleted MediaItem $mediaItemId and unlinked from experiences.");
-      
+
       // Optimistically remove from cache
       removeCachedSharedMediaItem(mediaItemId);
     } catch (e) {
@@ -1697,7 +1715,7 @@ class ExperienceService {
     final docRef = await _experiencesCollection.add(data);
     debugPrint(
         'createExperience: Created experience ${docRef.id} with ${sharedUserIds.length} shared users');
-    
+
     // Optimistically update the cache with the new experience instead of clearing it
     // Fetch the created experience to get server-set fields (timestamps, etc.)
     final createdExperience = await getExperience(docRef.id);
@@ -1707,7 +1725,7 @@ class ExperienceService {
       // Fallback: if we can't fetch, clear cache to force refresh
       clearUserExperiencesCache();
     }
-    
+
     return docRef.id;
   }
 
@@ -1744,8 +1762,7 @@ class ExperienceService {
         final String? createdBy = data['createdBy'] as String?;
         final List<dynamic>? editors = data['editorUserIds'] as List<dynamic>?;
         final bool isOwner = createdBy != null && createdBy == userId;
-        final bool hasEditAccess =
-            editors != null && editors.contains(userId);
+        final bool hasEditAccess = editors != null && editors.contains(userId);
         if (isOwner || hasEditAccess) {
           return Experience.fromFirestore(doc);
         }
@@ -1776,8 +1793,7 @@ class ExperienceService {
         final String? createdBy = data['createdBy'] as String?;
         final List<dynamic>? editors = data['editorUserIds'] as List<dynamic>?;
         final bool isOwner = createdBy != null && createdBy == userId;
-        final bool hasEditAccess =
-            editors != null && editors.contains(userId);
+        final bool hasEditAccess = editors != null && editors.contains(userId);
         if (isOwner || hasEditAccess) {
           results.add(Experience.fromFirestore(doc));
         }
@@ -1811,8 +1827,7 @@ class ExperienceService {
         final List<dynamic>? sharedWith =
             data['sharedWithUserIds'] as List<dynamic>?;
         final bool isOwner = createdBy != null && createdBy == userId;
-        final bool hasEditAccess =
-            editors != null && editors.contains(userId);
+        final bool hasEditAccess = editors != null && editors.contains(userId);
         final bool hasViewAccess =
             sharedWith != null && sharedWith.contains(userId);
         if (isOwner || hasEditAccess || hasViewAccess) {
@@ -1909,7 +1924,7 @@ class ExperienceService {
     }
 
     await _experiencesCollection.doc(experience.id).update(data);
-    
+
     // Optimistically update the cache with the modified experience instead of clearing it
     // We need to fetch the updated experience to get server-set fields (updatedAt timestamp)
     final updatedExperience = await getExperience(experience.id);
@@ -1960,7 +1975,7 @@ class ExperienceService {
 
     // Delete the experience document itself
     await _experiencesCollection.doc(experienceId).delete();
-    
+
     // Optimistically remove from cache instead of clearing the entire cache
     removeCachedExperience(experienceId);
 
@@ -2119,8 +2134,8 @@ class ExperienceService {
                 .get();
             for (final doc in broadSnap.docs) {
               final exp = Experience.fromFirestore(doc);
-              final bool matchesPrimary =
-                  exp.colorCategoryId != null && exp.colorCategoryId == categoryId;
+              final bool matchesPrimary = exp.colorCategoryId != null &&
+                  exp.colorCategoryId == categoryId;
               final bool matchesOther =
                   exp.otherColorCategoryIds.contains(categoryId);
               if (matchesPrimary || matchesOther) {
@@ -2305,28 +2320,31 @@ class ExperienceService {
   /// Results are cached for performance - even partial requests can use the full cache
   Future<List<Experience>> getExperiencesByUser(String userId,
       {int limit = 50, GetOptions? options, bool forceRefresh = false}) async {
-    
     final now = DateTime.now();
     final cacheValid = _cachedUserExperiences != null &&
         _cachedUserExperiencesUserId == userId &&
         _userExperiencesCacheTime != null &&
-        now.difference(_userExperiencesCacheTime!) < _experiencesCacheValidDuration;
-    
+        now.difference(_userExperiencesCacheTime!) <
+            _experiencesCacheValidDuration;
+
     // If we have a valid cache of ALL experiences, we can serve ANY request from it
     if (!forceRefresh && cacheValid) {
       if (limit == 0 || limit >= _cachedUserExperiences!.length) {
-        print('[ExperienceService] Using cached user experiences (${_cachedUserExperiences!.length} items)');
+        print(
+            '[ExperienceService] Using cached user experiences (${_cachedUserExperiences!.length} items)');
         return _cachedUserExperiences!;
       } else {
         // Return subset from cache
-        print('[ExperienceService] Using cached user experiences (returning first $limit of ${_cachedUserExperiences!.length})');
+        print(
+            '[ExperienceService] Using cached user experiences (returning first $limit of ${_cachedUserExperiences!.length})');
         return _cachedUserExperiences!.take(limit).toList();
       }
     }
-    
+
     // In-flight deduplication - if we're already fetching ALL experiences, wait for that
     if (!forceRefresh && _inFlightUserExperiencesFetch != null) {
-      print('[ExperienceService] Waiting for in-flight user experiences fetch...');
+      print(
+          '[ExperienceService] Waiting for in-flight user experiences fetch...');
       try {
         final result = await _inFlightUserExperiencesFetch!;
         // Return appropriate subset
@@ -2336,37 +2354,39 @@ class ExperienceService {
           return result.take(limit).toList();
         }
       } catch (e) {
-        print('[ExperienceService] In-flight fetch failed, starting new fetch: $e');
+        print(
+            '[ExperienceService] In-flight fetch failed, starting new fetch: $e');
       }
     }
-    
+
     // For limit=0 (all experiences), fetch and cache
     if (limit == 0) {
-      _inFlightUserExperiencesFetch = _doGetExperiencesByUser(userId, limit: 0, options: options);
+      _inFlightUserExperiencesFetch =
+          _doGetExperiencesByUser(userId, limit: 0, options: options);
       try {
         final result = await _inFlightUserExperiencesFetch!;
         _inFlightUserExperiencesFetch = null;
-        
+
         // Cache the full result
         _cachedUserExperiences = result;
         _cachedUserExperiencesUserId = userId;
         _userExperiencesCacheTime = DateTime.now();
-        
+
         return result;
       } catch (e) {
         _inFlightUserExperiencesFetch = null;
         rethrow;
       }
     }
-    
+
     // For limited requests without cache, just fetch directly (smaller query)
     return _doGetExperiencesByUser(userId, limit: limit, options: options);
   }
-  
+
   Future<List<Experience>> _doGetExperiencesByUser(String userId,
       {int limit = 50, GetOptions? options}) async {
     final sw = Stopwatch()..start();
-    
+
     Query query = _experiencesCollection
         .where('createdBy', isEqualTo: userId)
         .orderBy('createdAt', descending: true);
@@ -2375,14 +2395,16 @@ class ExperienceService {
     }
 
     final snapshot = await query.get(options);
-    final experiences = snapshot.docs.map((doc) => Experience.fromFirestore(doc)).toList();
-    
+    final experiences =
+        snapshot.docs.map((doc) => Experience.fromFirestore(doc)).toList();
+
     sw.stop();
-    print('[ExperienceService] getExperiencesByUser fetched ${experiences.length} experiences in ${sw.elapsedMilliseconds}ms');
-    
+    print(
+        '[ExperienceService] getExperiencesByUser fetched ${experiences.length} experiences in ${sw.elapsedMilliseconds}ms');
+
     return experiences;
   }
-  
+
   /// Clear the user experiences cache (call when experiences are added/edited/deleted)
   void clearUserExperiencesCache() {
     _cachedUserExperiences = null;
@@ -2390,54 +2412,62 @@ class ExperienceService {
     _userExperiencesCacheTime = null;
     print('[ExperienceService] Cleared user experiences cache');
   }
-  
+
   /// Update a single experience in the cache (optimistic update).
   /// If the experience doesn't exist in the cache, it will be added.
   /// This avoids refetching all experiences when only one changed.
   void updateCachedExperience(Experience experience) {
     final userId = _currentUserId;
     if (userId == null) return;
-    
+
     // Only update cache if it exists and belongs to the current user
-    if (_cachedUserExperiences == null || _cachedUserExperiencesUserId != userId) {
-      print('[ExperienceService] Cache not initialized for user, skipping optimistic update');
+    if (_cachedUserExperiences == null ||
+        _cachedUserExperiencesUserId != userId) {
+      print(
+          '[ExperienceService] Cache not initialized for user, skipping optimistic update');
       return;
     }
-    
-    final index = _cachedUserExperiences!.indexWhere((e) => e.id == experience.id);
+
+    final index =
+        _cachedUserExperiences!.indexWhere((e) => e.id == experience.id);
     if (index >= 0) {
       // Update existing experience
       _cachedUserExperiences![index] = experience;
-      print('[ExperienceService] Optimistically updated cached experience: ${experience.id}');
+      print(
+          '[ExperienceService] Optimistically updated cached experience: ${experience.id}');
     } else {
       // Add new experience at the beginning (most recently updated)
       _cachedUserExperiences!.insert(0, experience);
-      print('[ExperienceService] Optimistically added new experience to cache: ${experience.id}');
+      print(
+          '[ExperienceService] Optimistically added new experience to cache: ${experience.id}');
     }
     // Refresh the cache timestamp to extend validity
     _userExperiencesCacheTime = DateTime.now();
   }
-  
+
   /// Remove a single experience from the cache (optimistic delete).
   /// This avoids refetching all experiences when only one was deleted.
   void removeCachedExperience(String experienceId) {
     final userId = _currentUserId;
     if (userId == null) return;
-    
+
     // Only update cache if it exists and belongs to the current user
-    if (_cachedUserExperiences == null || _cachedUserExperiencesUserId != userId) {
-      print('[ExperienceService] Cache not initialized for user, skipping optimistic delete');
+    if (_cachedUserExperiences == null ||
+        _cachedUserExperiencesUserId != userId) {
+      print(
+          '[ExperienceService] Cache not initialized for user, skipping optimistic delete');
       return;
     }
-    
+
     _cachedUserExperiences!.removeWhere((e) => e.id == experienceId);
-    print('[ExperienceService] Optimistically removed experience from cache: $experienceId');
+    print(
+        '[ExperienceService] Optimistically removed experience from cache: $experienceId');
     // Refresh the cache timestamp to extend validity
     _userExperiencesCacheTime = DateTime.now();
   }
-  
+
   // ======= SharedMediaItems Cache Methods =======
-  
+
   /// Clear the shared media items cache
   void clearSharedMediaItemsCache() {
     _cachedSharedMediaItems = null;
@@ -2445,59 +2475,67 @@ class ExperienceService {
     _sharedMediaItemsCacheTime = null;
     print('[ExperienceService] Cleared shared media items cache');
   }
-  
+
   /// Update or add a single SharedMediaItem in the cache (optimistic update).
   void updateCachedSharedMediaItem(SharedMediaItem item) {
     final userId = _currentUserId;
     if (userId == null) return;
-    
+
     // Only update cache if it exists and belongs to the current user
-    if (_cachedSharedMediaItems == null || _cachedSharedMediaItemsUserId != userId) {
-      print('[ExperienceService] SharedMediaItems cache not initialized, skipping optimistic update');
+    if (_cachedSharedMediaItems == null ||
+        _cachedSharedMediaItemsUserId != userId) {
+      print(
+          '[ExperienceService] SharedMediaItems cache not initialized, skipping optimistic update');
       return;
     }
-    
+
     _cachedSharedMediaItems![item.id] = item;
     _sharedMediaItemsCacheTime = DateTime.now();
-    print('[ExperienceService] Optimistically updated cached SharedMediaItem: ${item.id}');
+    print(
+        '[ExperienceService] Optimistically updated cached SharedMediaItem: ${item.id}');
   }
-  
+
   /// Remove a single SharedMediaItem from the cache (optimistic delete).
   void removeCachedSharedMediaItem(String mediaItemId) {
     final userId = _currentUserId;
     if (userId == null) return;
-    
+
     // Only update cache if it exists and belongs to the current user
-    if (_cachedSharedMediaItems == null || _cachedSharedMediaItemsUserId != userId) {
-      print('[ExperienceService] SharedMediaItems cache not initialized, skipping optimistic delete');
+    if (_cachedSharedMediaItems == null ||
+        _cachedSharedMediaItemsUserId != userId) {
+      print(
+          '[ExperienceService] SharedMediaItems cache not initialized, skipping optimistic delete');
       return;
     }
-    
+
     _cachedSharedMediaItems!.remove(mediaItemId);
     _sharedMediaItemsCacheTime = DateTime.now();
-    print('[ExperienceService] Optimistically removed SharedMediaItem from cache: $mediaItemId');
+    print(
+        '[ExperienceService] Optimistically removed SharedMediaItem from cache: $mediaItemId');
   }
-  
+
   /// Add multiple SharedMediaItems to the cache (for bulk preloading).
   void addToSharedMediaItemsCache(List<SharedMediaItem> items) {
     final userId = _currentUserId;
     if (userId == null) return;
-    
+
     // Initialize cache if needed
-    if (_cachedSharedMediaItems == null || _cachedSharedMediaItemsUserId != userId) {
+    if (_cachedSharedMediaItems == null ||
+        _cachedSharedMediaItemsUserId != userId) {
       _cachedSharedMediaItems = {};
       _cachedSharedMediaItemsUserId = userId;
     }
-    
+
     for (final item in items) {
       _cachedSharedMediaItems![item.id] = item;
     }
     _sharedMediaItemsCacheTime = DateTime.now();
-    print('[ExperienceService] Added ${items.length} items to SharedMediaItems cache (total: ${_cachedSharedMediaItems!.length})');
+    print(
+        '[ExperienceService] Added ${items.length} items to SharedMediaItems cache (total: ${_cachedSharedMediaItems!.length})');
   }
-  
+
   // ======= Public Experiences Cache Methods =======
-  
+
   /// Clear the public experiences cache (call on pull-to-refresh in Discovery)
   void clearPublicExperiencesCache() {
     _cachedPublicExperiences = null;
@@ -2506,30 +2544,37 @@ class ExperienceService {
     _cachedPublicExperiencesHasMore = true;
     print('[ExperienceService] Cleared public experiences cache');
   }
-  
+
   /// Check if public experiences cache is valid
   bool get isPublicExperiencesCacheValid {
-    if (_cachedPublicExperiences == null || _publicExperiencesCacheTime == null) {
+    if (_cachedPublicExperiences == null ||
+        _publicExperiencesCacheTime == null) {
       return false;
     }
     final now = DateTime.now();
-    return now.difference(_publicExperiencesCacheTime!) < _publicExperiencesCacheValidDuration;
+    return now.difference(_publicExperiencesCacheTime!) <
+        _publicExperiencesCacheValidDuration;
   }
-  
+
   /// Get cached public experiences (returns null if cache is invalid)
   List<PublicExperience>? get cachedPublicExperiences {
     if (!isPublicExperiencesCacheValid) return null;
     return _cachedPublicExperiences;
   }
-  
+
   /// Get cached pagination state
-  ({DocumentSnapshot<Object?>? lastDoc, bool hasMore})? get cachedPublicExperiencesPaginationState {
+  ({DocumentSnapshot<Object?>? lastDoc, bool hasMore})?
+      get cachedPublicExperiencesPaginationState {
     if (!isPublicExperiencesCacheValid) return null;
-    return (lastDoc: _cachedPublicExperiencesLastDoc, hasMore: _cachedPublicExperiencesHasMore);
+    return (
+      lastDoc: _cachedPublicExperiencesLastDoc,
+      hasMore: _cachedPublicExperiencesHasMore
+    );
   }
-  
+
   /// Add public experiences to cache (appends to existing cache)
-  void addToPublicExperiencesCache(List<PublicExperience> experiences, {
+  void addToPublicExperiencesCache(
+    List<PublicExperience> experiences, {
     DocumentSnapshot<Object?>? lastDoc,
     required bool hasMore,
   }) {
@@ -2537,31 +2582,35 @@ class ExperienceService {
       _cachedPublicExperiences = [];
       _publicExperiencesCacheTime = DateTime.now();
     }
-    
+
     // Dedupe by ID before adding
     final existingIds = _cachedPublicExperiences!.map((e) => e.id).toSet();
-    final newExperiences = experiences.where((e) => !existingIds.contains(e.id)).toList();
-    
+    final newExperiences =
+        experiences.where((e) => !existingIds.contains(e.id)).toList();
+
     _cachedPublicExperiences!.addAll(newExperiences);
     _cachedPublicExperiencesLastDoc = lastDoc;
     _cachedPublicExperiencesHasMore = hasMore;
-    
-    print('[ExperienceService] Added ${newExperiences.length} public experiences to cache (total: ${_cachedPublicExperiences!.length}, hasMore: $hasMore)');
+
+    print(
+        '[ExperienceService] Added ${newExperiences.length} public experiences to cache (total: ${_cachedPublicExperiences!.length}, hasMore: $hasMore)');
   }
-  
+
   /// Preload public experiences in the background (call early to warm cache)
   Future<void> preloadPublicExperiences() async {
     if (isPublicExperiencesCacheValid) {
-      print('[ExperienceService] Public experiences already cached, skipping preload');
+      print(
+          '[ExperienceService] Public experiences already cached, skipping preload');
       return;
     }
-    
+
     try {
       // Fetch initial batch to warm the cache
       await fetchPublicExperiencesPage(limit: 50);
       print('[ExperienceService] Preloaded public experiences');
     } catch (e) {
-      debugPrint('[ExperienceService] Failed to preload public experiences: $e');
+      debugPrint(
+          '[ExperienceService] Failed to preload public experiences: $e');
     }
   }
 
@@ -2913,7 +2962,7 @@ class ExperienceService {
     int limit = 50,
   }) async {
     if (placeId.isEmpty) return [];
-    
+
     final snapshot = await _reviewsCollection
         .where('placeId', isEqualTo: placeId)
         .orderBy('createdAt', descending: true)
@@ -2926,7 +2975,7 @@ class ExperienceService {
   /// Check if user has already reviewed this place
   Future<Review?> getUserReviewForPlace(String placeId) async {
     if (_currentUserId == null || placeId.isEmpty) return null;
-    
+
     final snapshot = await _reviewsCollection
         .where('placeId', isEqualTo: placeId)
         .where('userId', isEqualTo: _currentUserId)
@@ -2962,6 +3011,22 @@ class ExperienceService {
 
     // Update the experience's average rating
     await _updateExperienceRating(review.experienceId);
+  }
+
+  /// Get all reviews by a specific user, ordered by most recent first
+  Future<List<Review>> getReviewsByUser(
+    String userId, {
+    int limit = 50,
+  }) async {
+    if (userId.isEmpty) return [];
+
+    final snapshot = await _reviewsCollection
+        .where('userId', isEqualTo: userId)
+        .orderBy('createdAt', descending: true)
+        .limit(limit)
+        .get();
+
+    return snapshot.docs.map((doc) => Review.fromFirestore(doc)).toList();
   }
 
   /// Like or unlike a review
@@ -3252,7 +3317,7 @@ class ExperienceService {
   /// to the experience document they're reviewing.
   Future<void> _updateExperienceRating(String experienceId) async {
     if (experienceId.isEmpty) return;
-    
+
     try {
       // Get all reviews for this experience
       final reviewsSnapshot = await _reviewsCollection
@@ -3287,7 +3352,8 @@ class ExperienceService {
     } catch (e) {
       // Silently ignore permission errors - the review was still saved successfully
       // This can happen when a user reviews an experience they don't have edit access to
-      debugPrint('_updateExperienceRating: Could not update experience rating (permission denied is expected for non-editors): $e');
+      debugPrint(
+          '_updateExperienceRating: Could not update experience rating (permission denied is expected for non-editors): $e');
     }
   }
 
@@ -3307,7 +3373,7 @@ class ExperienceService {
       debugPrint('updateUserThumbRating: User not authenticated');
       return null;
     }
-    
+
     if (experienceId.isEmpty) {
       debugPrint('updateUserThumbRating: Invalid experience ID');
       return null;
@@ -3320,7 +3386,8 @@ class ExperienceService {
         'updatedAt': FieldValue.serverTimestamp(),
       });
 
-      debugPrint('updateUserThumbRating: Updated experience $experienceId with rating: $newRating');
+      debugPrint(
+          'updateUserThumbRating: Updated experience $experienceId with rating: $newRating');
 
       // Fetch the updated experience to get the placeId for public experience sync
       final updatedDoc = await _experiencesCollection.doc(experienceId).get();
@@ -3360,23 +3427,31 @@ class ExperienceService {
     String? userId,
   }) async {
     final String effectiveUserId = userId ?? _currentUserId ?? '';
-    
+
     try {
       // Find or create public experience
-      PublicExperience? publicExperience = await findPublicExperienceByPlaceId(placeId);
-      
+      PublicExperience? publicExperience =
+          await findPublicExperienceByPlaceId(placeId);
+
       if (publicExperience == null) {
         // Create new public experience if template is provided
         if (experienceTemplate == null) {
-          debugPrint('_syncThumbRatingWithPublicExperience: No public experience found and no template provided');
+          debugPrint(
+              '_syncThumbRatingWithPublicExperience: No public experience found and no template provided');
           return;
         }
 
         // Calculate initial counts and user ID arrays based on the new rating
         int initialThumbsUp = newRating == true ? 1 : 0;
         int initialThumbsDown = newRating == false ? 1 : 0;
-        List<String> initialThumbsUpUserIds = (newRating == true && effectiveUserId.isNotEmpty) ? [effectiveUserId] : [];
-        List<String> initialThumbsDownUserIds = (newRating == false && effectiveUserId.isNotEmpty) ? [effectiveUserId] : [];
+        List<String> initialThumbsUpUserIds =
+            (newRating == true && effectiveUserId.isNotEmpty)
+                ? [effectiveUserId]
+                : [];
+        List<String> initialThumbsDownUserIds =
+            (newRating == false && effectiveUserId.isNotEmpty)
+                ? [effectiveUserId]
+                : [];
 
         final newPublicExperience = PublicExperience(
           id: '',
@@ -3393,52 +3468,64 @@ class ExperienceService {
         );
 
         await createPublicExperience(newPublicExperience);
-        debugPrint('_syncThumbRatingWithPublicExperience: Created new public experience with initial rating');
+        debugPrint(
+            '_syncThumbRatingWithPublicExperience: Created new public experience with initial rating');
         return;
       }
 
       // Build update data using array operations for user tracking
       final Map<String, dynamic> updateData = {};
-      
+
       // Check what the user's current rating is on the public experience
       // This is more reliable than the previousRating parameter for users without their own experience
       bool? actualPreviousRating;
       if (effectiveUserId.isNotEmpty) {
         if (publicExperience.thumbsUpUserIds.contains(effectiveUserId)) {
           actualPreviousRating = true;
-        } else if (publicExperience.thumbsDownUserIds.contains(effectiveUserId)) {
+        } else if (publicExperience.thumbsDownUserIds
+            .contains(effectiveUserId)) {
           actualPreviousRating = false;
         }
       }
-      
+
       // Use actual previous rating if available, otherwise fall back to the provided one
-      final bool? effectivePreviousRating = actualPreviousRating ?? previousRating;
-      
+      final bool? effectivePreviousRating =
+          actualPreviousRating ?? previousRating;
+
       // Remove user from previous rating list if they had one
       if (effectivePreviousRating == true && effectiveUserId.isNotEmpty) {
-        updateData['thumbsUpUserIds'] = FieldValue.arrayRemove([effectiveUserId]);
+        updateData['thumbsUpUserIds'] =
+            FieldValue.arrayRemove([effectiveUserId]);
         updateData['thumbsUpCount'] = FieldValue.increment(-1);
-      } else if (effectivePreviousRating == false && effectiveUserId.isNotEmpty) {
-        updateData['thumbsDownUserIds'] = FieldValue.arrayRemove([effectiveUserId]);
+      } else if (effectivePreviousRating == false &&
+          effectiveUserId.isNotEmpty) {
+        updateData['thumbsDownUserIds'] =
+            FieldValue.arrayRemove([effectiveUserId]);
         updateData['thumbsDownCount'] = FieldValue.increment(-1);
       }
 
       // Add user to new rating list if they're giving a new rating
       if (newRating == true && effectiveUserId.isNotEmpty) {
-        updateData['thumbsUpUserIds'] = FieldValue.arrayUnion([effectiveUserId]);
+        updateData['thumbsUpUserIds'] =
+            FieldValue.arrayUnion([effectiveUserId]);
         updateData['thumbsUpCount'] = FieldValue.increment(1);
       } else if (newRating == false && effectiveUserId.isNotEmpty) {
-        updateData['thumbsDownUserIds'] = FieldValue.arrayUnion([effectiveUserId]);
+        updateData['thumbsDownUserIds'] =
+            FieldValue.arrayUnion([effectiveUserId]);
         updateData['thumbsDownCount'] = FieldValue.increment(1);
       }
 
       // Only update if there's data to update
       if (updateData.isNotEmpty) {
-        await _publicExperiencesCollection.doc(publicExperience.id).update(updateData);
-        debugPrint('_syncThumbRatingWithPublicExperience: Updated with userId tracking - newRating: $newRating, previousRating: $effectivePreviousRating');
+        await _publicExperiencesCollection
+            .doc(publicExperience.id)
+            .update(updateData);
+        debugPrint(
+            '_syncThumbRatingWithPublicExperience: Updated with userId tracking - newRating: $newRating, previousRating: $effectivePreviousRating');
       }
     } catch (e) {
-      debugPrint('_syncThumbRatingWithPublicExperience: Error syncing rating: $e');
+      debugPrint(
+          '_syncThumbRatingWithPublicExperience: Error syncing rating: $e');
     }
   }
 
@@ -3455,7 +3542,7 @@ class ExperienceService {
       debugPrint('updatePublicExperienceRatingOnly: placeId is empty');
       return;
     }
-    
+
     await _syncThumbRatingWithPublicExperience(
       placeId: placeId,
       newRating: newRating,
@@ -3464,16 +3551,16 @@ class ExperienceService {
       userId: _currentUserId,
     );
   }
-  
+
   /// Gets the user's current rating for a place from the public experience.
   /// Returns true for thumbs up, false for thumbs down, null if no rating.
   Future<bool?> getUserRatingForPlace(String placeId) async {
     if (placeId.isEmpty || _currentUserId == null) return null;
-    
+
     try {
       final publicExperience = await findPublicExperienceByPlaceId(placeId);
       if (publicExperience == null) return null;
-      
+
       return publicExperience.getUserRating(_currentUserId!);
     } catch (e) {
       debugPrint('getUserRatingForPlace: Error getting rating: $e');
@@ -3576,40 +3663,58 @@ class ExperienceService {
 
   /// OPTIMIZED: Fetch both user categories and color categories with a single shared permissions query
   /// This avoids duplicate Firestore queries when both are needed simultaneously
-  Future<({List<UserCategory> userCategories, List<ColorCategory> colorCategories})> 
-      getUserAndColorCategories({bool includeSharedEditable = false, bool forceRefresh = false}) async {
+  Future<
+          ({
+            List<UserCategory> userCategories,
+            List<ColorCategory> colorCategories
+          })>
+      getUserAndColorCategories(
+          {bool includeSharedEditable = false,
+          bool forceRefresh = false}) async {
     final userId = _currentUserId;
-    print("getUserAndColorCategories START - User: $userId | includeSharedEditable: $includeSharedEditable | forceRefresh: $forceRefresh");
-    
+    print(
+        "getUserAndColorCategories START - User: $userId | includeSharedEditable: $includeSharedEditable | forceRefresh: $forceRefresh");
+
     if (userId == null) {
       print("getUserAndColorCategories END - No user, returning empty lists.");
-      return (userCategories: <UserCategory>[], colorCategories: <ColorCategory>[]);
+      return (
+        userCategories: <UserCategory>[],
+        colorCategories: <ColorCategory>[]
+      );
     }
-    
+
     // Check cache first (only when includeSharedEditable=true, which is the slow path)
-    if (includeSharedEditable && !forceRefresh &&
+    if (includeSharedEditable &&
+        !forceRefresh &&
         _cachedUserAndColorCategories != null &&
         _userAndColorCategoriesCacheUserId == userId &&
         _userAndColorCategoriesCacheTime != null &&
-        DateTime.now().difference(_userAndColorCategoriesCacheTime!) < _cacheValidDuration) {
-      print("getUserAndColorCategories - Using cached result (${_cachedUserAndColorCategories!.userCategories.length} user, ${_cachedUserAndColorCategories!.colorCategories.length} color categories)");
+        DateTime.now().difference(_userAndColorCategoriesCacheTime!) <
+            _cacheValidDuration) {
+      print(
+          "getUserAndColorCategories - Using cached result (${_cachedUserAndColorCategories!.userCategories.length} user, ${_cachedUserAndColorCategories!.colorCategories.length} color categories)");
       return _cachedUserAndColorCategories!;
     }
-    
+
     // Request deduplication: if a fetch is already in progress, wait for it instead of starting another
-    if (includeSharedEditable && !forceRefresh && _inFlightCategoriesFetch != null) {
-      print("getUserAndColorCategories - Waiting for in-flight fetch to complete...");
+    if (includeSharedEditable &&
+        !forceRefresh &&
+        _inFlightCategoriesFetch != null) {
+      print(
+          "getUserAndColorCategories - Waiting for in-flight fetch to complete...");
       try {
         return await _inFlightCategoriesFetch!;
       } catch (e) {
         // If the in-flight request failed, we'll start a new one below
-        print("getUserAndColorCategories - In-flight fetch failed, starting new fetch: $e");
+        print(
+            "getUserAndColorCategories - In-flight fetch failed, starting new fetch: $e");
       }
     }
-    
+
     // Start the actual fetch and track it
     if (includeSharedEditable && !forceRefresh) {
-      _inFlightCategoriesFetch = _doGetUserAndColorCategories(userId, includeSharedEditable: true);
+      _inFlightCategoriesFetch =
+          _doGetUserAndColorCategories(userId, includeSharedEditable: true);
       try {
         final result = await _inFlightCategoriesFetch!;
         _inFlightCategoriesFetch = null;
@@ -3619,59 +3724,83 @@ class ExperienceService {
         rethrow;
       }
     }
-    
-    // Non-shared path or force refresh - just fetch directly
-    return _doGetUserAndColorCategories(userId, includeSharedEditable: includeSharedEditable);
-  }
-  
-  /// Internal method that does the actual fetching
-  Future<({List<UserCategory> userCategories, List<ColorCategory> colorCategories})>
-      _doGetUserAndColorCategories(String userId, {required bool includeSharedEditable}) async {
 
+    // Non-shared path or force refresh - just fetch directly
+    return _doGetUserAndColorCategories(userId,
+        includeSharedEditable: includeSharedEditable);
+  }
+
+  /// Internal method that does the actual fetching
+  Future<
+          ({
+            List<UserCategory> userCategories,
+            List<ColorCategory> colorCategories
+          })>
+      _doGetUserAndColorCategories(String userId,
+          {required bool includeSharedEditable}) async {
     final fetchSw = Stopwatch()..start();
-    
+
     // OPTIMIZED: Fetch owned categories AND permissions in parallel (instead of sequentially)
     // This saves ~1-2 seconds by overlapping network requests
     final List<dynamic> results;
     if (includeSharedEditable) {
       results = await Future.wait([
-        _userCategoriesCollection(userId).orderBy('orderIndex').orderBy('name').get(),
-        _userColorCategoriesCollection(userId).orderBy('orderIndex').orderBy('name').get(),
+        _userCategoriesCollection(userId)
+            .orderBy('orderIndex')
+            .orderBy('name')
+            .get(),
+        _userColorCategoriesCollection(userId)
+            .orderBy('orderIndex')
+            .orderBy('name')
+            .get(),
         _getEditableCategoryPermissionsForCurrentUser(), // Fetch in parallel!
       ]);
     } else {
       results = await Future.wait([
-        _userCategoriesCollection(userId).orderBy('orderIndex').orderBy('name').get(),
-        _userColorCategoriesCollection(userId).orderBy('orderIndex').orderBy('name').get(),
+        _userCategoriesCollection(userId)
+            .orderBy('orderIndex')
+            .orderBy('name')
+            .get(),
+        _userColorCategoriesCollection(userId)
+            .orderBy('orderIndex')
+            .orderBy('name')
+            .get(),
       ]);
     }
-    
+
     final userCategorySnapshot = results[0] as QuerySnapshot;
     final colorCategorySnapshot = results[1] as QuerySnapshot;
-    
+
     final List<UserCategory> ownedUserCategories = userCategorySnapshot.docs
         .map((doc) => UserCategory.fromFirestore(doc))
         .toList();
     final List<ColorCategory> ownedColorCategories = colorCategorySnapshot.docs
         .map((doc) => ColorCategory.fromFirestore(doc))
         .toList();
-    
-    print("getUserAndColorCategories - Fetched ${ownedUserCategories.length} user categories and ${ownedColorCategories.length} color categories from Firestore");
+
+    print(
+        "getUserAndColorCategories - Fetched ${ownedUserCategories.length} user categories and ${ownedColorCategories.length} color categories from Firestore");
 
     List<UserCategory> sharedUserCategories = [];
     List<ColorCategory> sharedColorCategories = [];
-    
+
     if (includeSharedEditable) {
       // Get permissions from parallel fetch
       final permissions = results[2] as List<SharePermission>;
-      print("getUserAndColorCategories - Got ${permissions.length} shared category permissions (fetched in parallel)");
-      
+      print(
+          "getUserAndColorCategories - Got ${permissions.length} shared category permissions (fetched in parallel)");
+
       // OPTIMIZED: Fast-path when no shared permissions exist
       if (permissions.isEmpty) {
-        print("getUserAndColorCategories - No shared permissions, skipping category resolution");
+        print(
+            "getUserAndColorCategories - No shared permissions, skipping category resolution");
         fetchSw.stop();
-        print("getUserAndColorCategories END - Total time: ${fetchSw.elapsedMilliseconds}ms - Returning ${ownedUserCategories.length} user categories (owned: ${ownedUserCategories.length}, shared: 0) and ${ownedColorCategories.length} color categories (owned: ${ownedColorCategories.length}, shared: 0)");
-        final result = (userCategories: ownedUserCategories, colorCategories: ownedColorCategories);
+        print(
+            "getUserAndColorCategories END - Total time: ${fetchSw.elapsedMilliseconds}ms - Returning ${ownedUserCategories.length} user categories (owned: ${ownedUserCategories.length}, shared: 0) and ${ownedColorCategories.length} color categories (owned: ${ownedColorCategories.length}, shared: 0)");
+        final result = (
+          userCategories: ownedUserCategories,
+          colorCategories: ownedColorCategories
+        );
         // Cache the result
         _cachedUserAndColorCategories = result;
         _userAndColorCategoriesCacheTime = DateTime.now();
@@ -3691,17 +3820,19 @@ class ExperienceService {
           if (permission.itemId.isEmpty || permission.ownerUserId.isEmpty) {
             continue;
           }
-          
+
           final userKey = '${permission.ownerUserId}_${permission.itemId}_user';
-          final colorKey = '${permission.ownerUserId}_${permission.itemId}_color';
+          final colorKey =
+              '${permission.ownerUserId}_${permission.itemId}_color';
 
           // Try fetching as user category
           if (processedUserKeys.add(userKey)) {
             userCategoryFutures.add(() async {
               try {
-                final doc = await _userCategoriesCollection(permission.ownerUserId)
-                    .doc(permission.itemId)
-                    .get();
+                final doc =
+                    await _userCategoriesCollection(permission.ownerUserId)
+                        .doc(permission.itemId)
+                        .get();
                 if (!doc.exists) return null;
                 final category = UserCategory.fromFirestore(doc);
                 final ownerName = await _resolveShareOwnerDisplayName(
@@ -3717,9 +3848,10 @@ class ExperienceService {
           if (processedColorKeys.add(colorKey)) {
             colorCategoryFutures.add(() async {
               try {
-                final doc = await _userColorCategoriesCollection(permission.ownerUserId)
-                    .doc(permission.itemId)
-                    .get();
+                final doc =
+                    await _userColorCategoriesCollection(permission.ownerUserId)
+                        .doc(permission.itemId)
+                        .get();
                 if (!doc.exists) return null;
                 final category = ColorCategory.fromFirestore(doc);
                 final ownerName = await _resolveShareOwnerDisplayName(
@@ -3740,14 +3872,19 @@ class ExperienceService {
             Future.wait(colorCategoryFutures),
           ]);
           resolveSw.stop();
-          
-          sharedUserCategories = fetchResults[0].whereType<UserCategory>().toList();
-          sharedColorCategories = fetchResults[1].whereType<ColorCategory>().toList();
-          
-          sharedUserCategories.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-          sharedColorCategories.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-          
-          print("getUserAndColorCategories - Resolved ${sharedUserCategories.length} shared user categories and ${sharedColorCategories.length} shared color categories in ${resolveSw.elapsedMilliseconds}ms");
+
+          sharedUserCategories =
+              fetchResults[0].whereType<UserCategory>().toList();
+          sharedColorCategories =
+              fetchResults[1].whereType<ColorCategory>().toList();
+
+          sharedUserCategories.sort(
+              (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+          sharedColorCategories.sort(
+              (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+
+          print(
+              "getUserAndColorCategories - Resolved ${sharedUserCategories.length} shared user categories and ${sharedColorCategories.length} shared color categories in ${resolveSw.elapsedMilliseconds}ms");
         }
       }
     }
@@ -3773,21 +3910,27 @@ class ExperienceService {
       combinedColorCategories.putIfAbsent(key, () => category);
     }
 
-    final finalUserCategories = combinedUserCategories.values.toList(growable: false);
-    final finalColorCategories = combinedColorCategories.values.toList(growable: false);
-    
+    final finalUserCategories =
+        combinedUserCategories.values.toList(growable: false);
+    final finalColorCategories =
+        combinedColorCategories.values.toList(growable: false);
+
     fetchSw.stop();
-    print("getUserAndColorCategories END - Total time: ${fetchSw.elapsedMilliseconds}ms - Returning ${finalUserCategories.length} user categories (owned: ${ownedUserCategories.length}, shared: ${sharedUserCategories.length}) and ${finalColorCategories.length} color categories (owned: ${ownedColorCategories.length}, shared: ${sharedColorCategories.length})");
-    
-    final result = (userCategories: finalUserCategories, colorCategories: finalColorCategories);
-    
+    print(
+        "getUserAndColorCategories END - Total time: ${fetchSw.elapsedMilliseconds}ms - Returning ${finalUserCategories.length} user categories (owned: ${ownedUserCategories.length}, shared: ${sharedUserCategories.length}) and ${finalColorCategories.length} color categories (owned: ${ownedColorCategories.length}, shared: ${sharedColorCategories.length})");
+
+    final result = (
+      userCategories: finalUserCategories,
+      colorCategories: finalColorCategories
+    );
+
     // Cache the result when includeSharedEditable is true (the expensive path)
     if (includeSharedEditable) {
       _cachedUserAndColorCategories = result;
       _userAndColorCategoriesCacheTime = DateTime.now();
       _userAndColorCategoriesCacheUserId = userId;
     }
-    
+
     return result;
   }
 
@@ -4027,4 +4170,3 @@ class ExperienceService {
 
   // Add more helper methods as needed
 }
-

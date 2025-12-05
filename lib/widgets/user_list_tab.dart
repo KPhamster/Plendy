@@ -3,6 +3,7 @@ import '../models/user_profile.dart';
 import '../services/user_service.dart';
 import '../services/notification_state_service.dart';
 import '../widgets/notification_dot.dart';
+import '../widgets/cached_profile_avatar.dart';
 import 'package:provider/provider.dart';
 import '../services/auth_service.dart';
 
@@ -227,13 +228,9 @@ class _UserListTabState extends State<UserListTab> {
             
             return ListTile(
               leading: ProfilePictureNotificationDot(
-                profilePicture: CircleAvatar(
-                  backgroundImage: userProfile.photoURL != null
-                      ? NetworkImage(userProfile.photoURL!)
-                      : null,
-                  child: userProfile.photoURL == null
-                      ? const Icon(Icons.person)
-                      : null,
+                profilePicture: CachedProfileAvatar(
+                  photoUrl: userProfile.photoURL,
+                  fallbackText: displayName.isNotEmpty ? displayName[0].toUpperCase() : null,
                 ),
                 showDot: isUnseen,
               ),
