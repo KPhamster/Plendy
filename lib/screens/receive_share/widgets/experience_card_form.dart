@@ -1322,8 +1322,6 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                       ),
                       // --- END REPLACEMENT (with wrapper) ---
 
-                      SizedBox(height: 16),
-
                       // --- ADDED: Other Categories Selection ---
                       ValueListenableBuilder<List<UserCategory>>(
                         valueListenable: widget.userCategoriesNotifier,
@@ -1338,6 +1336,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                           return Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
+                              SizedBox(height: hasSelected ? 16 : 1),
                               if (hasSelected) ...[
                                 Text('Other Categories',
                                     style: Theme.of(context)
@@ -1473,8 +1472,6 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                       ),
                       // --- END ADDED (with wrapper) ---
 
-                      SizedBox(height: 16),
-
                       // --- ADDED: Other Color Categories Selection ---
                       ValueListenableBuilder<List<ColorCategory>>(
                         valueListenable: widget.userColorCategoriesNotifier,
@@ -1489,6 +1486,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                           return Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
+                              SizedBox(height: hasSelected ? 16 : 1),
                               if (hasSelected) ...[
                                 Text('Other Color Categories',
                                     style: Theme.of(context)

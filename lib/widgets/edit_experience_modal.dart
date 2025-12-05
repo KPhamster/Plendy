@@ -1561,7 +1561,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                   ),
                 ),
                 // TODO: Add validation message display if needed
-                SizedBox(height: 16),
+                SizedBox(height: _cardData.selectedOtherCategoryIds.isNotEmpty ? 16 : 1),
 
                 // --- ADDED: Other Categories Selection ---
                 Column(
@@ -1685,7 +1685,7 @@ class _EditExperienceModalState extends State<EditExperienceModal> {
                     ],
                   ),
                 ),
-                SizedBox(height: 16),
+                SizedBox(height: _cardData.selectedOtherColorCategoryIds.isNotEmpty ? 16 : 1),
 
                 // --- ADDED: Other Color Categories Selection ---
                 Column(
