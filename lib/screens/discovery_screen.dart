@@ -2161,11 +2161,10 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
         userId: currentUser.uid,
         screenReported: 'discovery_screen',
         previewURL: item.mediaUrl,
-        experienceId: item.experience.id,
+        experienceId: '', // Empty for discovery reports (public content, not a private experience)
         reportType: selectedReason,
         details: explanationController.text.trim(),
         createdAt: DateTime.now(),
-        reportedUserId: offenderId, // User who saved this content
         publicExperienceId: item.experience.id,
         offenderId: offenderId, // User who saved this content
         deviceInfo: deviceInfo,

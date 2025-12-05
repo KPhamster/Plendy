@@ -5287,6 +5287,32 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
           ? 'read-only experience_page_screen'
           : 'experience_page_screen';
 
+      // Determine the offender: prefer createdBy, fallback to first editor
+      String? experienceOffenderId = _currentExperience.createdBy;
+      if (experienceOffenderId == null || experienceOffenderId.isEmpty) {
+        if (_currentExperience.editorUserIds.isNotEmpty) {
+          experienceOffenderId = _currentExperience.editorUserIds.first;
+        }
+      }
+
+      // For read-only discovery views, fetch the actual SharedMediaItem owner from Firestore
+      if ((experienceOffenderId == null || experienceOffenderId.isEmpty) && 
+          isReadOnly && 
+          _mediaItems.isNotEmpty) {
+        try {
+          final sharedMediaItem = await _experienceService.findSharedMediaItemByPath(
+            _mediaItems.first.path,
+          );
+          if (sharedMediaItem != null && 
+              sharedMediaItem.ownerUserId.isNotEmpty &&
+              sharedMediaItem.ownerUserId != 'public_experience') {
+            experienceOffenderId = sharedMediaItem.ownerUserId;
+          }
+        } catch (e) {
+          debugPrint('ExperiencePageScreen: Failed to fetch SharedMediaItem for report: $e');
+        }
+      }
+
       final report = Report(
         id: '',
         userId: currentUser.uid,
@@ -5296,9 +5322,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
         reportType: selectedReason,
         details: explanationController.text.trim(),
         createdAt: DateTime.now(),
-        reportedUserId: _currentExperience.createdBy,
         publicExperienceId: publicExperienceIdForReport,
-        offenderId: _currentExperience.createdBy, // Creator of the experience
+        offenderId: experienceOffenderId,
         deviceInfo: deviceInfo,
       );
 
