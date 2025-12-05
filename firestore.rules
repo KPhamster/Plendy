@@ -172,6 +172,23 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    match /reviews/{reviewId} {
+      // Allow anyone to read reviews (for displaying on experience pages)
+      allow read: if true;
+      
+      // Allow authenticated users to create reviews
+      allow create: if request.auth != null &&
+        request.resource.data.userId == request.auth.uid;
+      
+      // Allow users to update their own reviews
+      allow update: if request.auth != null &&
+        resource.data.userId == request.auth.uid;
+      
+      // Allow users to delete their own reviews
+      allow delete: if request.auth != null &&
+        resource.data.userId == request.auth.uid;
+    }
+
     match /sharedMediaItems/{mediaItemId} {
       // Allow authenticated users full read access
       // Allow public access to non-private media items for public profile viewing
@@ -296,6 +313,8 @@ service cloud.firestore {
 
     match /reports/{reportId} {
       // Users can create reports if they are authenticated and the userId matches
+      // Required fields: userId, reportType, details, screenReported, experienceId, previewURL, status
+      // Optional fields: offenderId, reviewId (for review reports), publicExperienceId, deviceInfo, reportedUserId
       allow create: if request.auth != null &&
         request.resource.data.userId == request.auth.uid &&
         request.resource.data.reportType is string &&
@@ -303,7 +322,15 @@ service cloud.firestore {
         request.resource.data.screenReported is string &&
         request.resource.data.experienceId is string &&
         request.resource.data.previewURL is string &&
-        request.resource.data.status == 'pending';
+        request.resource.data.status == 'pending' &&
+        // Validate optional offenderId if provided
+        (!request.resource.data.keys().hasAny(['offenderId']) || 
+         request.resource.data.offenderId == null || 
+         request.resource.data.offenderId is string) &&
+        // Validate optional reviewId if provided
+        (!request.resource.data.keys().hasAny(['reviewId']) || 
+         request.resource.data.reviewId == null || 
+         request.resource.data.reviewId is string);
       
       // Users can read their own reports
       allow get: if request.auth != null &&

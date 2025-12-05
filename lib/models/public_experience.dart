@@ -14,6 +14,9 @@ class PublicExperience {
   // Aggregated thumbs up/down counts from all users
   final int thumbsUpCount;
   final int thumbsDownCount;
+  // Track which users have voted (for preventing duplicates and restoring state)
+  final List<String> thumbsUpUserIds;
+  final List<String> thumbsDownUserIds;
 
   PublicExperience({
     required this.id,
@@ -25,6 +28,8 @@ class PublicExperience {
     required this.allMediaPaths,
     this.thumbsUpCount = 0,
     this.thumbsDownCount = 0,
+    this.thumbsUpUserIds = const [],
+    this.thumbsDownUserIds = const [],
   });
 
   // CopyWith method for immutability
@@ -38,6 +43,8 @@ class PublicExperience {
     List<String>? allMediaPaths,
     int? thumbsUpCount,
     int? thumbsDownCount,
+    List<String>? thumbsUpUserIds,
+    List<String>? thumbsDownUserIds,
   }) {
     return PublicExperience(
       id: id ?? this.id,
@@ -49,6 +56,8 @@ class PublicExperience {
       allMediaPaths: allMediaPaths ?? this.allMediaPaths,
       thumbsUpCount: thumbsUpCount ?? this.thumbsUpCount,
       thumbsDownCount: thumbsDownCount ?? this.thumbsDownCount,
+      thumbsUpUserIds: thumbsUpUserIds ?? this.thumbsUpUserIds,
+      thumbsDownUserIds: thumbsDownUserIds ?? this.thumbsDownUserIds,
     );
   }
 
@@ -63,6 +72,8 @@ class PublicExperience {
       'allMediaPaths': allMediaPaths,
       'thumbsUpCount': thumbsUpCount,
       'thumbsDownCount': thumbsDownCount,
+      'thumbsUpUserIds': thumbsUpUserIds,
+      'thumbsDownUserIds': thumbsDownUserIds,
       // id is not stored in the document data itself
     };
   }
@@ -82,6 +93,8 @@ class PublicExperience {
           data['allMediaPaths'] ?? []), // Handle potential null
       thumbsUpCount: data['thumbsUpCount'] ?? 0,
       thumbsDownCount: data['thumbsDownCount'] ?? 0,
+      thumbsUpUserIds: List<String>.from(data['thumbsUpUserIds'] ?? []),
+      thumbsDownUserIds: List<String>.from(data['thumbsDownUserIds'] ?? []),
     );
   }
 
@@ -98,7 +111,20 @@ class PublicExperience {
       allMediaPaths: List<String>.from(map['allMediaPaths'] ?? []),
       thumbsUpCount: map['thumbsUpCount'] ?? 0,
       thumbsDownCount: map['thumbsDownCount'] ?? 0,
+      thumbsUpUserIds: List<String>.from(map['thumbsUpUserIds'] ?? []),
+      thumbsDownUserIds: List<String>.from(map['thumbsDownUserIds'] ?? []),
     );
+  }
+  
+  /// Gets the user's current rating from the public experience
+  /// Returns true for thumbs up, false for thumbs down, null if no rating
+  bool? getUserRating(String userId) {
+    if (thumbsUpUserIds.contains(userId)) {
+      return true;
+    } else if (thumbsDownUserIds.contains(userId)) {
+      return false;
+    }
+    return null;
   }
 
   /// Builds a lightweight [Experience] instance for read-only previews.
@@ -188,7 +214,9 @@ class PublicExperience {
         // Compare lists for equality (order matters)
         ListEquality().equals(other.allMediaPaths, allMediaPaths) &&
         other.thumbsUpCount == thumbsUpCount &&
-        other.thumbsDownCount == thumbsDownCount;
+        other.thumbsDownCount == thumbsDownCount &&
+        ListEquality().equals(other.thumbsUpUserIds, thumbsUpUserIds) &&
+        ListEquality().equals(other.thumbsDownUserIds, thumbsDownUserIds);
   }
 
   @override
@@ -202,7 +230,9 @@ class PublicExperience {
         // Generate hash code for list
         ListEquality().hash(allMediaPaths) ^
         thumbsUpCount.hashCode ^
-        thumbsDownCount.hashCode;
+        thumbsDownCount.hashCode ^
+        ListEquality().hash(thumbsUpUserIds) ^
+        ListEquality().hash(thumbsDownUserIds);
   }
 }
 

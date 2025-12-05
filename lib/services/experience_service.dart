@@ -96,6 +96,13 @@ class ExperienceService {
   DateTime? _sharedMediaItemsCacheTime;
   static const Duration _sharedMediaItemsCacheValidDuration = Duration(minutes: 5);
   
+  // Cache for public experiences (Discovery feed)
+  List<PublicExperience>? _cachedPublicExperiences;
+  DateTime? _publicExperiencesCacheTime;
+  static const Duration _publicExperiencesCacheValidDuration = Duration(minutes: 30);
+  DocumentSnapshot<Object?>? _cachedPublicExperiencesLastDoc;
+  bool _cachedPublicExperiencesHasMore = true;
+  
   /// Clear the permissions cache (call when user logs out or permissions change)
   void clearCategoryPermissionsCache() {
     _cachedCategoryPermissions = null;
@@ -716,10 +723,35 @@ class ExperienceService {
   }
 
   // ======= Public Experience Operations =======
+  /// Fetches public experiences with pagination and caching.
+  /// Set [forceRefresh] to true to bypass cache (e.g., on pull-to-refresh).
   Future<PublicExperiencePage> fetchPublicExperiencesPage({
     DocumentSnapshot<Object?>? startAfter,
     int limit = 50,
+    bool forceRefresh = false,
   }) async {
+    final sw = Stopwatch()..start();
+    
+    // On initial load (no startAfter), check if we have valid cached data
+    if (startAfter == null && !forceRefresh && isPublicExperiencesCacheValid) {
+      final cached = _cachedPublicExperiences!;
+      final paginationState = cachedPublicExperiencesPaginationState;
+      
+      sw.stop();
+      print('[ExperienceService] fetchPublicExperiencesPage: Returning ${cached.length} cached public experiences in ${sw.elapsedMilliseconds}ms');
+      
+      return PublicExperiencePage(
+        experiences: cached,
+        lastDocument: paginationState?.lastDoc,
+        hasMore: paginationState?.hasMore ?? false,
+      );
+    }
+    
+    // Clear cache on force refresh
+    if (forceRefresh && startAfter == null) {
+      clearPublicExperiencesCache();
+    }
+    
     try {
       Query query = _publicExperiencesCollection
           .orderBy(FieldPath.documentId)
@@ -737,6 +769,16 @@ class ExperienceService {
       final DocumentSnapshot<Object?>? lastDoc =
           snapshot.docs.isNotEmpty ? snapshot.docs.last : null;
       final hasMore = snapshot.docs.length == limit;
+      
+      // Add to cache
+      addToPublicExperiencesCache(
+        experiences,
+        lastDoc: lastDoc,
+        hasMore: hasMore,
+      );
+      
+      sw.stop();
+      print('[ExperienceService] fetchPublicExperiencesPage: Fetched ${experiences.length} public experiences from Firestore in ${sw.elapsedMilliseconds}ms');
 
       return PublicExperiencePage(
         experiences: experiences,
@@ -802,6 +844,38 @@ class ExperienceService {
     } catch (e, stackTrace) {
       debugPrint(
           'findPublicExperienceById: Error fetching public experience $id: $e');
+      debugPrint(stackTrace.toString());
+      return null;
+    }
+  }
+
+  /// Finds a user's own Experience document for a given placeId.
+  /// This is useful when viewing someone else's experience but needing
+  /// to check if the current user has their own saved experience for the same place.
+  Future<Experience?> findUserExperienceByPlaceId(String userId, String placeId) async {
+    if (userId.isEmpty || placeId.isEmpty) {
+      debugPrint('findUserExperienceByPlaceId: userId or placeId is empty.');
+      return null;
+    }
+    try {
+      final snapshot = await _experiencesCollection
+          .where('editorUserIds', arrayContains: userId)
+          .where('location.placeId', isEqualTo: placeId)
+          .limit(1)
+          .get();
+
+      if (snapshot.docs.isNotEmpty) {
+        final doc = snapshot.docs.first;
+        debugPrint(
+            'findUserExperienceByPlaceId: Found user experience with ID: ${doc.id}');
+        return Experience.fromFirestore(doc);
+      }
+      debugPrint(
+          'findUserExperienceByPlaceId: No experience found for userId: $userId, placeId: $placeId');
+      return null;
+    } catch (e, stackTrace) {
+      debugPrint(
+          'findUserExperienceByPlaceId: Error finding experience for userId $userId, placeId $placeId: $e');
       debugPrint(stackTrace.toString());
       return null;
     }
@@ -2421,6 +2495,75 @@ class ExperienceService {
     _sharedMediaItemsCacheTime = DateTime.now();
     print('[ExperienceService] Added ${items.length} items to SharedMediaItems cache (total: ${_cachedSharedMediaItems!.length})');
   }
+  
+  // ======= Public Experiences Cache Methods =======
+  
+  /// Clear the public experiences cache (call on pull-to-refresh in Discovery)
+  void clearPublicExperiencesCache() {
+    _cachedPublicExperiences = null;
+    _publicExperiencesCacheTime = null;
+    _cachedPublicExperiencesLastDoc = null;
+    _cachedPublicExperiencesHasMore = true;
+    print('[ExperienceService] Cleared public experiences cache');
+  }
+  
+  /// Check if public experiences cache is valid
+  bool get isPublicExperiencesCacheValid {
+    if (_cachedPublicExperiences == null || _publicExperiencesCacheTime == null) {
+      return false;
+    }
+    final now = DateTime.now();
+    return now.difference(_publicExperiencesCacheTime!) < _publicExperiencesCacheValidDuration;
+  }
+  
+  /// Get cached public experiences (returns null if cache is invalid)
+  List<PublicExperience>? get cachedPublicExperiences {
+    if (!isPublicExperiencesCacheValid) return null;
+    return _cachedPublicExperiences;
+  }
+  
+  /// Get cached pagination state
+  ({DocumentSnapshot<Object?>? lastDoc, bool hasMore})? get cachedPublicExperiencesPaginationState {
+    if (!isPublicExperiencesCacheValid) return null;
+    return (lastDoc: _cachedPublicExperiencesLastDoc, hasMore: _cachedPublicExperiencesHasMore);
+  }
+  
+  /// Add public experiences to cache (appends to existing cache)
+  void addToPublicExperiencesCache(List<PublicExperience> experiences, {
+    DocumentSnapshot<Object?>? lastDoc,
+    required bool hasMore,
+  }) {
+    if (_cachedPublicExperiences == null) {
+      _cachedPublicExperiences = [];
+      _publicExperiencesCacheTime = DateTime.now();
+    }
+    
+    // Dedupe by ID before adding
+    final existingIds = _cachedPublicExperiences!.map((e) => e.id).toSet();
+    final newExperiences = experiences.where((e) => !existingIds.contains(e.id)).toList();
+    
+    _cachedPublicExperiences!.addAll(newExperiences);
+    _cachedPublicExperiencesLastDoc = lastDoc;
+    _cachedPublicExperiencesHasMore = hasMore;
+    
+    print('[ExperienceService] Added ${newExperiences.length} public experiences to cache (total: ${_cachedPublicExperiences!.length}, hasMore: $hasMore)');
+  }
+  
+  /// Preload public experiences in the background (call early to warm cache)
+  Future<void> preloadPublicExperiences() async {
+    if (isPublicExperiencesCacheValid) {
+      print('[ExperienceService] Public experiences already cached, skipping preload');
+      return;
+    }
+    
+    try {
+      // Fetch initial batch to warm the cache
+      await fetchPublicExperiencesPage(limit: 50);
+      print('[ExperienceService] Preloaded public experiences');
+    } catch (e) {
+      debugPrint('[ExperienceService] Failed to preload public experiences: $e');
+    }
+  }
 
   /// Page experiences shared with a specific user, using denormalized sharedWithUserIds.
   /// Returns both items and the last DocumentSnapshot for pagination.
@@ -3104,36 +3247,47 @@ class ExperienceService {
   // ======= Helper methods =======
 
   /// Update the average rating of an experience based on all reviews
+  /// Note: This is legacy code for star ratings. We now use thumbs up/down on PublicExperience.
+  /// This method gracefully handles permission errors since the user may not have edit access
+  /// to the experience document they're reviewing.
   Future<void> _updateExperienceRating(String experienceId) async {
-    // Get all reviews for this experience
-    final reviewsSnapshot = await _reviewsCollection
-        .where('experienceId', isEqualTo: experienceId)
-        .get();
+    if (experienceId.isEmpty) return;
+    
+    try {
+      // Get all reviews for this experience
+      final reviewsSnapshot = await _reviewsCollection
+          .where('experienceId', isEqualTo: experienceId)
+          .get();
 
-    // Calculate the average rating
-    double totalRating = 0;
-    final reviews = reviewsSnapshot.docs;
-    final reviewCount = reviews.length;
+      // Calculate the average rating
+      double totalRating = 0;
+      final reviews = reviewsSnapshot.docs;
+      final reviewCount = reviews.length;
 
-    if (reviewCount > 0) {
-      for (final doc in reviews) {
-        final data = doc.data() as Map<String, dynamic>;
-        totalRating += (data['rating'] ?? 0).toDouble();
+      if (reviewCount > 0) {
+        for (final doc in reviews) {
+          final data = doc.data() as Map<String, dynamic>;
+          totalRating += (data['rating'] ?? 0).toDouble();
+        }
+
+        final averageRating = totalRating / reviewCount;
+
+        // Update the experience with the new rating (may fail if user doesn't have permission)
+        await _experiencesCollection.doc(experienceId).update({
+          'plendyRating': averageRating,
+          'plendyReviewCount': reviewCount,
+        });
+      } else {
+        // No reviews, reset rating (may fail if user doesn't have permission)
+        await _experiencesCollection.doc(experienceId).update({
+          'plendyRating': 0,
+          'plendyReviewCount': 0,
+        });
       }
-
-      final averageRating = totalRating / reviewCount;
-
-      // Update the experience with the new rating
-      await _experiencesCollection.doc(experienceId).update({
-        'plendyRating': averageRating,
-        'plendyReviewCount': reviewCount,
-      });
-    } else {
-      // No reviews, reset rating
-      await _experiencesCollection.doc(experienceId).update({
-        'plendyRating': 0,
-        'plendyReviewCount': 0,
-      });
+    } catch (e) {
+      // Silently ignore permission errors - the review was still saved successfully
+      // This can happen when a user reviews an experience they don't have edit access to
+      debugPrint('_updateExperienceRating: Could not update experience rating (permission denied is expected for non-editors): $e');
     }
   }
 
@@ -3197,12 +3351,16 @@ class ExperienceService {
 
   /// Syncs the thumb rating change with the public experience counts.
   /// Adjusts thumbsUpCount and thumbsDownCount based on the rating change.
+  /// Also tracks userId in thumbsUpUserIds/thumbsDownUserIds arrays to prevent duplicates.
   Future<void> _syncThumbRatingWithPublicExperience({
     required String placeId,
     required bool? newRating,
     required bool? previousRating,
     Experience? experienceTemplate,
+    String? userId,
   }) async {
+    final String effectiveUserId = userId ?? _currentUserId ?? '';
+    
     try {
       // Find or create public experience
       PublicExperience? publicExperience = await findPublicExperienceByPlaceId(placeId);
@@ -3214,9 +3372,11 @@ class ExperienceService {
           return;
         }
 
-        // Calculate initial counts based on the new rating
+        // Calculate initial counts and user ID arrays based on the new rating
         int initialThumbsUp = newRating == true ? 1 : 0;
         int initialThumbsDown = newRating == false ? 1 : 0;
+        List<String> initialThumbsUpUserIds = (newRating == true && effectiveUserId.isNotEmpty) ? [effectiveUserId] : [];
+        List<String> initialThumbsDownUserIds = (newRating == false && effectiveUserId.isNotEmpty) ? [effectiveUserId] : [];
 
         final newPublicExperience = PublicExperience(
           id: '',
@@ -3228,6 +3388,8 @@ class ExperienceService {
           allMediaPaths: experienceTemplate.imageUrls,
           thumbsUpCount: initialThumbsUp,
           thumbsDownCount: initialThumbsDown,
+          thumbsUpUserIds: initialThumbsUpUserIds,
+          thumbsDownUserIds: initialThumbsDownUserIds,
         );
 
         await createPublicExperience(newPublicExperience);
@@ -3235,40 +3397,87 @@ class ExperienceService {
         return;
       }
 
-      // Calculate the delta changes for thumbs up and thumbs down
-      int thumbsUpDelta = 0;
-      int thumbsDownDelta = 0;
-
-      // Handle previous rating removal
-      if (previousRating == true) {
-        thumbsUpDelta -= 1;
-      } else if (previousRating == false) {
-        thumbsDownDelta -= 1;
+      // Build update data using array operations for user tracking
+      final Map<String, dynamic> updateData = {};
+      
+      // Check what the user's current rating is on the public experience
+      // This is more reliable than the previousRating parameter for users without their own experience
+      bool? actualPreviousRating;
+      if (effectiveUserId.isNotEmpty) {
+        if (publicExperience.thumbsUpUserIds.contains(effectiveUserId)) {
+          actualPreviousRating = true;
+        } else if (publicExperience.thumbsDownUserIds.contains(effectiveUserId)) {
+          actualPreviousRating = false;
+        }
+      }
+      
+      // Use actual previous rating if available, otherwise fall back to the provided one
+      final bool? effectivePreviousRating = actualPreviousRating ?? previousRating;
+      
+      // Remove user from previous rating list if they had one
+      if (effectivePreviousRating == true && effectiveUserId.isNotEmpty) {
+        updateData['thumbsUpUserIds'] = FieldValue.arrayRemove([effectiveUserId]);
+        updateData['thumbsUpCount'] = FieldValue.increment(-1);
+      } else if (effectivePreviousRating == false && effectiveUserId.isNotEmpty) {
+        updateData['thumbsDownUserIds'] = FieldValue.arrayRemove([effectiveUserId]);
+        updateData['thumbsDownCount'] = FieldValue.increment(-1);
       }
 
-      // Handle new rating addition
-      if (newRating == true) {
-        thumbsUpDelta += 1;
-      } else if (newRating == false) {
-        thumbsDownDelta += 1;
+      // Add user to new rating list if they're giving a new rating
+      if (newRating == true && effectiveUserId.isNotEmpty) {
+        updateData['thumbsUpUserIds'] = FieldValue.arrayUnion([effectiveUserId]);
+        updateData['thumbsUpCount'] = FieldValue.increment(1);
+      } else if (newRating == false && effectiveUserId.isNotEmpty) {
+        updateData['thumbsDownUserIds'] = FieldValue.arrayUnion([effectiveUserId]);
+        updateData['thumbsDownCount'] = FieldValue.increment(1);
       }
 
-      // Only update if there's a change
-      if (thumbsUpDelta != 0 || thumbsDownDelta != 0) {
-        final Map<String, dynamic> updateData = {};
-        
-        if (thumbsUpDelta != 0) {
-          updateData['thumbsUpCount'] = FieldValue.increment(thumbsUpDelta);
-        }
-        if (thumbsDownDelta != 0) {
-          updateData['thumbsDownCount'] = FieldValue.increment(thumbsDownDelta);
-        }
-
+      // Only update if there's data to update
+      if (updateData.isNotEmpty) {
         await _publicExperiencesCollection.doc(publicExperience.id).update(updateData);
-        debugPrint('_syncThumbRatingWithPublicExperience: Updated counts - thumbsUpDelta: $thumbsUpDelta, thumbsDownDelta: $thumbsDownDelta');
+        debugPrint('_syncThumbRatingWithPublicExperience: Updated with userId tracking - newRating: $newRating, previousRating: $effectivePreviousRating');
       }
     } catch (e) {
       debugPrint('_syncThumbRatingWithPublicExperience: Error syncing rating: $e');
+    }
+  }
+
+  /// Updates only the public experience rating counts without requiring an experience document.
+  /// This is used when a user without their own saved experience wants to rate a place.
+  /// Tracks the userId to prevent duplicate ratings.
+  Future<void> updatePublicExperienceRatingOnly(
+    String placeId,
+    bool? newRating, {
+    required bool? previousRating,
+    Experience? experienceTemplate,
+  }) async {
+    if (placeId.isEmpty) {
+      debugPrint('updatePublicExperienceRatingOnly: placeId is empty');
+      return;
+    }
+    
+    await _syncThumbRatingWithPublicExperience(
+      placeId: placeId,
+      newRating: newRating,
+      previousRating: previousRating,
+      experienceTemplate: experienceTemplate,
+      userId: _currentUserId,
+    );
+  }
+  
+  /// Gets the user's current rating for a place from the public experience.
+  /// Returns true for thumbs up, false for thumbs down, null if no rating.
+  Future<bool?> getUserRatingForPlace(String placeId) async {
+    if (placeId.isEmpty || _currentUserId == null) return null;
+    
+    try {
+      final publicExperience = await findPublicExperienceByPlaceId(placeId);
+      if (publicExperience == null) return null;
+      
+      return publicExperience.getUserRating(_currentUserId!);
+    } catch (e) {
+      debugPrint('getUserRatingForPlace: Error getting rating: $e');
+      return null;
     }
   }
 

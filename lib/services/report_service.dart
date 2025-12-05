@@ -55,6 +55,37 @@ class ReportService {
     }
   }
 
+  /// Check if a user has already reported a specific review recently
+  /// Returns the existing report if found, null otherwise
+  Future<Report?> findExistingReviewReport({
+    required String userId,
+    required String reviewId,
+    Duration withinDuration = const Duration(days: 30),
+  }) async {
+    try {
+      final cutoffDate = DateTime.now().subtract(withinDuration);
+      
+      final querySnapshot = await _reportsCollection
+          .where('userId', isEqualTo: userId)
+          .where('reviewId', isEqualTo: reviewId)
+          .where('createdAt',
+              isGreaterThanOrEqualTo: Timestamp.fromDate(cutoffDate))
+          .limit(1)
+          .get();
+
+      if (querySnapshot.docs.isEmpty) {
+        return null;
+      }
+
+      return Report.fromFirestore(
+        querySnapshot.docs.first as DocumentSnapshot<Map<String, dynamic>>,
+      );
+    } catch (e) {
+      debugPrint('ReportService: Error checking for existing review report: $e');
+      return null;
+    }
+  }
+
   /// Get all reports submitted by a specific user
   Future<List<Report>> getUserReports(String userId) async {
     try {
