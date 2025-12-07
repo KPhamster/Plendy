@@ -14,7 +14,6 @@ import 'package:pointer_interceptor/pointer_interceptor.dart';
 import '../services/sharing_service.dart'; // RESTORED: Fallback path
 import '../models/enums/share_enums.dart'; // RESTORED: Fallback path
 import '../widgets/google_maps_widget.dart';
-import '../widgets/email_verification_banner.dart';
 import '../services/experience_service.dart'; // Import ExperienceService
 import '../services/auth_service.dart'; // Import AuthService
 import '../services/user_service.dart';
@@ -7324,9 +7323,6 @@ class _MapScreenState extends State<MapScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            // --- Email Verification Banner ---
-            const EmailVerificationBanner(),
-            
             // --- Search bar ---
             Container(
               color: Colors.white,
