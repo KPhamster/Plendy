@@ -3,6 +3,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:provider/provider.dart';
 
 import '../services/auth_service.dart';
+import 'verification_pending_screen.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -22,16 +23,27 @@ class _RegisterScreenState extends State<RegisterScreen> {
       try {
         final authService = Provider.of<AuthService>(context, listen: false);
         await authService.signUpWithEmail(
-          _emailController.text,
+          _emailController.text.trim(),
           _passwordController.text,
         );
+        
         if (mounted) {
-          Navigator.of(context).pop();
+          // Navigate to verification pending screen
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(
+              builder: (context) => VerificationPendingScreen(
+                email: _emailController.text.trim(),
+              ),
+            ),
+          );
         }
       } catch (e) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(e.toString())),
+            SnackBar(
+              content: Text(e.toString().replaceFirst('Exception: ', '')),
+              backgroundColor: Colors.red,
+            ),
           );
         }
       }

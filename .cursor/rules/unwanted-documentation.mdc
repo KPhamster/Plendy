@@ -2,4 +2,4 @@
 alwaysApply: true
 ---
 
-Do not create reference documentation unless asked to. Do not create any setup guides unless asked to.
+Never create reference documentation unless specifically asked to. Never create any setup guides unless specifically asked to.

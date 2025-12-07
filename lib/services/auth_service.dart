@@ -76,7 +76,13 @@ class AuthService extends ChangeNotifier {
           'hasCompletedOnboarding': false,
           'hasFinishedOnboardingFlow': false,
           'timezoneOffsetMinutes': timezoneOffsetMinutes,
+          'emailVerified': false,
+          'emailVerificationSentAt': FieldValue.serverTimestamp(),
+          'emailVerificationResendCount': 0,
         });
+
+        // Send email verification immediately after signup
+        await sendEmailVerification();
 
         // Initialize default categories for new user
         try {
@@ -111,6 +117,40 @@ class AuthService extends ChangeNotifier {
       );
     } catch (e) {
       rethrow;
+    }
+  }
+
+  // Send Password Reset Email using Firebase Auth
+  Future<void> sendPasswordResetEmail(String email) async {
+    try {
+      print('DEBUG: Attempting to send password reset email to: $email');
+      
+      // Use Firebase Auth's built-in password reset email
+      await _auth.sendPasswordResetEmail(email: email.trim());
+      
+      print('DEBUG: Password reset email sent successfully to: $email');
+    } on FirebaseAuthException catch (e) {
+      print('DEBUG: Firebase Auth error: ${e.code} - ${e.message}');
+      
+      String message;
+      switch (e.code) {
+        case 'invalid-email':
+          message = 'Please enter a valid email address.';
+          break;
+        case 'user-not-found':
+          // For security, don't reveal if user exists or not
+          message = 'If an account exists with this email, a password reset link has been sent.';
+          break;
+        case 'too-many-requests':
+          message = 'Too many attempts. Please try again later.';
+          break;
+        default:
+          message = e.message ?? 'Failed to send reset email. Please try again.';
+      }
+      throw Exception(message);
+    } catch (e) {
+      print('DEBUG: Generic error during password reset: $e');
+      throw Exception('Failed to send reset email. Please try again.');
     }
   }
 
@@ -311,6 +351,91 @@ class AuthService extends ChangeNotifier {
       }
       rethrow;
     }
+  }
+
+  // Send Email Verification
+  Future<void> sendEmailVerification() async {
+    try {
+      final user = _auth.currentUser;
+      if (user == null) {
+        throw Exception('No user logged in');
+      }
+
+      if (user.emailVerified) {
+        print('DEBUG: User email already verified');
+        return;
+      }
+
+      // Check rate limiting
+      final userDoc = await _firestore.collection('users').doc(user.uid).get();
+      if (userDoc.exists) {
+        final userData = userDoc.data();
+        final resendCount = userData?['emailVerificationResendCount'] ?? 0;
+        final lastResendAt = userData?['emailVerificationLastResendAt'] as Timestamp?;
+
+        // Rate limit: max 3 resends per hour
+        if (lastResendAt != null && resendCount >= 3) {
+          final hourAgo = DateTime.now().subtract(const Duration(hours: 1));
+          if (lastResendAt.toDate().isAfter(hourAgo)) {
+            throw Exception('Too many verification emails sent. Please try again later.');
+          }
+        }
+      }
+
+      // Send email verification (simple mode without dynamic links)
+      await user.sendEmailVerification();
+      
+      print('DEBUG: Email verification sent to ${user.email}');
+
+      // Update Firestore with send tracking
+      await _firestore.collection('users').doc(user.uid).update({
+        'emailVerificationLastResendAt': FieldValue.serverTimestamp(),
+        'emailVerificationResendCount': FieldValue.increment(1),
+      });
+    } on FirebaseAuthException catch (e) {
+      print('DEBUG: Firebase Auth error sending verification: ${e.code} - ${e.message}');
+      if (e.code == 'too-many-requests') {
+        throw Exception('Too many requests. Please wait a few minutes before trying again.');
+      }
+      rethrow;
+    } catch (e) {
+      print('DEBUG: Error sending email verification: $e');
+      rethrow;
+    }
+  }
+
+  // Check if current user's email is verified
+  Future<bool> checkEmailVerified() async {
+    try {
+      final user = _auth.currentUser;
+      if (user == null) return false;
+
+      // Reload user to get fresh email verification status
+      await user.reload();
+      final refreshedUser = _auth.currentUser;
+      
+      if (refreshedUser != null && refreshedUser.emailVerified) {
+        // Update Firestore to reflect verification
+        await _firestore.collection('users').doc(refreshedUser.uid).update({
+          'emailVerified': true,
+          'emailVerifiedAt': FieldValue.serverTimestamp(),
+        });
+        return true;
+      }
+      
+      return false;
+    } catch (e) {
+      print('DEBUG: Error checking email verification: $e');
+      return false;
+    }
+  }
+
+  // Get email verification status without reloading
+  bool get isEmailVerified => _auth.currentUser?.emailVerified ?? false;
+
+  // Resend verification email with rate limiting
+  Future<void> resendVerificationEmail() async {
+    await sendEmailVerification();
   }
 
   // Sign Out

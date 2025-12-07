@@ -25,5 +25,8 @@ exports.onSharePermissionCreate = require("./share_permissions").onSharePermissi
 exports.onSharePermissionUpdate = require("./share_permissions").onSharePermissionUpdate;
 exports.onSharePermissionDelete = require("./share_permissions").onSharePermissionDelete;
 
+// Export password reset email function
+exports.sendPasswordResetEmail = require("./send_password_reset").sendPasswordResetEmail;
+
 // Placeholder exports for category/experience denormalization (icon/color) if needed later
 // exports.onExperienceWriteDenorm = require("./experience_denorm").onExperienceWriteDenorm;

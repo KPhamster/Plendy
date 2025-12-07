@@ -14,6 +14,7 @@ import 'package:pointer_interceptor/pointer_interceptor.dart';
 import '../services/sharing_service.dart'; // RESTORED: Fallback path
 import '../models/enums/share_enums.dart'; // RESTORED: Fallback path
 import '../widgets/google_maps_widget.dart';
+import '../widgets/email_verification_banner.dart';
 import '../services/experience_service.dart'; // Import ExperienceService
 import '../services/auth_service.dart'; // Import AuthService
 import '../services/user_service.dart';
@@ -501,8 +502,12 @@ class _MapScreenState extends State<MapScreen> {
     final List<Future<MapEntry<String, List<Experience>>>> tasks = followeeIds
         .map((followeeId) async {
           try {
+            // Use forceRefresh: true to bypass in-flight deduplication since we're
+            // fetching for different users in parallel. The shared in-flight tracking
+            // in ExperienceService would otherwise cause all followees to get the
+            // same experiences from the first request.
             final experiences = await _experienceService
-                .getExperiencesByUser(followeeId, limit: 0); // No limit - load all followee experiences
+                .getExperiencesByUser(followeeId, limit: 0, forceRefresh: true); // No limit - load all followee experiences
             final List<Experience> publicExperiences = experiences
                 .where((exp) => _canViewFolloweeExperience(exp))
                 .toList();
@@ -5354,7 +5359,7 @@ class _MapScreenState extends State<MapScreen> {
                         Text(
                           experienceCount > 0
                               ? '$experienceCount experiences available'
-                              : 'No public experiences yet',
+                              : 'No experiences yet',
                           style: const TextStyle(
                               fontSize: 13, color: Colors.black54),
                         ),
@@ -5744,7 +5749,7 @@ class _MapScreenState extends State<MapScreen> {
                                               Text(
                                                 experienceCount > 0
                                                     ? '$experienceCount experiences'
-                                                    : 'No public experiences yet',
+                                                    : 'No experiences yet',
                                                 style: const TextStyle(
                                                     fontSize: 12,
                                                     color: Colors.black54),
@@ -7319,6 +7324,9 @@ class _MapScreenState extends State<MapScreen> {
       body: SafeArea(
         child: Column(
           children: [
+            // --- Email Verification Banner ---
+            const EmailVerificationBanner(),
+            
             // --- Search bar ---
             Container(
               color: Colors.white,
@@ -8197,31 +8205,6 @@ class _MapScreenState extends State<MapScreen> {
                                   child: _buildColorCategoryWidget(),
                                 ),
                                 const SizedBox(height: 12),
-                              ],
-                              if (selectedAdditionalNotes != null) ...[
-                                Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Icon(
-                                      Icons.notes,
-                                      size: 18,
-                                      color: Colors.grey[700],
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: Text(
-                                        selectedAdditionalNotes!,
-                                        style: TextStyle(
-                                          color: Colors.grey[800],
-                                          fontStyle: FontStyle.italic,
-                                        ),
-                                        maxLines: 3,
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 8),
                               ],
                               if (_tappedLocationDetails!.address != null &&
                                   _tappedLocationDetails!.address!.isNotEmpty) ...[
