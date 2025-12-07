@@ -1,11 +1,30 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:provider/provider.dart';
 
 import '../services/auth_service.dart';
 import '../services/email_validation_service.dart';
 import 'email_verification_screen.dart';
+
+// Custom formatter to trim trailing whitespace
+class _TrimTrailingWhitespaceFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    // If text is being added and ends with whitespace, trim it
+    if (newValue.text != oldValue.text && newValue.text.trimRight() != newValue.text) {
+      return TextEditingValue(
+        text: newValue.text.trimRight(),
+        selection: TextSelection.collapsed(offset: newValue.text.trimRight().length),
+      );
+    }
+    return newValue;
+  }
+}
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -338,6 +357,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                 keyboardType: TextInputType.emailAddress,
                                 autocorrect: false,
                                 enableSuggestions: false,
+                                inputFormatters: [_TrimTrailingWhitespaceFormatter()],
                                 decoration: InputDecoration(
                                   hintText: 'Email',
                                   floatingLabelBehavior:

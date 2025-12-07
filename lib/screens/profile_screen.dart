@@ -239,9 +239,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       ),
                     ),
                     const SizedBox(height: 8),
-                    Text(
-                      'Email: ${user?.email ?? 'No email'}',
-                      style: const TextStyle(fontSize: 18),
+                    Center(
+                      child: Text(
+                        '${user?.email ?? 'No email'}',
+                        style: TextStyle(
+                          fontSize:
+                              (user?.displayName?.isNotEmpty ?? false)
+                                  ? 16
+                                  : 20,
+                        ),
+                      ),
                     ),
                     const SizedBox(height: 16),
                     Consumer<NotificationStateService>(
