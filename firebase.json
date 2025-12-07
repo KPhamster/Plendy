@@ -51,6 +51,7 @@
       }
     ],
     "rewrites": [
+      { "source": "/__/auth/**", "destination": "/index.html" },
       { "source": "/api/publicShare", "function": { "functionId": "publicShare", "region": "us-central1" } },
       { "source": "**", "destination": "/index.html" }
     ]

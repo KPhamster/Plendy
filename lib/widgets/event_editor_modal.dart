@@ -25,7 +25,6 @@ import '../screens/event_experience_selector_screen.dart';
 import '../screens/location_picker_screen.dart';
 import '../screens/experience_page_screen.dart';
 import '../screens/map_screen.dart';
-import '../screens/events_screen.dart';
 import '../screens/auth_screen.dart';
 import '../screens/main_screen.dart';
 import 'share_experience_bottom_sheet.dart';
@@ -278,14 +277,9 @@ class _EventEditorModalState extends State<EventEditorModal> {
             wasSaved: true,
           ),
         );
-        
-        // Navigate to events screen, removing all previous routes
-        Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(
-            builder: (context) => const EventsScreen(),
-          ),
-          (route) => false, // Remove all previous routes
-        );
+
+        // Navigate to main screen with events tab selected
+        _navigateToMainScreen();
       }
     } catch (e) {
       setState(() {

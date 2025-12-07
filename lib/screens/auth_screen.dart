@@ -17,6 +17,152 @@ class _AuthScreenState extends State<AuthScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
 
+  void _showForgotPasswordDialog() {
+    final resetEmailController = TextEditingController();
+    final resetFormKey = GlobalKey<FormState>();
+    bool isLoading = false;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              backgroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              title: const Text(
+                'Reset Password',
+                style: TextStyle(
+                  fontWeight: FontWeight.w600,
+                  fontSize: 20,
+                ),
+              ),
+              content: Form(
+                key: resetFormKey,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Enter your email address and we\'ll send you a link to reset your password.\n\nNote: The email may arrive in your spam/junk folder.',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: Colors.black54,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    TextFormField(
+                      controller: resetEmailController,
+                      keyboardType: TextInputType.emailAddress,
+                      enabled: !isLoading,
+                      decoration: InputDecoration(
+                        hintText: 'Email',
+                        filled: true,
+                        fillColor: Colors.grey[100],
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide.none,
+                        ),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 14,
+                        ),
+                      ),
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Please enter your email';
+                        }
+                        if (!RegExp(r"^\S+@\S+\.\S+$").hasMatch(value)) {
+                          return 'Please enter a valid email address';
+                        }
+                        return null;
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: isLoading
+                      ? null
+                      : () => Navigator.of(dialogContext).pop(),
+                  child: const Text(
+                    'Cancel',
+                    style: TextStyle(color: Colors.black54),
+                  ),
+                ),
+                ElevatedButton(
+                  onPressed: isLoading
+                      ? null
+                      : () async {
+                          if (resetFormKey.currentState!.validate()) {
+                            setDialogState(() => isLoading = true);
+
+                            try {
+                              final authService = Provider.of<AuthService>(
+                                context,
+                                listen: false,
+                              );
+                              await authService.sendPasswordResetEmail(
+                                resetEmailController.text.trim(),
+                              );
+
+                              if (!mounted) return;
+                              Navigator.of(dialogContext).pop();
+
+                              ScaffoldMessenger.of(this.context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    '✉️ Email sent to ${resetEmailController.text.trim()}\n⚠️ Check your spam/junk folder if you don\'t see it.',
+                                  ),
+                                  backgroundColor: Colors.green,
+                                  duration: const Duration(seconds: 7),
+                                ),
+                              );
+                            } catch (e) {
+                              setDialogState(() => isLoading = false);
+
+                              if (!mounted) return;
+                              ScaffoldMessenger.of(this.context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    e.toString().replaceFirst('Exception: ', ''),
+                                  ),
+                                ),
+                              );
+                            }
+                          }
+                        },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.black,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                  child: isLoading
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor:
+                                AlwaysStoppedAnimation<Color>(Colors.white),
+                          ),
+                        )
+                      : const Text('Send Reset Email'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final mediaQuery = MediaQuery.of(context);
@@ -133,7 +279,7 @@ class _AuthScreenState extends State<AuthScreen> {
                               Align(
                                 alignment: Alignment.centerRight,
                                 child: TextButton(
-                                  onPressed: () {},
+                                  onPressed: _showForgotPasswordDialog,
                                   child: const Text(
                                     'Forgot password?',
                                     style: TextStyle(

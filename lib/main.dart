@@ -1300,6 +1300,18 @@ class _MyAppState extends State<MyApp> {
     if (normalizedUri != uri) {
       print('DeepLink: Normalized URI: ' + normalizedUri.toString());
     }
+
+    // Handle Firebase Auth email verification links
+    // Format: ?mode=verifyEmail&oobCode=...
+    final String? mode = normalizedUri.queryParameters['mode'];
+    final String? oobCode = normalizedUri.queryParameters['oobCode'];
+    
+    if (mode == 'verifyEmail' && oobCode != null) {
+      print('DeepLink: Email verification link detected');
+      _handleEmailVerification(oobCode);
+      return;
+    }
+
     final List<String> segments = normalizedUri.pathSegments;
     print('DeepLink: Path segments: ' + segments.toString());
 
@@ -1476,6 +1488,89 @@ class _MyAppState extends State<MyApp> {
       _intentSub?.cancel(); // Cancel the stream subscription
     }
     super.dispose();
+  }
+
+  Future<void> _handleEmailVerification(String oobCode) async {
+    try {
+      print('DeepLink: Verifying email with code: ${oobCode.substring(0, 10)}...');
+      
+      // Apply the verification code
+      await FirebaseAuth.instance.applyActionCode(oobCode);
+      
+      print('DeepLink: Email verification successful');
+      
+      // Reload the current user to refresh email verification status
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        await user.reload();
+        final refreshedUser = FirebaseAuth.instance.currentUser;
+        
+        if (refreshedUser != null && refreshedUser.emailVerified) {
+          // Update Firestore
+          await FirebaseFirestore.instance
+              .collection('users')
+              .doc(refreshedUser.uid)
+              .update({
+            'emailVerified': true,
+            'emailVerifiedAt': FieldValue.serverTimestamp(),
+          });
+          
+          print('DeepLink: Firestore updated with verification status');
+        }
+      }
+      
+      // Show success message and navigate to home
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && navigatorKey.currentContext != null) {
+          // Pop all routes and go to home
+          navigatorKey.currentState?.popUntil((route) => route.isFirst);
+          
+          // Show success message
+          ScaffoldMessenger.of(navigatorKey.currentContext!).showSnackBar(
+            const SnackBar(
+              content: Text('Email verified successfully! Welcome to Plendy.'),
+              backgroundColor: Colors.green,
+              duration: Duration(seconds: 4),
+            ),
+          );
+        }
+      });
+    } on FirebaseAuthException catch (e) {
+      print('DeepLink: Email verification error: ${e.code} - ${e.message}');
+      
+      String errorMessage = 'Failed to verify email.';
+      if (e.code == 'invalid-action-code') {
+        errorMessage = 'This verification link is invalid or has expired.';
+      } else if (e.code == 'expired-action-code') {
+        errorMessage = 'This verification link has expired. Please request a new one.';
+      }
+      
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && navigatorKey.currentContext != null) {
+          ScaffoldMessenger.of(navigatorKey.currentContext!).showSnackBar(
+            SnackBar(
+              content: Text(errorMessage),
+              backgroundColor: Colors.red,
+              duration: const Duration(seconds: 5),
+            ),
+          );
+        }
+      });
+    } catch (e) {
+      print('DeepLink: Unexpected error during email verification: $e');
+      
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && navigatorKey.currentContext != null) {
+          ScaffoldMessenger.of(navigatorKey.currentContext!).showSnackBar(
+            const SnackBar(
+              content: Text('An unexpected error occurred. Please try again.'),
+              backgroundColor: Colors.red,
+              duration: Duration(seconds: 5),
+            ),
+          );
+        }
+      });
+    }
   }
 
   @override
