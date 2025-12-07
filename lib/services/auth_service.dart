@@ -71,18 +71,24 @@ class AuthService extends ChangeNotifier {
       if (credential.user != null) {
         await _userService.saveUserEmail(credential.user!.uid, email);
         // Capture timezone on first sign up
+        // Mark user as requiring email verification (for new users only)
         final timezoneOffsetMinutes = -DateTime.now().timeZoneOffset.inMinutes;
         await _userService.updateUserCoreData(credential.user!.uid, {
           'hasCompletedOnboarding': false,
           'hasFinishedOnboardingFlow': false,
           'timezoneOffsetMinutes': timezoneOffsetMinutes,
-          'emailVerified': false,
-          'emailVerificationSentAt': FieldValue.serverTimestamp(),
-          'emailVerificationResendCount': 0,
+          'requiresEmailVerification': true, // New users must verify email
+          'emailVerifiedAt': null, // Will be set when verified
         });
 
-        // Send email verification immediately after signup
-        await sendEmailVerification();
+        // Send verification email
+        try {
+          await credential.user!.sendEmailVerification();
+          print("Verification email sent to: $email");
+        } catch (e) {
+          print("Error sending verification email: $e");
+          // Don't rethrow - account is created, user can resend verification
+        }
 
         // Initialize default categories for new user
         try {
@@ -106,6 +112,42 @@ class AuthService extends ChangeNotifier {
     } catch (e) {
       rethrow;
     }
+  }
+
+  /// Resend email verification
+  Future<void> resendVerificationEmail() async {
+    final user = _auth.currentUser;
+    if (user == null) {
+      throw Exception('No user logged in');
+    }
+    if (user.emailVerified) {
+      throw Exception('Email is already verified');
+    }
+    await user.sendEmailVerification();
+    print("Verification email resent to: ${user.email}");
+  }
+
+  /// Check if current user's email is verified (refreshes from Firebase)
+  Future<bool> checkEmailVerified() async {
+    final user = _auth.currentUser;
+    if (user == null) return false;
+    
+    // Reload user to get latest verification status
+    await user.reload();
+    _currentUser = _auth.currentUser;
+    
+    return _currentUser?.emailVerified ?? false;
+  }
+
+  /// Mark email as verified in Firestore (called after user verifies)
+  Future<void> markEmailVerified() async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+    
+    await _userService.updateUserCoreData(user.uid, {
+      'emailVerifiedAt': FieldValue.serverTimestamp(),
+    });
+    print("Email verification marked in Firestore for: ${user.uid}");
   }
 
   // Email/Password Sign In
@@ -351,91 +393,6 @@ class AuthService extends ChangeNotifier {
       }
       rethrow;
     }
-  }
-
-  // Send Email Verification
-  Future<void> sendEmailVerification() async {
-    try {
-      final user = _auth.currentUser;
-      if (user == null) {
-        throw Exception('No user logged in');
-      }
-
-      if (user.emailVerified) {
-        print('DEBUG: User email already verified');
-        return;
-      }
-
-      // Check rate limiting
-      final userDoc = await _firestore.collection('users').doc(user.uid).get();
-      if (userDoc.exists) {
-        final userData = userDoc.data();
-        final resendCount = userData?['emailVerificationResendCount'] ?? 0;
-        final lastResendAt = userData?['emailVerificationLastResendAt'] as Timestamp?;
-
-        // Rate limit: max 3 resends per hour
-        if (lastResendAt != null && resendCount >= 3) {
-          final hourAgo = DateTime.now().subtract(const Duration(hours: 1));
-          if (lastResendAt.toDate().isAfter(hourAgo)) {
-            throw Exception('Too many verification emails sent. Please try again later.');
-          }
-        }
-      }
-
-      // Send email verification (simple mode without dynamic links)
-      await user.sendEmailVerification();
-      
-      print('DEBUG: Email verification sent to ${user.email}');
-
-      // Update Firestore with send tracking
-      await _firestore.collection('users').doc(user.uid).update({
-        'emailVerificationLastResendAt': FieldValue.serverTimestamp(),
-        'emailVerificationResendCount': FieldValue.increment(1),
-      });
-    } on FirebaseAuthException catch (e) {
-      print('DEBUG: Firebase Auth error sending verification: ${e.code} - ${e.message}');
-      if (e.code == 'too-many-requests') {
-        throw Exception('Too many requests. Please wait a few minutes before trying again.');
-      }
-      rethrow;
-    } catch (e) {
-      print('DEBUG: Error sending email verification: $e');
-      rethrow;
-    }
-  }
-
-  // Check if current user's email is verified
-  Future<bool> checkEmailVerified() async {
-    try {
-      final user = _auth.currentUser;
-      if (user == null) return false;
-
-      // Reload user to get fresh email verification status
-      await user.reload();
-      final refreshedUser = _auth.currentUser;
-      
-      if (refreshedUser != null && refreshedUser.emailVerified) {
-        // Update Firestore to reflect verification
-        await _firestore.collection('users').doc(refreshedUser.uid).update({
-          'emailVerified': true,
-          'emailVerifiedAt': FieldValue.serverTimestamp(),
-        });
-        return true;
-      }
-      
-      return false;
-    } catch (e) {
-      print('DEBUG: Error checking email verification: $e');
-      return false;
-    }
-  }
-
-  // Get email verification status without reloading
-  bool get isEmailVerified => _auth.currentUser?.emailVerified ?? false;
-
-  // Resend verification email with rate limiting
-  Future<void> resendVerificationEmail() async {
-    await sendEmailVerification();
   }
 
   // Sign Out
