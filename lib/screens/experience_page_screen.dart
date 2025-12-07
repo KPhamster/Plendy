@@ -53,6 +53,7 @@ import 'package:collection/collection.dart';
 // --- END ADDED ---
 import 'map_screen.dart'; // ADDED: Import for MapScreen
 import 'main_screen.dart';
+import 'auth_screen.dart'; // ADDED: Import for AuthScreen
 import 'package:flutter/foundation.dart'; // ADDED for kIsWeb
 import 'package:webview_flutter/webview_flutter.dart';
 import '../services/experience_share_service.dart'; // ADDED: Import ExperienceShareService
@@ -3954,6 +3955,14 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   Future<void> _handleSaveExperiencePressed() async {
     if (!widget.readOnlyPreview) return;
     if (_isSaveSheetOpen) return;
+
+    // Check if user is authenticated - redirect to auth screen on web if not
+    if (kIsWeb && _authService.currentUser == null) {
+      Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const AuthScreen()),
+      );
+      return;
+    }
 
     setState(() {
       _isSaveSheetOpen = true;

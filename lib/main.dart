@@ -35,6 +35,7 @@ import 'providers/receive_share_provider.dart';
 import 'providers/category_save_progress_notifier.dart';
 import 'dart:async'; // Import dart:async for StreamSubscription
 import 'services/google_maps_service.dart'; // ADDED: Import GoogleMapsService
+import 'services/discovery_cover_service.dart'; // Import DiscoveryCoverService
 import 'firebase_options.dart'; // Import Firebase options
 import 'package:flutter/foundation.dart'
     show kIsWeb, kReleaseMode; // Import kIsWeb, kReleaseMode
@@ -512,6 +513,9 @@ void main() async {
   // This makes Collections screen load instantly when user navigates to it
   unawaited(_preloadCollectionsData());
 
+  // Initialize Discovery cover service (fetch list of available covers)
+  unawaited(_initializeDiscoveryCoverService());
+
   // Initialize sharing service
   // Conditionally initialize SharingService if not on web
   if (!kIsWeb) {
@@ -819,6 +823,18 @@ Future<void> _preloadUserLocation() async {
   }
 }
 
+/// Initialize Discovery cover service by fetching list of available cover images
+Future<void> _initializeDiscoveryCoverService() async {
+  try {
+    print("MAIN: Initializing Discovery cover service...");
+    final coverService = DiscoveryCoverService();
+    await coverService.initialize();
+    print("MAIN: Discovery cover service initialized");
+  } catch (e) {
+    print("MAIN: Error initializing Discovery cover service: $e");
+  }
+}
+
 /// Preload Collections data in background to warm up Firestore cache
 /// This runs the slow permission queries during app startup so Collections loads instantly
 bool _collectionsPreloaded = false; // Ensure we only preload once per app session
@@ -885,6 +901,8 @@ class _MyAppState extends State<MyApp> {
   String? _initialExperienceShareToken; // Track initial experience share token from URL
   String? _initialProfileUserId; // Track initial profile user ID from URL
   static const int _maxNavigatorPushRetries = 12;
+  bool _coverImagePreloaded = false; // Track if cover image is preloaded
+  Future<void>? _coverPreloadFuture; // Track the preload operation
 
   void _pushRouteWhenReady(WidgetBuilder builder,
       {RouteSettings? settings, int attempt = 0}) {
@@ -1236,8 +1254,43 @@ class _MyAppState extends State<MyApp> {
         print("MAIN: App paused");
       },
     ));
+
     // Deep link handling for shared links
     _initDeepLinks();
+  }
+
+  Future<void> _preloadDiscoveryCoverImages(BuildContext context) async {
+    if (!mounted) return;
+    
+    try {
+      final coverService = DiscoveryCoverService();
+      
+      // Preload 1 image during splash screen phase
+      print('MAIN: Preloading 1 Discovery cover image for splash...');
+      await coverService.preloadSingleImage(context);
+      print('MAIN: Discovery cover image preloaded for splash');
+      
+      setState(() {
+        _coverImagePreloaded = true;
+      });
+      
+      // Preload 5 more images in background (post-splash)
+      if (!mounted) return;
+      Future.microtask(() async {
+        try {
+          print('MAIN: Preloading 5 additional Discovery cover images in background...');
+          await coverService.preloadBackgroundImages(context, count: 5);
+          print('MAIN: Background Discovery cover preload complete');
+        } catch (e) {
+          print('MAIN: Error in background Discovery cover preload: $e');
+        }
+      });
+    } catch (e) {
+      print('MAIN: Error preloading Discovery cover images: $e');
+      setState(() {
+        _coverImagePreloaded = true; // Mark as complete even on error
+      });
+    }
   }
 
   void _initDeepLinks() async {
@@ -1560,6 +1613,13 @@ class _MyAppState extends State<MyApp> {
           secondary: Colors.white, // Lighter red for secondary elements
         ),
       ),
+      builder: (context, child) {
+        // Start preloading Discovery cover images as soon as MaterialApp builds
+        if (_coverPreloadFuture == null) {
+          _coverPreloadFuture = _preloadDiscoveryCoverImages(context);
+        }
+        return child ?? const SizedBox.shrink();
+      },
       home: _buildHomeWidget(authService, launchedFromShare),
     );
   }

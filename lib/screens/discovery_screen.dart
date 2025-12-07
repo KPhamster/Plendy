@@ -36,6 +36,8 @@ import 'map_screen.dart';
 import '../widgets/web_media_preview_card.dart';
 import '../widgets/share_experience_bottom_sheet.dart';
 import '../models/share_result.dart';
+import '../services/discovery_cover_service.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 
 class DiscoveryScreen extends StatefulWidget {
   const DiscoveryScreen({
@@ -604,8 +606,22 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
         if (!value) {
           _currentCoverQuote = _pickRandomCoverQuote();
           _isCoverImageLoaded = false; // Reset cover image loaded state when returning to cover
+          // Try to get a different preloaded cover image for variety
+          _selectNewPreloadedCoverImage();
         }
       });
+    }
+  }
+
+  void _selectNewPreloadedCoverImage() {
+    final coverService = DiscoveryCoverService();
+    final newUrl = coverService.getRandomPreloadedUrl();
+    if (newUrl != null && newUrl != _coverBackgroundUrl) {
+      setState(() {
+        _coverBackgroundUrl = newUrl;
+        _isCoverImageLoaded = false;
+      });
+      debugPrint('DiscoveryScreen: Selected new preloaded cover image');
     }
   }
 
@@ -654,6 +670,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
       _currentCoverQuote = _pickRandomCoverQuote();
       _isCoverImageLoaded = false; // Reset cover image loaded state
     });
+    _selectNewPreloadedCoverImage(); // Try to get a new preloaded cover image
     await _initializeFeed();
   }
 
@@ -1430,6 +1447,23 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
 
   Future<void> _fetchCoverBackgrounds() async {
     try {
+      final coverService = DiscoveryCoverService();
+      
+      // First, try to get a preloaded cover URL from the service
+      final preloadedUrl = coverService.getRandomPreloadedUrl();
+      if (preloadedUrl != null) {
+        debugPrint('DiscoveryScreen: Using preloaded cover image from service');
+        if (mounted) {
+          setState(() {
+            _coverBackgroundUrl = preloadedUrl;
+            _isCoverImageLoaded = false;
+          });
+        }
+        return;
+      }
+      
+      // Fallback: fetch from Firebase Storage if service doesn't have preloaded images
+      debugPrint('DiscoveryScreen: No preloaded images, fetching from Firebase Storage');
       final ListResult result =
           await FirebaseStorage.instance.ref(_coverBackgroundFolder).listAll();
       if (result.items.isEmpty) {
@@ -1520,16 +1554,21 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
 
     final Widget? coverImage = _coverBackgroundUrl == null
         ? null
-        : Image.network(
-            _coverBackgroundUrl!,
+        : CachedNetworkImage(
+            imageUrl: _coverBackgroundUrl!,
             key: ValueKey(_coverBackgroundUrl),
             fit: BoxFit.cover,
             color: Colors.black.withOpacity(0.45),
             colorBlendMode: BlendMode.darken,
-            frameBuilder: (BuildContext context, Widget child, int? frame,
-                bool wasSynchronouslyLoaded) {
-              // Mark image as loaded when frame is available
-              if (frame != null) {
+            fadeInDuration: const Duration(milliseconds: 150), // Fast fade for uncached images
+            fadeOutDuration: const Duration(milliseconds: 0), // Instant fade out
+            placeholder: (context, url) {
+              // Show nothing while loading (background gradient will be visible)
+              return const SizedBox.shrink();
+            },
+            imageBuilder: (context, imageProvider) {
+              // Mark as loaded when image is ready
+              if (!_isCoverImageLoaded) {
                 WidgetsBinding.instance.addPostFrameCallback((_) {
                   if (mounted && !_isCoverImageLoaded) {
                     setState(() {
@@ -1538,24 +1577,14 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
                   }
                 });
               }
-              if (wasSynchronouslyLoaded) {
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  if (mounted && !_isCoverImageLoaded) {
-                    setState(() {
-                      _isCoverImageLoaded = true;
-                    });
-                  }
-                });
-                return child;
-              }
-              return AnimatedOpacity(
-                opacity: frame == null ? 0.0 : 1.0,
-                duration: _coverFadeDuration,
-                curve: Curves.easeOut,
-                child: child,
+              return Image(
+                image: imageProvider,
+                fit: BoxFit.cover,
+                color: Colors.black.withOpacity(0.45),
+                colorBlendMode: BlendMode.darken,
               );
             },
-            errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+            errorWidget: (context, url, error) => const SizedBox.shrink(),
           );
 
     return Stack(
@@ -1563,22 +1592,6 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
       children: [
         background,
         if (coverImage != null) coverImage,
-        // Show app icon in top 40% while waiting for cover image to load
-        if (!_isCoverImageLoaded)
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            height: MediaQuery.of(context).size.height * 0.4,
-            child: Center(
-              child: Image.asset(
-                'assets/icon/icon.png',
-                fit: BoxFit.contain,
-                width: 450,
-                height: 450,
-              ),
-            ),
-          ),
         SafeArea(
           child: Align(
             alignment: Alignment.topRight,
