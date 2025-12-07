@@ -150,6 +150,96 @@ class AuthService extends ChangeNotifier {
     print("Email verification marked in Firestore for: ${user.uid}");
   }
 
+  /// Check if the current user has password authentication provider
+  bool hasPasswordProvider() {
+    final user = _auth.currentUser;
+    if (user == null) return false;
+    
+    return user.providerData.any((provider) => provider.providerId == 'password');
+  }
+
+  /// Get list of authentication provider IDs for current user
+  List<String> getAuthProviders() {
+    final user = _auth.currentUser;
+    if (user == null) return [];
+    
+    return user.providerData.map((provider) => provider.providerId).toList();
+  }
+
+  /// Update user email with verification (only for password users)
+  /// Sends verification email to new address - email is only updated after user verifies
+  Future<void> updateEmailWithVerification(String newEmail) async {
+    final user = _auth.currentUser;
+    if (user == null) {
+      throw Exception('No user logged in');
+    }
+
+    // Check if user has password provider
+    if (!hasPasswordProvider()) {
+      throw Exception('Email updates are only available for users with email/password authentication. Social login users cannot change their email.');
+    }
+
+    // Check if email is actually different
+    if (user.email?.toLowerCase() == newEmail.toLowerCase()) {
+      throw Exception('This is already your current email address');
+    }
+
+    try {
+      // Use verifyBeforeUpdateEmail - this sends verification to new email
+      // and only updates after user clicks verification link
+      await user.verifyBeforeUpdateEmail(newEmail);
+      print("Verification email sent to: $newEmail");
+    } on FirebaseAuthException catch (e) {
+      print("Firebase error updating email: ${e.code} - ${e.message}");
+      
+      String message;
+      switch (e.code) {
+        case 'requires-recent-login':
+          message = 'For security, please sign out and sign back in before changing your email address.';
+          break;
+        case 'invalid-email':
+          message = 'Please enter a valid email address.';
+          break;
+        case 'email-already-in-use':
+          message = 'This email is already in use by another account.';
+          break;
+        default:
+          message = e.message ?? 'Failed to update email. Please try again.';
+      }
+      throw Exception(message);
+    } catch (e) {
+      print("Generic error updating email: $e");
+      throw Exception('Failed to send verification email. Please try again.');
+    }
+  }
+
+  /// Check if email has been updated and sync with Firestore
+  /// Should be called after user clicks verification link
+  Future<bool> checkAndSyncEmailUpdate() async {
+    final user = _auth.currentUser;
+    if (user == null) return false;
+
+    try {
+      // Reload user to get latest email
+      await user.reload();
+      _currentUser = _auth.currentUser;
+      
+      // Get updated email
+      final updatedEmail = _currentUser?.email;
+      if (updatedEmail == null) return false;
+
+      // Update email in Firestore
+      await _userService.saveUserEmail(_currentUser!.uid, updatedEmail);
+      
+      print("Email updated and synced to Firestore: $updatedEmail");
+      notifyListeners();
+      return true;
+    } catch (e) {
+      print("Error syncing email update: $e");
+      return false;
+    }
+  }
+
   // Email/Password Sign In
   Future<UserCredential> signInWithEmail(String email, String password) async {
     try {
