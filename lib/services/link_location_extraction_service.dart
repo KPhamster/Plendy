@@ -801,18 +801,70 @@ class LinkLocationExtractionService {
       
       for (final locationInfo in extractedNames) {
         
-        String searchQuery = locationInfo.name;
-        if (locationInfo.city != null) {
-          searchQuery += ' ${locationInfo.city}';
-        }
+        // Strategy: Try multiple search queries to get the best result
+        // 1. First try just the name (most specific, avoids locality confusion)
+        // 2. If no good results, try name + city
+        // 3. If still no results, try name + "Los Angeles" or other broad context
         
-        final placeResults = await _maps.searchPlaces(
-          searchQuery,
+        List<Map<String, dynamic>> placeResults = [];
+        Map<String, dynamic>? placeResult;
+        
+        // Attempt 1: Search with just the name
+        print('📷 IMAGE EXTRACTION: Searching Places API for: ${locationInfo.name}');
+        placeResults = await _maps.searchPlaces(
+          locationInfo.name,
           latitude: userLocation?.latitude,
           longitude: userLocation?.longitude,
         );
+        placeResult = _selectBestPlaceResult(placeResults, locationInfo.name);
         
-        final placeResult = placeResults.isNotEmpty ? placeResults.first : null;
+        // Check if we got a good establishment result (not just a locality)
+        bool gotGoodResult = false;
+        if (placeResult != null) {
+          final types = (placeResult['types'] as List?)?.cast<String>() ?? [];
+          final isEstablishment = types.any((t) => 
+            t == 'establishment' || t == 'point_of_interest' || t == 'food' || 
+            t == 'restaurant' || t == 'cafe' || t == 'bar' || t == 'store');
+          final isLocality = types.any((t) => 
+            t == 'locality' || t == 'sublocality' || t == 'neighborhood' || t == 'political');
+          gotGoodResult = isEstablishment || !isLocality;
+        }
+        
+        // Attempt 2: If no good result and we have a city, try with city
+        if (!gotGoodResult && locationInfo.city != null && locationInfo.city!.isNotEmpty) {
+          final queryWithCity = '${locationInfo.name} ${locationInfo.city}';
+          print('📷 IMAGE EXTRACTION: Retrying with city: $queryWithCity');
+          final resultsWithCity = await _maps.searchPlaces(
+            queryWithCity,
+            latitude: userLocation?.latitude,
+            longitude: userLocation?.longitude,
+          );
+          final resultWithCity = _selectBestPlaceResult(resultsWithCity, locationInfo.name);
+          
+          // Only use this result if it's better (is an establishment)
+          if (resultWithCity != null) {
+            final types = (resultWithCity['types'] as List?)?.cast<String>() ?? [];
+            final isEstablishment = types.any((t) => 
+              t == 'establishment' || t == 'point_of_interest' || t == 'food' || 
+              t == 'restaurant' || t == 'cafe' || t == 'bar' || t == 'store');
+            if (isEstablishment || placeResult == null) {
+              placeResult = resultWithCity;
+              gotGoodResult = true;
+            }
+          }
+        }
+        
+        // Attempt 3: If still no results and we have type info, try name + type
+        if (placeResult == null && locationInfo.type != null) {
+          final queryWithType = '${locationInfo.name} ${locationInfo.type}';
+          print('📷 IMAGE EXTRACTION: Retrying with type: $queryWithType');
+          final resultsWithType = await _maps.searchPlaces(
+            queryWithType,
+            latitude: userLocation?.latitude,
+            longitude: userLocation?.longitude,
+          );
+          placeResult = _selectBestPlaceResult(resultsWithType, locationInfo.name);
+        }
         
         if (placeResult != null) {
           // Handle both camelCase and snake_case field names
@@ -936,6 +988,123 @@ class LinkLocationExtractionService {
       print('❌ IMAGE EXTRACTION ERROR: $e');
       return [];
     }
+  }
+
+  /// Select the best place result from a list, preferring businesses over neighborhoods
+  /// 
+  /// When searching for "@kuyalord_la (East Hollywood)", we might get:
+  /// 1. "East Hollywood, LA, CA, USA" (locality - NOT what we want)
+  /// 2. "Kuya Lord, Melrose Avenue..." (establishment - WHAT WE WANT)
+  /// 
+  /// This method picks the best match by:
+  /// 1. Preferring establishments (restaurants, cafes, shops) over localities/neighborhoods
+  /// 2. Preferring results whose name contains the original search term
+  Map<String, dynamic>? _selectBestPlaceResult(
+    List<Map<String, dynamic>> results,
+    String originalName,
+  ) {
+    if (results.isEmpty) return null;
+    if (results.length == 1) return results.first;
+    
+    // Normalize the original name for comparison
+    final normalizedOriginal = _normalizeForComparison(originalName);
+    
+    // Types that indicate a locality/neighborhood (NOT what we want)
+    const localityTypes = [
+      'locality',
+      'sublocality',
+      'sublocality_level_1',
+      'neighborhood',
+      'administrative_area_level_1',
+      'administrative_area_level_2',
+      'administrative_area_level_3',
+      'political',
+    ];
+    
+    // Types that indicate an establishment/business (what we WANT)
+    const establishmentTypes = [
+      'establishment',
+      'point_of_interest',
+      'food',
+      'restaurant',
+      'cafe',
+      'bar',
+      'store',
+      'shopping_mall',
+      'meal_delivery',
+      'meal_takeaway',
+      'bakery',
+      'night_club',
+      'tourist_attraction',
+      'museum',
+      'park',
+    ];
+    
+    Map<String, dynamic>? bestResult;
+    int bestScore = -1;
+    
+    for (final result in results) {
+      int score = 0;
+      
+      // Get the result name and types
+      final resultName = (result['name'] ?? result['description']?.toString().split(',').first ?? '') as String;
+      final normalizedResultName = _normalizeForComparison(resultName);
+      final types = (result['types'] as List?)?.cast<String>() ?? [];
+      
+      // Score based on name similarity
+      if (normalizedResultName.contains(normalizedOriginal) || 
+          normalizedOriginal.contains(normalizedResultName)) {
+        score += 50; // Strong match
+      }
+      
+      // Check if the original name words appear in the result
+      final originalWords = normalizedOriginal.split(RegExp(r'\s+')).where((w) => w.length > 2);
+      for (final word in originalWords) {
+        if (normalizedResultName.contains(word)) {
+          score += 10;
+        }
+      }
+      
+      // Penalize locality/neighborhood results
+      for (final type in types) {
+        if (localityTypes.contains(type)) {
+          score -= 30;
+          break;
+        }
+      }
+      
+      // Boost establishment/business results
+      for (final type in types) {
+        if (establishmentTypes.contains(type)) {
+          score += 25;
+          break;
+        }
+      }
+      
+      // Log scoring for debugging
+      print('📷 IMAGE EXTRACTION: Scoring "$resultName" = $score (types: ${types.take(3).join(", ")})');
+      
+      if (score > bestScore) {
+        bestScore = score;
+        bestResult = result;
+      }
+    }
+    
+    if (bestResult != null) {
+      final selectedName = (bestResult['name'] ?? bestResult['description']?.toString().split(',').first ?? '') as String;
+      print('📷 IMAGE EXTRACTION: Selected best result: "$selectedName" (score: $bestScore)');
+    }
+    
+    return bestResult ?? results.first;
+  }
+  
+  /// Normalize a string for comparison (lowercase, remove special chars)
+  String _normalizeForComparison(String text) {
+    return text
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9\s]'), '')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
   }
 
   /// Extract coordinates from Places API result

@@ -465,6 +465,32 @@ Provide accurate, verified location information only.
 You are an expert at OCR (Optical Character Recognition) and location extraction. 
 Analyze this screenshot/image and extract ALL location and place information.
 
+=== INSTAGRAM PREVIEW STRUCTURE (IMPORTANT) ===
+Instagram preview images typically have THREE sections. Process them in this priority order:
+
+**PRIORITY 1 - MAIN CONTENT (Focus here first!):**
+- The large main image or video thumbnail at the top
+- Text overlaid on the main image/video (location text, captions burned into video)
+- Location pin icons 📍 with place names near the top
+- Any signs, storefronts, or business names visible in the main image
+
+**PRIORITY 2 - POST CAPTION (Secondary focus):**
+- The caption text below the main image (before hashtags)
+- Look for location names, business names, addresses mentioned naturally
+- Text like "visited", "at", "went to", "check out" followed by place names
+- Lists of places (e.g., "📍 Point Buchon Trail", "📍 Hearst Castle")
+
+**PRIORITY 3 - HASHTAGS (Only if nothing found above):**
+- Hashtags at the end of captions (#locationname, #cityname)
+- ONLY extract from hashtags if ZERO locations were found in Priority 1 and 2
+- Convert hashtag to readable name: #bigsur → "Big Sur", #sanfrancisco → "San Francisco"
+
+**COMPLETELY IGNORE - DO NOT EXTRACT:**
+- "More posts from [username]" section at the bottom
+- Small thumbnail images in the "More posts from" grid
+- Any text from these thumbnail images
+- Suggested accounts or "You might also like" sections
+
 === CRITICAL: READ ALL TEXT IN THE IMAGE ===
 Use your OCR capabilities to detect and read ALL visible text, including:
 - Text overlaid on video frames (like TikTok/Instagram Reels captions)
@@ -481,14 +507,22 @@ Social media handles (@username) are often business names! ALWAYS convert them:
 - "@thebluebottlecoffee" → "Blue Bottle Coffee"
 - "@matecoffeebar" → "Mate Coffee Bar"
 - "@taco.bell.official" → "Taco Bell"
+- "@kuyalord_la" → "Kuya Lord" (NOT "Kuyalord La"!)
+- "@carlitosgardel" → "Carlitos Gardel"
+- "@kissa_cora" → "Kissa Cora"
+- "@flowersfinest_" → "Flowers Finest"
 
 Rules for conversion:
 1. Remove the @ symbol
-2. Remove domain suffixes (.us, .co, .nyc, .la, .official, .shop, etc.)
-3. Replace dots (.) and underscores (_) with spaces
-4. Capitalize each word properly (Title Case)
-5. Remove "the" prefix if it makes sense
-6. The result should be a human-readable business name
+2. REMOVE city/location suffixes: _la, _nyc, _sf, _chi, _atl, _mia, _dc, _phx, etc.
+3. REMOVE domain suffixes: .us, .co, .official, .shop, etc.
+4. Replace remaining dots (.) and underscores (_) with spaces
+5. Split camelCase or concatenated words: "kuyalord" → "Kuya Lord", "carlitosgardel" → "Carlitos Gardel"
+6. Capitalize each word properly (Title Case)
+7. The result should be a human-readable business name
+
+IMPORTANT: When you see "@kuyalord_la (East Hollywood)", the name is "Kuya Lord" NOT "Kuyalord La"!
+The "_la" is a location suffix meaning Los Angeles, it is NOT part of the business name!
 
 === LOOK FOR THESE LOCATION TYPES ===
 1. Business names (restaurants, cafes, shops, bars, hotels)
@@ -499,6 +533,13 @@ Rules for conversion:
 6. Tagged locations from social media (📍 location markers)
 7. Signs, storefronts, menus showing business names
 8. Text mentioning "at", "visited", "went to", "check out"
+
+=== FILTER OUT GENERIC/NON-SPECIFIC LOCATIONS ===
+DO NOT include overly broad regions unless they are the ONLY location found:
+- Skip: "California", "USA", "Central Coast", "Southern California" (too broad)
+- Keep: "Carmel-by-the-Sea", "San Simeon", "Big Sur" (specific cities/areas)
+- Keep: "Hearst Castle", "Bixby Bridge", "Point Lobos" (specific landmarks)
+If a post mentions both "California" and "Hearst Castle", only include "Hearst Castle"
 
 === SOCIAL MEDIA SPECIFIC ===
 For TikTok/Instagram/Facebook screenshots:
@@ -516,7 +557,7 @@ Return a JSON array with this exact structure:
     "name": "Business or Place Name (NOT the @handle, use converted name)",
     "address": "Street address if visible (or null)",
     "city": "City name if visible (or null)", 
-    "type": "restaurant/cafe/store/attraction/etc"
+    "type": "restaurant/cafe/store/attraction/park/trail/landmark/region"
   }
 ]
 
@@ -527,12 +568,26 @@ Return: {"name": "Old Ferry Donut", "address": "6982 Beach Blvd", "city": null, 
 If you see: "📍 @matecoffeebar"
 Return: {"name": "Mate Coffee Bar", "address": null, "city": null, "type": "cafe"}
 
+If you see a list like:
+"📍 Point Buchon Trail in Los Osos
+📍 Hearst Castle in San Simeon
+📍 Bixby Bridge
+#california #roadtrip"
+Return only the specific locations, NOT "California":
+[
+  {"name": "Point Buchon Trail", "address": null, "city": "Los Osos", "type": "trail"},
+  {"name": "Hearst Castle", "address": null, "city": "San Simeon", "type": "landmark"},
+  {"name": "Bixby Bridge", "address": null, "city": null, "type": "landmark"}
+]
+
 === RULES ===
 - ALWAYS convert @handles to proper business names
-- Extract EVERY distinct location mentioned
+- Extract EVERY distinct location mentioned (from Priority 1 and 2 sections)
 - Include partial information - even just a business name is useful
 - For video text overlays, read character by character if needed
 - Prioritize text that appears to name specific places
+- SKIP generic regions/states/countries if specific locations exist
+- IGNORE "More posts from" section and its thumbnails entirely
 - Return ONLY the JSON array, no other text
 - If absolutely no locations found, return: []
 ''';
@@ -607,11 +662,23 @@ Return: {"name": "Mate Coffee Bar", "address": null, "city": null, "type": "cafe
 
   /// Convert a social media handle to a proper business name
   /// e.g., "@oldferrydonut.us" → "Old Ferry Donut"
+  /// e.g., "@kuyalord_la" → "Kuya Lord"
   String _convertHandleToBusinessName(String name) {
     String result = name.trim();
     
-    // If it doesn't look like a handle, return as-is
+    // If it doesn't look like a handle or concatenated name, return as-is
+    // But still try to improve concatenated words like "Kuyalord La"
     if (!result.startsWith('@') && !result.contains('.') && !result.contains('_')) {
+      // Check if it looks like a concatenated name followed by a city code
+      // e.g., "Kuyalord La" -> should become "Kuya Lord"
+      final cityCodePattern = RegExp(r'\s+(la|nyc|sf|chi|dc|atl|mia|dal|hou|phx)$', caseSensitive: false);
+      if (cityCodePattern.hasMatch(result)) {
+        result = result.replaceFirst(cityCodePattern, '');
+        // Try to split concatenated name
+        result = _splitConcatenatedWords(result);
+        print('📝 HANDLE CONVERSION: "$name" → "$result" (removed trailing city code)');
+        return result;
+      }
       return result;
     }
     
@@ -620,13 +687,17 @@ Return: {"name": "Mate Coffee Bar", "address": null, "city": null, "type": "cafe
       result = result.substring(1);
     }
     
-    // Remove common domain/location suffixes
+    // Remove common domain/location suffixes (including underscore versions)
     final suffixesToRemove = [
+      // Underscore versions first (more specific)
+      '_official', '_us', '_uk', '_ca', '_au',
+      '_nyc', '_la', '_sf', '_chi', '_dc', '_atl', '_mia', '_dal', '_hou', '_phx',
+      '_shop', '_store', '_cafe', '_restaurant', '_bar', '_food', '_eats',
+      // Dot versions
       '.us', '.co', '.uk', '.ca', '.au', '.de', '.fr', '.es', '.it', '.jp',
       '.nyc', '.la', '.sf', '.chi', '.dc', '.atl', '.mia', '.dal', '.hou', '.phx',
       '.official', '.shop', '.store', '.cafe', '.restaurant', '.bar', '.food',
       '.eats', '.kitchen', '.bakery', '.coffee', '.pizza', '.tacos', '.burgers',
-      '_official', '_us', '_nyc', '_la',
     ];
     
     for (final suffix in suffixesToRemove) {
@@ -641,6 +712,11 @@ Return: {"name": "Mate Coffee Bar", "address": null, "city": null, "type": "cafe
     
     // Remove multiple consecutive spaces
     result = result.replaceAll(RegExp(r'\s+'), ' ').trim();
+    
+    // Try to split concatenated words for each word (e.g., "kuyalord" -> "Kuya Lord")
+    result = result.split(' ').map((word) {
+      return _splitConcatenatedWords(word);
+    }).join(' ');
     
     // Convert to Title Case
     result = result.split(' ').map((word) {
@@ -666,6 +742,71 @@ Return: {"name": "Mate Coffee Bar", "address": null, "city": null, "type": "cafe
     print('📝 HANDLE CONVERSION: "$name" → "$result"');
     
     return result;
+  }
+  
+  /// Try to split concatenated words like "kuyalord" into "Kuya Lord"
+  /// Uses common word patterns and dictionary checks
+  String _splitConcatenatedWords(String word) {
+    if (word.length < 4) return word;
+    
+    // Common business name prefixes/suffixes to look for
+    final commonPrefixes = [
+      'kuya', 'tita', 'tito', 'chef', 'mama', 'papa', 'uncle', 'aunt',
+      'casa', 'cafe', 'chez', 'el', 'la', 'los', 'las', 'don', 'dona',
+      'old', 'new', 'big', 'little', 'golden', 'silver', 'blue', 'red',
+      'happy', 'lucky', 'good', 'best', 'first', 'royal', 'king', 'queen',
+    ];
+    
+    final commonSuffixes = [
+      'lord', 'king', 'queen', 'house', 'place', 'spot', 'kitchen', 'grill',
+      'cafe', 'bar', 'pub', 'inn', 'deli', 'bistro', 'eatery', 'joint',
+      'gardel', 'bella', 'bello', 'grande', 'lindo', 'rico', 'bueno',
+    ];
+    
+    final wordLower = word.toLowerCase();
+    
+    // Try to find known prefix + suffix combinations
+    for (final prefix in commonPrefixes) {
+      if (wordLower.startsWith(prefix) && wordLower.length > prefix.length) {
+        final remainder = wordLower.substring(prefix.length);
+        // Check if remainder is a known suffix or looks like a word
+        for (final suffix in commonSuffixes) {
+          if (remainder == suffix) {
+            return '${prefix[0].toUpperCase()}${prefix.substring(1)} ${suffix[0].toUpperCase()}${suffix.substring(1)}';
+          }
+        }
+        // If remainder is at least 3 chars, try splitting
+        if (remainder.length >= 3) {
+          return '${prefix[0].toUpperCase()}${prefix.substring(1)} ${remainder[0].toUpperCase()}${remainder.substring(1)}';
+        }
+      }
+    }
+    
+    // Try suffix matching from the end
+    for (final suffix in commonSuffixes) {
+      if (wordLower.endsWith(suffix) && wordLower.length > suffix.length) {
+        final prefix = wordLower.substring(0, wordLower.length - suffix.length);
+        if (prefix.length >= 3) {
+          return '${prefix[0].toUpperCase()}${prefix.substring(1)} ${suffix[0].toUpperCase()}${suffix.substring(1)}';
+        }
+      }
+    }
+    
+    // Handle specific known business names that we've seen
+    final knownMappings = {
+      'kuyalord': 'Kuya Lord',
+      'carlitosgardel': 'Carlitos Gardel',
+      'kissacora': 'Kissa Cora',
+      'flowersfinest': 'Flowers Finest',
+      'leannalinswonderland': 'Leanna Lins Wonderland',
+      'hongkong': 'Hong Kong',
+    };
+    
+    if (knownMappings.containsKey(wordLower)) {
+      return knownMappings[wordLower]!;
+    }
+    
+    return word;
   }
 
   /// Fallback parsing for non-JSON responses
