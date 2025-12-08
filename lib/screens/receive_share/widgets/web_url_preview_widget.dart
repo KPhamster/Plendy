@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
-import 'package:webview_flutter/webview_flutter.dart';
+import 'package:flutter_inappwebview/flutter_inappwebview.dart';
+import 'dart:typed_data';
 
 class WebUrlPreviewWidget extends StatefulWidget {
   final String url;
   final Future<void> Function(String) launchUrlCallback;
-  final void Function(WebViewController)? onWebViewCreated;
+  final void Function(InAppWebViewController)? onWebViewCreated;
   final bool showControls;
-  final double? height; // Used when showControls is false
+  final double? height;
 
   const WebUrlPreviewWidget({
     super.key,
@@ -18,96 +19,59 @@ class WebUrlPreviewWidget extends StatefulWidget {
   });
 
   @override
-  State<WebUrlPreviewWidget> createState() => _WebUrlPreviewWidgetState();
+  State<WebUrlPreviewWidget> createState() => WebUrlPreviewWidgetState();
 }
 
-class _WebUrlPreviewWidgetState extends State<WebUrlPreviewWidget> with AutomaticKeepAliveClientMixin {
-  late final WebViewController _controller;
+class WebUrlPreviewWidgetState extends State<WebUrlPreviewWidget> with AutomaticKeepAliveClientMixin {
+  InAppWebViewController? _controller;
   bool _isLoading = true;
   bool _hasError = false;
-  bool _isInitialized = false;
   bool _isExpanded = false;
+  bool _isDisposed = false;
 
   @override
   bool get wantKeepAlive => true;
 
-  void _initializeWebView() {
-    if (_isInitialized) return;
-    _isInitialized = true;
+  @override
+  void dispose() {
+    _isDisposed = true;
+    super.dispose();
+  }
 
-    _controller = WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..enableZoom(true)
-      ..setUserAgent('Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Mobile Safari/537.36')
-      ..setNavigationDelegate(
-        NavigationDelegate(
-          onPageStarted: (String url) {
-            setState(() {
-              _isLoading = true;
-              _hasError = false;
-            });
-          },
-          onPageFinished: (String url) async {
-            setState(() {
-              _isLoading = false;
-            });
-            try {
-              await _controller.runJavaScript('''
-                document.body.style.overflow = 'auto';
-                document.documentElement.style.overflow = 'auto';
-                document.body.style.touchAction = 'auto';
-                document.body.style.webkitOverflowScrolling = 'touch';
-                document.body.style.height = 'auto';
-                document.body.style.width = '100%';
-                document.body.style.position = 'relative';
-              ''');
-            } catch (_) {}
-          },
-          onWebResourceError: (WebResourceError error) {
-            setState(() {
-              _isLoading = false;
-              _hasError = true;
-            });
-          },
-          onNavigationRequest: (NavigationRequest request) {
-            final String url = request.url;
-            // Keep standard web links inside WebView
-            if (url.startsWith('http://') || url.startsWith('https://')) {
-              return NavigationDecision.navigate;
-            }
-            // Handle Android intent:// deep links (e.g., Yelp app redirects)
-            if (url.startsWith('intent://')) {
-              final String? fallback = _extractBrowserFallbackUrl(url);
-              if (fallback != null && (fallback.startsWith('http://') || fallback.startsWith('https://'))) {
-                _controller.loadRequest(Uri.parse(fallback));
-              }
-              return NavigationDecision.prevent;
-            }
-            // Handle custom Yelp scheme by converting to web URL
-            if (url.startsWith('yelp://')) {
-              final String path = url.replaceFirst('yelp://', '');
-              final String httpsUrl = 'https://www.yelp.com/$path';
-              _controller.loadRequest(Uri.parse(httpsUrl));
-              return NavigationDecision.prevent;
-            }
-            // Fallback: try to open externally; if it fails, just block
-            widget.launchUrlCallback(url);
-            return NavigationDecision.prevent;
-          },
+  /// Take a screenshot of the current WebView content
+  /// Uses PNG format for best quality OCR/text detection
+  Future<Uint8List?> takeScreenshot() async {
+    if (_controller == null) {
+      print('⚠️ WEB PREVIEW: Controller is null, cannot take screenshot');
+      return null;
+    }
+    
+    try {
+      // Use PNG format (lossless) for best text/OCR quality
+      final screenshot = await _controller!.takeScreenshot(
+        screenshotConfiguration: ScreenshotConfiguration(
+          compressFormat: CompressFormat.PNG,
+          quality: 100,
         ),
-      )
-      ..loadRequest(Uri.parse(widget.url));
-
-    // Expose controller to parent if requested
-    if (widget.onWebViewCreated != null) {
-      widget.onWebViewCreated!(_controller);
+      );
+      if (screenshot != null) {
+        print('✅ WEB PREVIEW: Screenshot captured (${screenshot.length} bytes, PNG format)');
+      }
+      return screenshot;
+    } catch (e) {
+      print('❌ WEB PREVIEW: Screenshot failed: $e');
+      return null;
     }
   }
 
-  @override
-  void initState() {
-    super.initState();
-    _initializeWebView();
+  void refreshWebView() {
+    if (_controller != null) {
+      setState(() {
+        _isLoading = true;
+        _hasError = false;
+      });
+      _controller!.loadUrl(urlRequest: URLRequest(url: WebUri(widget.url)));
+    }
   }
 
   @override
@@ -125,51 +89,117 @@ class _WebUrlPreviewWidgetState extends State<WebUrlPreviewWidget> with Automati
             ? Border.all(color: Colors.grey.shade300)
             : null,
       ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.zero,
-        child: Stack(
-          children: [
-            SizedBox(
-              width: double.infinity,
-              height: resolvedHeight,
-              child: WebViewWidget(controller: _controller),
+      clipBehavior: Clip.hardEdge,
+      child: Stack(
+        children: [
+          InAppWebView(
+            initialUrlRequest: URLRequest(url: WebUri(widget.url)),
+            initialSettings: InAppWebViewSettings(
+              javaScriptEnabled: true,
+              mediaPlaybackRequiresUserGesture: false,
+              allowsInlineMediaPlayback: true,
+              iframeAllowFullscreen: false,
+              userAgent: 'Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Mobile Safari/537.36',
             ),
-            if (_isLoading)
-              Container(
-                color: Colors.white.withOpacity(0.8),
-                child: const Center(
-                  child: CircularProgressIndicator(),
+            onWebViewCreated: (controller) {
+              _controller = controller;
+              widget.onWebViewCreated?.call(controller);
+            },
+            onLoadStart: (controller, url) {
+              if (!mounted || _isDisposed) return;
+              setState(() {
+                _isLoading = true;
+                _hasError = false;
+              });
+            },
+            onLoadStop: (controller, url) async {
+              if (!mounted || _isDisposed) return;
+              setState(() {
+                _isLoading = false;
+              });
+              try {
+                await controller.evaluateJavascript(source: '''
+                  document.body.style.overflow = 'auto';
+                  document.documentElement.style.overflow = 'auto';
+                  document.body.style.touchAction = 'auto';
+                  document.body.style.webkitOverflowScrolling = 'touch';
+                  document.body.style.height = 'auto';
+                  document.body.style.width = '100%';
+                  document.body.style.position = 'relative';
+                ''');
+              } catch (_) {}
+            },
+            onReceivedError: (controller, request, error) {
+              if (!mounted || _isDisposed) return;
+              setState(() {
+                _isLoading = false;
+                _hasError = true;
+              });
+            },
+            shouldOverrideUrlLoading: (controller, navigationAction) async {
+              final String url = navigationAction.request.url?.toString() ?? '';
+              
+              // Keep standard web links inside WebView
+              if (url.startsWith('http://') || url.startsWith('https://')) {
+                return NavigationActionPolicy.ALLOW;
+              }
+              
+              // Handle Android intent:// deep links
+              if (url.startsWith('intent://')) {
+                final String? fallback = _extractBrowserFallbackUrl(url);
+                if (fallback != null && (fallback.startsWith('http://') || fallback.startsWith('https://'))) {
+                  controller.loadUrl(urlRequest: URLRequest(url: WebUri(fallback)));
+                }
+                return NavigationActionPolicy.CANCEL;
+              }
+              
+              // Handle custom Yelp scheme
+              if (url.startsWith('yelp://')) {
+                final String path = url.replaceFirst('yelp://', '');
+                final String httpsUrl = 'https://www.yelp.com/$path';
+                controller.loadUrl(urlRequest: URLRequest(url: WebUri(httpsUrl)));
+                return NavigationActionPolicy.CANCEL;
+              }
+              
+              widget.launchUrlCallback(url);
+              return NavigationActionPolicy.CANCEL;
+            },
+          ),
+          if (_isLoading)
+            Container(
+              color: Colors.white.withOpacity(0.8),
+              child: const Center(
+                child: CircularProgressIndicator(),
+              ),
+            ),
+          if (_hasError && !_isLoading)
+            Container(
+              color: Colors.grey.shade100,
+              child: Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.error_outline, size: 48, color: Colors.grey.shade600),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Unable to load preview',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.grey.shade700,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    TextButton.icon(
+                      onPressed: () => widget.launchUrlCallback(widget.url),
+                      icon: const Icon(Icons.open_in_new),
+                      label: const Text('Open in Browser'),
+                    ),
+                  ],
                 ),
               ),
-            if (_hasError && !_isLoading)
-              Container(
-                color: Colors.grey.shade100,
-                child: Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.error_outline, size: 48, color: Colors.grey.shade600),
-                      const SizedBox(height: 16),
-                      Text(
-                        'Unable to load preview',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w500,
-                          color: Colors.grey.shade700,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      TextButton.icon(
-                        onPressed: () => widget.launchUrlCallback(widget.url),
-                        icon: const Icon(Icons.open_in_new),
-                        label: const Text('Open in Browser'),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-          ],
-        ),
+            ),
+        ],
       ),
     );
 
@@ -228,41 +258,33 @@ class _WebUrlPreviewWidgetState extends State<WebUrlPreviewWidget> with Automati
           child: Row(
             children: [
               IconButton(
-                onPressed: _refreshPreview,
+                onPressed: refreshWebView,
                 icon: Icon(Icons.refresh, size: 20, color: Colors.blue.shade700),
                 tooltip: 'Refresh Preview',
-                padding: EdgeInsets.all(8),
-                constraints: BoxConstraints(minWidth: 36, minHeight: 36),
+                padding: const EdgeInsets.all(8),
+                constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
               ),
               const Spacer(),
               IconButton(
                 onPressed: () => widget.launchUrlCallback(widget.url),
                 icon: Icon(Icons.open_in_new, size: 20, color: Colors.blue.shade700),
                 tooltip: 'Open Link',
-                padding: EdgeInsets.all(8),
-                constraints: BoxConstraints(minWidth: 36, minHeight: 36),
+                padding: const EdgeInsets.all(8),
+                constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
               ),
               const Spacer(),
               IconButton(
                 onPressed: _toggleExpand,
                 icon: Icon(_isExpanded ? Icons.fullscreen_exit : Icons.fullscreen, size: 20, color: Colors.blue.shade700),
                 tooltip: _isExpanded ? 'Collapse Preview' : 'Expand Preview',
-                padding: EdgeInsets.all(8),
-                constraints: BoxConstraints(minWidth: 36, minHeight: 36),
+                padding: const EdgeInsets.all(8),
+                constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
               ),
             ],
           ),
         ),
       ],
     );
-  }
-
-  void _refreshPreview() {
-    setState(() {
-      _isLoading = true;
-      _hasError = false;
-    });
-    _controller.loadRequest(Uri.parse(widget.url));
   }
 
   void _toggleExpand() {
@@ -279,7 +301,6 @@ class _WebUrlPreviewWidgetState extends State<WebUrlPreviewWidget> with Automati
         final String encoded = m.group(1)!;
         return Uri.decodeComponent(encoded);
       }
-      // Also try without escaped backslash variant
       final RegExp rx2 = RegExp(r'S\.browser_fallback_url=([^;]+)');
       final Match? m2 = rx2.firstMatch(intentUrl);
       if (m2 != null && m2.groupCount >= 1) {
@@ -290,5 +311,3 @@ class _WebUrlPreviewWidgetState extends State<WebUrlPreviewWidget> with Automati
     return null;
   }
 }
-
-

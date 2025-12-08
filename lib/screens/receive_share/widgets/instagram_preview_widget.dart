@@ -1,27 +1,22 @@
 import 'package:flutter/material.dart';
-import 'package:webview_flutter/webview_flutter.dart';
-import 'package:webview_flutter_wkwebview/webview_flutter_wkwebview.dart';
-// For Platform checks
-import 'dart:async'; // For cancellation
-import 'dart:io' show Platform; // For iOS detection
-import 'package:flutter/foundation.dart' show kIsWeb; // Import kIsWeb
-// Removed unused url_launcher import
-// For Instagram Icon
+import 'package:flutter_inappwebview/flutter_inappwebview.dart';
+import 'dart:async';
+import 'dart:io' show Platform;
+import 'dart:typed_data';
+import 'package:flutter/foundation.dart' show kIsWeb;
 
-// Web-specific imports removed - now using direct URL loading like browser signin
-
-// Renamed class to reflect its focus
+/// Instagram WebView widget using flutter_inappwebview for screenshot support
 class InstagramWebView extends StatefulWidget {
   final String url;
-  final double height; // Requires a specific height from the parent
+  final double height;
   final Future<void> Function(String) launchUrlCallback;
-  final Function(WebViewController) onWebViewCreated;
-  final Function(String) onPageFinished; // Callback when page finishes
+  final Function(InAppWebViewController) onWebViewCreated;
+  final Function(String) onPageFinished;
 
   const InstagramWebView({
     super.key,
     required this.url,
-    required this.height, // This will be effectively ignored for web aspect ratio
+    required this.height,
     required this.launchUrlCallback,
     required this.onWebViewCreated,
     required this.onPageFinished,
@@ -32,181 +27,54 @@ class InstagramWebView extends StatefulWidget {
 }
 
 class InstagramWebViewState extends State<InstagramWebView> {
-  // Mobile-only controller
-  late final WebViewController controller;
-  bool isLoading = true; // Still manage internal loading indicator
+  InAppWebViewController? controller;
+  bool isLoading = true;
   
-  // Add cancellation tokens for operations
   int _loadingDelayOperationId = 0;
-  
-  // Add a dispose flag as an extra safety check
   bool _isDisposed = false;
 
-  // Web-specific variables removed
-
-  @override
-  void initState() {
-    super.initState();
-    if (kIsWeb) {
-      // Web implementation would go here if needed
-      // For now, we'll focus on mobile implementation
-    } else {
-      _initWebViewController(); // Mobile: Initialize WebView controller
-    }
-  }
-  
   @override
   void dispose() {
-    _isDisposed = true; // Mark as disposed first
+    _isDisposed = true;
     super.dispose();
   }
 
-  // Removed unused auto-click simulation helper
-
-  void _initWebViewController() {
-    // This should only be called if !kIsWeb, but double-check.
-    if (kIsWeb) return;
-
-    if (Platform.isIOS) {
-      final WebKitWebViewControllerCreationParams params = WebKitWebViewControllerCreationParams(
-        allowsInlineMediaPlayback: true,
-      );
-      controller = WebViewController.fromPlatformCreationParams(params);
-    } else {
-      controller = WebViewController();
+  /// Take a screenshot of the current WebView content
+  /// Uses PNG format for best quality OCR/text detection
+  Future<Uint8List?> takeScreenshot() async {
+    if (controller == null) {
+      print('⚠️ INSTAGRAM PREVIEW: Controller is null, cannot take screenshot');
+      return null;
     }
     
-    if (!mounted || _isDisposed) return; // Safety check
-    
-    widget.onWebViewCreated(controller); // Pass controller to parent
-
-    controller
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setBackgroundColor(const Color(0x00000000))
-      ..setUserAgent(
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
-      ..setNavigationDelegate(
-        NavigationDelegate(
-          onProgress: (int progress) {},
-          onPageStarted: (String url) {
-            if (!mounted || _isDisposed) return; // Safety check
-            
-            setState(() {
-              isLoading = true;
-            });
-          },
-          onPageFinished: (String url) {
-            if (!mounted || _isDisposed) return; // Safety check
-            
-            // Safely call the callback
-            try {
-              widget.onPageFinished(url); // Notify parent
-            } catch (e) {
-              print("Error in onPageFinished callback: $e");
-            }
-            
-            // Try to strip fullscreen permissions and enforce inline playback
-            try {
-              controller.runJavaScript('''
-                (function(){
-                  try {
-                    var iframes = document.querySelectorAll('iframe');
-                    iframes.forEach(function(iframe){
-                      iframe.removeAttribute('allowfullscreen');
-                      var allow = iframe.getAttribute('allow') || '';
-                      allow = allow.replace(/fullscreen/g,'').trim();
-                      if (allow.length>0) { iframe.setAttribute('allow', allow); } else { iframe.removeAttribute('allow'); }
-                      iframe.setAttribute('playsinline','');
-                    });
-                    var videos = document.querySelectorAll('video');
-                    videos.forEach(function(v){ v.setAttribute('playsinline',''); v.removeAttribute('webkit-playsinline'); });
-                  } catch(e) {}
-                })();
-              ''');
-            } catch (_) {}
-            
-            // Set loading to false after a short delay to allow rendering
-            final currentLoadingOperationId = ++_loadingDelayOperationId;
-            
-            Future.delayed(const Duration(milliseconds: 500), () {
-              // Check if this is still the current operation and widget is still mounted
-              if (!mounted || _isDisposed || _loadingDelayOperationId != currentLoadingOperationId) return;
-              
-              setState(() {
-                isLoading = false;
-              });
-            });
-          },
-          onWebResourceError: (WebResourceError error) {
-            print("WebView Error: ${error.description}");
-            
-            if (!mounted || _isDisposed) return; // Safety check
-            
-            setState(() {
-              isLoading = false; // Stop loading on error
-            });
-          },
-          onNavigationRequest: (NavigationRequest request) {
-            // Handle custom URL schemes (like Instagram app deep links)
-            final url = request.url;
-            
-            // Handle about:blank URLs
-            if (url == 'about:blank' || url == 'https://about:blank') {
-              return NavigationDecision.prevent;
-            }
-            
-            // List of custom schemes to block
-            final customSchemes = ['instagram', 'fb', 'intent'];
-            final uri = Uri.tryParse(url);
-            
-            if (uri != null && customSchemes.any((scheme) => url.startsWith('$scheme:'))) {
-              // Block the custom scheme navigation
-              return NavigationDecision.prevent;
-            }
-            
-            // Allow Instagram domains, CDN, and Facebook authentication
-            if (url.contains('instagram.com') || 
-                url.contains('cdn.instagram.com') ||
-                url.contains('cdninstagram.com') ||
-                url.contains('fbcdn.net') ||
-                url.contains('facebook.com/instagram/') ||  // Allow Facebook-Instagram auth flows
-                url.contains('facebook.com/login/') ||      // Allow Facebook login
-                url.contains('accounts.instagram.com')) {   // Allow Instagram accounts
-              return NavigationDecision.navigate;
-            }
-            
-            // For external links, use callback only if it's a valid HTTP/HTTPS URL
-            if (mounted && !_isDisposed && url.startsWith('http')) {
-              try {
-                widget.launchUrlCallback(url);
-              } catch (e) {
-                print("Error in launchUrlCallback: $e");
-              }
-            }
-            
-            return NavigationDecision.prevent;
-          },
+    try {
+      // Use PNG format (lossless) for best text/OCR quality
+      final screenshot = await controller!.takeScreenshot(
+        screenshotConfiguration: ScreenshotConfiguration(
+          compressFormat: CompressFormat.PNG,
+          quality: 100,
         ),
       );
-      
-    // Final check before loading URL directly
-    if (!mounted || _isDisposed) return;
-    
-    // Load the Instagram URL directly instead of custom HTML
-    controller.loadRequest(Uri.parse(_cleanInstagramUrl(widget.url)));
+      if (screenshot != null) {
+        print('✅ INSTAGRAM PREVIEW: Screenshot captured (${screenshot.length} bytes, PNG format)');
+      }
+      return screenshot;
+    } catch (e) {
+      print('❌ INSTAGRAM PREVIEW: Screenshot failed: $e');
+      return null;
+    }
   }
 
   void refresh() {
-    if (kIsWeb) {
-      // Web logic would go here if needed
-    } else {
-      if (mounted && !_isDisposed) {
-        controller.loadRequest(Uri.parse(_cleanInstagramUrl(widget.url)));
-      }
+    if (kIsWeb) return;
+    
+    if (mounted && !_isDisposed && controller != null) {
+      controller!.loadUrl(
+        urlRequest: URLRequest(url: WebUri(_cleanInstagramUrl(widget.url))),
+      );
     }
   }
 
-  // Clean Instagram URL (keep this helper)
   String _cleanInstagramUrl(String url) {
     try {
       Uri uri = Uri.parse(url);
@@ -226,23 +94,18 @@ class InstagramWebViewState extends State<InstagramWebView> {
     }
   }
 
-  // Custom HTML generation removed - now loading Instagram URLs directly
-
-  // Removed unused launcher helper
-
   @override
   Widget build(BuildContext context) {
     if (kIsWeb) {
-      // Web implementation would go here if needed
       return SizedBox(
         height: widget.height,
         width: double.infinity,
-        child: Center(child: Text("Web implementation not yet available")),
+        child: const Center(child: Text("Web implementation not yet available")),
       );
     }
 
-    // Mobile specific WebViewWidget implementation
     final double containerHeight = widget.height;
+    
     return Stack(
       alignment: Alignment.center,
       children: [
@@ -253,14 +116,124 @@ class InstagramWebViewState extends State<InstagramWebView> {
             border: Border.all(color: Colors.grey[300]!),
             borderRadius: BorderRadius.circular(8),
           ),
-          child: WebViewWidget(controller: controller),
+          clipBehavior: Clip.hardEdge,
+          child: InAppWebView(
+            initialUrlRequest: URLRequest(
+              url: WebUri(_cleanInstagramUrl(widget.url)),
+            ),
+            initialSettings: InAppWebViewSettings(
+              javaScriptEnabled: true,
+              mediaPlaybackRequiresUserGesture: false,
+              allowsInlineMediaPlayback: true,
+              iframeAllowFullscreen: false,
+              transparentBackground: true,
+              userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+            ),
+            onWebViewCreated: (webController) {
+              controller = webController;
+              widget.onWebViewCreated(webController);
+            },
+            onLoadStart: (webController, url) {
+              if (!mounted || _isDisposed) return;
+              
+              setState(() {
+                isLoading = true;
+              });
+            },
+            onLoadStop: (webController, url) async {
+              if (!mounted || _isDisposed) return;
+              
+              // Notify parent
+              try {
+                widget.onPageFinished(url?.toString() ?? '');
+              } catch (e) {
+                print("Error in onPageFinished callback: $e");
+              }
+              
+              // Strip fullscreen permissions and enforce inline playback
+              try {
+                await webController.evaluateJavascript(source: '''
+                  (function(){
+                    try {
+                      var iframes = document.querySelectorAll('iframe');
+                      iframes.forEach(function(iframe){
+                        iframe.removeAttribute('allowfullscreen');
+                        var allow = iframe.getAttribute('allow') || '';
+                        allow = allow.replace(/fullscreen/g,'').trim();
+                        if (allow.length>0) { iframe.setAttribute('allow', allow); } else { iframe.removeAttribute('allow'); }
+                        iframe.setAttribute('playsinline','');
+                      });
+                      var videos = document.querySelectorAll('video');
+                      videos.forEach(function(v){ v.setAttribute('playsinline',''); v.removeAttribute('webkit-playsinline'); });
+                    } catch(e) {}
+                  })();
+                ''');
+              } catch (_) {}
+              
+              // Set loading to false after a short delay
+              final currentLoadingOperationId = ++_loadingDelayOperationId;
+              
+              Future.delayed(const Duration(milliseconds: 500), () {
+                if (!mounted || _isDisposed || _loadingDelayOperationId != currentLoadingOperationId) return;
+                
+                setState(() {
+                  isLoading = false;
+                });
+              });
+            },
+            onReceivedError: (webController, request, error) {
+              print("WebView Error: ${error.description}");
+              
+              if (!mounted || _isDisposed) return;
+              
+              setState(() {
+                isLoading = false;
+              });
+            },
+            shouldOverrideUrlLoading: (webController, navigationAction) async {
+              final url = navigationAction.request.url?.toString() ?? '';
+              
+              // Handle about:blank URLs
+              if (url == 'about:blank' || url == 'https://about:blank') {
+                return NavigationActionPolicy.CANCEL;
+              }
+              
+              // Block custom schemes
+              final customSchemes = ['instagram', 'fb', 'intent'];
+              if (customSchemes.any((scheme) => url.startsWith('$scheme:'))) {
+                return NavigationActionPolicy.CANCEL;
+              }
+              
+              // Allow Instagram domains, CDN, and Facebook authentication
+              if (url.contains('instagram.com') || 
+                  url.contains('cdn.instagram.com') ||
+                  url.contains('cdninstagram.com') ||
+                  url.contains('fbcdn.net') ||
+                  url.contains('facebook.com/instagram/') ||
+                  url.contains('facebook.com/login/') ||
+                  url.contains('accounts.instagram.com')) {
+                return NavigationActionPolicy.ALLOW;
+              }
+              
+              // For external links, use callback
+              if (mounted && !_isDisposed && url.startsWith('http')) {
+                try {
+                  widget.launchUrlCallback(url);
+                } catch (e) {
+                  print("Error in launchUrlCallback: $e");
+                }
+              }
+              
+              return NavigationActionPolicy.CANCEL;
+            },
+          ),
         ),
         if (isLoading)
           Container(
             width: double.infinity,
             height: containerHeight,
             color: Colors.white.withOpacity(0.7),
-            child: Center(
+            child: const Center(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [

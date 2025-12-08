@@ -21,6 +21,7 @@ import '../services/experience_service.dart'; // For fetching reviews
 // RE-ADDED: Import Instagram Preview Widget
 import 'receive_share/widgets/instagram_preview_widget.dart'
     as instagram_widget;
+import 'package:flutter_inappwebview/flutter_inappwebview.dart' as inapp;
 import 'receive_share/widgets/tiktok_preview_widget.dart';
 import 'receive_share/widgets/facebook_preview_widget.dart';
 import 'receive_share/widgets/youtube_preview_widget.dart';
@@ -197,6 +198,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
   // --- END ADDED ---
   // --- ADDED: Webview controllers for refresh ---
   final Map<String, WebViewController> _webViewControllers = {};
+  final Map<String, inapp.InAppWebViewController> _inAppWebViewControllers = {}; // For Instagram (flutter_inappwebview)
   final Map<String, GlobalKey<TikTokPreviewWidgetState>> _tiktokControllerKeys =
       {};
   final Map<String, GlobalKey<instagram_widget.InstagramWebViewState>>
@@ -2481,7 +2483,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                             launchUrlCallback: _launchUrl,
                             showControls: false,
                             onWebViewCreated: (controller) {
-                              _webViewControllers[url] = controller;
+                              _inAppWebViewControllers[url] = controller;
                             },
                           );
                   } else if (isInstagramUrl) {
@@ -2503,7 +2505,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                             height: instagramHeight,
                             launchUrlCallback: _launchUrl,
                             onWebViewCreated: (controller) {
-                              _webViewControllers[url] = controller;
+                              _inAppWebViewControllers[url] = controller;
                             },
                             onPageFinished: (_) {},
                           );
@@ -2521,7 +2523,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                             height: facebookHeight,
                             launchUrlCallback: _launchUrl,
                             onWebViewCreated: (controller) {
-                              _webViewControllers[url] = controller;
+                              _inAppWebViewControllers[url] = controller;
                             },
                             onPageFinished: (_) {},
                             showControls: false,
@@ -2544,7 +2546,7 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                             showControls: false,
                             height: previewHeightOverride,
                             onWebViewCreated: (controller) {
-                              _webViewControllers[url] = controller;
+                              _inAppWebViewControllers[url] = controller;
                             },
                           );
                   } else if (isNetworkUrl) {
