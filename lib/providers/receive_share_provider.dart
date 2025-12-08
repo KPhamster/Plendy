@@ -468,7 +468,9 @@ class ReceiveShareProvider extends ChangeNotifier {
   /// 
   /// This method creates a new experience card for each location found,
   /// pre-filling the title and location fields with the extracted data.
-  void createCardsFromLocations(List<ExtractedLocationData> locations) {
+  /// 
+  /// Note: Uses async delays between card creation to ensure unique timestamp-based IDs.
+  Future<void> createCardsFromLocations(List<ExtractedLocationData> locations) async {
     if (locations.isEmpty) {
       print("ReceiveShareProvider: createCardsFromLocations called with empty list");
       return;
@@ -478,6 +480,11 @@ class ReceiveShareProvider extends ChangeNotifier {
 
     for (int i = 0; i < locations.length; i++) {
       final locationData = locations[i];
+      
+      // Add small delay between card creation to ensure unique timestamp-based IDs
+      if (i > 0) {
+        await Future.delayed(const Duration(milliseconds: 2));
+      }
       
       // Create new card
       final newCard = ExperienceCardData();
@@ -575,7 +582,7 @@ class ReceiveShareProvider extends ChangeNotifier {
   }
 
   /// Clear all existing cards and create new ones from locations
-  void replaceCardsWithLocations(List<ExtractedLocationData> locations) {
+  Future<void> replaceCardsWithLocations(List<ExtractedLocationData> locations) async {
     // Dispose all existing cards first
     for (var card in _experienceCards) {
       card.dispose();
@@ -585,7 +592,7 @@ class ReceiveShareProvider extends ChangeNotifier {
     print("ReceiveShareProvider: Cleared ${_experienceCards.length} existing cards, creating ${locations.length} new cards");
     
     // Create new cards from locations
-    createCardsFromLocations(locations);
+    await createCardsFromLocations(locations);
   }
 
   /// Get the number of cards that have location data from extraction

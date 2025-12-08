@@ -1662,7 +1662,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     return duplicates;
   }
 
-  /// Apply a single extracted location to the first experience card
+  /// Apply a single extracted location to an available experience card
+  /// If all cards already have locations, creates a new card
   Future<void> _applySingleExtractedLocation(
     ExtractedLocationData locationData,
     ReceiveShareProvider provider,
@@ -1672,14 +1673,23 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       return;
     }
 
-    final card = provider.experienceCards.first;
+    // Find the first card without a location
+    ExperienceCardData? targetCard;
+    for (final card in provider.experienceCards) {
+      if (card.selectedLocation == null || 
+          card.selectedLocation!.placeId == null ||
+          card.selectedLocation!.placeId!.isEmpty) {
+        targetCard = card;
+        break;
+      }
+    }
     
-    // Only auto-fill if location is not already set
-    if (card.selectedLocation != null && 
-        card.selectedLocation!.placeId != null &&
-        card.selectedLocation!.placeId!.isNotEmpty) {
-      print('📍 AI EXTRACTION: Card already has location, skipping auto-fill');
-      return;
+    // If all cards have locations, create a new card
+    if (targetCard == null) {
+      print('📍 AI EXTRACTION: All cards have locations, creating new card');
+      await Future.delayed(const Duration(milliseconds: 2)); // Ensure unique ID
+      provider.addExperienceCard();
+      targetCard = provider.experienceCards.last;
     }
 
     // Check for duplicate
@@ -1725,14 +1735,14 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       );
       
       if (useExisting == true) {
-        provider.updateCardWithExistingExperience(card.id, existingExperience);
+        provider.updateCardWithExistingExperience(targetCard.id, existingExperience);
         print('✅ AI EXTRACTION: Using existing experience "${existingExperience.name}"');
         return;
       }
     }
 
     // Update the card with extracted location
-    provider.updateCardWithExtractedLocation(card.id, locationData);
+    provider.updateCardWithExtractedLocation(targetCard.id, locationData);
     
     print('✅ AI EXTRACTION: Applied location "${locationData.name}" to card');
   }
@@ -1788,30 +1798,53 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       
       int emptyCardIndex = 0;
       
-      // Process new locations first
-      for (int i = 0; i < newLocations.length; i++) {
+      // Split new locations into those that fill empty cards vs those that need new cards
+      final List<ExtractedLocationData> locationsForEmptyCards = [];
+      final List<ExtractedLocationData> locationsNeedingNewCards = [];
+      
+      for (final location in newLocations) {
         if (emptyCardIndex < emptyCards.length) {
-          // Fill an existing empty card
-          provider.updateCardWithExtractedLocation(emptyCards[emptyCardIndex].id, newLocations[i]);
-          print('📍 Filled existing card with: ${newLocations[i].name}');
+          locationsForEmptyCards.add(location);
           emptyCardIndex++;
         } else {
-          // Create new card for remaining locations
-          provider.createCardsFromLocations([newLocations[i]]);
-          cardsCreated++;
+          locationsNeedingNewCards.add(location);
         }
       }
       
+      // Fill existing empty cards with new locations
+      for (int i = 0; i < locationsForEmptyCards.length; i++) {
+        provider.updateCardWithExtractedLocation(
+          emptyCards[i].id, 
+          locationsForEmptyCards[i],
+        );
+        print('📍 Filled existing card with: ${locationsForEmptyCards[i].name}');
+      }
+      
+      // Create all new cards for remaining new locations in one batch
+      if (locationsNeedingNewCards.isNotEmpty) {
+        await provider.createCardsFromLocations(locationsNeedingNewCards);
+        cardsCreated += locationsNeedingNewCards.length;
+        print('📍 Created ${locationsNeedingNewCards.length} new cards for new locations');
+      }
+      
       // Process existing experiences (duplicates user chose to use)
+      // For these, we need to fill remaining empty cards or create new ones
+      final remainingEmptyCards = emptyCards.sublist(
+        locationsForEmptyCards.length < emptyCards.length ? locationsForEmptyCards.length : emptyCards.length
+      );
+      int remainingEmptyIndex = 0;
+      
       for (final existingExp in existingExperiences) {
-        if (emptyCardIndex < emptyCards.length) {
+        if (remainingEmptyIndex < remainingEmptyCards.length) {
           // Fill an existing empty card with existing experience
-          provider.updateCardWithExistingExperience(emptyCards[emptyCardIndex].id, existingExp);
+          provider.updateCardWithExistingExperience(remainingEmptyCards[remainingEmptyIndex].id, existingExp);
           print('📍 Filled card with existing experience: ${existingExp.name}');
-          emptyCardIndex++;
+          remainingEmptyIndex++;
           existingUsed++;
         } else {
           // Need to create a new card for this existing experience
+          // Add a small delay to ensure unique timestamp-based IDs
+          await Future.delayed(const Duration(milliseconds: 2));
           provider.addExperienceCard();
           final newCard = provider.experienceCards.last;
           provider.updateCardWithExistingExperience(newCard.id, existingExp);
@@ -1873,19 +1906,14 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Applied locations to $count experience card${count > 1 ? 's' : ''}.',
+              'Applied locations to $count experience card${count > 1 ? 's' : ''}. Scroll down to take a look!',
               style: const TextStyle(fontSize: 16),
             ),
             const SizedBox(height: 16),
             const Text(
-              'You can:',
+              'You can edit them however you want and save them to your list of experiences.',
               style: TextStyle(fontWeight: FontWeight.bold),
             ),
-            const SizedBox(height: 8),
-            _buildInfoBulletPoint('Edit each card independently'),
-            _buildInfoBulletPoint('Remove cards you don\'t want'),
-            _buildInfoBulletPoint('Add notes and categories'),
-            _buildInfoBulletPoint('Save all as separate experiences'),
           ],
         ),
         actions: [
