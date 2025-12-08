@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 2.1.2+39
+version: 2.1.2+40
 
 environment:
   sdk: '>=3.3.3 <4.0.0'
@@ -55,6 +55,7 @@ dependencies:
   any_link_preview: ^3.0.1
   url_launcher: ^6.3.1
   webview_flutter: ^4.13.0
+  flutter_inappwebview: ^6.1.5  # For Instagram preview with screenshot support
   google_maps_flutter: ^2.12.3
   geolocator: ^14.0.1
   dio: ^5.5.0+1
@@ -78,6 +79,7 @@ dependencies:
   pointer_interceptor: ^0.10.1+2
   email_validator: ^3.0.0
   dnsolve: ^1.0.2
+  google_generative_ai: ^0.4.7  # Gemini API for AI-powered location extraction
 
 dev_dependencies:
   flutter_test:

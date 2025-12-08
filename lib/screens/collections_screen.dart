@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_typeahead/flutter_typeahead.dart';
 import '../models/experience.dart';
@@ -224,6 +224,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
 
   @override
   void setState(VoidCallback fn) {
+    if (!mounted) return;
     final bool previousLoading = _isLoading;
     super.setState(fn);
     if (_isLoading != previousLoading) {
@@ -901,6 +902,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
         TabController(length: 3, vsync: this, initialIndex: initialTabIndex);
     _currentTabIndex = initialTabIndex;
     _tabController.addListener(() {
+      if (!mounted) return;
       if (_tabController.indexIsChanging) {
         setState(() {
           _currentTabIndex = _tabController.index;
@@ -1208,6 +1210,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
   }
 
   void _onExperiencesScroll() {
+    if (!mounted) return;
     if (_experiencesScrollController.position.pixels >=
         _experiencesScrollController.position.maxScrollExtent * 0.8) {
       // When user scrolls to 80% of the list, load more
@@ -1221,9 +1224,10 @@ class CollectionsScreenState extends State<CollectionsScreen>
   void dispose() {
     _categorySaveNotifier?.removeListener(_handleCategorySaveProgress);
     _categorySaveNotifier = null;
+    _experiencesScrollController.removeListener(_onExperiencesScroll);
+    _experiencesScrollController.dispose();
     _tabController.dispose();
     _searchController.dispose();
-    _experiencesScrollController.dispose();
     super.dispose();
   }
 

@@ -1,14 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
-import 'package:webview_flutter/webview_flutter.dart';
+import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'dart:typed_data';
 
 class YouTubePreviewWidget extends StatefulWidget {
   final String url;
   final Future<void> Function(String) launchUrlCallback;
   final bool showControls;
-  final Function(WebViewController)? onWebViewCreated;
-  final double? height; // Optional height, will auto-calculate based on video type
+  final Function(InAppWebViewController)? onWebViewCreated;
+  final double? height;
 
   const YouTubePreviewWidget({
     super.key,
@@ -24,7 +25,7 @@ class YouTubePreviewWidget extends StatefulWidget {
 }
 
 class YouTubePreviewWidgetState extends State<YouTubePreviewWidget> {
-  late WebViewController _controller;
+  InAppWebViewController? _controller;
   bool _isLoading = true;
   bool _isDisposed = false;
   String? _videoId;
@@ -35,7 +36,7 @@ class YouTubePreviewWidgetState extends State<YouTubePreviewWidget> {
   void initState() {
     super.initState();
     _extractVideoInfo();
-    _initializeWebView();
+    _generateEmbedHtml();
   }
 
   @override
@@ -44,28 +45,47 @@ class YouTubePreviewWidgetState extends State<YouTubePreviewWidget> {
     super.dispose();
   }
 
+  /// Take a screenshot of the current WebView content
+  /// Uses PNG format for best quality OCR/text detection
+  Future<Uint8List?> takeScreenshot() async {
+    if (_controller == null) {
+      print('⚠️ YOUTUBE PREVIEW: Controller is null, cannot take screenshot');
+      return null;
+    }
+    
+    try {
+      // Use PNG format (lossless) for best text/OCR quality
+      final screenshot = await _controller!.takeScreenshot(
+        screenshotConfiguration: ScreenshotConfiguration(
+          compressFormat: CompressFormat.PNG,
+          quality: 100,
+        ),
+      );
+      if (screenshot != null) {
+        print('✅ YOUTUBE PREVIEW: Screenshot captured (${screenshot.length} bytes, PNG format)');
+      }
+      return screenshot;
+    } catch (e) {
+      print('❌ YOUTUBE PREVIEW: Screenshot failed: $e');
+      return null;
+    }
+  }
+
   void _extractVideoInfo() {
-    // Extract video ID and determine if it's a Short
     final uri = Uri.parse(widget.url);
     
-    // Check if it's a YouTube Short
     _isShort = widget.url.contains('/shorts/');
     
-    // Extract video ID from various YouTube URL formats
     if (_isShort) {
-      // Format: https://youtube.com/shorts/VIDEO_ID
       final pathSegments = uri.pathSegments;
       if (pathSegments.length >= 2 && pathSegments[0] == 'shorts') {
         _videoId = pathSegments[1];
       }
     } else if (uri.host.contains('youtu.be')) {
-      // Format: https://youtu.be/VIDEO_ID
       _videoId = uri.pathSegments.isNotEmpty ? uri.pathSegments[0] : null;
     } else if (uri.host.contains('youtube.com')) {
-      // Format: https://www.youtube.com/watch?v=VIDEO_ID
       _videoId = uri.queryParameters['v'];
       
-      // Also check for embed format: https://www.youtube.com/embed/VIDEO_ID
       if (_videoId == null && uri.pathSegments.contains('embed')) {
         final embedIndex = uri.pathSegments.indexOf('embed');
         if (embedIndex < uri.pathSegments.length - 1) {
@@ -74,90 +94,20 @@ class YouTubePreviewWidgetState extends State<YouTubePreviewWidget> {
       }
     }
     
-    // Remove any query parameters from video ID
     if (_videoId != null && _videoId!.contains('?')) {
       _videoId = _videoId!.split('?')[0];
     }
   }
 
-  void _initializeWebView() {
-    _controller = WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setBackgroundColor(const Color(0x00000000))
-      ..setNavigationDelegate(
-        NavigationDelegate(
-          onProgress: (int progress) {},
-          onPageStarted: (String url) {
-            if (!mounted || _isDisposed) return;
-            setState(() {
-              _isLoading = true;
-            });
-          },
-          onPageFinished: (String url) {
-            if (!mounted || _isDisposed) return;
-            setState(() {
-              _isLoading = false;
-            });
-          },
-          onWebResourceError: (WebResourceError error) {
-            print("YouTube WebView Error: ${error.description}");
-            if (!mounted || _isDisposed) return;
-            setState(() {
-              _isLoading = false;
-            });
-          },
-          onNavigationRequest: (NavigationRequest request) {
-            // Allow YouTube navigation
-            if (request.url.contains('youtube.com') || 
-                request.url.contains('youtu.be') ||
-                request.url.contains('googlevideo.com') ||
-                request.url.contains('ytimg.com')) {
-              return NavigationDecision.navigate;
-            }
-            
-            // Open external links
-            if (mounted && !_isDisposed) {
-              widget.launchUrlCallback(request.url);
-            }
-            return NavigationDecision.prevent;
-          },
-        ),
-      );
-
-    if (widget.onWebViewCreated != null) {
-      widget.onWebViewCreated!(_controller);
-    }
-
-    _loadYouTubeEmbed();
-  }
-
-  void _loadYouTubeEmbed() {
+  void _generateEmbedHtml() {
     if (_videoId == null) {
-      _loadErrorHtml();
+      _currentEmbedHtml = _generateErrorHtml();
       return;
     }
 
-    _currentEmbedHtml = _generateYouTubeEmbedHtml(_videoId!);
-    _controller.loadHtmlString(_currentEmbedHtml!);
-  }
-
-  void refreshWebView() {
-    if (_currentEmbedHtml != null && mounted && !_isDisposed) {
-      setState(() {
-        _isLoading = true;
-      });
-      _controller.loadHtmlString(_currentEmbedHtml!);
-    } else {
-      _loadYouTubeEmbed();
-    }
-  }
-
-  String _generateYouTubeEmbedHtml(String videoId) {
-    // Calculate aspect ratio based on video type
-    // Shorts use 9:16 (56.25%), regular videos use 16:9 (177.78%)
     final aspectRatio = _isShort ? '177.78%' : '56.25%';
     
-    return '''
+    _currentEmbedHtml = '''
 <!DOCTYPE html>
 <html>
 <head>
@@ -185,69 +135,24 @@ class YouTubePreviewWidgetState extends State<YouTubePreviewWidget> {
       height: 100%;
       border: 0;
     }
-    .error-container {
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      height: 100vh;
-      color: white;
-      text-align: center;
-      font-family: Arial, sans-serif;
-    }
   </style>
 </head>
 <body>
   <div class="video-container">
     <iframe
       id="youtube-player"
-      src="https://www.youtube.com/embed/$videoId?enablejsapi=1&modestbranding=1&rel=0&showinfo=0&fs=0&playsinline=1"
+      src="https://www.youtube.com/embed/$_videoId?enablejsapi=1&modestbranding=1&rel=0&showinfo=0&fs=0&playsinline=1"
       allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
       playsinline>
     </iframe>
   </div>
-  
-  <script>
-    try {
-      var iframe = document.getElementById('youtube-player');
-      // Ensure no fullscreen token remains
-      var allow = iframe.getAttribute('allow') || '';
-      allow = allow.replace(/fullscreen/g,'').trim();
-      if (allow.length > 0) { iframe.setAttribute('allow', allow); } else { iframe.removeAttribute('allow'); }
-      iframe.removeAttribute('allowfullscreen');
-      iframe.setAttribute('playsinline','');
-    } catch(e) {}
-
-    // Optional: Add YouTube IFrame API for more control
-    var tag = document.createElement('script');
-    tag.src = "https://www.youtube.com/iframe_api";
-    var firstScriptTag = document.getElementsByTagName('script')[0];
-    firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
-    
-    var player;
-    function onYouTubeIframeAPIReady() {
-      player = new YT.Player('youtube-player', {
-        events: {
-          'onReady': onPlayerReady,
-          'onError': onPlayerError
-        }
-      });
-    }
-    
-    function onPlayerReady(event) {
-      console.log('YouTube player ready');
-    }
-    
-    function onPlayerError(event) {
-      console.error('YouTube player error:', event.data);
-    }
-  </script>
 </body>
 </html>
     ''';
   }
 
-  void _loadErrorHtml() {
-    final errorHtml = '''
+  String _generateErrorHtml() {
+    return '''
 <!DOCTYPE html>
 <html>
 <head>
@@ -269,35 +174,32 @@ class YouTubePreviewWidgetState extends State<YouTubePreviewWidget> {
       background: white;
       padding: 30px;
       border-radius: 10px;
-      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
     }
     .error-icon {
       font-size: 48px;
       color: #ff0000;
       margin-bottom: 20px;
     }
-    .error-message {
-      color: #333;
-      margin-bottom: 10px;
-    }
-    .error-url {
-      color: #666;
-      font-size: 14px;
-      word-break: break-all;
-    }
   </style>
 </head>
 <body>
   <div class="error-container">
     <div class="error-icon">⚠️</div>
-    <div class="error-message">Unable to load YouTube video</div>
-    <div class="error-url">${widget.url}</div>
+    <div>Unable to load YouTube video</div>
+    <div style="color: #666; font-size: 14px;">${widget.url}</div>
   </div>
 </body>
 </html>
     ''';
-    
-    _controller.loadHtmlString(errorHtml);
+  }
+
+  void refreshWebView() {
+    if (_controller != null && _currentEmbedHtml != null && mounted && !_isDisposed) {
+      setState(() {
+        _isLoading = true;
+      });
+      _controller!.loadData(data: _currentEmbedHtml!, baseUrl: WebUri('https://www.youtube.com'));
+    }
   }
 
   Future<void> _launchYouTubeUrl() async {
@@ -307,7 +209,7 @@ class YouTubePreviewWidgetState extends State<YouTubePreviewWidget> {
     } else {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not open YouTube link')),
+          const SnackBar(content: Text('Could not open YouTube link')),
         );
       }
     }
@@ -315,7 +217,6 @@ class YouTubePreviewWidgetState extends State<YouTubePreviewWidget> {
 
   @override
   Widget build(BuildContext context) {
-    // Calculate height based on video type if not provided
     final double containerHeight = widget.height ?? (_isShort ? 600.0 : 220.0);
     
     return Column(
@@ -330,10 +231,51 @@ class YouTubePreviewWidgetState extends State<YouTubePreviewWidget> {
                 color: Colors.black,
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: WebViewWidget(controller: _controller),
-              ),
+              clipBehavior: Clip.hardEdge,
+              child: _currentEmbedHtml != null
+                  ? InAppWebView(
+                      initialData: InAppWebViewInitialData(
+                        data: _currentEmbedHtml!,
+                        baseUrl: WebUri('https://www.youtube.com'),
+                      ),
+                      initialSettings: InAppWebViewSettings(
+                        javaScriptEnabled: true,
+                        mediaPlaybackRequiresUserGesture: false,
+                        allowsInlineMediaPlayback: true,
+                        iframeAllowFullscreen: false,
+                        transparentBackground: true,
+                      ),
+                      onWebViewCreated: (controller) {
+                        _controller = controller;
+                        widget.onWebViewCreated?.call(controller);
+                      },
+                      onLoadStart: (controller, url) {
+                        if (!mounted || _isDisposed) return;
+                        setState(() {
+                          _isLoading = true;
+                        });
+                      },
+                      onLoadStop: (controller, url) {
+                        if (!mounted || _isDisposed) return;
+                        setState(() {
+                          _isLoading = false;
+                        });
+                      },
+                      shouldOverrideUrlLoading: (controller, navigationAction) async {
+                        final url = navigationAction.request.url?.toString() ?? '';
+                        if (url.contains('youtube.com') || 
+                            url.contains('youtu.be') ||
+                            url.contains('googlevideo.com') ||
+                            url.contains('ytimg.com')) {
+                          return NavigationActionPolicy.ALLOW;
+                        }
+                        if (mounted && !_isDisposed) {
+                          widget.launchUrlCallback(url);
+                        }
+                        return NavigationActionPolicy.CANCEL;
+                      },
+                    )
+                  : const SizedBox(),
             ),
             if (_isLoading)
               Container(
@@ -344,13 +286,13 @@ class YouTubePreviewWidgetState extends State<YouTubePreviewWidget> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      CircularProgressIndicator(
+                      const CircularProgressIndicator(
                         valueColor: AlwaysStoppedAnimation<Color>(Colors.red),
                       ),
-                      SizedBox(height: 16),
+                      const SizedBox(height: 16),
                       Text(
                         'Loading YouTube ${_isShort ? "Short" : "video"}...',
-                        style: TextStyle(color: Colors.white),
+                        style: const TextStyle(color: Colors.white),
                       ),
                     ],
                   ),
@@ -365,7 +307,7 @@ class YouTubePreviewWidgetState extends State<YouTubePreviewWidget> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const SizedBox(width: 48), // Spacer for alignment
+                const SizedBox(width: 48),
                 IconButton(
                   icon: const FaIcon(FontAwesomeIcons.youtube),
                   color: Colors.red,

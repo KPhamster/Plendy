@@ -1,17 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'dart:math';
+import 'dart:typed_data';
 import '../models/shared_media_compat.dart';
 import 'dart:io';
 import 'dart:convert';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'package:flutter_inappwebview/flutter_inappwebview.dart' as inapp;
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:dio/dio.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:provider/provider.dart';
+import 'package:image_picker/image_picker.dart';
 import '../providers/receive_share_provider.dart';
 import '../models/experience.dart';
 import '../models/user_category.dart';
@@ -23,6 +26,8 @@ import '../services/experience_service.dart';
 import '../services/category_ordering_service.dart';
 import '../services/google_maps_service.dart';
 import '../services/google_knowledge_graph_service.dart';
+import '../services/link_location_extraction_service.dart';
+import '../models/extracted_location_data.dart';
 import '../widgets/google_maps_widget.dart';
 import 'location_picker_screen.dart';
 import '../services/sharing_service.dart';
@@ -226,6 +231,14 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       CategoryOrderingService();
   final GoogleMapsService _mapsService = GoogleMapsService();
   final SharingService _sharingService = SharingService();
+  final LinkLocationExtractionService _locationExtractor = 
+      LinkLocationExtractionService();
+  
+  // AI Location Extraction state
+  bool _isExtractingLocation = false;
+  bool _isProcessingScreenshot = false; // For screenshot-based extraction
+  Position? _currentUserPosition; // For location-biased extraction
+  final ImagePicker _imagePicker = ImagePicker();
   // URL bar controller and focus node
   late final TextEditingController _sharedUrlController;
   late final FocusNode _sharedUrlFocusNode;
@@ -248,8 +261,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   final GlobalKey _experienceCardsSectionKey = GlobalKey();
   bool _showUpArrowForFab = false;
   bool _isInstagramPreviewExpanded = false;
-  final Map<String, GlobalKey> _instagramPreviewKeys =
-      {}; // To store keys for active Instagram previews
+  final Map<String, GlobalKey<_InstagramPreviewWrapperState>> _instagramPreviewKeys = {};
+  final Map<String, GlobalKey<TikTokPreviewWidgetState>> _tiktokPreviewKeys = {};
+  final Map<String, GlobalKey<YouTubePreviewWidgetState>> _youtubePreviewKeys = {};
+  final Map<String, GlobalKey<FacebookPreviewWidgetState>> _facebookPreviewKeys = {};
+  final Map<String, GlobalKey<WebUrlPreviewWidgetState>> _webUrlPreviewKeys = {};
   String?
       _currentVisibleInstagramUrl; // To track which Instagram preview is potentially visible
   // --- END ADDED FOR SCROLLING FAB ---
@@ -343,12 +359,601 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                     style: instructionStyle,
                   ),
                 ],
+                // Screenshot Upload Buttons - Always visible
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    _buildScreenshotUploadButton(),
+                    _buildScanCurrentPreviewButton(),
+                  ],
+                ),
+                // AI Location Extraction loading indicator
+                if (_isExtractingLocation) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.blue[50],
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.blue[200]!),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation<Color>(Colors.blue[700]!),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Text(
+                          '🤖 AI finding locations...',
+                          style: TextStyle(
+                            color: Colors.blue[800],
+                            fontWeight: FontWeight.w500,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+                // Screenshot processing loading indicator
+                if (_isProcessingScreenshot) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.purple[50],
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.purple[200]!),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation<Color>(Colors.purple[700]!),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Text(
+                          '📷 AI analyzing screenshot...',
+                          style: TextStyle(
+                            color: Colors.purple[800],
+                            fontWeight: FontWeight.w500,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
         );
       },
     );
+  }
+
+  /// Build the screenshot upload button widget
+  Widget _buildScreenshotUploadButton() {
+    final isLoading = _isProcessingScreenshot || _isExtractingLocation;
+
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        child: OutlinedButton.icon(
+          onPressed: isLoading ? null : _showScreenshotUploadOptions,
+          icon: Icon(
+            Icons.add_photo_alternate_outlined,
+            size: 20,
+            color: isLoading ? Colors.grey : Colors.purple[700],
+          ),
+          label: const Text(
+            'Upload Screenshot',
+            style: TextStyle(
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          style: OutlinedButton.styleFrom(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            side: BorderSide(
+              color: isLoading ? Colors.grey[300]! : Colors.purple[300]!,
+            ),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Build the scan current preview button widget
+  Widget _buildScanCurrentPreviewButton() {
+    final isLoading = _isProcessingScreenshot || _isExtractingLocation;
+    final hasPreview = _hasActivePreview();
+
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        child: OutlinedButton.icon(
+          onPressed: (isLoading || !hasPreview) ? null : _scanCurrentPreview,
+          icon: Icon(
+            Icons.screenshot_monitor,
+            size: 20,
+            color: (isLoading || !hasPreview) ? Colors.grey : Colors.blue[700],
+          ),
+          label: const Text(
+            'Scan Preview',
+            style: TextStyle(
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          style: OutlinedButton.styleFrom(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            side: BorderSide(
+              color: (isLoading || !hasPreview) ? Colors.grey[300]! : Colors.blue[300]!,
+            ),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Show options dialog for screenshot upload (camera/gallery)
+  void _showScreenshotUploadOptions() {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) => SafeArea(
+        child: Container(
+          color: Colors.white,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 40,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 16),
+                decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.auto_awesome, color: Colors.purple[600]),
+                        const SizedBox(width: 8),
+                        const Text(
+                          'AI Location from Screenshot',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 18,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Upload a screenshot or take a photo. AI will find locations from captions, tagged places, and visible text.',
+                      style: TextStyle(
+                        color: Colors.grey[600],
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Divider(),
+              ListTile(
+                leading: Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.blue[50],
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(Icons.photo_library, color: Colors.blue[700]),
+                ),
+                title: const Text('Choose from Gallery'),
+                subtitle: const Text('Select an existing screenshot'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _pickScreenshotFromGallery();
+                },
+              ),
+              ListTile(
+                leading: Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.green[50],
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(Icons.camera_alt, color: Colors.green[700]),
+                ),
+                title: const Text('Take a Photo'),
+                subtitle: const Text('Capture text or sign with location info'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _takePhotoForLocation();
+                },
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        ),
+        ),
+      ),
+    );
+  }
+
+  /// Pick a screenshot from gallery
+  Future<void> _pickScreenshotFromGallery() async {
+    try {
+      final XFile? image = await _imagePicker.pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 90,
+      );
+      
+      if (image != null) {
+        await _processScreenshotForLocations(File(image.path));
+      }
+    } catch (e) {
+      print('❌ SCREENSHOT: Error picking image from gallery: $e');
+      Fluttertoast.showToast(
+        msg: 'Error selecting image',
+        backgroundColor: Colors.red,
+      );
+    }
+  }
+
+  /// Take a photo for location extraction
+  Future<void> _takePhotoForLocation() async {
+    try {
+      final XFile? image = await _imagePicker.pickImage(
+        source: ImageSource.camera,
+        imageQuality: 90,
+      );
+      
+      if (image != null) {
+        await _processScreenshotForLocations(File(image.path));
+      }
+    } catch (e) {
+      print('❌ SCREENSHOT: Error taking photo: $e');
+      Fluttertoast.showToast(
+        msg: 'Error taking photo',
+        backgroundColor: Colors.red,
+      );
+    }
+  }
+
+  /// Check if there's an active preview (any URL) that can be scanned
+  bool _hasActivePreview() {
+    if (_currentSharedFiles.isEmpty) return false;
+    final url = _extractFirstUrl(_currentSharedFiles.first.path);
+    if (url == null) return false;
+    // Check if it's any URL that would have a WebView preview
+    return _isInstagramUrl(url) || 
+           _isTikTokUrl(url) || 
+           _isFacebookUrl(url) || 
+           _isYouTubeUrl(url) ||
+           _isSocialMediaUrl(url) ||
+           url.startsWith('http');  // Any web URL
+  }
+
+  /// Scan the current preview WebView content using AI
+  Future<void> _scanCurrentPreview() async {
+    if (_isProcessingScreenshot || _isExtractingLocation) return;
+
+    setState(() {
+      _isProcessingScreenshot = true;
+    });
+
+    try {
+      print('📷 SCAN PREVIEW: Capturing WebView content...');
+      
+      // Try to capture the WebView screenshot from any active preview
+      Uint8List? screenshotBytes = await _tryCaptureaActiveWebView();
+      
+      if (screenshotBytes == null || screenshotBytes.isEmpty) {
+        Fluttertoast.showToast(
+          msg: '📷 Could not capture preview. Try uploading a screenshot instead.',
+          toastLength: Toast.LENGTH_LONG,
+          backgroundColor: Colors.orange[700],
+        );
+        return;
+      }
+
+      print('📷 SCAN PREVIEW: Captured ${screenshotBytes.length} bytes, sending to AI...');
+
+      // Get user location for better results
+      LatLng? userLocation;
+      if (_currentUserPosition != null) {
+        userLocation = LatLng(
+          _currentUserPosition!.latitude,
+          _currentUserPosition!.longitude,
+        );
+      }
+
+      // Process the captured image
+      final locations = await _locationExtractor.extractLocationsFromImageBytes(
+        screenshotBytes,
+        mimeType: 'image/png',
+        userLocation: userLocation,
+      );
+
+      if (!mounted) return;
+
+      if (locations.isEmpty) {
+        print('⚠️ SCAN PREVIEW: No locations found in preview');
+        Fluttertoast.showToast(
+          msg: '📷 No locations found. Try pausing video on text, or upload a screenshot.',
+          toastLength: Toast.LENGTH_LONG,
+          backgroundColor: Colors.orange[700],
+        );
+        return;
+      }
+
+      print('✅ SCAN PREVIEW: Found ${locations.length} location(s)');
+
+      final provider = context.read<ReceiveShareProvider>();
+
+      if (locations.length == 1) {
+        await _applySingleExtractedLocation(locations.first, provider);
+        Fluttertoast.showToast(
+          msg: '📷 Found: ${locations.first.name}',
+          toastLength: Toast.LENGTH_SHORT,
+          backgroundColor: Colors.green,
+        );
+      } else {
+        await _handleMultipleExtractedLocations(locations, provider);
+      }
+    } catch (e) {
+      print('❌ SCAN PREVIEW ERROR: $e');
+      Fluttertoast.showToast(
+        msg: 'Error scanning preview',
+        backgroundColor: Colors.red,
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isProcessingScreenshot = false;
+        });
+      }
+    }
+  }
+
+  /// Try to capture the active WebView content from any preview type
+  Future<Uint8List?> _tryCaptureaActiveWebView() async {
+    if (_currentSharedFiles.isEmpty) return null;
+    
+    final url = _extractFirstUrl(_currentSharedFiles.first.path);
+    if (url == null) return null;
+    
+    print('📷 SCAN PREVIEW: Attempting to capture preview for URL: $url');
+    
+    // Try each preview type in order
+    if (_isInstagramUrl(url)) {
+      return await _captureInstagramPreview(url);
+    } else if (_isTikTokUrl(url)) {
+      return await _captureTikTokPreview(url);
+    } else if (_isYouTubeUrl(url)) {
+      return await _captureYouTubePreview(url);
+    } else if (_isFacebookUrl(url)) {
+      return await _captureFacebookPreview(url);
+    } else if (url.startsWith('http')) {
+      return await _captureWebUrlPreview(url);
+    }
+    
+    print('⚠️ SCAN PREVIEW: No matching preview type found');
+    return null;
+  }
+
+  /// Capture Instagram preview WebView
+  Future<Uint8List?> _captureInstagramPreview(String url) async {
+    final previewKey = _instagramPreviewKeys[url];
+    if (previewKey == null) {
+      print('⚠️ SCAN PREVIEW: No Instagram preview key found');
+      return null;
+    }
+    
+    final state = previewKey.currentState;
+    if (state != null) {
+      try {
+        final screenshot = await state.takeScreenshot();
+        if (screenshot != null) {
+          print('✅ SCAN PREVIEW: Captured Instagram WebView (${screenshot.length} bytes)');
+          return screenshot;
+        }
+      } catch (e) {
+        print('⚠️ SCAN PREVIEW: Instagram takeScreenshot failed: $e');
+      }
+    }
+    return null;
+  }
+
+  /// Capture TikTok preview WebView
+  Future<Uint8List?> _captureTikTokPreview(String url) async {
+    final previewKey = _tiktokPreviewKeys[url];
+    if (previewKey == null) {
+      print('⚠️ SCAN PREVIEW: No TikTok preview key found');
+      return null;
+    }
+    
+    final state = previewKey.currentState;
+    if (state != null) {
+      try {
+        final screenshot = await state.takeScreenshot();
+        if (screenshot != null) {
+          print('✅ SCAN PREVIEW: Captured TikTok WebView (${screenshot.length} bytes)');
+          return screenshot;
+        }
+      } catch (e) {
+        print('⚠️ SCAN PREVIEW: TikTok takeScreenshot failed: $e');
+      }
+    }
+    return null;
+  }
+
+  /// Capture YouTube preview WebView
+  Future<Uint8List?> _captureYouTubePreview(String url) async {
+    final previewKey = _youtubePreviewKeys[url];
+    if (previewKey == null) {
+      print('⚠️ SCAN PREVIEW: No YouTube preview key found');
+      return null;
+    }
+    
+    final state = previewKey.currentState;
+    if (state != null) {
+      try {
+        final screenshot = await state.takeScreenshot();
+        if (screenshot != null) {
+          print('✅ SCAN PREVIEW: Captured YouTube WebView (${screenshot.length} bytes)');
+          return screenshot;
+        }
+      } catch (e) {
+        print('⚠️ SCAN PREVIEW: YouTube takeScreenshot failed: $e');
+      }
+    }
+    return null;
+  }
+
+  /// Capture Facebook preview WebView
+  Future<Uint8List?> _captureFacebookPreview(String url) async {
+    final previewKey = _facebookPreviewKeys[url];
+    if (previewKey == null) {
+      print('⚠️ SCAN PREVIEW: No Facebook preview key found');
+      return null;
+    }
+    
+    final state = previewKey.currentState;
+    if (state != null) {
+      try {
+        final screenshot = await state.takeScreenshot();
+        if (screenshot != null) {
+          print('✅ SCAN PREVIEW: Captured Facebook WebView (${screenshot.length} bytes)');
+          return screenshot;
+        }
+      } catch (e) {
+        print('⚠️ SCAN PREVIEW: Facebook takeScreenshot failed: $e');
+      }
+    }
+    return null;
+  }
+
+  /// Capture Web URL preview WebView
+  Future<Uint8List?> _captureWebUrlPreview(String url) async {
+    final previewKey = _webUrlPreviewKeys[url];
+    if (previewKey == null) {
+      print('⚠️ SCAN PREVIEW: No Web URL preview key found');
+      return null;
+    }
+    
+    final state = previewKey.currentState;
+    if (state != null) {
+      try {
+        final screenshot = await state.takeScreenshot();
+        if (screenshot != null) {
+          print('✅ SCAN PREVIEW: Captured Web URL WebView (${screenshot.length} bytes)');
+          return screenshot;
+        }
+      } catch (e) {
+        print('⚠️ SCAN PREVIEW: Web URL takeScreenshot failed: $e');
+      }
+    }
+    return null;
+  }
+
+  /// Process the screenshot/image to extract locations using Gemini Vision
+  Future<void> _processScreenshotForLocations(File imageFile) async {
+    // Skip if already processing
+    if (_isProcessingScreenshot || _isExtractingLocation) return;
+
+    setState(() {
+      _isProcessingScreenshot = true;
+    });
+
+    try {
+      // Get user location for better results (optional)
+      LatLng? userLocation;
+      if (_currentUserPosition != null) {
+        userLocation = LatLng(
+          _currentUserPosition!.latitude,
+          _currentUserPosition!.longitude,
+        );
+      }
+
+      print('📷 SCREENSHOT: Starting AI location extraction from image...');
+
+      // Extract locations using Gemini Vision
+      final locations = await _locationExtractor.extractLocationsFromImage(
+        imageFile,
+        userLocation: userLocation,
+      );
+
+      if (!mounted) return;
+
+      if (locations.isEmpty) {
+        print('⚠️ SCREENSHOT: No locations found in image');
+        Fluttertoast.showToast(
+          msg: '📷 No locations found in screenshot. Try an image with visible text, captions, or location tags.',
+          toastLength: Toast.LENGTH_LONG,
+          backgroundColor: Colors.orange[700],
+        );
+        return;
+      }
+
+      print('✅ SCREENSHOT: Found ${locations.length} location(s)');
+
+      final provider = context.read<ReceiveShareProvider>();
+
+      if (locations.length == 1) {
+        // Single location: Update first card or create if none exists
+        await _applySingleExtractedLocation(locations.first, provider);
+
+        Fluttertoast.showToast(
+          msg: '📷 Found: ${locations.first.name}',
+          toastLength: Toast.LENGTH_SHORT,
+          backgroundColor: Colors.green,
+        );
+      } else {
+        // Multiple locations: Ask user before creating multiple cards
+        await _handleMultipleExtractedLocations(locations, provider);
+      }
+    } catch (e) {
+      print('❌ SCREENSHOT ERROR: $e');
+      Fluttertoast.showToast(
+        msg: 'Error processing screenshot',
+        backgroundColor: Colors.red,
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isProcessingScreenshot = false;
+        });
+      }
+    }
   }
 
   // Track initialization state
@@ -920,6 +1525,431 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     // Unfocus the text field and hide keyboard
     _sharedUrlFocusNode.unfocus();
     FocusScope.of(context).unfocus();
+    
+    // Trigger AI-powered location extraction
+    _extractLocationsFromUrl(url);
+  }
+
+  /// Extract locations from URL using AI-powered Gemini service
+  Future<void> _extractLocationsFromUrl(String url) async {
+    // Skip if already extracting
+    if (_isExtractingLocation) return;
+    
+    // Skip for URLs that we already handle specially with their own location logic
+    if (_isYelpUrl(url) || _isGoogleMapsUrl(url)) {
+      print('🔍 EXTRACTION: Skipping AI extraction for platform-specific URL');
+      return;
+    }
+
+    setState(() {
+      _isExtractingLocation = true;
+    });
+
+    try {
+      // Get user location for better results (optional)
+      LatLng? userLocation;
+      if (_currentUserPosition != null) {
+        userLocation = LatLng(
+          _currentUserPosition!.latitude,
+          _currentUserPosition!.longitude,
+        );
+      }
+
+      print('🤖 AI EXTRACTION: Starting location extraction from URL...');
+      
+      // Extract locations using Gemini + Maps grounding
+      final locations = await _locationExtractor.extractLocationsFromSharedLink(
+        url,
+        userLocation: userLocation,
+        maxLocations: 5,
+      );
+
+      if (!mounted) return;
+
+      if (locations.isEmpty) {
+        print('⚠️ AI EXTRACTION: No locations found in URL');
+        
+        // Show helpful message for social media URLs
+        if (_isSocialMediaUrl(url)) {
+          Fluttertoast.showToast(
+            msg: '💡 Tip: Copy the caption or post text that mentions the location, then paste it in the URL field',
+            toastLength: Toast.LENGTH_LONG,
+            backgroundColor: Colors.orange[700],
+          );
+        }
+        return;
+      }
+
+      print('✅ AI EXTRACTION: Found ${locations.length} location(s)');
+      
+      final provider = context.read<ReceiveShareProvider>();
+      
+      if (locations.length == 1) {
+        // Single location: Update first card or create if none exists
+        await _applySingleExtractedLocation(locations.first, provider);
+        
+        Fluttertoast.showToast(
+          msg: '📍 Found: ${locations.first.name}',
+          toastLength: Toast.LENGTH_SHORT,
+          backgroundColor: Colors.green,
+        );
+      } else {
+        // Multiple locations: Ask user before creating multiple cards
+        await _handleMultipleExtractedLocations(locations, provider);
+      }
+    } catch (e) {
+      print('❌ AI EXTRACTION ERROR: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isExtractingLocation = false;
+        });
+      }
+    }
+  }
+
+  /// Check multiple locations for duplicates against user's saved experiences
+  /// Returns a map of location index -> existing Experience if duplicate found
+  Future<Map<int, Experience>> _checkLocationsForDuplicates(
+    List<ExtractedLocationData> locations,
+  ) async {
+    final Map<int, Experience> duplicates = {};
+    
+    final String? currentUserId = _authService.currentUser?.uid;
+    if (currentUserId == null) {
+      print('📍 DUPLICATE CHECK: No user ID, skipping duplicate check');
+      return duplicates;
+    }
+
+    List<Experience> userExperiences = [];
+    try {
+      userExperiences = await _experienceService.getUserExperiences();
+    } catch (e) {
+      print('📍 DUPLICATE CHECK: Could not load experiences: $e');
+      return duplicates;
+    }
+
+    if (userExperiences.isEmpty) {
+      return duplicates;
+    }
+
+    for (int i = 0; i < locations.length; i++) {
+      final location = locations[i];
+      
+      // Check by Place ID first (most accurate)
+      if (location.placeId != null && location.placeId!.isNotEmpty) {
+        final matchByPlaceId = userExperiences.firstWhereOrNull(
+          (exp) => exp.location.placeId == location.placeId,
+        );
+        if (matchByPlaceId != null) {
+          duplicates[i] = matchByPlaceId;
+          print('📍 DUPLICATE CHECK: Found duplicate for "${location.name}" by Place ID');
+          continue;
+        }
+      }
+      
+      // Check by title (case-insensitive)
+      final matchByTitle = userExperiences.firstWhereOrNull(
+        (exp) => exp.name.trim().toLowerCase() == location.name.trim().toLowerCase(),
+      );
+      if (matchByTitle != null) {
+        duplicates[i] = matchByTitle;
+        print('📍 DUPLICATE CHECK: Found duplicate for "${location.name}" by title');
+      }
+    }
+
+    print('📍 DUPLICATE CHECK: Found ${duplicates.length} duplicates out of ${locations.length} locations');
+    return duplicates;
+  }
+
+  /// Apply a single extracted location to the first experience card
+  Future<void> _applySingleExtractedLocation(
+    ExtractedLocationData locationData,
+    ReceiveShareProvider provider,
+  ) async {
+    // Ensure we have at least one card
+    if (provider.experienceCards.isEmpty) {
+      return;
+    }
+
+    final card = provider.experienceCards.first;
+    
+    // Only auto-fill if location is not already set
+    if (card.selectedLocation != null && 
+        card.selectedLocation!.placeId != null &&
+        card.selectedLocation!.placeId!.isNotEmpty) {
+      print('📍 AI EXTRACTION: Card already has location, skipping auto-fill');
+      return;
+    }
+
+    // Check for duplicate
+    final duplicates = await _checkLocationsForDuplicates([locationData]);
+    
+    if (duplicates.containsKey(0)) {
+      // Found a duplicate - show dialog to ask user
+      final existingExperience = duplicates[0]!;
+      
+      if (!mounted) return;
+      
+      final bool? useExisting = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (BuildContext dialogContext) {
+          final Color primaryColor = Theme.of(dialogContext).colorScheme.primary;
+          return AlertDialog(
+            backgroundColor: Colors.white,
+            title: const Text('Already Saved'),
+            content: Text(
+              'You already have "${existingExperience.name}" saved at "${existingExperience.location.address ?? 'No address'}". Would you like to use this existing experience?'
+            ),
+            actions: <Widget>[
+              TextButton(
+                style: TextButton.styleFrom(
+                  backgroundColor: Colors.white,
+                  foregroundColor: primaryColor,
+                ),
+                child: const Text('Create New'),
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+              ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: primaryColor,
+                  foregroundColor: Colors.white,
+                ),
+                child: const Text('Use Existing'),
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+              ),
+            ],
+          );
+        },
+      );
+      
+      if (useExisting == true) {
+        provider.updateCardWithExistingExperience(card.id, existingExperience);
+        print('✅ AI EXTRACTION: Using existing experience "${existingExperience.name}"');
+        return;
+      }
+    }
+
+    // Update the card with extracted location
+    provider.updateCardWithExtractedLocation(card.id, locationData);
+    
+    print('✅ AI EXTRACTION: Applied location "${locationData.name}" to card');
+  }
+
+  /// Handle multiple extracted locations - show dialog with checklist to user
+  Future<void> _handleMultipleExtractedLocations(
+    List<ExtractedLocationData> locations,
+    ReceiveShareProvider provider,
+  ) async {
+    // Check for duplicates before showing dialog
+    final duplicates = await _checkLocationsForDuplicates(locations);
+    
+    if (!mounted) return;
+    
+    // Show dialog with selectable checklist (including duplicate info)
+    final result = await showDialog<_MultiLocationSelectionResult>(
+      context: context,
+      builder: (context) => _MultiLocationSelectionDialog(
+        locations: locations,
+        duplicates: duplicates,
+      ),
+    );
+    
+    // Handle the result (which now includes both locations and their duplicate info)
+    final selectedLocations = result?.selectedLocations;
+    final selectedDuplicates = result?.selectedDuplicates;
+
+    if (selectedLocations != null && selectedLocations.isNotEmpty) {
+      // Separate locations into new vs existing (duplicates)
+      final List<ExtractedLocationData> newLocations = [];
+      final List<Experience> existingExperiences = [];
+      
+      for (final location in selectedLocations) {
+        if (selectedDuplicates != null && selectedDuplicates.containsKey(location)) {
+          existingExperiences.add(selectedDuplicates[location]!);
+        } else {
+          newLocations.add(location);
+        }
+      }
+      
+      print('📍 MULTI-LOCATION: ${newLocations.length} new, ${existingExperiences.length} existing');
+      
+      // Track cards created/updated
+      int cardsCreated = 0;
+      int existingUsed = 0;
+      
+      // Find empty cards to fill first
+      final emptyCards = provider.experienceCards.where(
+        (card) => card.selectedLocation == null || 
+                  card.selectedLocation!.placeId == null || 
+                  card.selectedLocation!.placeId!.isEmpty,
+      ).toList();
+      
+      int emptyCardIndex = 0;
+      
+      // Process new locations first
+      for (int i = 0; i < newLocations.length; i++) {
+        if (emptyCardIndex < emptyCards.length) {
+          // Fill an existing empty card
+          provider.updateCardWithExtractedLocation(emptyCards[emptyCardIndex].id, newLocations[i]);
+          print('📍 Filled existing card with: ${newLocations[i].name}');
+          emptyCardIndex++;
+        } else {
+          // Create new card for remaining locations
+          provider.createCardsFromLocations([newLocations[i]]);
+          cardsCreated++;
+        }
+      }
+      
+      // Process existing experiences (duplicates user chose to use)
+      for (final existingExp in existingExperiences) {
+        if (emptyCardIndex < emptyCards.length) {
+          // Fill an existing empty card with existing experience
+          provider.updateCardWithExistingExperience(emptyCards[emptyCardIndex].id, existingExp);
+          print('📍 Filled card with existing experience: ${existingExp.name}');
+          emptyCardIndex++;
+          existingUsed++;
+        } else {
+          // Need to create a new card for this existing experience
+          provider.addExperienceCard();
+          final newCard = provider.experienceCards.last;
+          provider.updateCardWithExistingExperience(newCard.id, existingExp);
+          print('📍 Created card for existing experience: ${existingExp.name}');
+          cardsCreated++;
+          existingUsed++;
+        }
+      }
+      
+      // Show appropriate toast message
+      if (existingUsed > 0 && newLocations.isNotEmpty) {
+        Fluttertoast.showToast(
+          msg: '📍 ${newLocations.length} new + ${existingUsed} existing experience${existingUsed > 1 ? 's' : ''} added',
+          toastLength: Toast.LENGTH_LONG,
+          backgroundColor: Colors.blue,
+        );
+      } else if (existingUsed > 0) {
+        Fluttertoast.showToast(
+          msg: '📍 Using ${existingUsed} existing experience${existingUsed > 1 ? 's' : ''}',
+          toastLength: Toast.LENGTH_SHORT,
+          backgroundColor: Colors.green,
+        );
+      } else if (selectedLocations.length == 1) {
+        Fluttertoast.showToast(
+          msg: '📍 Applied: ${selectedLocations.first.name}',
+          toastLength: Toast.LENGTH_SHORT,
+          backgroundColor: Colors.green,
+        );
+      } else {
+        Fluttertoast.showToast(
+          msg: '📍 Added ${selectedLocations.length} new experience cards!',
+          toastLength: Toast.LENGTH_LONG,
+          backgroundColor: Colors.blue,
+        );
+      }
+      
+      // Show helpful info dialog if multiple cards affected
+      if (selectedLocations.length > 1) {
+        _showMultiLocationInfoDialog(selectedLocations.length);
+      }
+    }
+  }
+
+  /// Show informational dialog about multiple cards added
+  void _showMultiLocationInfoDialog(int count) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Colors.white,
+        title: Row(
+          children: [
+            const Icon(Icons.check_circle, color: Colors.green),
+            const SizedBox(width: 8),
+            const Text('Locations Applied!'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Applied locations to $count experience card${count > 1 ? 's' : ''}.',
+              style: const TextStyle(fontSize: 16),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'You can:',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            _buildInfoBulletPoint('Edit each card independently'),
+            _buildInfoBulletPoint('Remove cards you don\'t want'),
+            _buildInfoBulletPoint('Add notes and categories'),
+            _buildInfoBulletPoint('Save all as separate experiences'),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Got it!'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInfoBulletPoint(String text) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 8, bottom: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('• ', style: TextStyle(fontSize: 16)),
+          Expanded(child: Text(text)),
+        ],
+      ),
+    );
+  }
+
+  /// Check if URL is a Google Maps URL
+  bool _isGoogleMapsUrl(String url) {
+    final lower = url.toLowerCase();
+    return lower.contains('google.com/maps') ||
+           lower.contains('maps.google.com') ||
+           lower.contains('goo.gl/maps');
+  }
+
+  /// Check if URL is from a social media platform
+  bool _isSocialMediaUrl(String url) {
+    final lower = url.toLowerCase();
+    return lower.contains('instagram.com') ||
+           lower.contains('tiktok.com') ||
+           lower.contains('youtube.com') ||
+           lower.contains('facebook.com') ||
+           lower.contains('twitter.com') ||
+           lower.contains('x.com');
+  }
+
+  /// Check if URL is an Instagram URL
+  bool _isInstagramUrl(String url) {
+    return url.toLowerCase().contains('instagram.com');
+  }
+
+  /// Check if URL is a TikTok URL
+  bool _isTikTokUrl(String url) {
+    final lower = url.toLowerCase();
+    return lower.contains('tiktok.com') || lower.contains('vm.tiktok.com');
+  }
+
+  /// Check if URL is a Facebook URL
+  bool _isFacebookUrl(String url) {
+    return url.toLowerCase().contains('facebook.com');
+  }
+
+  /// Check if URL is a YouTube URL
+  bool _isYouTubeUrl(String url) {
+    final lower = url.toLowerCase();
+    return lower.contains('youtube.com') || lower.contains('youtu.be');
   }
 
   // Extract Yelp URL from shared files
@@ -3920,7 +4950,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // return const SizedBox(height: 50, child: Center(child: Text("Instagram Preview Disabled")));
       if (!_instagramPreviewKeys.containsKey(url)) {
         // Ensure key exists
-        _instagramPreviewKeys[url] = GlobalKey();
+        _instagramPreviewKeys[url] = GlobalKey<_InstagramPreviewWrapperState>();
       }
       // If this is the first media item and it's instagram, update _currentVisibleInstagramUrl
       // This logic is a bit tricky here as _buildMediaPreview is called inside a loop.
@@ -3968,7 +4998,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         );
       }
 
+      // Ensure TikTok preview key exists
+      if (!_tiktokPreviewKeys.containsKey(url)) {
+        _tiktokPreviewKeys[url] = GlobalKey<TikTokPreviewWidgetState>();
+      }
       return TikTokPreviewWidget(
+        key: _tiktokPreviewKeys[url],
         url: url,
         launchUrlCallback: _launchUrl,
         onPhotoDetected: (detectedUrl, isPhoto) {
@@ -3981,7 +5016,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     if (url.contains('facebook.com') ||
         url.contains('fb.com') ||
         url.contains('fb.watch')) {
+      // Ensure Facebook preview key exists
+      if (!_facebookPreviewKeys.containsKey(url)) {
+        _facebookPreviewKeys[url] = GlobalKey<FacebookPreviewWidgetState>();
+      }
       return FacebookPreviewWidget(
+        key: _facebookPreviewKeys[url],
         url: url,
         height: 500,
         onWebViewCreated: (controller) {
@@ -3997,7 +5037,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     if (url.contains('youtube.com') ||
         url.contains('youtu.be') ||
         url.contains('youtube.com/shorts')) {
+      // Ensure YouTube preview key exists
+      if (!_youtubePreviewKeys.containsKey(url)) {
+        _youtubePreviewKeys[url] = GlobalKey<YouTubePreviewWidgetState>();
+      }
       return YouTubePreviewWidget(
+        key: _youtubePreviewKeys[url],
         url: url,
         launchUrlCallback: _launchUrl,
       );
@@ -4935,7 +5980,7 @@ class InstagramPreviewWrapper extends StatefulWidget {
 class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
   bool _isExpanded = false;
   bool _isDisposed = false;
-  late WebViewController _controller;
+  inapp.InAppWebViewController? _controller;
 
   @override
   void dispose() {
@@ -4953,9 +5998,23 @@ class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
   }
 
   // Safe callback for webview
-  void _handleWebViewCreated(WebViewController controller) {
+  void _handleWebViewCreated(inapp.InAppWebViewController controller) {
     if (!mounted || _isDisposed) return;
     _controller = controller;
+  }
+
+  /// Take a screenshot of the Instagram WebView
+  Future<Uint8List?> takeScreenshot() async {
+    if (_controller == null) {
+      print('⚠️ INSTAGRAM WRAPPER: Controller is null');
+      return null;
+    }
+    try {
+      return await _controller!.takeScreenshot();
+    } catch (e) {
+      print('❌ INSTAGRAM WRAPPER: Screenshot failed: $e');
+      return null;
+    }
   }
 
   // Safe callback for page finished
@@ -5023,6 +6082,332 @@ class _InstagramPreviewWrapperState extends State<InstagramPreviewWrapper> {
         const SizedBox(height: 8),
       ],
     );
+  }
+}
+
+/// Result from the multi-location selection dialog
+class _MultiLocationSelectionResult {
+  final List<ExtractedLocationData> selectedLocations;
+  final Map<ExtractedLocationData, Experience> selectedDuplicates;
+
+  _MultiLocationSelectionResult({
+    required this.selectedLocations,
+    required this.selectedDuplicates,
+  });
+}
+
+/// Dialog for selecting multiple locations from AI extraction results
+class _MultiLocationSelectionDialog extends StatefulWidget {
+  final List<ExtractedLocationData> locations;
+  final Map<int, Experience> duplicates; // index -> existing Experience
+
+  const _MultiLocationSelectionDialog({
+    required this.locations,
+    this.duplicates = const {},
+  });
+
+  @override
+  State<_MultiLocationSelectionDialog> createState() => _MultiLocationSelectionDialogState();
+}
+
+class _MultiLocationSelectionDialogState extends State<_MultiLocationSelectionDialog> {
+  late Set<int> _selectedIndices;
+
+  @override
+  void initState() {
+    super.initState();
+    // Start with all locations selected
+    _selectedIndices = Set<int>.from(List.generate(widget.locations.length, (i) => i));
+  }
+
+  bool get _allSelected => _selectedIndices.length == widget.locations.length;
+  bool get _noneSelected => _selectedIndices.isEmpty;
+  
+  int get _duplicateCount => widget.duplicates.length;
+  int get _selectedDuplicateCount => 
+      _selectedIndices.where((i) => widget.duplicates.containsKey(i)).length;
+  int get _selectedNewCount => _selectedIndices.length - _selectedDuplicateCount;
+
+  void _toggleAll() {
+    setState(() {
+      if (_allSelected) {
+        _selectedIndices.clear();
+      } else {
+        _selectedIndices = Set<int>.from(List.generate(widget.locations.length, (i) => i));
+      }
+    });
+  }
+
+  void _toggleLocation(int index) {
+    setState(() {
+      if (_selectedIndices.contains(index)) {
+        _selectedIndices.remove(index);
+      } else {
+        _selectedIndices.add(index);
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: MediaQuery.of(context).size.width * 0.9,
+      child: AlertDialog(
+        backgroundColor: Colors.white,
+      title: Row(
+        children: [
+          const Icon(Icons.location_on, color: Colors.blue),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              '${widget.locations.length} Locations Found',
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Select which locations to add:',
+              style: TextStyle(fontWeight: FontWeight.w500),
+            ),
+            // Show duplicate notice if any duplicates found
+            if (_duplicateCount > 0) ...[
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.orange[50],
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.orange[200]!),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.bookmark, size: 16, color: Colors.orange[700]),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        '$_duplicateCount already saved',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Colors.orange[800],
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+            const SizedBox(height: 8),
+            // Select All / Deselect All row
+            InkWell(
+              onTap: _toggleAll,
+              borderRadius: BorderRadius.circular(8),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Row(
+                  children: [
+                    Checkbox(
+                      value: _allSelected,
+                      tristate: true,
+                      onChanged: (_) => _toggleAll(),
+                      activeColor: Colors.blue,
+                    ),
+                    Text(
+                      _allSelected ? 'Deselect All' : 'Select All',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        color: Colors.blue[700],
+                      ),
+                    ),
+                    const Spacer(),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.blue[50],
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        '${_selectedIndices.length}/${widget.locations.length}',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.blue[700],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const Divider(height: 1),
+            const SizedBox(height: 8),
+            // Scrollable list of locations
+            Flexible(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.of(context).size.height * 0.4,
+                ),
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: widget.locations.length,
+                  itemBuilder: (context, index) {
+                    final location = widget.locations[index];
+                    final isSelected = _selectedIndices.contains(index);
+                    final isDuplicate = widget.duplicates.containsKey(index);
+                    final existingExp = widget.duplicates[index];
+                    
+                    return InkWell(
+                      onTap: () => _toggleLocation(index),
+                      borderRadius: BorderRadius.circular(8),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 4),
+                        decoration: BoxDecoration(
+                          color: isSelected 
+                              ? (isDuplicate ? Colors.orange.withOpacity(0.08) : Colors.blue.withOpacity(0.05))
+                              : null,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Row(
+                          children: [
+                            Checkbox(
+                              value: isSelected,
+                              onChanged: (_) => _toggleLocation(index),
+                              activeColor: isDuplicate ? Colors.orange : Colors.blue,
+                            ),
+                            Icon(
+                              isDuplicate ? Icons.bookmark : Icons.place, 
+                              size: 18, 
+                              color: isDuplicate ? Colors.orange[600] : Colors.grey,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: Text(
+                                          location.name,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            fontWeight: FontWeight.w500,
+                                            color: isSelected ? Colors.black : Colors.grey[700],
+                                          ),
+                                        ),
+                                      ),
+                                      if (isDuplicate)
+                                        Container(
+                                          margin: const EdgeInsets.only(left: 4),
+                                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                          decoration: BoxDecoration(
+                                            color: Colors.orange[100],
+                                            borderRadius: BorderRadius.circular(4),
+                                          ),
+                                          child: Text(
+                                            'Saved',
+                                            style: TextStyle(
+                                              fontSize: 10,
+                                              fontWeight: FontWeight.w600,
+                                              color: Colors.orange[800],
+                                            ),
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                  if (location.address != null && location.address!.isNotEmpty)
+                                    Text(
+                                      location.address!,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: Colors.grey[600],
+                                      ),
+                                    ),
+                                  if (isDuplicate && existingExp != null)
+                                    Text(
+                                      'Will use existing: "${existingExp.name}"',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        fontStyle: FontStyle.italic,
+                                        color: Colors.orange[700],
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, null),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          onPressed: _noneSelected
+              ? null
+              : () {
+                  // Sort indices and map to locations
+                  final sortedIndices = _selectedIndices.toList()..sort();
+                  final selectedLocations = sortedIndices
+                      .map((i) => widget.locations[i])
+                      .toList();
+                  
+                  // Build map of selected locations that are duplicates
+                  final selectedDuplicates = <ExtractedLocationData, Experience>{};
+                  for (final index in sortedIndices) {
+                    if (widget.duplicates.containsKey(index)) {
+                      selectedDuplicates[widget.locations[index]] = widget.duplicates[index]!;
+                    }
+                  }
+                  
+                  Navigator.pop(context, _MultiLocationSelectionResult(
+                    selectedLocations: selectedLocations,
+                    selectedDuplicates: selectedDuplicates,
+                  ));
+                },
+          child: Text(
+            _buildButtonText(),
+          ),
+        ),
+      ],
+      ),
+    );
+  }
+  
+  String _buildButtonText() {
+    if (_selectedIndices.length == 1) {
+      final isDuplicate = widget.duplicates.containsKey(_selectedIndices.first);
+      return isDuplicate ? 'Use Existing' : 'Create 1 Card';
+    }
+    
+    if (_selectedDuplicateCount > 0 && _selectedNewCount > 0) {
+      return 'Add ${_selectedIndices.length} (${_selectedNewCount} new, ${_selectedDuplicateCount} existing)';
+    } else if (_selectedDuplicateCount > 0) {
+      return 'Use ${_selectedDuplicateCount} Existing';
+    } else {
+      return 'Create ${_selectedNewCount} Cards';
+    }
   }
 }
 

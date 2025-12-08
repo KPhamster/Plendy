@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:webview_flutter/webview_flutter.dart';
+import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'dart:async';
+import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show kIsWeb, kDebugMode;
 import 'package:url_launcher/url_launcher.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
@@ -8,7 +9,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 class FacebookPreviewWidget extends StatefulWidget {
   final String url;
   final double height;
-  final Function(WebViewController) onWebViewCreated;
+  final Function(InAppWebViewController) onWebViewCreated;
   final Function(String) onPageFinished;
   final Future<void> Function(String) launchUrlCallback;
   final bool showControls;
@@ -24,159 +25,46 @@ class FacebookPreviewWidget extends StatefulWidget {
   });
 
   @override
-  State<FacebookPreviewWidget> createState() => _FacebookPreviewWidgetState();
+  State<FacebookPreviewWidget> createState() => FacebookPreviewWidgetState();
 }
 
-class _FacebookPreviewWidgetState extends State<FacebookPreviewWidget> {
-  WebViewController? controller;
+class FacebookPreviewWidgetState extends State<FacebookPreviewWidget> {
+  InAppWebViewController? controller;
   bool isLoading = true;
   bool hasError = false;
   String? errorMessage;
-  bool _isInitialized = false;
   bool _isExpanded = false;
-  
-  // Cancellation tokens for operations
-  int _loadingDelayOperationId = 0;
   bool _isDisposed = false;
 
-  @override
-  void initState() {
-    super.initState();
-    if (!kIsWeb) {
-      _initWebViewController();
-    }
-  }
-  
   @override
   void dispose() {
     _isDisposed = true;
     super.dispose();
   }
 
-  void _initWebViewController() {
-    if (kIsWeb) return;
-
+  /// Take a screenshot of the current WebView content
+  /// Uses PNG format for best quality OCR/text detection
+  Future<Uint8List?> takeScreenshot() async {
+    if (controller == null) {
+      print('⚠️ FACEBOOK PREVIEW: Controller is null, cannot take screenshot');
+      return null;
+    }
+    
     try {
-      WebViewController webViewController;
-      // Create iOS controller with inline playback
-      try {
-        // Import is available only on Apple platforms in build; safe to reference at runtime
-        // ignore: undefined_prefixed_name
-        webViewController = WebViewController.fromPlatformCreationParams(const PlatformWebViewControllerCreationParams());
-      } catch (_) {
-        // Fallback for non-iOS
-        webViewController = WebViewController();
+      // Use PNG format (lossless) for best text/OCR quality
+      final screenshot = await controller!.takeScreenshot(
+        screenshotConfiguration: ScreenshotConfiguration(
+          compressFormat: CompressFormat.PNG,
+          quality: 100,
+        ),
+      );
+      if (screenshot != null) {
+        print('✅ FACEBOOK PREVIEW: Screenshot captured (${screenshot.length} bytes, PNG format)');
       }
-      
-      if (!mounted || _isDisposed) return;
-      
-      webViewController
-        ..setJavaScriptMode(JavaScriptMode.unrestricted)
-        ..setBackgroundColor(const Color(0x00000000))
-        ..setUserAgent(
-            "Mozilla/5.0 (Linux; Android 11; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Mobile Safari/537.36")
-        ..setNavigationDelegate(
-          NavigationDelegate(
-            onProgress: (int progress) {},
-            onPageStarted: (String url) {
-              if (!mounted || _isDisposed) return;
-              
-              setState(() {
-                isLoading = true;
-                hasError = false;
-                errorMessage = null;
-              });
-            },
-            onPageFinished: (String url) {
-              if (!mounted || _isDisposed) return;
-              
-              try {
-                widget.onPageFinished(url);
-              } catch (e) {
-                // Handle error silently in production
-                if (kDebugMode) {
-                  print("Error in onPageFinished callback: $e");
-                }
-              }
-              
-              // Remove fullscreen permissions and enforce inline
-              try {
-                webViewController.runJavaScript('''
-                  (function(){
-                    try {
-                      var iframes = document.querySelectorAll('iframe');
-                      iframes.forEach(function(iframe){
-                        iframe.removeAttribute('allowfullscreen');
-                        var allow = iframe.getAttribute('allow') || '';
-                        allow = allow.replace(/fullscreen/g,'').trim();
-                        if (allow.length>0) { iframe.setAttribute('allow', allow); } else { iframe.removeAttribute('allow'); }
-                        iframe.setAttribute('playsinline','');
-                      });
-                      var videos = document.querySelectorAll('video');
-                      videos.forEach(function(v){ v.setAttribute('playsinline',''); v.removeAttribute('webkit-playsinline'); });
-                    } catch(e) {}
-                  })();
-                ''');
-              } catch (_) {}
-
-              // Set loading to false after a short delay
-              final currentLoadingOperationId = ++_loadingDelayOperationId;
-              
-              Future.delayed(const Duration(milliseconds: 500), () {
-                if (!mounted || _isDisposed || _loadingDelayOperationId != currentLoadingOperationId) return;
-                
-                setState(() {
-                  isLoading = false;
-                });
-              });
-            },
-            onWebResourceError: (WebResourceError error) {
-              if (kDebugMode) {
-                print("Facebook WebView Error: ${error.description}");
-              }
-              
-              if (!mounted || _isDisposed) return;
-              
-              setState(() {
-                isLoading = false;
-                hasError = true;
-                errorMessage = error.description;
-              });
-            },
-            onNavigationRequest: (NavigationRequest request) {
-              // Allow Facebook navigation
-              if (kDebugMode) {
-                print("Facebook WebView navigation to: ${request.url}");
-              }
-              return NavigationDecision.navigate;
-            },
-          ),
-        );
-        
-      if (!mounted || _isDisposed) return;
-      
-      setState(() {
-        controller = webViewController;
-        _isInitialized = true;
-      });
-      
-      // Notify parent widget
-      widget.onWebViewCreated(webViewController);
-      
-      // Load the Facebook URL directly
-      webViewController.loadRequest(Uri.parse(widget.url));
-      
+      return screenshot;
     } catch (e) {
-      if (kDebugMode) {
-        print("Error initializing Facebook WebView: $e");
-      }
-      if (!mounted || _isDisposed) return;
-      
-      setState(() {
-        hasError = true;
-        errorMessage = "Failed to initialize preview: $e";
-        isLoading = false;
-      });
+      print('❌ FACEBOOK PREVIEW: Screenshot failed: $e');
+      return null;
     }
   }
 
@@ -190,16 +78,12 @@ class _FacebookPreviewWidgetState extends State<FacebookPreviewWidget> {
           SnackBar(content: Text('Could not open Facebook link: ${widget.url}')),
         );
       }
-      if (kDebugMode) {
-        print('Could not launch ${widget.url}');
-      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
     if (kIsWeb) {
-      // Web platform - show simple fallback
       return Container(
         height: widget.height,
         width: double.infinity,
@@ -241,78 +125,7 @@ class _FacebookPreviewWidgetState extends State<FacebookPreviewWidget> {
       );
     }
 
-    // Mobile specific WebViewWidget implementation
     final double containerHeight = _isExpanded ? 800 : widget.height;
-    
-    // Show loading or error state if controller is not initialized
-    if (!_isInitialized || controller == null) {
-      return Container(
-        height: containerHeight,
-        width: double.infinity,
-        decoration: BoxDecoration(
-          color: Colors.grey[100],
-          border: Border.all(color: Colors.grey[300]!),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Center(
-          child: hasError
-              ? Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.error_outline,
-                      size: 48,
-                      color: Colors.grey[400],
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      'Unable to load Facebook content',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.grey[800],
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      errorMessage ?? 'This content may be private or unavailable',
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: Colors.grey[600],
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 20),
-                    ElevatedButton.icon(
-                      onPressed: _launchFacebookUrl,
-                      icon: const FaIcon(FontAwesomeIcons.facebook, size: 16),
-                      label: const Text('Open in Facebook'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF1877F2),
-                        foregroundColor: Colors.white,
-                      ),
-                    ),
-                  ],
-                )
-              : Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const CircularProgressIndicator(
-                      valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF1877F2)),
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      'Loading Facebook content...',
-                      style: TextStyle(
-                        color: Colors.grey[700],
-                        fontSize: 14,
-                      ),
-                    ),
-                  ],
-                ),
-        ),
-      );
-    }
     
     return Column(
       children: [
@@ -327,9 +140,75 @@ class _FacebookPreviewWidgetState extends State<FacebookPreviewWidget> {
                 border: Border.all(color: Colors.grey[300]!),
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: WebViewWidget(controller: controller!),
+              clipBehavior: Clip.hardEdge,
+              child: InAppWebView(
+                initialUrlRequest: URLRequest(url: WebUri(widget.url)),
+                initialSettings: InAppWebViewSettings(
+                  javaScriptEnabled: true,
+                  mediaPlaybackRequiresUserGesture: false,
+                  allowsInlineMediaPlayback: true,
+                  iframeAllowFullscreen: false,
+                  transparentBackground: true,
+                  userAgent: "Mozilla/5.0 (Linux; Android 11; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Mobile Safari/537.36",
+                ),
+                onWebViewCreated: (webController) {
+                  controller = webController;
+                  widget.onWebViewCreated(webController);
+                },
+                onLoadStart: (webController, url) {
+                  if (!mounted || _isDisposed) return;
+                  setState(() {
+                    isLoading = true;
+                    hasError = false;
+                    errorMessage = null;
+                  });
+                },
+                onLoadStop: (webController, url) async {
+                  if (!mounted || _isDisposed) return;
+                  
+                  try {
+                    widget.onPageFinished(url?.toString() ?? '');
+                  } catch (e) {
+                    if (kDebugMode) {
+                      print("Error in onPageFinished callback: $e");
+                    }
+                  }
+                  
+                  // Remove fullscreen permissions
+                  try {
+                    await webController.evaluateJavascript(source: '''
+                      (function(){
+                        try {
+                          var iframes = document.querySelectorAll('iframe');
+                          iframes.forEach(function(iframe){
+                            iframe.removeAttribute('allowfullscreen');
+                            iframe.setAttribute('playsinline','');
+                          });
+                          var videos = document.querySelectorAll('video');
+                          videos.forEach(function(v){ v.setAttribute('playsinline',''); });
+                        } catch(e) {}
+                      })();
+                    ''');
+                  } catch (_) {}
+
+                  Future.delayed(const Duration(milliseconds: 500), () {
+                    if (!mounted || _isDisposed) return;
+                    setState(() {
+                      isLoading = false;
+                    });
+                  });
+                },
+                onReceivedError: (webController, request, error) {
+                  if (kDebugMode) {
+                    print("Facebook WebView Error: ${error.description}");
+                  }
+                  if (!mounted || _isDisposed) return;
+                  setState(() {
+                    isLoading = false;
+                    hasError = true;
+                    errorMessage = error.description;
+                  });
+                },
               ),
             ),
             if (isLoading)
@@ -405,35 +284,35 @@ class _FacebookPreviewWidgetState extends State<FacebookPreviewWidget> {
           ],
         ),
         if (widget.showControls) ...[
-        const SizedBox(height: 8),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceAround,
-          children: [
-            IconButton(
-              icon: const Icon(Icons.refresh),
-              tooltip: 'Refresh',
-              onPressed: () {
-                if (controller != null) {
-                  controller!.reload();
-                }
-              },
-            ),
-            IconButton(
-              icon: const FaIcon(FontAwesomeIcons.facebook, color: Color(0xFF1877F2)),
-              tooltip: 'Open in Facebook',
-              onPressed: _launchFacebookUrl,
-            ),
-            IconButton(
-              icon: Icon(_isExpanded ? Icons.fullscreen_exit : Icons.fullscreen),
-              tooltip: _isExpanded ? 'Collapse' : 'Expand',
-              onPressed: () {
-                setState(() {
-                  _isExpanded = !_isExpanded;
-                });
-              },
-            ),
-          ],
-        ),
+          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: [
+              IconButton(
+                icon: const Icon(Icons.refresh),
+                tooltip: 'Refresh',
+                onPressed: () {
+                  if (controller != null) {
+                    controller!.reload();
+                  }
+                },
+              ),
+              IconButton(
+                icon: const FaIcon(FontAwesomeIcons.facebook, color: Color(0xFF1877F2)),
+                tooltip: 'Open in Facebook',
+                onPressed: _launchFacebookUrl,
+              ),
+              IconButton(
+                icon: Icon(_isExpanded ? Icons.fullscreen_exit : Icons.fullscreen),
+                tooltip: _isExpanded ? 'Collapse' : 'Expand',
+                onPressed: () {
+                  setState(() {
+                    _isExpanded = !_isExpanded;
+                  });
+                },
+              ),
+            ],
+          ),
         ]
       ],
     );

@@ -47,6 +47,7 @@ import 'screens/category_share_preview_screen.dart';
 import 'screens/public_profile_screen.dart';
 import 'providers/discovery_share_coordinator.dart';
 import 'screens/discovery_share_preview_screen.dart';
+import 'screens/data_deletion_screen.dart';
 import 'screens/email_verification_screen.dart';
 
 // Define a GlobalKey for the Navigator
@@ -899,6 +900,7 @@ class _MyAppState extends State<MyApp> {
       _initialDiscoveryShareToken; // NEW: Track initial discovery share token from URL
   String? _initialEventShareToken; // Track initial event share token from URL
   String? _initialExperienceShareToken; // Track initial experience share token from URL
+  bool _showDataDeletion = false; // Track if data deletion page should be shown
   String? _initialProfileUserId; // Track initial profile user ID from URL
   static const int _maxNavigatorPushRetries = 12;
   bool _coverImagePreloaded = false; // Track if cover image is preloaded
@@ -1117,6 +1119,13 @@ class _MyAppState extends State<MyApp> {
               print(
                   "MAIN: Detected initial profile user ID from URL: $userId");
             }
+          }
+          // Check for data deletion page (public, no auth required)
+          else if (firstSegment == 'data-deletion') {
+            print('MAIN: Web URL detected data-deletion page. Setting _showDataDeletion=true');
+            setState(() {
+              _showDataDeletion = true;
+            });
           }
         }
       } catch (e) {
@@ -1517,6 +1526,11 @@ class _MyAppState extends State<MyApp> {
       } else {
         print('DeepLink: Profile userId missing or empty.');
       }
+    } else if (firstSegment == 'data-deletion') {
+      print('DeepLink: Data deletion page requested');
+      setState(() {
+        _showDataDeletion = true;
+      });
     } else {
       print('DeepLink: No handler for path segments: ' + segments.toString());
     }
@@ -1636,6 +1650,12 @@ class _MyAppState extends State<MyApp> {
   Widget _buildHomeWidget(AuthService authService, bool launchedFromShare) {
     print(
         "MAIN BUILD DEBUG: _buildHomeWidget called with launchedFromShare=$launchedFromShare");
+
+    // NEW: Prioritize data deletion page (public, no auth required)
+    if (_showDataDeletion) {
+      print("MAIN BUILD DEBUG: Showing DataDeletionScreen");
+      return const DataDeletionScreen();
+    }
 
     // NEW: Prioritize event share preview (for unauthenticated users)
     if (_initialEventShareToken != null && _initialEventShareToken!.isNotEmpty) {

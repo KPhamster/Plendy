@@ -5,6 +5,7 @@ import 'package:plendy/config/app_constants.dart'; // ADDED: For unified keys
 // TODO: Adjust these import paths if they are incorrect for your project structure
 import '../models/user_category.dart';
 import '../models/color_category.dart';
+import '../models/extracted_location_data.dart'; // ADDED: For location extraction
 import 'package:shared_preferences/shared_preferences.dart'; // ADDED
 import 'package:collection/collection.dart'; // ADDED for firstWhereOrNull
 
@@ -458,6 +459,144 @@ class ReceiveShareProvider extends ChangeNotifier {
     }
   }
   // --- END ADDED METHOD ---
+
+  // ============ MULTI-LOCATION EXTRACTION METHODS ============
+
+  /// Create multiple experience cards from extracted locations
+  /// 
+  /// [locations] - List of extracted location data from AI/URL parsing
+  /// 
+  /// This method creates a new experience card for each location found,
+  /// pre-filling the title and location fields with the extracted data.
+  void createCardsFromLocations(List<ExtractedLocationData> locations) {
+    if (locations.isEmpty) {
+      print("ReceiveShareProvider: createCardsFromLocations called with empty list");
+      return;
+    }
+
+    print("ReceiveShareProvider: Creating ${locations.length} cards from extracted locations");
+
+    for (int i = 0; i < locations.length; i++) {
+      final locationData = locations[i];
+      
+      // Create new card
+      final newCard = ExperienceCardData();
+      
+      // Apply defaults based on whether it's the first card
+      final bool isFirstCard = _experienceCards.isEmpty;
+      _applyDefaultsToCard(newCard, isFirstCard: isFirstCard);
+      
+      // Pre-fill title with location name
+      newCard.titleController.text = locationData.name;
+      
+      // Pre-fill location data if coordinates available
+      if (locationData.coordinates != null || locationData.address != null) {
+        newCard.selectedLocation = Location(
+          latitude: locationData.coordinates?.latitude ?? 0.0,
+          longitude: locationData.coordinates?.longitude ?? 0.0,
+          address: locationData.address,
+          placeId: locationData.placeId,
+          displayName: locationData.name,
+          website: locationData.website,
+        );
+        
+        // Update search controller with address
+        if (locationData.address != null) {
+          newCard.searchController.text = locationData.address!;
+        }
+        
+        // Set place ID for preview
+        newCard.placeIdForPreview = locationData.placeId;
+        
+        // Set website if available
+        if (locationData.website != null && locationData.website!.isNotEmpty) {
+          newCard.websiteController.text = locationData.website!;
+          print("ReceiveShareProvider: Set website for card: ${locationData.website}");
+        }
+      }
+      
+      // Store extraction metadata on the card
+      // Note: We track this via a custom property we'll access through the card's id prefix
+      
+      _experienceCards.add(newCard);
+      
+      print("ReceiveShareProvider: Created card ${i + 1}/${locations.length} for '${locationData.name}' (confidence: ${(locationData.confidence * 100).toInt()}%)");
+    }
+
+    notifyListeners();
+  }
+
+  /// Update a single card's location from extracted data
+  void updateCardWithExtractedLocation(
+    String cardId,
+    ExtractedLocationData locationData,
+  ) {
+    final index = _experienceCards.indexWhere((c) => c.id == cardId);
+    if (index == -1) {
+      print("ReceiveShareProvider: Card not found for updateCardWithExtractedLocation: $cardId");
+      return;
+    }
+
+    final card = _experienceCards[index];
+    
+    // Update title if empty
+    if (card.titleController.text.isEmpty) {
+      card.titleController.text = locationData.name;
+    }
+    
+    // Update location
+    if (locationData.coordinates != null || locationData.address != null) {
+      card.selectedLocation = Location(
+        latitude: locationData.coordinates?.latitude ?? 0.0,
+        longitude: locationData.coordinates?.longitude ?? 0.0,
+        address: locationData.address,
+        placeId: locationData.placeId,
+        displayName: locationData.name,
+        website: locationData.website,
+      );
+      
+      if (locationData.address != null) {
+        card.searchController.text = locationData.address!;
+      }
+      
+      card.placeIdForPreview = locationData.placeId;
+      
+      // Set website if available and card's website is empty
+      if (locationData.website != null && 
+          locationData.website!.isNotEmpty && 
+          card.websiteController.text.isEmpty) {
+        card.websiteController.text = locationData.website!;
+        print("ReceiveShareProvider: Set website for card: ${locationData.website}");
+      }
+    }
+    
+    print("ReceiveShareProvider: Updated card $cardId with location '${locationData.name}'");
+    notifyListeners();
+  }
+
+  /// Clear all existing cards and create new ones from locations
+  void replaceCardsWithLocations(List<ExtractedLocationData> locations) {
+    // Dispose all existing cards first
+    for (var card in _experienceCards) {
+      card.dispose();
+    }
+    _experienceCards.clear();
+    
+    print("ReceiveShareProvider: Cleared ${_experienceCards.length} existing cards, creating ${locations.length} new cards");
+    
+    // Create new cards from locations
+    createCardsFromLocations(locations);
+  }
+
+  /// Get the number of cards that have location data from extraction
+  int get extractedLocationCardCount {
+    return _experienceCards.where((card) => 
+      card.selectedLocation != null && 
+      card.selectedLocation!.placeId != null
+    ).length;
+  }
+
+  // ============ END MULTI-LOCATION EXTRACTION METHODS ============
 
   @override
   void dispose() {

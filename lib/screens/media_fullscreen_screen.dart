@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_inappwebview/flutter_inappwebview.dart' as inapp;
 import 'receive_share/widgets/instagram_preview_widget.dart'
     as instagram_widget;
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
