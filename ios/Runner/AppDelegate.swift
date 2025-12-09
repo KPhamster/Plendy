@@ -47,8 +47,45 @@ import Foundation
           result(FlutterMethodNotImplemented)
         }
       }
+      
+      // Screenshot channel - captures the entire window including WebViews
+      let screenshotChannel = FlutterMethodChannel(name: "com.plendy.app/screenshot", binaryMessenger: controller.binaryMessenger)
+      screenshotChannel.setMethodCallHandler { [weak self] call, result in
+        guard let self = self else { return }
+        
+        switch call.method {
+        case "captureScreen":
+          self.captureScreen(result: result)
+        default:
+          result(FlutterMethodNotImplemented)
+        }
+      }
     }
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+  }
+  
+  // MARK: - Screenshot Capture
+  private func captureScreen(result: @escaping FlutterResult) {
+    DispatchQueue.main.async { [weak self] in
+      guard let self = self,
+            let window = self.window else {
+        result(FlutterError(code: "CAPTURE_ERROR", message: "Window not available", details: nil))
+        return
+      }
+      
+      // Use drawHierarchy to capture the window including WebViews
+      let renderer = UIGraphicsImageRenderer(bounds: window.bounds)
+      let image = renderer.image { context in
+        // afterScreenUpdates: true ensures WebView content is captured
+        window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+      }
+      
+      if let pngData = image.pngData() {
+        result(FlutterStandardTypedData(bytes: pngData))
+      } else {
+        result(FlutterError(code: "CAPTURE_ERROR", message: "Failed to convert image to PNG", details: nil))
+      }
+    }
   }
   
   // MARK: - Universal Links Handler (Required by Apple's Best Practices)

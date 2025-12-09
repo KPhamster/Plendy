@@ -20,6 +20,9 @@ class GoogleMapsLocation {
   
   /// Google Maps URI for the place
   final String? uri;
+  
+  /// City name (extracted from address)
+  final String? city;
 
   const GoogleMapsLocation({
     required this.placeId,
@@ -28,6 +31,7 @@ class GoogleMapsLocation {
     this.formattedAddress,
     this.types = const [],
     this.uri,
+    this.city,
   });
 
   /// Create from JSON map (from Gemini API response)
@@ -46,6 +50,7 @@ class GoogleMapsLocation {
                         json['address'] as String?,
       types: (json['types'] as List?)?.cast<String>() ?? [],
       uri: json['uri'] as String? ?? json['url'] as String?,
+      city: json['city'] as String?,
     );
   }
 
@@ -60,6 +65,7 @@ class GoogleMapsLocation {
       'formattedAddress': formattedAddress,
       'types': types,
       'uri': uri,
+      'city': city,
     };
   }
 
@@ -203,10 +209,11 @@ class GeminiGroundingResult {
               locations.add(GoogleMapsLocation(
                 placeId: '', // No Place ID from text parsing
                 name: name,
-                coordinates: LatLng(0, 0), // Will need to geocode later
+                coordinates: const LatLng(0, 0), // Will need to geocode later
                 formattedAddress: _buildAddress(item),
                 types: [item['type'] as String? ?? 'point_of_interest'],
                 uri: null,
+                city: item['city'] as String?,
               ));
             }
           }
@@ -257,6 +264,41 @@ class GeminiGroundingResult {
     }
     
     return parts.isNotEmpty ? parts.join(', ') : null;
+  }
+
+  /// Create from Cloud Function response (Vertex AI YouTube analysis)
+  /// 
+  /// The Cloud Function returns a simpler format:
+  /// [{ name, address, city, region, country, type }]
+  factory GeminiGroundingResult.fromCloudFunctionResponse(List<dynamic> locationsList) {
+    final locations = <GoogleMapsLocation>[];
+
+    for (final item in locationsList) {
+      // Handle both Map<String, dynamic> and LinkedHashMap from Firebase
+      if (item is Map) {
+        final mapItem = Map<String, dynamic>.from(item);
+        final name = mapItem['name'] as String?;
+        
+        if (name != null && name.isNotEmpty) {
+          locations.add(GoogleMapsLocation(
+            placeId: '', // Will be resolved later via Places API
+            name: name,
+            coordinates: const LatLng(0, 0), // Placeholder - will be resolved via Places API
+            formattedAddress: _buildAddress(mapItem),
+            types: [mapItem['type'] as String? ?? 'point_of_interest'],
+            uri: null,
+            city: mapItem['city'] as String?,
+          ));
+        }
+      }
+    }
+    
+    return GeminiGroundingResult(
+      responseText: 'Cloud Function response',
+      locations: locations,
+      widgetContextToken: null,
+      rawResponse: {'locations': locationsList},
+    );
   }
 
   @override

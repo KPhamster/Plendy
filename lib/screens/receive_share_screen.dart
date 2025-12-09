@@ -512,9 +512,16 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   Widget _buildScanCurrentPreviewButton() {
     // Hide for generic web URLs (they use "Scan Locations" instead)
     if (_isGenericWebUrl()) return const SizedBox.shrink();
-    
+
     final isLoading = _isProcessingScreenshot || _isExtractingLocation;
     final hasPreview = _hasActivePreview();
+
+    // Determine button text based on URL type
+    final url = _currentSharedFiles.isNotEmpty
+        ? _extractFirstUrl(_currentSharedFiles.first.path)
+        : null;
+    final isYouTubeUrl = url != null && _isYouTubeUrl(url);
+    final buttonText = isYouTubeUrl ? 'Scan Screen' : 'Scan Preview';
 
     return Expanded(
       child: Container(
@@ -526,9 +533,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
             size: 20,
             color: (isLoading || !hasPreview) ? Colors.grey : Colors.blue[700],
           ),
-          label: const Text(
-            'Scan Preview',
-            style: TextStyle(
+          label: Text(
+            buttonText,
+            style: const TextStyle(
               fontWeight: FontWeight.w500,
             ),
           ),
@@ -1116,11 +1123,53 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     return null;
   }
 
-  /// Capture YouTube preview WebView
+  /// Platform channel for native screenshot
+  static const MethodChannel _screenshotChannel = MethodChannel('com.plendy.app/screenshot');
+
+  /// Capture YouTube preview using native screen capture
+  /// This captures the entire device screen including WebView video content
   Future<Uint8List?> _captureYouTubePreview(String url) async {
+    try {
+      print('📷 SCAN PREVIEW: Taking native screen capture for YouTube...');
+      
+      // Use native platform screenshot to capture the entire screen
+      // This includes WebView content and video frames
+      final result = await _screenshotChannel.invokeMethod('captureScreen');
+      
+      if (result != null) {
+        Uint8List pngBytes;
+        if (result is Uint8List) {
+          pngBytes = result;
+        } else if (result is List) {
+          pngBytes = Uint8List.fromList(result.cast<int>());
+        } else {
+          print('⚠️ SCAN PREVIEW: Unexpected result type: ${result.runtimeType}');
+          return await _captureYouTubeWebViewFallback(url);
+        }
+        
+        print('✅ SCAN PREVIEW: Captured native screen (${pngBytes.length} bytes, PNG format)');
+        
+        // No file is saved - the image stays in memory only
+        return pngBytes;
+      } else {
+        print('⚠️ SCAN PREVIEW: Native screenshot returned null');
+        return await _captureYouTubeWebViewFallback(url);
+      }
+    } on PlatformException catch (e) {
+      print('⚠️ SCAN PREVIEW: Native screenshot failed: ${e.message}');
+      return await _captureYouTubeWebViewFallback(url);
+    } catch (e) {
+      print('⚠️ SCAN PREVIEW: Native screenshot error: $e');
+      return await _captureYouTubeWebViewFallback(url);
+    }
+  }
+
+  /// Fallback to WebView screenshot for YouTube if native screen capture fails
+  Future<Uint8List?> _captureYouTubeWebViewFallback(String url) async {
+    print('📷 SCAN PREVIEW: Trying WebView fallback for YouTube...');
     final previewKey = _youtubePreviewKeys[url];
     if (previewKey == null) {
-      print('⚠️ SCAN PREVIEW: No YouTube preview key found');
+      print('⚠️ SCAN PREVIEW: No YouTube preview key found for fallback');
       return null;
     }
 
@@ -1130,11 +1179,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         final screenshot = await state.takeScreenshot();
         if (screenshot != null) {
           print(
-              '✅ SCAN PREVIEW: Captured YouTube WebView (${screenshot.length} bytes)');
+              '✅ SCAN PREVIEW: Captured YouTube WebView fallback (${screenshot.length} bytes)');
           return screenshot;
         }
       } catch (e) {
-        print('⚠️ SCAN PREVIEW: YouTube takeScreenshot failed: $e');
+        print('⚠️ SCAN PREVIEW: YouTube WebView fallback failed: $e');
       }
     }
     return null;
@@ -1476,6 +1525,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
       // Mark as fully initialized
       _isFullyInitialized = true;
+      
+      // Auto-extract locations for YouTube URLs on initial load
+      _autoExtractLocationsIfYouTube(_currentSharedFiles);
     }
   }
 
@@ -1713,6 +1765,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         // Process the new content
         _processSharedContent(_currentSharedFiles);
         _syncSharedUrlControllerFromContent();
+        
+        // Auto-extract locations for YouTube URLs shared via intent
+        _autoExtractLocationsIfYouTube(updatedFiles);
+        
         _isProcessingUpdate = false;
         return;
       }
@@ -1755,7 +1811,34 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // Process the new content
       _processSharedContent(_currentSharedFiles);
       _syncSharedUrlControllerFromContent();
+      
+      // Auto-extract locations for YouTube URLs shared via intent
+      _autoExtractLocationsIfYouTube(updatedFiles);
+      
       _isProcessingUpdate = false;
+    }
+  }
+  
+  /// Automatically trigger location extraction for YouTube URLs shared via intent
+  /// This allows Gemini to analyze the actual video content (audio + visuals)
+  void _autoExtractLocationsIfYouTube(List<SharedMediaFile> files) {
+    if (files.isEmpty) return;
+    
+    final first = files.first;
+    if (first.type != SharedMediaType.url && first.type != SharedMediaType.text) return;
+    
+    final url = _extractFirstUrl(first.path);
+    if (url == null) return;
+    
+    // Only auto-extract for YouTube URLs
+    if (_isYouTubeUrl(url)) {
+      print('🎬 AUTO-EXTRACT: YouTube URL detected via share intent, triggering video analysis');
+      // Delay slightly to allow UI to settle
+      Future.delayed(const Duration(milliseconds: 500), () {
+        if (mounted) {
+          _extractLocationsFromUrl(url);
+        }
+      });
     }
   }
 
@@ -1913,10 +1996,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       print('🤖 AI EXTRACTION: Starting location extraction from URL...');
 
       // Extract locations using Gemini + Maps grounding
+      // YouTube videos can have many locations (e.g., "Top 10" videos) - no limit
+      final isYouTube = _isYouTubeUrl(url);
       final locations = await _locationExtractor.extractLocationsFromSharedLink(
         url,
         userLocation: userLocation,
-        maxLocations: 5,
+        maxLocations: isYouTube ? null : 5, // No limit for YouTube
       );
 
       if (!mounted) return;

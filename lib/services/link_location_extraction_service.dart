@@ -24,21 +24,19 @@ class LinkLocationExtractionService {
   // Cache to avoid redundant API calls
   final Map<String, List<ExtractedLocationData>> _cache = {};
 
-  // Maximum number of locations to extract per URL/image
-  static const int _maxLocationsDefault = 10;
 
   /// Extract locations from a shared URL
-  /// 
+  ///
   /// [url] - The URL to analyze
   /// [userLocation] - Optional user location for better results
-  /// [maxLocations] - Maximum number of locations to return (default: 5)
-  /// 
+  /// [maxLocations] - Maximum number of locations to return (default: 10, null = unlimited)
+  ///
   /// Returns a list of [ExtractedLocationData] objects, one for each
   /// location found in the URL. May return an empty list if no locations found.
   Future<List<ExtractedLocationData>> extractLocationsFromSharedLink(
     String url, {
     LatLng? userLocation,
-    int maxLocations = _maxLocationsDefault,
+    int? maxLocations,
   }) async {
     // Normalize URL for caching
     final normalizedUrl = url.trim().toLowerCase();
@@ -86,8 +84,8 @@ class LinkLocationExtractionService {
       }
     }
 
-    // Limit results
-    if (results.length > maxLocations) {
+    // Limit results (only if maxLocations is specified)
+    if (maxLocations != null && results.length > maxLocations) {
       results = results.sublist(0, maxLocations);
     }
 
@@ -124,8 +122,8 @@ class LinkLocationExtractionService {
   /// [authorName] - Optional author name (useful for business accounts)
   /// [sourceUrl] - Optional source URL for caching and context
   /// [userLocation] - Optional user location for better results
-  /// [maxLocations] - Maximum number of locations to return (default: 5)
-  /// 
+  /// [maxLocations] - Maximum number of locations to return (default: 10, null = unlimited)
+  ///
   /// Returns a list of [ExtractedLocationData] objects found in the caption.
   Future<List<ExtractedLocationData>> extractLocationsFromCaption(
     String caption, {
@@ -133,7 +131,7 @@ class LinkLocationExtractionService {
     String? authorName,
     String? sourceUrl,
     LatLng? userLocation,
-    int maxLocations = _maxLocationsDefault,
+    int? maxLocations,
   }) async {
     // Check cache if we have a source URL
     if (sourceUrl != null) {
@@ -201,7 +199,8 @@ class LinkLocationExtractionService {
           print('✅ CAPTION EXTRACTION: Found ${relevantLocations.length} relevant location(s) from grounding (filtered from ${geminiResult.locations.length})');
         
         // Convert and verify each location has valid coordinates
-        for (final location in relevantLocations.take(maxLocations)) {
+        final locationsToProcess = maxLocations != null ? relevantLocations.take(maxLocations) : relevantLocations;
+        for (final location in locationsToProcess) {
           // Skip if we've already processed a location with the same name (case-insensitive)
           final normalizedName = location.name.toLowerCase().trim();
           if (seenLocationNames.contains(normalizedName)) {
@@ -289,7 +288,8 @@ class LinkLocationExtractionService {
         if (parsedLocations.isNotEmpty) {
           print('✅ CAPTION EXTRACTION: Parsed ${parsedLocations.length} location(s) from JSON response');
           
-          for (final parsed in parsedLocations.take(maxLocations)) {
+          final parsedToProcess = maxLocations != null ? parsedLocations.take(maxLocations) : parsedLocations;
+          for (final parsed in parsedToProcess) {
             final name = parsed['name'] as String?;
             if (name == null || name.isEmpty) continue;
             
@@ -583,33 +583,81 @@ class LinkLocationExtractionService {
         return null;
       }
 
-      // Find the best matching result based on location context
-      Map<String, dynamic> bestResult = results.first;
+      // Find the best matching result
+      // Priority: 1) Name + city match, 2) Name match only, 3) Text Search fallback
+      Map<String, dynamic>? bestResult;
+      final lowerLocationName = locationName.toLowerCase();
+      final lowerContext = locationContext?.toLowerCase() ?? '';
       
-      if (locationContext != null && locationContext.isNotEmpty && results.length > 1) {
-        // Look for a result that contains the location context in its description/address
-        final lowerContext = locationContext.toLowerCase();
+      // First pass: Look for results that match BOTH name AND city
+      for (final result in results) {
+        final description = (result['description'] as String? ?? '').toLowerCase();
         
+        // Skip results that are just city/locality names
+        if (_isJustCityResult(description, lowerContext)) {
+          print('⏭️ PLACES RESOLVE: Skipping city-only result: ${result['description']}');
+          continue;
+        }
+        
+        // Check if this result contains BOTH the location name AND the city
+        final containsName = description.contains(lowerLocationName) || 
+            lowerLocationName.contains(description.split(',').first.trim());
+        final containsCity = lowerContext.isEmpty || description.contains(lowerContext);
+        
+        if (containsName && containsCity) {
+          print('🎯 PLACES RESOLVE: Found name+city match: ${result['description']}');
+          bestResult = result;
+          break;
+        }
+      }
+      
+      // Second pass: Name match only (ONLY if no city context - otherwise wrong city matches)
+      // If we have a city context but no name+city match, skip to Text Search
+      if (bestResult == null && lowerContext.isEmpty) {
         for (final result in results) {
           final description = (result['description'] as String? ?? '').toLowerCase();
-          final resultAddress = (result['address'] as String? ?? '').toLowerCase();
+          if (_isJustCityResult(description, lowerContext)) continue;
           
-          // Check if this result matches the city context
-          if (description.contains(lowerContext) || resultAddress.contains(lowerContext)) {
-            print('🎯 PLACES RESOLVE: Found city-matching result: ${result['description']}');
+          final containsName = description.contains(lowerLocationName) || 
+              lowerLocationName.contains(description.split(',').first.trim());
+          
+          if (containsName) {
+            print('🎯 PLACES RESOLVE: Found name-only match (no city context): ${result['description']}');
             bestResult = result;
             break;
           }
         }
-        
-        // If no exact match, log what we're using
-        if (bestResult == results.first) {
-          print('⚠️ PLACES RESOLVE: No result matched city "$locationContext", using first result');
-          // Log all results for debugging
-          for (int i = 0; i < results.length && i < 3; i++) {
-            print('   Result ${i + 1}: ${results[i]['description']}');
+      }
+      
+      // If we have a city context but couldn't find name+city match, don't use wrong city results
+      // Better to return null than wrong location
+      if (bestResult == null && lowerContext.isNotEmpty) {
+        print('⚠️ PLACES RESOLVE: No results match both name "$locationName" and city "$locationContext"');
+        print('   Will add location without coordinates (user can set manually)');
+        return null;
+      }
+      
+      // Last resort (no city context): Use first non-city Autocomplete result
+      if (bestResult == null) {
+        for (final result in results) {
+          final description = (result['description'] as String? ?? '').toLowerCase();
+          if (!_isJustCityResult(description, lowerContext)) {
+            print('⚠️ PLACES RESOLVE: No good match, using first non-city result');
+            bestResult = result;
+            break;
           }
         }
+      }
+      
+      // Absolute last resort: First result
+      if (bestResult == null && results.isNotEmpty) {
+        print('⚠️ PLACES RESOLVE: All results are cities, using first result');
+        bestResult = results.first;
+      }
+      
+      if (bestResult == null) {
+        print('⚠️ PLACES RESOLVE: No results found at all');
+        return null;
       }
 
       final placeId = bestResult['placeId'] as String?;
@@ -618,6 +666,7 @@ class LinkLocationExtractionService {
       LatLng? coords;
       String? resolvedAddress;
       String? resolvedName;
+      String? website;
       
       if (placeId != null && placeId.isNotEmpty) {
         print('🔍 PLACES RESOLVE: Getting details for Place ID: $placeId');
@@ -631,8 +680,12 @@ class LinkLocationExtractionService {
           
           resolvedAddress = placeDetails.address;
           resolvedName = placeDetails.displayName ?? bestResult['description'] as String?;
+          website = placeDetails.website;
           
           print('✅ PLACES RESOLVE: Got details - "${resolvedName}" at $coords');
+          if (website != null) {
+            print('🌐 PLACES RESOLVE: Got website: $website');
+          }
         } catch (e) {
           print('⚠️ PLACES RESOLVE: Could not get place details: $e');
           // Fall back to autocomplete data
@@ -655,6 +708,7 @@ class LinkLocationExtractionService {
         source: ExtractionSource.placesSearch,
         confidence: coords != null ? 0.85 : 0.6, // Higher confidence with coords
         metadata: {'original_query': locationName, 'location_context': locationContext},
+        website: website,
       );
     } catch (e) {
       print('❌ PLACES RESOLVE ERROR: $e');
@@ -714,26 +768,53 @@ class LinkLocationExtractionService {
   Future<List<ExtractedLocationData>> _tryGeminiMultiLocationExtraction(
     String url,
     LatLng? userLocation,
-    int maxLocations,
+    int? maxLocations,
   ) async {
     try {
+      // YouTube URLs: Use native video analysis (Gemini can watch the video!)
+      if (_isYouTubeUrl(url)) {
+        print('🎬 EXTRACTION: Detected YouTube URL - using native video analysis');
+        final youtubeResult = await _gemini.extractLocationsFromYouTubeVideo(
+          url,
+          userLocation: userLocation,
+        );
+        
+        if (youtubeResult != null && youtubeResult.locations.isNotEmpty) {
+          print('✅ EXTRACTION: Found ${youtubeResult.locationCount} location(s) from YouTube video');
+          
+          // Resolve each location via Places API to get real coordinates
+          final resolvedLocations = await _resolveYouTubeLocations(
+            youtubeResult.locations,
+            userLocation: userLocation,
+            maxLocations: maxLocations,
+          );
+          
+          if (resolvedLocations.isNotEmpty) {
+            return resolvedLocations;
+          }
+        } else {
+          print('⚠️ EXTRACTION: No locations found in YouTube video, trying metadata fallback');
+          // Fall through to metadata extraction as backup
+        }
+      }
+
       // NOTE: Instagram oEmbed API requires Facebook App Review (Meta oEmbed Read permission)
       // Disabled for now - requires app review which takes days/weeks
-      // 
+      //
       // For Instagram URLs, try to get caption via oEmbed API first
       // if (_isInstagramUrl(url)) {
       //   print('📸 EXTRACTION: Fetching Instagram caption...');
       //   final caption = await _instagram.getCaptionFromUrl(url);
-      //   
+      //
       //   if (caption != null && caption.isNotEmpty) {
       //     print('✅ EXTRACTION: Got Instagram caption: ${caption.length} chars');
-      //     
+      //
       //     // Use Gemini to extract locations from caption
       //     final textResult = await _gemini.extractLocationsFromText(
       //       'Instagram post caption:\n\n$caption',
       //       userLocation: userLocation,
       //     );
-      //     
+      //
       //     if (textResult != null && textResult.locations.isNotEmpty) {
       //       print('✅ EXTRACTION: Found locations from Instagram caption');
       //       return _convertGeminiResultToExtracted(textResult, maxLocations);
@@ -742,10 +823,10 @@ class LinkLocationExtractionService {
       //     print('⚠️ EXTRACTION: Could not get Instagram caption');
       //   }
       // }
-      
+
       // For other social media URLs, try to get page metadata
       String? pageDescription;
-      if (_isSocialMediaUrl(url) && !_isInstagramUrl(url)) {
+      if (_isSocialMediaUrl(url) && !_isInstagramUrl(url) && !_isYouTubeUrl(url)) {
         print('📄 EXTRACTION: Fetching metadata for social media URL...');
         try {
           final metadata = await AnyLinkPreview.getMetadata(link: url);
@@ -795,11 +876,14 @@ class LinkLocationExtractionService {
   /// Convert Gemini result to ExtractedLocationData list
   List<ExtractedLocationData> _convertGeminiResultToExtracted(
     GeminiGroundingResult result,
-    int maxLocations,
+    int? maxLocations,
   ) {
     final extractedList = <ExtractedLocationData>[];
 
-    for (final location in result.locations.take(maxLocations)) {
+    // Take all locations if maxLocations is null (unlimited), otherwise take the specified limit
+    final locationsToProcess = maxLocations != null ? result.locations.take(maxLocations) : result.locations;
+
+    for (final location in locationsToProcess) {
       extractedList.add(ExtractedLocationData(
         placeId: location.placeId.isNotEmpty ? location.placeId : null,
         name: location.name,
@@ -819,6 +903,75 @@ class LinkLocationExtractionService {
     }
 
     return extractedList;
+  }
+
+  /// Resolve YouTube video locations via Places API
+  ///
+  /// YouTube video analysis returns location names and cities, but not coordinates.
+  /// This method resolves each location to get real Place IDs and coordinates.
+  Future<List<ExtractedLocationData>> _resolveYouTubeLocations(
+    List<GoogleMapsLocation> locations,
+    {LatLng? userLocation, int? maxLocations}
+  ) async {
+    final results = <ExtractedLocationData>[];
+    final seenPlaceIds = <String>{};
+    final seenNames = <String>{};
+    
+    print('🎬 YOUTUBE: Resolving ${locations.length} location(s) via Places API...');
+
+    // Take all locations if maxLocations is null (unlimited), otherwise take the specified limit
+    final locationsToProcess = maxLocations != null ? locations.take(maxLocations) : locations;
+
+    for (final location in locationsToProcess) {
+      // Skip duplicates by name
+      final normalizedName = location.name.toLowerCase().trim();
+      if (seenNames.contains(normalizedName)) {
+        print('⏭️ YOUTUBE: Skipping duplicate name: "${location.name}"');
+        continue;
+      }
+      seenNames.add(normalizedName);
+      
+      // Build location context from city info
+      final locationContext = location.city;
+      
+      print('🔍 YOUTUBE: Resolving "${location.name}" (${locationContext ?? "no city"})...');
+      
+      final resolvedLocation = await _resolveLocationWithPlacesApi(
+        location.name,
+        address: location.formattedAddress,
+        locationContext: locationContext,
+        userLocation: userLocation,
+      );
+      
+      if (resolvedLocation != null) {
+        // Skip if we've already added this Place ID
+        if (resolvedLocation.placeId != null && seenPlaceIds.contains(resolvedLocation.placeId)) {
+          print('⏭️ YOUTUBE: Skipping duplicate Place ID: ${resolvedLocation.placeId}');
+          continue;
+        }
+        if (resolvedLocation.placeId != null) {
+          seenPlaceIds.add(resolvedLocation.placeId!);
+        }
+        
+        print('✅ YOUTUBE: Resolved "${location.name}" → ${resolvedLocation.name} (${resolvedLocation.coordinates?.latitude}, ${resolvedLocation.coordinates?.longitude})');
+        results.add(resolvedLocation);
+      } else {
+        // Still add without coordinates - user can manually set location
+        print('⚠️ YOUTUBE: Could not resolve "${location.name}", adding without coords');
+        results.add(ExtractedLocationData(
+          placeId: null,
+          name: location.name,
+          address: location.city != null ? location.city : null,
+          coordinates: null, // No coordinates - don't use placeholder (0,0)
+          type: PlaceType.unknown,
+          source: ExtractionSource.geminiGrounding,
+          confidence: 0.5, // Lower confidence without coords
+        ));
+      }
+    }
+    
+    print('🎬 YOUTUBE: Resolved ${results.length}/${locations.length} location(s)');
+    return results;
   }
 
   /// Check if URL is from Instagram
@@ -897,6 +1050,15 @@ class LinkLocationExtractionService {
 
   bool _isYelpUrl(String url) {
     return url.contains('yelp.com/biz/');
+  }
+
+  /// Check if URL is a YouTube video URL
+  bool _isYouTubeUrl(String url) {
+    final lower = url.toLowerCase();
+    return lower.contains('youtube.com/watch') ||
+           lower.contains('youtube.com/shorts') ||
+           lower.contains('youtu.be/') ||
+           lower.contains('youtube.com/embed');
   }
 
   bool _isInstagramLocationUrl(String url) {
@@ -1076,6 +1238,37 @@ class LinkLocationExtractionService {
     return null;
   }
 
+  /// Check if a Places API result is just a city/locality rather than a specific business
+  bool _isJustCityResult(String description, String cityContext) {
+    final lower = description.toLowerCase();
+    
+    // Common patterns for city-only results
+    // e.g., "Costa Mesa, CA, USA" or "Newport Beach, California, USA"
+    final cityPatterns = [
+      RegExp(r'^[^,]+,\s*(ca|california|tx|texas|ny|new york|fl|florida|az|arizona)[,\s]', caseSensitive: false),
+      RegExp(r'^[^,]+,\s*[a-z]{2},\s*usa$', caseSensitive: false),
+    ];
+    
+    for (final pattern in cityPatterns) {
+      if (pattern.hasMatch(lower)) {
+        // Make sure it's not a business with a comma in the name
+        final firstPart = lower.split(',').first.trim();
+        // If the first part exactly matches the city context, it's just a city
+        if (cityContext.isNotEmpty && firstPart == cityContext.toLowerCase()) {
+          return true;
+        }
+        // Check if it looks like just "CityName, State, Country"
+        final parts = lower.split(',').map((p) => p.trim()).toList();
+        if (parts.length <= 3 && parts.first.split(' ').length <= 3) {
+          // Likely just a city (e.g., "Costa Mesa, CA, USA")
+          return true;
+        }
+      }
+    }
+    
+    return false;
+  }
+
   bool _isDuplicate(ExtractedLocationData newLocation, List<ExtractedLocationData> existing) {
     for (final loc in existing) {
       // Check by place ID
@@ -1092,15 +1285,25 @@ class LinkLocationExtractionService {
         return true;
       }
 
-      // Check by coordinates proximity
+      // Check by coordinates proximity (skip if either has placeholder coordinates 0,0)
+      // Only consider as duplicate if BOTH names are similar AND coordinates are close
+      // This allows different businesses in the same shopping center to be extracted
       if (newLocation.coordinates != null && loc.coordinates != null) {
-        final distance = _calculateDistance(
-          newLocation.coordinates!, 
-          loc.coordinates!,
-        );
-        if (distance < 50) { // Within 50 meters
-          print('⚠️ DUPLICATE CHECK: Too close (${distance.toStringAsFixed(0)}m): "${newLocation.name}" vs "${loc.name}"');
-          return true;
+        // Skip if either location has placeholder coordinates (0, 0)
+        final isNewPlaceholder = newLocation.coordinates!.latitude == 0 && newLocation.coordinates!.longitude == 0;
+        final isExistingPlaceholder = loc.coordinates!.latitude == 0 && loc.coordinates!.longitude == 0;
+        
+        if (!isNewPlaceholder && !isExistingPlaceholder) {
+          final distance = _calculateDistance(
+            newLocation.coordinates!, 
+            loc.coordinates!,
+          );
+          // Only flag as duplicate if VERY close (< 10m) - same exact location
+          // Different restaurants in same mall (20-50m apart) should NOT be duplicates
+          if (distance < 10) {
+            print('⚠️ DUPLICATE CHECK: Same location (${distance.toStringAsFixed(0)}m): "${newLocation.name}" vs "${loc.name}"');
+            return true;
+          }
         }
       }
     }
@@ -1363,6 +1566,12 @@ class LinkLocationExtractionService {
         return [];
       }
 
+      // Log what Gemini found for debugging
+      print('📷 IMAGE EXTRACTION: Gemini returned ${extractedNames.length} location(s):');
+      for (final loc in extractedNames) {
+        print('   📍 Name: "${loc.name}", City: "${loc.city}", Type: "${loc.type}", Address: "${loc.address}"');
+      }
+
       // Step 2: Verify with Places API
       final results = <ExtractedLocationData>[];
       
@@ -1383,7 +1592,7 @@ class LinkLocationExtractionService {
           latitude: userLocation?.latitude,
           longitude: userLocation?.longitude,
         );
-        placeResult = _selectBestPlaceResult(placeResults, locationInfo.name);
+        placeResult = _selectBestPlaceResult(placeResults, locationInfo.name, geminiType: locationInfo.type);
         
         // Check if we got a good establishment result (not just a locality)
         bool gotGoodResult = false;
@@ -1406,7 +1615,7 @@ class LinkLocationExtractionService {
             latitude: userLocation?.latitude,
             longitude: userLocation?.longitude,
           );
-          final resultWithCity = _selectBestPlaceResult(resultsWithCity, locationInfo.name);
+          final resultWithCity = _selectBestPlaceResult(resultsWithCity, locationInfo.name, geminiType: locationInfo.type);
           
           // Only use this result if it's better (is an establishment)
           if (resultWithCity != null) {
@@ -1430,7 +1639,7 @@ class LinkLocationExtractionService {
             latitude: userLocation?.latitude,
             longitude: userLocation?.longitude,
           );
-          placeResult = _selectBestPlaceResult(resultsWithType, locationInfo.name);
+          placeResult = _selectBestPlaceResult(resultsWithType, locationInfo.name, geminiType: locationInfo.type);
         }
         
         if (placeResult != null) {
@@ -1566,10 +1775,12 @@ class LinkLocationExtractionService {
   /// This method picks the best match by:
   /// 1. Preferring establishments (restaurants, cafes, shops) over localities/neighborhoods
   /// 2. Preferring results whose name contains the original search term
+  /// 3. If [geminiType] is "city", prefer locality results instead of establishments
   Map<String, dynamic>? _selectBestPlaceResult(
     List<Map<String, dynamic>> results,
-    String originalName,
-  ) {
+    String originalName, {
+    String? geminiType,
+  }) {
     if (results.isEmpty) return null;
     if (results.length == 1) return results.first;
     
@@ -1632,19 +1843,47 @@ class LinkLocationExtractionService {
         }
       }
       
-      // Penalize locality/neighborhood results
-      for (final type in types) {
-        if (localityTypes.contains(type)) {
-          score -= 30;
-          break;
-        }
+      // Check if Gemini identified this as a city/locality type
+      final isCitySearch = geminiType?.toLowerCase() == 'city' || 
+                          geminiType?.toLowerCase() == 'locality' ||
+                          geminiType?.toLowerCase() == 'neighborhood';
+      
+      if (isCitySearch && bestScore == -1) {
+        // Log once at the start of scoring
+        print('📷 IMAGE EXTRACTION: City/locality search mode (geminiType: $geminiType)');
       }
       
-      // Boost establishment/business results
-      for (final type in types) {
-        if (establishmentTypes.contains(type)) {
-          score += 25;
-          break;
+      if (isCitySearch) {
+        // INVERT scoring: When Gemini says it's a city, PREFER localities
+        for (final type in types) {
+          if (localityTypes.contains(type)) {
+            score += 40; // Boost localities when searching for a city
+            break;
+          }
+        }
+        
+        // Penalize establishments when we're looking for a city
+        for (final type in types) {
+          if (establishmentTypes.contains(type)) {
+            score -= 20;
+            break;
+          }
+        }
+      } else {
+        // Normal scoring: Penalize locality/neighborhood results
+        for (final type in types) {
+          if (localityTypes.contains(type)) {
+            score -= 30;
+            break;
+          }
+        }
+        
+        // Boost establishment/business results
+        for (final type in types) {
+          if (establishmentTypes.contains(type)) {
+            score += 25;
+            break;
+          }
         }
       }
       
