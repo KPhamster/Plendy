@@ -54,6 +54,7 @@ import 'receive_share/widgets/youtube_preview_widget.dart';
 import 'main_screen.dart';
 import '../models/public_experience.dart';
 import '../services/auth_service.dart';
+import '../services/gemini_service.dart';
 import 'package:collection/collection.dart';
 import 'package:plendy/config/app_constants.dart';
 import '../models/experience_card_data.dart';
@@ -243,6 +244,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   late final TextEditingController _sharedUrlController;
   late final FocusNode _sharedUrlFocusNode;
   String? _lastProcessedUrl;
+  // Track URLs that have been auto-scanned to prevent duplicate scans
+  final Set<String> _autoScannedUrls = {};
 
   // Add flag to prevent double processing
   bool _isProcessingUpdate = false;
@@ -271,6 +274,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       _facebookPreviewKeys = {};
   final Map<String, GlobalKey<WebUrlPreviewWidgetState>> _webUrlPreviewKeys =
       {};
+  final Map<String, GlobalKey<GoogleKnowledgeGraphPreviewWidgetState>>
+      _googleKgPreviewKeys = {};
   String?
       _currentVisibleInstagramUrl; // To track which Instagram preview is potentially visible
   // --- END ADDED FOR SCROLLING FAB ---
@@ -369,9 +374,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                 Row(
                   children: [
                     _buildScreenshotUploadButton(),
-                    _buildScanCurrentPreviewButton(),
+                    // For generic URLs, show "Scan Locations" instead of "Scan Preview"
+                    _isGenericWebUrl() ? _buildScanPageContentButtonInRow() : _buildScanCurrentPreviewButton(),
                   ],
                 ),
+                // Scan All Locations button (only show below for non-generic URLs)
+                if (!_isGenericWebUrl()) _buildScanPageContentButton(),
                 // AI Location Extraction loading indicator
                 if (_isExtractingLocation) ...[
                   const SizedBox(height: 12),
@@ -433,7 +441,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                         ),
                         const SizedBox(width: 10),
                         Text(
-                          '📷 AI analyzing screenshot...',
+                          '📷 Plendy AI analyzing...',
                           style: TextStyle(
                             color: Colors.purple[800],
                             fontWeight: FontWeight.w500,
@@ -486,8 +494,25 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     );
   }
 
+  /// Check if current URL is a generic web URL (not social media)
+  bool _isGenericWebUrl() {
+    final url = _currentSharedFiles.isNotEmpty
+        ? _extractFirstUrl(_currentSharedFiles.first.path)
+        : null;
+    return url != null &&
+        url.startsWith('http') &&
+        !_isInstagramUrl(url) &&
+        !_isTikTokUrl(url) &&
+        !_isYouTubeUrl(url) &&
+        !_isFacebookUrl(url) &&
+        !_isGoogleKnowledgeGraphUrl(url);
+  }
+
   /// Build the scan current preview button widget
   Widget _buildScanCurrentPreviewButton() {
+    // Hide for generic web URLs (they use "Scan Locations" instead)
+    if (_isGenericWebUrl()) return const SizedBox.shrink();
+    
     final isLoading = _isProcessingScreenshot || _isExtractingLocation;
     final hasPreview = _hasActivePreview();
 
@@ -513,6 +538,99 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
               color: (isLoading || !hasPreview)
                   ? Colors.grey[300]!
                   : Colors.blue[300]!,
+            ),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Build the scan page content button widget for the Row (replaces "Scan Preview" for generic URLs)
+  Widget _buildScanPageContentButtonInRow() {
+    final isLoading = _isProcessingScreenshot || _isExtractingLocation;
+    final hasPreview = _hasActivePreview();
+
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        child: OutlinedButton.icon(
+          onPressed: (isLoading || !hasPreview) ? null : _scanPageContent,
+          icon: Icon(
+            Icons.article_outlined,
+            size: 20,
+            color: (isLoading || !hasPreview) ? Colors.grey : Colors.purple[700],
+          ),
+          label: const Text(
+            'Scan Locations',
+            style: TextStyle(
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          style: OutlinedButton.styleFrom(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            side: BorderSide(
+              color: (isLoading || !hasPreview)
+                  ? Colors.grey[300]!
+                  : Colors.purple[300]!,
+            ),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Build the scan page content button widget (for articles with multiple locations)
+  /// Shows below the Row for non-generic URLs
+  Widget _buildScanPageContentButton() {
+    // Only show below Row for non-generic URLs (generic URLs show it in the Row)
+    if (_isGenericWebUrl()) return const SizedBox.shrink();
+    
+    final isLoading = _isProcessingScreenshot || _isExtractingLocation;
+    final hasPreview = _hasActivePreview();
+    // Only show for generic web URLs (not social media)
+    final url = _currentSharedFiles.isNotEmpty
+        ? _extractFirstUrl(_currentSharedFiles.first.path)
+        : null;
+    final isWebUrl = url != null &&
+        url.startsWith('http') &&
+        !_isInstagramUrl(url) &&
+        !_isTikTokUrl(url) &&
+        !_isYouTubeUrl(url) &&
+        !_isFacebookUrl(url);
+
+    // Don't show button if not a web URL
+    if (!isWebUrl) return const SizedBox.shrink();
+
+    return Container(
+      padding: const EdgeInsets.only(left: 4, top: 8),
+      child: SizedBox(
+        width: double.infinity,
+        child: OutlinedButton.icon(
+          onPressed: (isLoading || !hasPreview) ? null : _scanPageContent,
+          icon: Icon(
+            Icons.article_outlined,
+            size: 20,
+            color: (isLoading || !hasPreview) ? Colors.grey : Colors.purple[700],
+          ),
+          label: Text(
+            'Scan Locations',
+            style: TextStyle(
+              fontWeight: FontWeight.w500,
+              color: (isLoading || !hasPreview) ? Colors.grey : Colors.purple[700],
+            ),
+          ),
+          style: OutlinedButton.styleFrom(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            side: BorderSide(
+              color: (isLoading || !hasPreview)
+                  ? Colors.grey[300]!
+                  : Colors.purple[300]!,
             ),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(8),
@@ -759,6 +877,169 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     }
   }
 
+  /// Scan the entire page content to extract ALL locations
+  /// Useful for articles like "50 best restaurants" or travel guides
+  Future<void> _scanPageContent() async {
+    if (_isProcessingScreenshot || _isExtractingLocation) return;
+
+    setState(() {
+      _isProcessingScreenshot = true;
+    });
+
+    try {
+      print('📄 SCAN PAGE: Extracting page content...');
+
+      // Get the URL for context
+      final url = _currentSharedFiles.isNotEmpty
+          ? _extractFirstUrl(_currentSharedFiles.first.path)
+          : null;
+
+      // Try to extract page content from the active WebView
+      String? pageContent = await _tryExtractPageContent();
+
+      if (pageContent == null || pageContent.isEmpty) {
+        Fluttertoast.showToast(
+          msg: '📄 Could not extract page content. Try the screenshot scan instead.',
+          toastLength: Toast.LENGTH_LONG,
+          backgroundColor: Colors.orange[700],
+        );
+        return;
+      }
+
+      print('📄 SCAN PAGE: Extracted ${pageContent.length} characters, sending to Gemini...');
+
+      // Get user location for better results
+      LatLng? userLocation;
+      if (_currentUserPosition != null) {
+        userLocation = LatLng(
+          _currentUserPosition!.latitude,
+          _currentUserPosition!.longitude,
+        );
+      }
+
+      // Process with Gemini
+      final geminiService = GeminiService();
+      final result = await geminiService.extractLocationsFromWebPage(
+        pageContent,
+        pageUrl: url,
+        userLocation: userLocation,
+      );
+
+      if (!mounted) return;
+
+      if (result == null || result.locations.isEmpty) {
+        print('⚠️ SCAN PAGE: No locations found in page content');
+        Fluttertoast.showToast(
+          msg: '📄 No locations found on this page.',
+          toastLength: Toast.LENGTH_LONG,
+          backgroundColor: Colors.orange[700],
+        );
+        return;
+      }
+
+      print('✅ SCAN PAGE: Found ${result.locations.length} location(s)');
+      for (final loc in result.locations) {
+        final hasPlaceId = loc.placeId.isNotEmpty;
+        final hasCoords = loc.coordinates.latitude != 0 || loc.coordinates.longitude != 0;
+        print('   📍 ${loc.name} (placeId: ${hasPlaceId ? "✓" : "✗"}, coords: ${hasCoords ? "✓" : "✗"})');
+      }
+
+      // Convert Gemini results to ExtractedLocationData
+      final locations = result.locations.map((loc) {
+        // Infer place type from the types list
+        final placeType = ExtractedLocationData.inferPlaceType(loc.types);
+        
+        // Check if we have valid coordinates (not 0,0 which is our fallback)
+        final hasValidCoords = loc.coordinates.latitude != 0 || loc.coordinates.longitude != 0;
+        
+        // Determine confidence based on whether we have grounding data
+        final hasGrounding = loc.placeId.isNotEmpty;
+        final confidence = hasGrounding ? 0.9 : (hasValidCoords ? 0.7 : 0.5);
+        
+        return ExtractedLocationData(
+          name: loc.name,
+          address: loc.formattedAddress,
+          placeId: loc.placeId.isNotEmpty ? loc.placeId : null,
+          coordinates: hasValidCoords ? loc.coordinates : null, // Don't use (0,0) coordinates
+          type: placeType,
+          source: hasGrounding ? ExtractionSource.geminiGrounding : ExtractionSource.placesSearch,
+          confidence: confidence,
+          googleMapsUri: loc.uri,
+          placeTypes: loc.types,
+        );
+      }).toList();
+
+      final provider = context.read<ReceiveShareProvider>();
+
+      if (locations.length == 1) {
+        await _applySingleExtractedLocation(locations.first, provider);
+        Fluttertoast.showToast(
+          msg: '📄 Found: ${locations.first.name}',
+          toastLength: Toast.LENGTH_SHORT,
+          backgroundColor: Colors.green,
+        );
+      } else {
+        // Show selection dialog for multiple locations
+        await _handleMultipleExtractedLocations(locations, provider);
+      }
+    } catch (e) {
+      print('❌ SCAN PAGE ERROR: $e');
+      Fluttertoast.showToast(
+        msg: 'Error scanning page content',
+        backgroundColor: Colors.red,
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isProcessingScreenshot = false;
+        });
+      }
+    }
+  }
+
+  /// Try to extract text content from the active WebView
+  Future<String?> _tryExtractPageContent() async {
+    if (_currentSharedFiles.isEmpty) return null;
+
+    final url = _extractFirstUrl(_currentSharedFiles.first.path);
+    if (url == null) return null;
+
+    print('📄 SCAN PAGE: Attempting to extract content for URL: $url');
+
+    // Try Google KG preview first
+    if (_isGoogleKnowledgeGraphUrl(url)) {
+      final previewKey = _googleKgPreviewKeys[url];
+      if (previewKey?.currentState != null) {
+        try {
+          final content = await previewKey!.currentState!.extractPageContent();
+          if (content != null && content.isNotEmpty) {
+            print('✅ SCAN PAGE: Extracted content from Google KG preview');
+            return content;
+          }
+        } catch (e) {
+          print('⚠️ SCAN PAGE: Google KG content extraction failed: $e');
+        }
+      }
+    }
+
+    // Try Web URL preview
+    final webPreviewKey = _webUrlPreviewKeys[url];
+    if (webPreviewKey?.currentState != null) {
+      try {
+        final content = await webPreviewKey!.currentState!.extractPageContent();
+        if (content != null && content.isNotEmpty) {
+          print('✅ SCAN PAGE: Extracted content from Web URL preview');
+          return content;
+        }
+      } catch (e) {
+        print('⚠️ SCAN PAGE: Web URL content extraction failed: $e');
+      }
+    }
+
+    print('⚠️ SCAN PAGE: No content could be extracted');
+    return null;
+  }
+
   /// Try to capture the active WebView content from any preview type
   Future<Uint8List?> _tryCaptureaActiveWebView() async {
     if (_currentSharedFiles.isEmpty) return null;
@@ -777,6 +1058,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       return await _captureYouTubePreview(url);
     } else if (_isFacebookUrl(url)) {
       return await _captureFacebookPreview(url);
+    } else if (_isGoogleKnowledgeGraphUrl(url)) {
+      return await _captureGoogleKgPreview(url);
     } else if (url.startsWith('http')) {
       return await _captureWebUrlPreview(url);
     }
@@ -900,6 +1183,30 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         }
       } catch (e) {
         print('⚠️ SCAN PREVIEW: Web URL takeScreenshot failed: $e');
+      }
+    }
+    return null;
+  }
+
+  /// Capture Google Knowledge Graph preview WebView
+  Future<Uint8List?> _captureGoogleKgPreview(String url) async {
+    final previewKey = _googleKgPreviewKeys[url];
+    if (previewKey == null) {
+      print('⚠️ SCAN PREVIEW: No Google KG preview key found');
+      return null;
+    }
+
+    final state = previewKey.currentState;
+    if (state != null) {
+      try {
+        final screenshot = await state.takeScreenshot();
+        if (screenshot != null) {
+          print(
+              '✅ SCAN PREVIEW: Captured Google KG WebView (${screenshot.length} bytes)');
+          return screenshot;
+        }
+      } catch (e) {
+        print('⚠️ SCAN PREVIEW: Google KG takeScreenshot failed: $e');
       }
     }
     return null;
@@ -2139,6 +2446,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     return lower.contains('youtube.com') || lower.contains('youtu.be');
   }
 
+  /// Check if URL is a Google Knowledge Graph URL (g.co/kgs/ or share.google/)
+  bool _isGoogleKnowledgeGraphUrl(String url) {
+    final lower = url.toLowerCase();
+    return lower.contains('g.co/kgs/') || lower.contains('share.google/');
+  }
+
   // Extract Yelp URL from shared files
   String? _extractYelpUrlFromSharedFiles(List<SharedMediaFile> files) {
     for (final file in files) {
@@ -2678,6 +2991,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     setState(() {
       _currentSharedFiles = files;
     });
+    // Clear auto-scanned URLs when new content is shared
+    _autoScannedUrls.clear();
     _processSharedContent(files);
     _syncSharedUrlControllerFromContent();
   }
@@ -5501,16 +5816,56 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     // Google Knowledge Graph URLs - use WebView
     if (url.contains('g.co/kgs/') || url.contains('share.google/')) {
+      // Ensure Google KG preview key exists
+      if (!_googleKgPreviewKeys.containsKey(url)) {
+        _googleKgPreviewKeys[url] =
+            GlobalKey<GoogleKnowledgeGraphPreviewWidgetState>();
+      }
       return GoogleKnowledgeGraphPreviewWidget(
+        key: _googleKgPreviewKeys[url],
         url: url,
         launchUrlCallback: _launchUrl,
       );
     }
 
-    return GenericUrlPreviewWidget(
+    // Generic/fallback URLs - use WebView for screenshot support
+    // Ensure Web URL preview key exists
+    if (!_webUrlPreviewKeys.containsKey(url)) {
+      _webUrlPreviewKeys[url] = GlobalKey<WebUrlPreviewWidgetState>();
+    }
+    return WebUrlPreviewWidget(
+      key: _webUrlPreviewKeys[url],
       url: url,
       launchUrlCallback: _launchUrl,
+      onPageFinished: (loadedUrl) => _onGenericWebPageLoaded(url),
     );
+  }
+
+  /// Called when a generic web page finishes loading - auto-triggers location scan
+  void _onGenericWebPageLoaded(String url) {
+    // Only auto-scan once per URL
+    if (_autoScannedUrls.contains(url)) {
+      print('🔄 AUTO-SCAN: Already scanned $url, skipping');
+      return;
+    }
+    
+    // Don't auto-scan if already processing
+    if (_isProcessingScreenshot || _isExtractingLocation) {
+      print('🔄 AUTO-SCAN: Already processing, skipping auto-scan');
+      return;
+    }
+    
+    // Mark as scanned
+    _autoScannedUrls.add(url);
+    
+    print('🚀 AUTO-SCAN: Web page loaded, automatically scanning for locations...');
+    
+    // Small delay to ensure WebView is fully rendered
+    Future.delayed(const Duration(milliseconds: 500), () {
+      if (mounted && !_isProcessingScreenshot && !_isExtractingLocation) {
+        _scanPageContent();
+      }
+    });
   }
 
   Widget _buildVideoPreview(SharedMediaFile file) {
@@ -6258,8 +6613,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       barrierDismissible: false,
       builder: (BuildContext dialogContext) {
         return AlertDialog(
+          insetPadding: const EdgeInsets.symmetric(horizontal: 16),
           title: Text('Select Location for "$entityName"'),
-          content: Column(
+            content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               const Text(
@@ -6634,10 +6990,9 @@ class _MultiLocationSelectionDialogState
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: MediaQuery.of(context).size.width * 0.9,
-      child: AlertDialog(
-        backgroundColor: Colors.white,
+    return AlertDialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16),
+      backgroundColor: Colors.white,
         title: Row(
           children: [
             const Icon(Icons.location_on, color: Colors.blue),
@@ -6891,8 +7246,7 @@ class _MultiLocationSelectionDialogState
             ),
           ),
         ],
-      ),
-    );
+      );
   }
 
   String _buildButtonText() {

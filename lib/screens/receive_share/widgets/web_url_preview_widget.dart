@@ -6,6 +6,7 @@ class WebUrlPreviewWidget extends StatefulWidget {
   final String url;
   final Future<void> Function(String) launchUrlCallback;
   final void Function(InAppWebViewController)? onWebViewCreated;
+  final void Function(String url)? onPageFinished;
   final bool showControls;
   final double? height;
 
@@ -14,6 +15,7 @@ class WebUrlPreviewWidget extends StatefulWidget {
     required this.url,
     required this.launchUrlCallback,
     this.onWebViewCreated,
+    this.onPageFinished,
     this.showControls = true,
     this.height,
   });
@@ -61,6 +63,160 @@ class WebUrlPreviewWidgetState extends State<WebUrlPreviewWidget> with Automatic
     } catch (e) {
       print('❌ WEB PREVIEW: Screenshot failed: $e');
       return null;
+    }
+  }
+
+  /// Extract all text content from the current page
+  /// This is useful for scraping articles with lists of locations
+  Future<String?> extractPageContent() async {
+    if (_controller == null) {
+      print('⚠️ WEB PREVIEW: Controller is null, cannot extract content');
+      return null;
+    }
+    
+    try {
+      // JavaScript to extract meaningful text content from the page
+      // Enhanced filtering to remove author bios, sidebars, related posts, etc.
+      final result = await _controller!.evaluateJavascript(source: '''
+        (function() {
+          // Comprehensive list of selectors to remove (non-article content)
+          const selectorsToRemove = [
+            // Basic elements
+            'script', 'style', 'noscript', 'iframe', 'svg', 'canvas', 'video', 'audio',
+            
+            // Navigation and structure
+            'nav', 'footer', 'header', 'aside',
+            '[role="navigation"]', '[role="banner"]', '[role="contentinfo"]', '[role="complementary"]',
+            
+            // Common class names for navigation/footer
+            '.nav', '.navbar', '.navigation', '.menu', '.footer', '.header', '.masthead',
+            
+            // Sidebar content
+            '.sidebar', '.side-bar', '.widget', '.widgets', '#sidebar', '#side-bar',
+            '[class*="sidebar"]', '[id*="sidebar"]',
+            
+            // Author/About sections (often contain unrelated locations)
+            '.author', '.author-bio', '.author-box', '.author-info', '.about-author',
+            '.bio', '.writer-bio', '.contributor',
+            '[class*="author"]', '[class*="bio"]',
+            
+            // Related/Popular posts
+            '.related', '.related-posts', '.related-articles', '.similar-posts',
+            '.popular', '.popular-posts', '.trending', '.recommended',
+            '.recent-posts', '.latest-posts', '.more-posts',
+            '[class*="related"]', '[class*="popular"]', '[class*="recent-posts"]',
+            
+            // Comments
+            '.comments', '.comment-section', '.disqus', '#comments', '#respond',
+            '[class*="comment"]',
+            
+            // Ads and promotions
+            '.advertisement', '.ad', '.ads', '.advert', '.sponsored', '.promo',
+            '[class*="advert"]', '[class*="sponsor"]',
+            
+            // Social sharing
+            '.social', '.social-share', '.share-buttons', '.sharing',
+            '[class*="social"]', '[class*="share"]',
+            
+            // Newsletter/Subscribe
+            '.newsletter', '.subscribe', '.signup', '.opt-in', '.email-signup',
+            '[class*="newsletter"]', '[class*="subscribe"]',
+            
+            // WordPress specific
+            '.wp-sidebar', '.widget-area', '.tagcloud', '.wp-block-latest-posts',
+            
+            // Footer widgets and misc
+            '.site-footer', '.footer-widgets', '.post-navigation', '.breadcrumb',
+            '.pagination', '.page-links'
+          ];
+          
+          // Get the main content area - prioritize article content
+          let mainContent = document.querySelector('article.post, article.entry, article.blog-post, .post-content, .article-content, .entry-content, .blog-content');
+          
+          // Fallback to broader selectors
+          if (!mainContent) {
+            mainContent = document.querySelector('article, main, [role="main"], .content, #content, #main');
+          }
+          
+          let textContent = '';
+          
+          if (mainContent) {
+            // Clone to avoid modifying the actual DOM
+            const clone = mainContent.cloneNode(true);
+            
+            // Remove all unwanted elements from clone
+            selectorsToRemove.forEach(selector => {
+              try {
+                clone.querySelectorAll(selector).forEach(el => el.remove());
+              } catch (e) {
+                // Some selectors might fail, ignore
+              }
+            });
+            
+            textContent = clone.innerText || clone.textContent;
+          } else {
+            // Fallback: get body text but aggressively clean it
+            const bodyClone = document.body.cloneNode(true);
+            selectorsToRemove.forEach(selector => {
+              try {
+                bodyClone.querySelectorAll(selector).forEach(el => el.remove());
+              } catch (e) {
+                // Ignore selector errors
+              }
+            });
+            textContent = bodyClone.innerText || bodyClone.textContent;
+          }
+          
+          // Get the page title (important for context)
+          const title = document.title || '';
+          
+          // Get meta description if available
+          const metaDesc = document.querySelector('meta[name="description"]');
+          const description = metaDesc ? metaDesc.getAttribute('content') : '';
+          
+          // Try to get the main heading (h1) for better context
+          const h1 = document.querySelector('h1');
+          const mainHeading = h1 ? h1.innerText.trim() : '';
+          
+          // Combine title, heading, description, and content
+          let fullContent = '';
+          if (title) fullContent += 'Page Title: ' + title + '\\n';
+          if (mainHeading && mainHeading !== title) fullContent += 'Main Heading: ' + mainHeading + '\\n';
+          if (description) fullContent += 'Description: ' + description + '\\n';
+          fullContent += '\\n=== MAIN ARTICLE CONTENT ===\\n' + textContent;
+          
+          // Clean up whitespace
+          fullContent = fullContent.replace(/\\s+/g, ' ').replace(/\\n\\s*\\n/g, '\\n\\n').trim();
+          
+          // Limit to ~50k characters to avoid token limits
+          if (fullContent.length > 50000) {
+            fullContent = fullContent.substring(0, 50000) + '... [content truncated]';
+          }
+          
+          return fullContent;
+        })();
+      ''');
+      
+      if (result != null && result.toString().isNotEmpty) {
+        final content = result.toString();
+        print('✅ WEB PREVIEW: Extracted ${content.length} characters of page content');
+        return content;
+      }
+      return null;
+    } catch (e) {
+      print('❌ WEB PREVIEW: Content extraction failed: $e');
+      return null;
+    }
+  }
+
+  /// Get the current page URL (may differ from initial URL after redirects)
+  Future<String?> getCurrentUrl() async {
+    if (_controller == null) return widget.url;
+    try {
+      final url = await _controller!.getUrl();
+      return url?.toString() ?? widget.url;
+    } catch (e) {
+      return widget.url;
     }
   }
 
@@ -128,6 +284,8 @@ class WebUrlPreviewWidgetState extends State<WebUrlPreviewWidget> with Automatic
                   document.body.style.position = 'relative';
                 ''');
               } catch (_) {}
+              // Notify parent that page has finished loading
+              widget.onPageFinished?.call(url?.toString() ?? widget.url);
             },
             onReceivedError: (controller, request, error) {
               if (!mounted || _isDisposed) return;
