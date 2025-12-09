@@ -105,7 +105,7 @@ class YelpPreviewWidget extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'Yelp previews now open directly in the Yelp app.',
+                      'Yelp previews open directly in the Yelp app.',
                       style: theme.textTheme.bodyMedium?.copyWith(
                         color: Colors.grey[700],
                       ),
