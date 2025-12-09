@@ -248,20 +248,84 @@ Use Google Maps data to verify locations and provide accurate Place IDs whenever
   }
 
   /// Build prompt for text-based location extraction
+  /// Enhanced prompt with priority system matching Instagram screenshot analysis
   String _buildTextLocationExtractionPrompt(String text) {
     return '''
-Extract ALL location information from the following text:
+You are an expert at extracting location and place information from social media captions.
+Analyze the following text and extract ALL location and place information.
 
+=== TEXT TO ANALYZE ===
 $text
 
-For EACH distinct place, business, or location mentioned, identify:
-1. The exact business or place name
-2. The full address if available
-3. The type of place
-4. Any additional location context
+=== EXTRACTION PRIORITY (Follow this order!) ===
 
-If multiple places are mentioned, extract all of them.
-Provide accurate, verified location information only.
+**PRIORITY 1 - EXPLICIT LOCATIONS WITH CITY CONTEXT:**
+Look for patterns that mention a place WITH its city/location:
+- "store in Anaheim" → Extract: name="[store name]", city="Anaheim"
+- "opened in San Francisco" → city="San Francisco"
+- "located in [City]" → city="[City]"
+- "at [Place] in [City]" → Extract both place and city
+- "📍 [Place Name]" with city mentioned nearby
+
+CRITICAL: When you find "[Business Name] in [City]", ALWAYS include the city!
+
+**PRIORITY 2 - BUSINESS/PLACE NAMES:**
+- Named businesses, restaurants, cafes, stores, attractions
+- Names following "at", "visited", "went to", "check out", "just opened"
+- Names with location pin emoji 📍
+- @handles that are business names (convert them!)
+
+**PRIORITY 3 - HASHTAGS (Use for city context):**
+- Extract city names from hashtags: #anaheim → "Anaheim", #orangecounty → "Orange County"
+- #losangeles, #la → "Los Angeles"
+- #sanfrancisco, #sf → "San Francisco"  
+- #newyork, #nyc → "New York"
+- Use hashtag cities to provide context for businesses found in Priority 1 & 2
+- If a business is found but no city is explicitly stated, check hashtags for the city
+
+=== SOCIAL MEDIA HANDLE CONVERSION ===
+Convert @handles to proper business names:
+- "@ebisu_life_store" → "Ebisu Life Store"
+- "@joes_pizza_nyc" → "Joe's Pizza" (remove _nyc suffix)
+- "@cafe.luna.la" → "Cafe Luna" (remove .la suffix)
+- Remove location suffixes: _la, _nyc, _sf, .us, .co, etc.
+- Replace dots and underscores with spaces
+- Apply Title Case
+
+=== OUTPUT FORMAT ===
+Return a JSON array. IMPORTANT: Include the city in the response!
+
+[
+  {
+    "name": "Business or Place Name",
+    "address": "Street address if mentioned (or null)",
+    "city": "City name from text or hashtags (IMPORTANT - extract this!)",
+    "region": "State/region if mentioned (or null)",
+    "type": "restaurant/cafe/store/attraction/park/landmark"
+  }
+]
+
+=== EXAMPLES ===
+
+Example 1 - Caption: "new Japanese store in Anaheim! Ebisu life store just opened #orangecounty #anaheim"
+Output:
+[{"name": "Ebisu Life Store", "address": null, "city": "Anaheim", "region": "Orange County", "type": "store"}]
+
+Example 2 - Caption: "best coffee ☕ @bluebottle in SF #sanfrancisco"
+Output:
+[{"name": "Blue Bottle", "address": null, "city": "San Francisco", "region": null, "type": "cafe"}]
+
+Example 3 - Caption: "📍 Hearst Castle in San Simeon, amazing views! #california #roadtrip"
+Output:
+[{"name": "Hearst Castle", "address": null, "city": "San Simeon", "region": "California", "type": "landmark"}]
+
+=== RULES ===
+1. ALWAYS extract city context when available (from "in [City]" or hashtags)
+2. Deduplicate - same place mentioned twice = one result
+3. Skip generic regions (California, USA) if specific cities exist
+4. Convert all @handles to readable business names
+5. Return ONLY the JSON array, no other text
+6. If no locations found, return: []
 ''';
   }
 

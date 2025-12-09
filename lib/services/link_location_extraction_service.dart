@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -114,6 +115,572 @@ class LinkLocationExtractionService {
   void clearCache() {
     _cache.clear();
     print('🗑️ EXTRACTION: Cache cleared');
+  }
+
+  /// Extract locations from social media caption/description text
+  /// 
+  /// [caption] - The caption/description text from the social media post
+  /// [platform] - The platform name (e.g., "TikTok", "Instagram") for context
+  /// [authorName] - Optional author name (useful for business accounts)
+  /// [sourceUrl] - Optional source URL for caching and context
+  /// [userLocation] - Optional user location for better results
+  /// [maxLocations] - Maximum number of locations to return (default: 5)
+  /// 
+  /// Returns a list of [ExtractedLocationData] objects found in the caption.
+  Future<List<ExtractedLocationData>> extractLocationsFromCaption(
+    String caption, {
+    String platform = 'social media',
+    String? authorName,
+    String? sourceUrl,
+    LatLng? userLocation,
+    int maxLocations = _maxLocationsDefault,
+  }) async {
+    // Check cache if we have a source URL
+    if (sourceUrl != null) {
+      final cacheKey = 'caption:${sourceUrl.trim().toLowerCase()}';
+      if (_cache.containsKey(cacheKey)) {
+        print('📦 CAPTION CACHE: Returning cached result for $sourceUrl');
+        return _cache[cacheKey]!;
+      }
+    }
+
+    print('🎬 CAPTION EXTRACTION: Analyzing $platform caption...');
+    print('📝 Caption preview: ${caption.length > 100 ? caption.substring(0, 100) + "..." : caption}');
+    
+    List<ExtractedLocationData> results = [];
+
+    try {
+      // Build context-rich prompt for Gemini
+      final contextualCaption = _buildCaptionContext(
+        caption: caption,
+        platform: platform,
+        authorName: authorName,
+      );
+      
+      // Use Gemini to extract locations from the caption text
+      final geminiResult = await _gemini.extractLocationsFromText(
+        contextualCaption,
+        userLocation: userLocation,
+      );
+      
+      // Extract city/location context from the caption for better Places API searches
+      final locationContext = _extractLocationContext(caption);
+      if (locationContext != null) {
+        print('📍 CAPTION: Detected location context: "$locationContext"');
+      }
+      
+      // Track seen locations to avoid duplicates
+      final Set<String> seenPlaceIds = {};
+      final Set<String> seenLocationNames = {};
+      
+      // Check if we have grounding chunks with location data
+      // BUT validate that the grounding chunks are actually relevant to the caption
+      // (Gemini sometimes returns unrelated businesses based on keywords)
+      if (geminiResult != null && geminiResult.locations.isNotEmpty) {
+        // Filter grounding chunks to only include ones whose names appear in the caption
+        final lowerCaption = caption.toLowerCase();
+        final relevantLocations = geminiResult.locations.where((location) {
+          final nameParts = location.name.toLowerCase().split(' ');
+          // Check if at least 2 words from the location name appear in the caption
+          // (or all words if name has fewer than 2 words)
+          final requiredMatches = nameParts.length >= 2 ? 2 : nameParts.length;
+          int matchCount = 0;
+          for (final part in nameParts) {
+            if (part.length > 2 && lowerCaption.contains(part)) {
+              matchCount++;
+            }
+          }
+          final isRelevant = matchCount >= requiredMatches;
+          if (!isRelevant) {
+            print('⏭️ CAPTION: Skipping unrelated grounding result: "${location.name}" (not mentioned in caption)');
+          }
+          return isRelevant;
+        }).toList();
+        
+        if (relevantLocations.isNotEmpty) {
+          print('✅ CAPTION EXTRACTION: Found ${relevantLocations.length} relevant location(s) from grounding (filtered from ${geminiResult.locations.length})');
+        
+        // Convert and verify each location has valid coordinates
+        for (final location in relevantLocations.take(maxLocations)) {
+          // Skip if we've already processed a location with the same name (case-insensitive)
+          final normalizedName = location.name.toLowerCase().trim();
+          if (seenLocationNames.contains(normalizedName)) {
+            print('⏭️ CAPTION: Skipping duplicate location name: "${location.name}"');
+            continue;
+          }
+          seenLocationNames.add(normalizedName);
+          
+          final hasValidCoords = location.coordinates.latitude != 0.0 || 
+                                  location.coordinates.longitude != 0.0;
+          
+          if (hasValidCoords && location.placeId.isNotEmpty) {
+            // Skip if we've already added this Place ID
+            if (seenPlaceIds.contains(location.placeId)) {
+              print('⏭️ CAPTION: Skipping duplicate Place ID: ${location.placeId}');
+              continue;
+            }
+            seenPlaceIds.add(location.placeId);
+            
+            // Location has valid coordinates and Place ID from grounding
+            print('📍 CAPTION: "${location.name}" has valid coords from grounding');
+            results.add(ExtractedLocationData(
+              placeId: location.placeId,
+              name: location.name,
+              address: location.formattedAddress,
+              coordinates: location.coordinates,
+              type: ExtractedLocationData.inferPlaceType(location.types),
+              source: ExtractionSource.geminiGrounding,
+              confidence: 0.9,
+              googleMapsUri: location.uri,
+              placeTypes: location.types,
+            ));
+          } else {
+            // Location needs Places API lookup for coordinates
+            // Include location context from caption for better results
+            print('🔍 CAPTION: "${location.name}" missing coords, searching Places API...');
+            final resolvedLocation = await _resolveLocationWithPlacesApi(
+              location.name,
+              address: location.formattedAddress,
+              locationContext: locationContext, // Add city/region context
+              userLocation: userLocation,
+            );
+            
+            if (resolvedLocation != null) {
+              // Skip if we've already added this Place ID
+              if (resolvedLocation.placeId != null && seenPlaceIds.contains(resolvedLocation.placeId)) {
+                print('⏭️ CAPTION: Skipping duplicate resolved Place ID: ${resolvedLocation.placeId}');
+                continue;
+              }
+              if (resolvedLocation.placeId != null) {
+                seenPlaceIds.add(resolvedLocation.placeId!);
+              }
+              
+              print('✅ CAPTION: Resolved "${location.name}" via Places API');
+              results.add(resolvedLocation);
+            } else {
+              // Still add the location even without coords - user can manually set
+              print('⚠️ CAPTION: Could not resolve "${location.name}", adding without coords');
+              results.add(ExtractedLocationData(
+                placeId: location.placeId.isNotEmpty ? location.placeId : null,
+                name: location.name,
+                address: location.formattedAddress,
+                coordinates: null, // No valid coordinates
+                type: ExtractedLocationData.inferPlaceType(location.types),
+                source: ExtractionSource.geminiGrounding,
+                confidence: 0.5, // Lower confidence without coords
+                placeTypes: location.types,
+              ));
+            }
+          }
+        }
+        } else {
+          print('⚠️ CAPTION EXTRACTION: Grounding returned ${geminiResult.locations.length} results but none matched caption text');
+        }
+      } 
+      
+      // Fallback: Parse JSON from Gemini's text response when:
+      // 1. No grounding chunks were returned, OR
+      // 2. Grounding chunks were irrelevant (filtered out above)
+      if (results.isEmpty && geminiResult != null && geminiResult.responseText.isNotEmpty) {
+        print('🔄 CAPTION EXTRACTION: No grounding chunks, parsing JSON from response text...');
+        
+        final parsedLocations = _parseLocationsFromJsonResponse(geminiResult.responseText);
+        
+        if (parsedLocations.isNotEmpty) {
+          print('✅ CAPTION EXTRACTION: Parsed ${parsedLocations.length} location(s) from JSON response');
+          
+          for (final parsed in parsedLocations.take(maxLocations)) {
+            final name = parsed['name'] as String?;
+            if (name == null || name.isEmpty) continue;
+            
+            // Skip duplicates by name
+            final normalizedName = name.toLowerCase().trim();
+            if (seenLocationNames.contains(normalizedName)) {
+              print('⏭️ CAPTION: Skipping duplicate location name: "$name"');
+              continue;
+            }
+            seenLocationNames.add(normalizedName);
+            
+            final city = parsed['city'] as String?;
+            final region = parsed['region'] as String?;
+            final address = parsed['address'] as String?;
+            
+            // Build location context from parsed JSON (prioritize parsed city over caption context)
+            String? effectiveContext = city ?? locationContext;
+            if (effectiveContext == null && region != null) {
+              effectiveContext = region;
+            }
+            
+            print('🔍 CAPTION: Resolving "$name" with context "$effectiveContext" via Places API...');
+            
+            final resolvedLocation = await _resolveLocationWithPlacesApi(
+              name,
+              address: address,
+              locationContext: effectiveContext,
+              userLocation: userLocation,
+            );
+            
+            if (resolvedLocation != null) {
+              // Skip if we've already added this Place ID
+              if (resolvedLocation.placeId != null && seenPlaceIds.contains(resolvedLocation.placeId)) {
+                print('⏭️ CAPTION: Skipping duplicate resolved Place ID: ${resolvedLocation.placeId}');
+                continue;
+              }
+              if (resolvedLocation.placeId != null) {
+                seenPlaceIds.add(resolvedLocation.placeId!);
+              }
+              
+              print('✅ CAPTION: Resolved "$name" via Places API');
+              results.add(resolvedLocation);
+            } else {
+              // Add location without coordinates - user can manually set
+              print('⚠️ CAPTION: Could not resolve "$name", adding without coords');
+              results.add(ExtractedLocationData(
+                placeId: null,
+                name: name,
+                address: address ?? (city != null ? '$city${region != null ? ", $region" : ""}' : null),
+                coordinates: null,
+                type: PlaceType.unknown,
+                source: ExtractionSource.geminiGrounding, // From Gemini, even though grounding chunks were empty
+                confidence: 0.5,
+              ));
+            }
+          }
+        } else {
+          print('⚠️ CAPTION EXTRACTION: Could not parse any locations from JSON response');
+        }
+      }
+      
+      // Final check - if still no results
+      if (results.isEmpty) {
+        if (geminiResult == null) {
+          print('⚠️ CAPTION EXTRACTION: Gemini returned no results');
+        } else {
+          print('⚠️ CAPTION EXTRACTION: No locations could be extracted from caption');
+        }
+      }
+      
+      print('📍 CAPTION EXTRACTION: Returning ${results.length} unique location(s)');
+    } catch (e) {
+      print('❌ CAPTION EXTRACTION ERROR: $e');
+    }
+
+    // Cache results if we have a source URL
+    if (sourceUrl != null) {
+      final cacheKey = 'caption:${sourceUrl.trim().toLowerCase()}';
+      _cache[cacheKey] = results;
+    }
+
+    return results;
+  }
+  
+  /// Extract city/region context from caption text
+  /// Returns the most specific location mentioned (city > region > state)
+  String? _extractLocationContext(String caption) {
+    final lowerCaption = caption.toLowerCase();
+    
+    // Common California cities (prioritize specific cities)
+    final caCities = [
+      'anaheim', 'los angeles', 'la', 'san diego', 'san francisco', 'sf',
+      'san jose', 'irvine', 'santa monica', 'burbank', 'glendale', 'pasadena',
+      'long beach', 'oakland', 'berkeley', 'hollywood', 'west hollywood',
+      'beverly hills', 'costa mesa', 'newport beach', 'laguna beach',
+      'huntington beach', 'fullerton', 'garden grove', 'santa ana',
+      'alhambra', 'arcadia', 'torrance', 'downey', 'el monte', 'pomona',
+      'ontario', 'riverside', 'corona', 'temecula', 'oceanside', 'carlsbad',
+      'escondido', 'chula vista', 'sacramento', 'fresno', 'bakersfield',
+      'whittier', 'buena park', 'cypress', 'la habra', 'placentia', 'yorba linda',
+      'brea', 'diamond bar', 'rowland heights', 'walnut', 'west covina', 'covina',
+      'monrovia', 'azusa', 'glendora', 'san dimas', 'claremont', 'upland', 'rancho cucamonga',
+    ];
+    
+    // Common US cities
+    final usCities = [
+      'new york', 'nyc', 'manhattan', 'brooklyn', 'queens',
+      'chicago', 'houston', 'phoenix', 'philadelphia', 'san antonio',
+      'dallas', 'austin', 'seattle', 'denver', 'boston', 'atlanta',
+      'miami', 'tampa', 'orlando', 'las vegas', 'portland', 'detroit',
+      'minneapolis', 'charlotte', 'raleigh', 'nashville', 'memphis',
+      'new orleans', 'salt lake city', 'honolulu', 'anchorage',
+    ];
+    
+    // Regional abbreviations  
+    final regions = {
+      'oc': 'Orange County, CA',
+      'orange county': 'Orange County, CA',
+      'socal': 'Southern California',
+      'norcal': 'Northern California',
+      'bay area': 'Bay Area, CA',
+      'silicon valley': 'Silicon Valley, CA',
+      'inland empire': 'Inland Empire, CA',
+    };
+    
+    // Check for parenthetical city format first: (city, state) or (city,state)
+    // Examples: (whittier,ca), (Anaheim, CA), (Los Angeles, California)
+    final parenCityPattern = RegExp(r'\(([a-zA-Z\s]+)[,\s]+(ca|california|tx|texas|ny|new york|fl|florida|wa|washington)\)', caseSensitive: false);
+    final parenMatch = parenCityPattern.firstMatch(lowerCaption);
+    if (parenMatch != null) {
+      final possibleCity = parenMatch.group(1)?.trim().toLowerCase();
+      if (possibleCity != null && (caCities.contains(possibleCity) || usCities.contains(possibleCity))) {
+        print('🏙️ CONTEXT: Found city in parentheses: $possibleCity');
+        return possibleCity;
+      }
+    }
+    
+    // Check hashtags (most specific intent)
+    final hashtagPattern = RegExp(r'#(\w+)');
+    final hashtags = hashtagPattern.allMatches(lowerCaption)
+        .map((m) => m.group(1)?.toLowerCase() ?? '')
+        .toList();
+    
+    // Check hashtags for city names
+    for (final city in caCities) {
+      final cityNoSpaces = city.replaceAll(' ', '');
+      if (hashtags.contains(cityNoSpaces) || hashtags.contains(city)) {
+        print('🏙️ CONTEXT: Found city in hashtag: $city');
+        return city;
+      }
+    }
+    for (final city in usCities) {
+      final cityNoSpaces = city.replaceAll(' ', '');
+      if (hashtags.contains(cityNoSpaces) || hashtags.contains(city)) {
+        print('🏙️ CONTEXT: Found city in hashtag: $city');
+        return city;
+      }
+    }
+    
+    // Check caption text for "in [City]" pattern
+    final inCityPattern = RegExp(r'\bin\s+([A-Z][a-zA-Z\s]+?)(?:\s*[!.,#✨🎉]|\s+(?:just|is|has|and|the|at|on)|\s*$)', caseSensitive: false);
+    final inCityMatches = inCityPattern.allMatches(caption);
+    for (final match in inCityMatches) {
+      final possibleCity = match.group(1)?.trim().toLowerCase();
+      if (possibleCity != null) {
+        // Check if it's a known city
+        if (caCities.contains(possibleCity) || usCities.contains(possibleCity)) {
+          print('🏙️ CONTEXT: Found "in $possibleCity" pattern');
+          return possibleCity;
+        }
+      }
+    }
+    
+    // Check for regional abbreviations
+    for (final entry in regions.entries) {
+      if (lowerCaption.contains(entry.key)) {
+        print('🏙️ CONTEXT: Found region: ${entry.key}');
+        // For regions like "OC", try to find a more specific city
+        // If "OC" is found, look for nearby city mentions
+        if (entry.key == 'oc' || entry.key == 'orange county') {
+          // Check for specific OC cities
+          for (final city in ['anaheim', 'irvine', 'santa ana', 'costa mesa', 
+                              'newport beach', 'huntington beach', 'fullerton', 
+                              'garden grove', 'orange', 'tustin']) {
+            if (lowerCaption.contains(city)) {
+              print('🏙️ CONTEXT: Found specific OC city: $city');
+              return city;
+            }
+          }
+        }
+        return entry.value;
+      }
+    }
+    
+    // Check caption text for any city mention
+    for (final city in caCities) {
+      if (lowerCaption.contains(city)) {
+        print('🏙️ CONTEXT: Found city mention: $city');
+        return city;
+      }
+    }
+    for (final city in usCities) {
+      if (lowerCaption.contains(city)) {
+        print('🏙️ CONTEXT: Found city mention: $city');
+        return city;
+      }
+    }
+    
+    return null;
+  }
+
+  /// Parse locations from Gemini's JSON response text
+  /// Handles cases where Gemini returns JSON but Maps grounding didn't return chunks
+  List<Map<String, dynamic>> _parseLocationsFromJsonResponse(String responseText) {
+    try {
+      // Find JSON array in the response (may be wrapped in markdown code blocks)
+      String jsonStr = responseText.trim();
+      
+      // Remove markdown code block wrapper if present
+      if (jsonStr.contains('```json')) {
+        final start = jsonStr.indexOf('```json') + 7;
+        final end = jsonStr.indexOf('```', start);
+        if (end > start) {
+          jsonStr = jsonStr.substring(start, end).trim();
+        }
+      } else if (jsonStr.contains('```')) {
+        final start = jsonStr.indexOf('```') + 3;
+        final end = jsonStr.indexOf('```', start);
+        if (end > start) {
+          jsonStr = jsonStr.substring(start, end).trim();
+        }
+      }
+      
+      // Find the JSON array bounds
+      final arrayStart = jsonStr.indexOf('[');
+      final arrayEnd = jsonStr.lastIndexOf(']');
+      
+      if (arrayStart == -1 || arrayEnd == -1 || arrayEnd <= arrayStart) {
+        print('⚠️ JSON PARSE: No valid JSON array found in response');
+        return [];
+      }
+      
+      jsonStr = jsonStr.substring(arrayStart, arrayEnd + 1);
+      
+      // Parse the JSON
+      final decoded = jsonDecode(jsonStr);
+      
+      if (decoded is List) {
+        final results = <Map<String, dynamic>>[];
+        for (final item in decoded) {
+          if (item is Map<String, dynamic>) {
+            results.add(item);
+          }
+        }
+        print('✅ JSON PARSE: Successfully parsed ${results.length} location(s)');
+        return results;
+      }
+      
+      return [];
+    } catch (e) {
+      print('❌ JSON PARSE ERROR: $e');
+      return [];
+    }
+  }
+
+  /// Resolve a location name to full details using Places API
+  Future<ExtractedLocationData?> _resolveLocationWithPlacesApi(
+    String locationName, {
+    String? address,
+    String? locationContext,
+    LatLng? userLocation,
+  }) async {
+    try {
+      // Build search query - combine name with location context for better results
+      String searchQuery = locationName;
+      
+      // Prioritize location context over generic address
+      if (locationContext != null && locationContext.isNotEmpty) {
+        // Use comma-separated format for more specific matching
+        searchQuery = '$locationName, $locationContext';
+        print('🔍 PLACES RESOLVE: Using location context: "$searchQuery"');
+      } else if (address != null && address.isNotEmpty) {
+        searchQuery = '$locationName $address';
+      }
+      
+      print('🔍 PLACES RESOLVE: Searching for "$searchQuery"');
+      
+      final results = await _maps.searchPlaces(searchQuery);
+      if (results.isEmpty) {
+        print('⚠️ PLACES RESOLVE: No results for "$searchQuery"');
+        return null;
+      }
+
+      // Find the best matching result based on location context
+      Map<String, dynamic> bestResult = results.first;
+      
+      if (locationContext != null && locationContext.isNotEmpty && results.length > 1) {
+        // Look for a result that contains the location context in its description/address
+        final lowerContext = locationContext.toLowerCase();
+        
+        for (final result in results) {
+          final description = (result['description'] as String? ?? '').toLowerCase();
+          final resultAddress = (result['address'] as String? ?? '').toLowerCase();
+          
+          // Check if this result matches the city context
+          if (description.contains(lowerContext) || resultAddress.contains(lowerContext)) {
+            print('🎯 PLACES RESOLVE: Found city-matching result: ${result['description']}');
+            bestResult = result;
+            break;
+          }
+        }
+        
+        // If no exact match, log what we're using
+        if (bestResult == results.first) {
+          print('⚠️ PLACES RESOLVE: No result matched city "$locationContext", using first result');
+          // Log all results for debugging
+          for (int i = 0; i < results.length && i < 3; i++) {
+            print('   Result ${i + 1}: ${results[i]['description']}');
+          }
+        }
+      }
+
+      final placeId = bestResult['placeId'] as String?;
+      
+      // Autocomplete doesn't return coordinates - need to call Place Details API
+      LatLng? coords;
+      String? resolvedAddress;
+      String? resolvedName;
+      
+      if (placeId != null && placeId.isNotEmpty) {
+        print('🔍 PLACES RESOLVE: Getting details for Place ID: $placeId');
+        try {
+          final placeDetails = await _maps.getPlaceDetails(placeId);
+          
+          // Extract coordinates from place details
+          if (placeDetails.latitude != 0.0 || placeDetails.longitude != 0.0) {
+            coords = LatLng(placeDetails.latitude, placeDetails.longitude);
+          }
+          
+          resolvedAddress = placeDetails.address;
+          resolvedName = placeDetails.displayName ?? bestResult['description'] as String?;
+          
+          print('✅ PLACES RESOLVE: Got details - "${resolvedName}" at $coords');
+        } catch (e) {
+          print('⚠️ PLACES RESOLVE: Could not get place details: $e');
+          // Fall back to autocomplete data
+          resolvedName = bestResult['description'] as String?;
+          resolvedAddress = bestResult['address'] as String?;
+        }
+      } else {
+        resolvedName = bestResult['description'] as String?;
+        resolvedAddress = bestResult['address'] as String?;
+      }
+      
+      print('✅ PLACES RESOLVE: Final result "${resolvedName}" at $coords');
+
+      return ExtractedLocationData(
+        placeId: placeId,
+        name: resolvedName ?? locationName,
+        address: resolvedAddress,
+        coordinates: coords,
+        type: PlaceType.unknown,
+        source: ExtractionSource.placesSearch,
+        confidence: coords != null ? 0.85 : 0.6, // Higher confidence with coords
+        metadata: {'original_query': locationName, 'location_context': locationContext},
+      );
+    } catch (e) {
+      print('❌ PLACES RESOLVE ERROR: $e');
+      return null;
+    }
+  }
+
+  /// Build a context-rich prompt for caption-based extraction
+  String _buildCaptionContext({
+    required String caption,
+    required String platform,
+    String? authorName,
+  }) {
+    final buffer = StringBuffer();
+    
+    buffer.writeln('$platform post caption:');
+    buffer.writeln();
+    buffer.writeln(caption);
+    
+    if (authorName != null && authorName.isNotEmpty) {
+      buffer.writeln();
+      buffer.writeln('Posted by: $authorName');
+      buffer.writeln('(Note: The author name might be a business name if this is a business account)');
+    }
+    
+    return buffer.toString();
   }
 
   // ============ EXTRACTION STRATEGIES ============
