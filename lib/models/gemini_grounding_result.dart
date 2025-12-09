@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 
 /// Represents a single location from Google Maps grounding
@@ -144,12 +145,118 @@ class GeminiGroundingResult {
       widgetToken = groundingMetadata['googleMapsWidgetContextToken'] as String?;
     }
 
+    // FALLBACK: If no grounding chunks, try to parse JSON from text response
+    // This handles cases where Gemini returns locations in JSON format but
+    // Google Maps grounding doesn't verify them (common for landmarks, viewpoints)
+    if (locations.isEmpty && text.isNotEmpty) {
+      final parsedLocations = _parseLocationsFromText(text);
+      locations.addAll(parsedLocations);
+      if (parsedLocations.isNotEmpty) {
+        print('📍 GEMINI: Parsed ${parsedLocations.length} locations from text response (no grounding)');
+      }
+    }
+
     return GeminiGroundingResult(
       responseText: text,
       locations: locations,
       widgetContextToken: widgetToken,
       rawResponse: response,
     );
+  }
+
+  /// Parse locations from Gemini's JSON text response
+  /// Used as fallback when Google Maps grounding returns no chunks
+  static List<GoogleMapsLocation> _parseLocationsFromText(String text) {
+    final locations = <GoogleMapsLocation>[];
+    
+    try {
+      // Extract JSON array from text (might be wrapped in ```json ... ```)
+      String jsonText = text.trim();
+      
+      // Remove markdown code block wrapper if present
+      if (jsonText.startsWith('```')) {
+        final startIndex = jsonText.indexOf('[');
+        final endIndex = jsonText.lastIndexOf(']');
+        if (startIndex != -1 && endIndex != -1 && endIndex > startIndex) {
+          jsonText = jsonText.substring(startIndex, endIndex + 1);
+        }
+      }
+      
+      // Try to find JSON array in text
+      if (!jsonText.startsWith('[')) {
+        final startIndex = jsonText.indexOf('[');
+        final endIndex = jsonText.lastIndexOf(']');
+        if (startIndex != -1 && endIndex != -1 && endIndex > startIndex) {
+          jsonText = jsonText.substring(startIndex, endIndex + 1);
+        }
+      }
+      
+      if (jsonText.startsWith('[') && jsonText.endsWith(']')) {
+        final List<dynamic> jsonList = _parseJsonSafely(jsonText);
+        
+        for (final item in jsonList) {
+          if (item is Map<String, dynamic>) {
+            final name = item['name'] as String?;
+            if (name != null && name.isNotEmpty) {
+              // Create location with available data
+              // Note: These won't have Place IDs since grounding failed
+              locations.add(GoogleMapsLocation(
+                placeId: '', // No Place ID from text parsing
+                name: name,
+                coordinates: LatLng(0, 0), // Will need to geocode later
+                formattedAddress: _buildAddress(item),
+                types: [item['type'] as String? ?? 'point_of_interest'],
+                uri: null,
+              ));
+            }
+          }
+        }
+      }
+    } catch (e) {
+      print('⚠️ GEMINI: Error parsing locations from text: $e');
+    }
+    
+    return locations;
+  }
+
+  /// Safely parse JSON, handling common issues
+  static List<dynamic> _parseJsonSafely(String jsonText) {
+    try {
+      // First try standard parsing
+      return List<dynamic>.from(
+        (const JsonDecoder().convert(jsonText)) as List,
+      );
+    } catch (e) {
+      // Try to fix common JSON issues
+      try {
+        // Remove trailing commas before ] or }
+        String fixed = jsonText.replaceAll(RegExp(r',\s*\]'), ']');
+        fixed = fixed.replaceAll(RegExp(r',\s*\}'), '}');
+        return List<dynamic>.from(
+          (const JsonDecoder().convert(fixed)) as List,
+        );
+      } catch (e2) {
+        print('⚠️ GEMINI: JSON parse failed even after fixes: $e2');
+        return [];
+      }
+    }
+  }
+
+  /// Build address string from parsed JSON item
+  static String? _buildAddress(Map<String, dynamic> item) {
+    final parts = <String>[];
+    
+    if (item['address'] != null && item['address'].toString().isNotEmpty) {
+      parts.add(item['address'].toString());
+    }
+    if (item['city'] != null && item['city'].toString().isNotEmpty) {
+      parts.add(item['city'].toString());
+    }
+    if (item['region'] != null && item['region'].toString().isNotEmpty) {
+      parts.add(item['region'].toString());
+    }
+    
+    return parts.isNotEmpty ? parts.join(', ') : null;
   }
 
   @override

@@ -111,6 +111,144 @@ class GeminiService {
     }
   }
 
+  /// Extract ALL locations from a web page's content
+  /// Optimized for articles like "50 best restaurants" or travel guides
+  Future<GeminiGroundingResult?> extractLocationsFromWebPage(
+    String pageContent, {
+    String? pageUrl,
+    LatLng? userLocation,
+  }) async {
+    if (!isConfigured) {
+      print('⚠️ GEMINI: API key not configured');
+      return null;
+    }
+
+    try {
+      final prompt = _buildWebPageLocationExtractionPrompt(pageContent, pageUrl: pageUrl);
+      
+      print('🤖 GEMINI: Extracting ALL locations from web page content (${pageContent.length} chars)');
+      
+      final response = await _callGeminiWithMapsGrounding(
+        prompt,
+        userLocation: userLocation,
+      );
+      
+      if (response == null) return null;
+
+      final result = GeminiGroundingResult.fromApiResponse(response);
+      print('✅ GEMINI: Found ${result.locationCount} location(s) from web page');
+      
+      return result;
+    } catch (e) {
+      print('❌ GEMINI ERROR: $e');
+      return null;
+    }
+  }
+
+  /// Build prompt for extracting locations from web page content
+  /// Optimized for articles, listicles, and guides
+  String _buildWebPageLocationExtractionPrompt(String pageContent, {String? pageUrl}) {
+    // Extract the page title from the content for context-aware filtering
+    String? pageTitle;
+    final titleMatch = RegExp(r'Page Title:\s*(.+?)(?:\n|$)').firstMatch(pageContent);
+    if (titleMatch != null) {
+      pageTitle = titleMatch.group(1)?.trim();
+    }
+    
+    // Extract main heading if different from title
+    String? mainHeading;
+    final headingMatch = RegExp(r'Main Heading:\s*(.+?)(?:\n|$)').firstMatch(pageContent);
+    if (headingMatch != null) {
+      mainHeading = headingMatch.group(1)?.trim();
+    }
+    
+    // Determine the article topic for filtering
+    final articleTopic = mainHeading ?? pageTitle ?? 'the main article';
+    
+    return '''
+You are an expert at extracting location and place information from web pages.
+Your task is to find places that are DIRECTLY RELEVANT to the main article topic.
+
+${pageUrl != null ? 'Source URL: $pageUrl\n' : ''}
+${pageTitle != null ? 'Article Title: $pageTitle\n' : ''}
+${mainHeading != null && mainHeading != pageTitle ? 'Main Heading: $mainHeading\n' : ''}
+
+=== WEB PAGE CONTENT ===
+$pageContent
+
+=== CRITICAL RELEVANCE FILTER ===
+
+**ONLY include locations that are DIRECTLY PART OF "$articleTopic".**
+
+❌ **EXCLUDE these types of mentions:**
+- Author bio locations (where the blogger lives, their favorite local stores)
+- Grocery stores, supermarkets, or supply stores mentioned for "trip prep" or "packing"
+- Generic shopping recommendations (Amazon, Walmart, Costco, etc.)
+- Locations from "Related Posts" or "You May Also Like" sections
+- Sponsor/advertisement locations
+- The author's home city or local recommendations unrelated to the article topic
+- Airports UNLESS the article is specifically about traveling to a destination and mentions the airport as part of the itinerary
+
+✅ **INCLUDE these types of locations:**
+- Places that are the main subject of the article (e.g., Death Valley attractions for a Death Valley guide)
+- Restaurants, hotels, and attractions AT THE DESTINATION being discussed
+- Specific stops, viewpoints, or experiences described in the itinerary/guide
+- Places with detailed descriptions, reviews, or recommendations in the main content
+
+=== EXTRACTION INSTRUCTIONS ===
+
+1. **Determine the Geographic Focus**: What location/region is this article primarily about?
+   - Only extract places IN or NEAR that region
+   - If it's a "Death Valley Itinerary", only include Death Valley area locations
+   - If it's "Best Restaurants in NYC", only include NYC restaurants
+
+2. **For "Best Of" Lists or Rankings**: Extract all listed items that match the article's topic.
+
+3. **For Each Place Extract**:
+   - Name: The exact business/place name
+   - Address: Street address if mentioned
+   - City: City name (should match the article's geographic focus)
+   - Region: State/province if mentioned
+   - Type: restaurant/cafe/bar/hotel/attraction/store/park/landmark
+   - Description: Brief description if provided (one sentence max)
+
+4. **What to Include**:
+   - Restaurants, cafes, bars at the DESTINATION
+   - Hotels, resorts where travelers would STAY at the destination
+   - Attractions, museums, landmarks at the DESTINATION
+   - Parks, viewpoints, hiking trails at the DESTINATION
+   - Any venue that is part of the recommended experience
+
+5. **What to EXCLUDE**:
+   - The author's local grocery stores (R Ranch, Amazon Fresh, Trader Joe's for "packing")
+   - The author's hometown businesses
+   - Generic chain stores mentioned for supplies
+   - Any location more than 100 miles from the article's main geographic focus
+   - Locations only mentioned in passing without recommendation
+
+=== OUTPUT FORMAT ===
+Return a JSON array with ONLY relevant locations:
+
+[
+  {
+    "name": "Place Name",
+    "address": "Street address or null",
+    "city": "City name",
+    "region": "State/Region or null",
+    "type": "restaurant/cafe/bar/hotel/attraction/store/park/landmark",
+    "description": "Brief description or null"
+  }
+]
+
+=== IMPORTANT ===
+- Quality over quantity - only include places RELEVANT to the article topic
+- When in doubt, ask: "Is this place part of the itinerary/guide, or just mentioned for other reasons?"
+- Use Google Maps grounding to verify locations and get accurate Place IDs
+- If no relevant locations found, return: []
+- Return ONLY the JSON array, no other text
+''';
+  }
+
   /// Call Gemini API with Google Maps grounding enabled
   Future<Map<String, dynamic>?> _callGeminiWithMapsGrounding(
     String prompt, {
