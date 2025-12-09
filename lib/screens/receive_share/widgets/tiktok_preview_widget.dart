@@ -5,11 +5,37 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:typed_data';
 
+/// Data extracted from TikTok oEmbed API
+class TikTokOEmbedData {
+  final String? title;       // Video caption/description
+  final String? authorName;  // Creator's display name
+  final String? authorUrl;   // Creator's profile URL
+  final String? thumbnailUrl; // Video thumbnail
+  final String type;         // "video" or "photo"
+  
+  TikTokOEmbedData({
+    this.title,
+    this.authorName,
+    this.authorUrl,
+    this.thumbnailUrl,
+    required this.type,
+  });
+  
+  /// Check if there's useful content for location extraction
+  bool get hasContent => (title != null && title!.isNotEmpty) || 
+                         (authorName != null && authorName!.isNotEmpty);
+  
+  @override
+  String toString() => 'TikTokOEmbedData(title: ${title?.substring(0, (title?.length ?? 0) > 50 ? 50 : title?.length)}..., author: $authorName, type: $type)';
+}
+
 class TikTokPreviewWidget extends StatefulWidget {
   final String url;
   final Future<void> Function(String) launchUrlCallback;
   final void Function(bool, String)? onExpansionChanged;
   final void Function(String url, bool isPhotoCarousel)? onPhotoDetected;
+  /// Callback when oEmbed data (caption, author, etc.) is loaded
+  final void Function(TikTokOEmbedData data)? onOEmbedDataLoaded;
   final bool showControls;
   final Function(InAppWebViewController)? onWebViewCreated;
 
@@ -19,6 +45,7 @@ class TikTokPreviewWidget extends StatefulWidget {
     required this.launchUrlCallback,
     this.onExpansionChanged,
     this.onPhotoDetected,
+    this.onOEmbedDataLoaded,
     this.showControls = true,
     this.onWebViewCreated,
   });
@@ -98,6 +125,21 @@ class TikTokPreviewWidgetState extends State<TikTokPreviewWidget> with Automatic
           print('🎬 TIKTOK TYPE: ${data['type']}');
           print('🎬 IS PHOTO CAROUSEL: $isPhotoPost');
           print('🎬 HEIGHT WILL BE: ${isPhotoPost ? 350.0 : 700.0}px');
+          
+          // Extract and pass oEmbed data for location extraction
+          final oembedData = TikTokOEmbedData(
+            title: data['title'] as String?,
+            authorName: data['author_name'] as String?,
+            authorUrl: data['author_url'] as String?,
+            thumbnailUrl: data['thumbnail_url'] as String?,
+            type: data['type'] as String? ?? 'video',
+          );
+          
+          print('🎬 TIKTOK CAPTION: ${oembedData.title?.substring(0, (oembedData.title?.length ?? 0) > 100 ? 100 : oembedData.title?.length)}...');
+          print('🎬 TIKTOK AUTHOR: ${oembedData.authorName}');
+          
+          // Notify listener about oEmbed data (for automatic location extraction)
+          widget.onOEmbedDataLoaded?.call(oembedData);
           
           if (mounted) {
             setState(() {

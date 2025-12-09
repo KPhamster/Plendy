@@ -978,6 +978,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
   // Add a map to track TikTok photo carousel status
   final Map<String, bool> _tiktokPhotoStatus = {};
+  
+  // Track TikTok URLs that have already been processed for auto-extraction
+  final Set<String> _tiktokCaptionsProcessed = {};
 
   // Add debounce timer for location updates
   Timer? _locationUpdateDebounce;
@@ -1599,6 +1602,97 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
     } catch (e) {
       print('❌ AI EXTRACTION ERROR: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isExtractingLocation = false;
+        });
+      }
+    }
+  }
+
+  /// Handle TikTok oEmbed data loaded - automatically extract locations from caption
+  Future<void> _handleTikTokOEmbedData(String url, TikTokOEmbedData data) async {
+    // Skip if already processed this URL
+    if (_tiktokCaptionsProcessed.contains(url)) {
+      print('🎬 TIKTOK AUTO-EXTRACT: Already processed $url');
+      return;
+    }
+    
+    // Skip if no useful content
+    if (!data.hasContent) {
+      print('🎬 TIKTOK AUTO-EXTRACT: No caption content to analyze');
+      return;
+    }
+    
+    // Skip if already extracting
+    if (_isExtractingLocation) {
+      print('🎬 TIKTOK AUTO-EXTRACT: Extraction already in progress');
+      return;
+    }
+    
+    // Mark as processed to prevent duplicate extractions
+    _tiktokCaptionsProcessed.add(url);
+    
+    print('🎬 TIKTOK AUTO-EXTRACT: Starting automatic location extraction...');
+    print('🎬 Caption: ${data.title}');
+    print('🎬 Author: ${data.authorName}');
+    
+    setState(() {
+      _isExtractingLocation = true;
+    });
+
+    try {
+      // Get user location for better results (optional)
+      LatLng? userLocation;
+      if (_currentUserPosition != null) {
+        userLocation = LatLng(
+          _currentUserPosition!.latitude,
+          _currentUserPosition!.longitude,
+        );
+      }
+
+      // Extract locations from the TikTok caption
+      final locations = await _locationExtractor.extractLocationsFromCaption(
+        data.title ?? '',
+        platform: 'TikTok',
+        authorName: data.authorName,
+        sourceUrl: url,
+        userLocation: userLocation,
+        maxLocations: 5,
+      );
+
+      if (!mounted) return;
+
+      if (locations.isEmpty) {
+        print('⚠️ TIKTOK AUTO-EXTRACT: No locations found in caption');
+        Fluttertoast.showToast(
+          msg: '💡 No location found in caption. Try the "Scan Preview" button to analyze visible text.',
+          toastLength: Toast.LENGTH_LONG,
+          backgroundColor: Colors.orange[700],
+        );
+        return;
+      }
+
+      print('✅ TIKTOK AUTO-EXTRACT: Found ${locations.length} location(s)');
+      
+      final provider = context.read<ReceiveShareProvider>();
+      
+      if (locations.length == 1) {
+        // Single location: Update first card or create if none exists
+        await _applySingleExtractedLocation(locations.first, provider);
+        
+        Fluttertoast.showToast(
+          msg: '📍 Found: ${locations.first.name}',
+          toastLength: Toast.LENGTH_SHORT,
+          backgroundColor: Colors.green,
+        );
+      } else {
+        // Multiple locations: Ask user before creating multiple cards
+        await _handleMultipleExtractedLocations(locations, provider);
+      }
+    } catch (e) {
+      print('❌ TIKTOK AUTO-EXTRACT ERROR: $e');
     } finally {
       if (mounted) {
         setState(() {
@@ -5037,6 +5131,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         onPhotoDetected: (detectedUrl, isPhoto) {
           // Track whether this TikTok URL is a photo carousel
           _tiktokPhotoStatus[detectedUrl] = isPhoto;
+        },
+        onOEmbedDataLoaded: (data) {
+          // Automatically extract locations from TikTok caption
+          _handleTikTokOEmbedData(url, data);
         },
       );
     }
