@@ -28,6 +28,10 @@ Object.assign(exports, backfillModule);
 const passwordResetModule = require("./src/send_password_reset");
 Object.assign(exports, passwordResetModule);
 
+// Import and export YouTube video analysis function (Vertex AI)
+const analyzeYouTubeModule = require("./src/analyze_youtube_video");
+Object.assign(exports, analyzeYouTubeModule);
+
 
 /**
  * Sends a notification when a new follow request is created (2nd Gen).

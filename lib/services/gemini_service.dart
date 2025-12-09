@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import '../config/api_secrets.dart';
 import '../models/gemini_grounding_result.dart';
 
@@ -141,6 +142,265 @@ class GeminiService {
       return result;
     } catch (e) {
       print('❌ GEMINI ERROR: $e');
+      return null;
+    }
+  }
+
+  /// Extract locations from a YouTube video using Vertex AI via Cloud Function
+  /// 
+  /// This method calls a Firebase Cloud Function that uses Vertex AI to analyze
+  /// the actual video content (both audio and visuals) to extract location information.
+  /// 
+  /// [youtubeUrl] - The YouTube video URL to analyze
+  /// [userLocation] - Optional user location for better results
+  /// 
+  /// Returns a [GeminiGroundingResult] containing extracted locations,
+  /// or null if extraction fails or no locations are found.
+  Future<GeminiGroundingResult?> extractLocationsFromYouTubeVideo(
+    String youtubeUrl, {
+    LatLng? userLocation,
+  }) async {
+    // Validate YouTube URL
+    if (!_isValidYouTubeUrl(youtubeUrl)) {
+      print('⚠️ GEMINI: Invalid YouTube URL: $youtubeUrl');
+      return null;
+    }
+
+    try {
+      print('🎬 VERTEX AI: Analyzing YouTube video via Cloud Function: $youtubeUrl');
+      
+      // Call the Cloud Function
+      final callable = FirebaseFunctions.instance.httpsCallable(
+        'analyzeYouTubeVideo',
+        options: HttpsCallableOptions(
+          timeout: const Duration(seconds: 120),
+        ),
+      );
+      
+      final response = await callable.call<Map<String, dynamic>>({
+        'youtubeUrl': youtubeUrl,
+        if (userLocation != null) 'userLocation': {
+          'lat': userLocation.latitude,
+          'lng': userLocation.longitude,
+        },
+      });
+      
+      final data = response.data;
+      
+      // Check for errors
+      if (data['error'] != null && data['error'].toString().isNotEmpty) {
+        print('⚠️ VERTEX AI: Cloud Function returned error: ${data['error']}');
+        return null;
+      }
+      
+      // Parse locations from response
+      final locationsList = data['locations'] as List<dynamic>?;
+      if (locationsList == null || locationsList.isEmpty) {
+        print('⚠️ VERTEX AI: No locations found in YouTube video');
+        return null;
+      }
+      
+      // Convert to GeminiGroundingResult format
+      final result = GeminiGroundingResult.fromCloudFunctionResponse(locationsList);
+      
+      print('✅ VERTEX AI: Found ${result.locationCount} location(s) from YouTube video');
+      for (final loc in result.locations) {
+        print('   📍 ${loc.name} (${loc.city ?? 'unknown city'})');
+      }
+      
+      return result;
+    } on FirebaseFunctionsException catch (e) {
+      print('❌ VERTEX AI Cloud Function ERROR: ${e.code} - ${e.message}');
+      print('   Details: ${e.details}');
+      return null;
+    } catch (e, stackTrace) {
+      print('❌ VERTEX AI YouTube ERROR: $e');
+      print('Stack trace: $stackTrace');
+      return null;
+    }
+  }
+
+  /// Validate if a URL is a valid YouTube URL
+  bool _isValidYouTubeUrl(String url) {
+    final lower = url.toLowerCase();
+    return lower.contains('youtube.com/watch') ||
+           lower.contains('youtube.com/shorts') ||
+           lower.contains('youtu.be/') ||
+           lower.contains('youtube.com/embed');
+  }
+
+  /// Build prompt for YouTube video location extraction
+  String _buildYouTubeLocationExtractionPrompt() {
+    return '''
+You are an expert at extracting location and place information from videos.
+Analyze this YouTube video thoroughly - both the AUDIO (speech, narration) and VISUAL content (on-screen text, locations shown, signage).
+
+=== WHAT TO LOOK FOR ===
+
+**AUDIO/SPEECH:**
+- Location names mentioned by the speaker
+- Addresses read aloud
+- City, neighborhood, or area names
+- Business names (restaurants, hotels, attractions, stores)
+- "We're here at...", "This is...", "Welcome to..."
+
+**VISUAL CONTENT:**
+- Text overlays showing location names or addresses
+- Signs, storefronts, or landmarks visible on screen
+- Location tags or captions added by the creator
+- Maps or directions shown in the video
+- Business names visible on buildings or menus
+
+**VIDEO DESCRIPTION/TITLE:**
+- Location information from the video title
+- Places mentioned in any on-screen text
+
+=== OUTPUT REQUIREMENTS ===
+
+For EACH distinct place, business, or location found, provide:
+1. The exact business or place name
+2. The full street address if mentioned/shown
+3. The city, state/province, and country
+4. The type of place (restaurant, cafe, attraction, hotel, store, park, etc.)
+
+=== OUTPUT FORMAT ===
+Return a JSON array with all locations found:
+
+[
+  {
+    "name": "Business or Place Name",
+    "address": "Street address or null",
+    "city": "City name",
+    "region": "State/Region or null",
+    "country": "Country or null",
+    "type": "restaurant/cafe/bar/hotel/attraction/store/park/landmark"
+  }
+]
+
+=== IMPORTANT ===
+- Extract ALL locations mentioned or shown, not just the main one
+- If a video is a "Top 10" or list, extract all items on the list
+- Include timestamps if helpful (e.g., "mentioned at 2:30")
+- If no location information found, return: []
+- Return ONLY the JSON array, no other text
+- Use Google Maps data to verify locations and provide accurate Place IDs
+''';
+  }
+
+  /// Call Gemini API with YouTube video URL using file_data format
+  /// 
+  /// This uses the native YouTube URL support added in March 2025
+  Future<Map<String, dynamic>?> _callGeminiWithYouTubeVideo(
+    String youtubeUrl,
+    String prompt, {
+    LatLng? userLocation,
+  }) async {
+    final endpoint = '$_baseUrl/models/$_defaultModel:generateContent';
+    
+    // Build request body with YouTube video as file_data
+    final requestBody = {
+      'contents': [
+        {
+          'parts': [
+            // The prompt/instruction
+            {'text': prompt},
+            // The YouTube video URL using file_data format
+            {
+              'file_data': {
+                'file_uri': youtubeUrl,
+              }
+            }
+          ]
+        }
+      ],
+      // Enable Google Maps grounding for location verification
+      'tools': [
+        {
+          'googleMaps': {}
+        }
+      ],
+      'toolConfig': {
+        'functionCallingConfig': {
+          'mode': 'ANY'
+        }
+      },
+      'generationConfig': {
+        'temperature': 0.1,
+        'topP': 0.8,
+        'topK': 40,
+        'maxOutputTokens': 4096, // Higher limit for video content
+      }
+    };
+
+    // Add user location for better grounding results
+    if (userLocation != null) {
+      requestBody['toolConfig'] = {
+        ...requestBody['toolConfig'] as Map<String, dynamic>,
+        'retrievalConfig': {
+          'latLng': {
+            'latitude': userLocation.latitude,
+            'longitude': userLocation.longitude,
+          }
+        }
+      };
+    }
+
+    try {
+      print('🎬 GEMINI: Calling API with YouTube video URL...');
+      print('   Video: $youtubeUrl');
+      
+      final response = await _dio.post(
+        '$endpoint?key=$_apiKey',
+        data: requestBody,
+        options: Options(
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          // YouTube video analysis can take longer
+          sendTimeout: const Duration(seconds: 120),
+          receiveTimeout: const Duration(seconds: 120),
+          validateStatus: (status) => status != null && status < 500,
+        ),
+      );
+
+      if (response.statusCode == 200) {
+        print('✅ GEMINI: YouTube video analysis returned 200 OK');
+        
+        final responseData = response.data as Map<String, dynamic>;
+        final candidates = responseData['candidates'] as List?;
+        if (candidates != null && candidates.isNotEmpty) {
+          final candidate = candidates.first as Map<String, dynamic>;
+          final content = candidate['content'] as Map<String, dynamic>?;
+          final parts = content?['parts'] as List?;
+          if (parts != null && parts.isNotEmpty) {
+            final text = parts.first['text'] as String?;
+            if (text != null && text.length > 100) {
+              print('📝 GEMINI YouTube Response: ${text.substring(0, 100)}...');
+            } else if (text != null) {
+              print('📝 GEMINI YouTube Response: $text');
+            }
+          }
+          
+          // Log grounding metadata
+          final groundingMetadata = candidate['groundingMetadata'];
+          if (groundingMetadata != null) {
+            final chunks = groundingMetadata['groundingChunks'];
+            print('🗺️ GEMINI: YouTube grounding chunks found: ${chunks?.length ?? 0}');
+          }
+        }
+        
+        return responseData;
+      } else {
+        print('❌ GEMINI: YouTube API returned ${response.statusCode}');
+        print('   Response: ${jsonEncode(response.data)}');
+        return null;
+      }
+    } on DioException catch (e) {
+      print('❌ GEMINI YouTube DIO ERROR: ${e.message}');
+      if (e.response != null) {
+        print('   Status: ${e.response?.statusCode}');
+        print('   Data: ${e.response?.data}');
+      }
       return null;
     }
   }
@@ -640,7 +900,8 @@ Output:
           if (parts != null && parts.isNotEmpty) {
             final text = parts.first['text'] as String?;
             if (text != null) {
-              print('📝 GEMINI VISION Response: ${text.length > 200 ? text.substring(0, 200) + "..." : text}');
+              // Show full response for debugging (up to 1000 chars)
+              print('📝 GEMINI VISION Response: ${text.length > 1000 ? text.substring(0, 1000) + "..." : text}');
             }
           }
         }
@@ -667,7 +928,26 @@ Output:
 You are an expert at OCR (Optical Character Recognition) and location extraction. 
 Analyze this screenshot/image and extract ALL location and place information.
 
-=== INSTAGRAM PREVIEW STRUCTURE (IMPORTANT) ===
+=== YOUTUBE VIDEO SCREENSHOTS (HIGHEST PRIORITY) ===
+For YouTube video screenshots/thumbnails, follow this strict priority:
+
+**PRIORITY 1 - TEXT OVERLAID ON VIDEO THUMBNAIL (MOST IMPORTANT!):**
+- Look for business/restaurant names as large text OVERLAID on the video image
+- These are often styled text with the place name (e.g., "PARLOR SAN CLEMENTE", "JOE'S PIZZA")
+- This is the MOST important source - extract these names first
+- The text is usually in the CENTER of the video thumbnail
+- May be styled, have shadows, or be in distinctive fonts
+
+**PRIORITY 2 - Location tags below video:**
+- Location names appearing below or near the video player
+- Text near map pins or location icons
+
+**PRIORITY 3 - Video title (LOWEST PRIORITY):**
+- The video title like "Top 10 Restaurants..."
+- ONLY use this if NO specific business names are found in Priority 1 or 2
+- NEVER extract broad regions (like "Orange County", "Los Angeles") from titles if specific places exist
+
+=== INSTAGRAM PREVIEW STRUCTURE ===
 Instagram preview images typically have THREE sections. Process them in this priority order:
 
 **PRIORITY 1 - MAIN CONTENT (Focus here first!):**
@@ -736,12 +1016,20 @@ The "_la" is a location suffix meaning Los Angeles, it is NOT part of the busine
 7. Signs, storefronts, menus showing business names
 8. Text mentioning "at", "visited", "went to", "check out"
 
-=== FILTER OUT GENERIC/NON-SPECIFIC LOCATIONS ===
-DO NOT include overly broad regions unless they are the ONLY location found:
-- Skip: "California", "USA", "Central Coast", "Southern California" (too broad)
-- Keep: "Carmel-by-the-Sea", "San Simeon", "Big Sur" (specific cities/areas)
+=== FILTER OUT GENERIC/NON-SPECIFIC LOCATIONS (CRITICAL!) ===
+ALWAYS skip broad regions/counties when specific business names exist:
+- ALWAYS Skip: "Orange County", "Los Angeles County", "San Diego County" (counties are too broad)
+- ALWAYS Skip: "California", "USA", "Central Coast", "Southern California", "SoCal", "NorCal"
+- ALWAYS Skip: General city names when a specific business in that city is visible
+- Keep: "Parlor San Clemente" (specific restaurant), NOT "Orange County"
+- Keep: "Carmel-by-the-Sea", "San Simeon", "Big Sur" (specific small cities/areas)
 - Keep: "Hearst Castle", "Bixby Bridge", "Point Lobos" (specific landmarks)
-If a post mentions both "California" and "Hearst Castle", only include "Hearst Castle"
+
+IMPORTANT: If you see "PARLOR SAN CLEMENTE" on a video and "Orange County" in the title:
+- Return "Parlor" with city "San Clemente" (the specific restaurant)
+- DO NOT return "Orange County" (the broad region)
+
+If a video shows a specific restaurant/business name, ONLY return that business, not the region!
 
 === SOCIAL MEDIA SPECIFIC ===
 For TikTok/Instagram/Facebook screenshots:
@@ -764,6 +1052,16 @@ Return a JSON array with this exact structure:
 ]
 
 === EXAMPLES ===
+**YOUTUBE EXAMPLE (IMPORTANT!):**
+If you see a YouTube video with:
+- Title: "Top 10 Orange County Restaurants I've Tried in 2025"  
+- Overlaid text on thumbnail: "PARLOR SAN CLEMENTE" (with a pizza image)
+Return ONLY the specific restaurant, NOT "Orange County":
+[
+  {"name": "Parlor", "address": null, "city": "San Clemente", "type": "restaurant"}
+]
+DO NOT return: {"name": "Orange County", ...} - this is too broad!
+
 If you see: "@oldferrydonut.us - 6982 Beach Blvd"
 Return: {"name": "Old Ferry Donut", "address": "6982 Beach Blvd", "city": null, "type": "restaurant"}
 
@@ -788,7 +1086,9 @@ Return only the specific locations, NOT "California":
 - Include partial information - even just a business name is useful
 - For video text overlays, read character by character if needed
 - Prioritize text that appears to name specific places
-- SKIP generic regions/states/countries if specific locations exist
+- SKIP generic regions/states/countries/counties if specific locations exist
+- For YouTube: text OVERLAID on the video thumbnail is MORE important than the video title
+- For YouTube: NEVER return just a county/region name if a business name is visible on the thumbnail
 - IGNORE "More posts from" section and its thumbnails entirely
 - Return ONLY the JSON array, no other text
 - If absolutely no locations found, return: []

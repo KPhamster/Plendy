@@ -28,15 +28,12 @@ class YouTubePreviewWidgetState extends State<YouTubePreviewWidget> {
   InAppWebViewController? _controller;
   bool _isLoading = true;
   bool _isDisposed = false;
-  String? _videoId;
   bool _isShort = false;
-  String? _currentEmbedHtml;
 
   @override
   void initState() {
     super.initState();
-    _extractVideoInfo();
-    _generateEmbedHtml();
+    _isShort = widget.url.contains('/shorts/');
   }
 
   @override
@@ -71,134 +68,33 @@ class YouTubePreviewWidgetState extends State<YouTubePreviewWidget> {
     }
   }
 
-  void _extractVideoInfo() {
-    final uri = Uri.parse(widget.url);
+  /// Get the mobile-friendly YouTube URL
+  String _getMobileUrl() {
+    // Convert to mobile YouTube URL for better WebView compatibility
+    String url = widget.url;
     
-    _isShort = widget.url.contains('/shorts/');
-    
-    if (_isShort) {
-      final pathSegments = uri.pathSegments;
-      if (pathSegments.length >= 2 && pathSegments[0] == 'shorts') {
-        _videoId = pathSegments[1];
-      }
-    } else if (uri.host.contains('youtu.be')) {
-      _videoId = uri.pathSegments.isNotEmpty ? uri.pathSegments[0] : null;
-    } else if (uri.host.contains('youtube.com')) {
-      _videoId = uri.queryParameters['v'];
-      
-      if (_videoId == null && uri.pathSegments.contains('embed')) {
-        final embedIndex = uri.pathSegments.indexOf('embed');
-        if (embedIndex < uri.pathSegments.length - 1) {
-          _videoId = uri.pathSegments[embedIndex + 1];
-        }
+    // Ensure we're using m.youtube.com for mobile-friendly viewing
+    if (url.contains('youtube.com') && !url.contains('m.youtube.com')) {
+      url = url.replaceFirst('youtube.com', 'm.youtube.com');
+      url = url.replaceFirst('www.', '');
+    } else if (url.contains('youtu.be')) {
+      // Convert youtu.be short URLs to m.youtube.com
+      final uri = Uri.parse(url);
+      if (uri.pathSegments.isNotEmpty) {
+        final videoId = uri.pathSegments[0];
+        url = 'https://m.youtube.com/watch?v=$videoId';
       }
     }
     
-    if (_videoId != null && _videoId!.contains('?')) {
-      _videoId = _videoId!.split('?')[0];
-    }
-  }
-
-  void _generateEmbedHtml() {
-    if (_videoId == null) {
-      _currentEmbedHtml = _generateErrorHtml();
-      return;
-    }
-
-    final aspectRatio = _isShort ? '177.78%' : '56.25%';
-    
-    _currentEmbedHtml = '''
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <style>
-    body {
-      margin: 0;
-      padding: 0;
-      background-color: #000;
-      overflow: hidden;
-    }
-    .video-container {
-      position: relative;
-      width: 100%;
-      padding-bottom: $aspectRatio;
-      height: 0;
-      overflow: hidden;
-    }
-    .video-container iframe {
-      position: absolute;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      border: 0;
-    }
-  </style>
-</head>
-<body>
-  <div class="video-container">
-    <iframe
-      id="youtube-player"
-      src="https://www.youtube.com/embed/$_videoId?enablejsapi=1&modestbranding=1&rel=0&showinfo=0&fs=0&playsinline=1"
-      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-      playsinline>
-    </iframe>
-  </div>
-</body>
-</html>
-    ''';
-  }
-
-  String _generateErrorHtml() {
-    return '''
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <style>
-    body {
-      margin: 0;
-      padding: 20px;
-      font-family: Arial, sans-serif;
-      background-color: #f0f0f0;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      min-height: 200px;
-    }
-    .error-container {
-      text-align: center;
-      background: white;
-      padding: 30px;
-      border-radius: 10px;
-    }
-    .error-icon {
-      font-size: 48px;
-      color: #ff0000;
-      margin-bottom: 20px;
-    }
-  </style>
-</head>
-<body>
-  <div class="error-container">
-    <div class="error-icon">⚠️</div>
-    <div>Unable to load YouTube video</div>
-    <div style="color: #666; font-size: 14px;">${widget.url}</div>
-  </div>
-</body>
-</html>
-    ''';
+    return url;
   }
 
   void refreshWebView() {
-    if (_controller != null && _currentEmbedHtml != null && mounted && !_isDisposed) {
+    if (_controller != null && mounted && !_isDisposed) {
       setState(() {
         _isLoading = true;
       });
-      _controller!.loadData(data: _currentEmbedHtml!, baseUrl: WebUri('https://www.youtube.com'));
+      _controller!.loadUrl(urlRequest: URLRequest(url: WebUri(_getMobileUrl())));
     }
   }
 
@@ -217,7 +113,7 @@ class YouTubePreviewWidgetState extends State<YouTubePreviewWidget> {
 
   @override
   Widget build(BuildContext context) {
-    final double containerHeight = widget.height ?? (_isShort ? 600.0 : 220.0);
+    final double containerHeight = widget.height ?? (_isShort ? 600.0 : 350.0);
     
     return Column(
       children: [
@@ -232,50 +128,70 @@ class YouTubePreviewWidgetState extends State<YouTubePreviewWidget> {
                 borderRadius: BorderRadius.circular(12),
               ),
               clipBehavior: Clip.hardEdge,
-              child: _currentEmbedHtml != null
-                  ? InAppWebView(
-                      initialData: InAppWebViewInitialData(
-                        data: _currentEmbedHtml!,
-                        baseUrl: WebUri('https://www.youtube.com'),
-                      ),
-                      initialSettings: InAppWebViewSettings(
-                        javaScriptEnabled: true,
-                        mediaPlaybackRequiresUserGesture: false,
-                        allowsInlineMediaPlayback: true,
-                        iframeAllowFullscreen: false,
-                        transparentBackground: true,
-                      ),
-                      onWebViewCreated: (controller) {
-                        _controller = controller;
-                        widget.onWebViewCreated?.call(controller);
-                      },
-                      onLoadStart: (controller, url) {
-                        if (!mounted || _isDisposed) return;
-                        setState(() {
-                          _isLoading = true;
-                        });
-                      },
-                      onLoadStop: (controller, url) {
-                        if (!mounted || _isDisposed) return;
-                        setState(() {
-                          _isLoading = false;
-                        });
-                      },
-                      shouldOverrideUrlLoading: (controller, navigationAction) async {
-                        final url = navigationAction.request.url?.toString() ?? '';
-                        if (url.contains('youtube.com') || 
-                            url.contains('youtu.be') ||
-                            url.contains('googlevideo.com') ||
-                            url.contains('ytimg.com')) {
-                          return NavigationActionPolicy.ALLOW;
-                        }
-                        if (mounted && !_isDisposed) {
-                          widget.launchUrlCallback(url);
-                        }
-                        return NavigationActionPolicy.CANCEL;
-                      },
-                    )
-                  : const SizedBox(),
+              child: InAppWebView(
+                initialUrlRequest: URLRequest(url: WebUri(_getMobileUrl())),
+                initialSettings: InAppWebViewSettings(
+                  javaScriptEnabled: true,
+                  mediaPlaybackRequiresUserGesture: false,
+                  allowsInlineMediaPlayback: true,
+                  iframeAllowFullscreen: true,
+                  transparentBackground: true,
+                  useShouldOverrideUrlLoading: true,
+                  // Use a desktop Chrome user agent - YouTube mobile site works better with this
+                  userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                  // Allow mixed content for YouTube resources
+                  mixedContentMode: MixedContentMode.MIXED_CONTENT_ALWAYS_ALLOW,
+                  // Enable DOM storage for YouTube player state
+                  domStorageEnabled: true,
+                  // Allow file access for media playback
+                  allowFileAccess: true,
+                  allowContentAccess: true,
+                  // Support zoom for better UX
+                  supportZoom: false,
+                  // Disable text zoom to maintain layout
+                  textZoom: 100,
+                ),
+                onWebViewCreated: (controller) {
+                  _controller = controller;
+                  widget.onWebViewCreated?.call(controller);
+                },
+                onLoadStart: (controller, url) {
+                  if (!mounted || _isDisposed) return;
+                  setState(() {
+                    _isLoading = true;
+                  });
+                },
+                onLoadStop: (controller, url) {
+                  if (!mounted || _isDisposed) return;
+                  setState(() {
+                    _isLoading = false;
+                  });
+                },
+                onReceivedError: (controller, request, error) {
+                  print('⚠️ YOUTUBE PREVIEW: WebView error: ${error.description}');
+                },
+                shouldOverrideUrlLoading: (controller, navigationAction) async {
+                  final url = navigationAction.request.url?.toString() ?? '';
+                  
+                  // Allow YouTube-related URLs
+                  if (url.contains('youtube.com') || 
+                      url.contains('youtu.be') ||
+                      url.contains('googlevideo.com') ||
+                      url.contains('ytimg.com') ||
+                      url.contains('ggpht.com') ||
+                      url.contains('googleusercontent.com') ||
+                      url.contains('gstatic.com') ||
+                      url.contains('google.com')) {
+                    return NavigationActionPolicy.ALLOW;
+                  }
+                  
+                  // External URLs - launch externally
+                  if (mounted && !_isDisposed) {
+                    widget.launchUrlCallback(url);
+                  }
+                  return NavigationActionPolicy.CANCEL;
+                },
+              ),
             ),
             if (_isLoading)
               Container(

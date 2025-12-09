@@ -28,5 +28,8 @@ exports.onSharePermissionDelete = require("./share_permissions").onSharePermissi
 // Export password reset email function
 exports.sendPasswordResetEmail = require("./send_password_reset").sendPasswordResetEmail;
 
+// Export YouTube video analysis function (uses Vertex AI)
+exports.analyzeYouTubeVideo = require("./analyze_youtube_video").analyzeYouTubeVideo;
+
 // Placeholder exports for category/experience denormalization (icon/color) if needed later
 // exports.onExperienceWriteDenorm = require("./experience_denorm").onExperienceWriteDenorm;
