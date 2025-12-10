@@ -175,10 +175,26 @@ class LinkLocationExtractionService {
       // BUT validate that the grounding chunks are actually relevant to the caption
       // (Gemini sometimes returns unrelated businesses based on keywords)
       if (geminiResult != null && geminiResult.locations.isNotEmpty) {
+        // Generic regions/counties to skip - these are too vague to be useful
+        final genericRegions = {
+          'orange county', 'los angeles county', 'san diego county', 'riverside county',
+          'san bernardino county', 'ventura county', 'santa barbara county',
+          'california', 'southern california', 'northern california',
+          'united states', 'usa', 'america',
+        };
+        
         // Filter grounding chunks to only include ones whose names appear in the caption
         final lowerCaption = caption.toLowerCase();
         final relevantLocations = geminiResult.locations.where((location) {
-          final nameParts = location.name.toLowerCase().split(' ');
+          final nameLower = location.name.toLowerCase().trim();
+          
+          // Skip generic region/county names
+          if (genericRegions.contains(nameLower)) {
+            print('⏭️ CAPTION: Skipping generic region/county: "${location.name}"');
+            return false;
+          }
+          
+          final nameParts = nameLower.split(' ');
           // Check if at least 2 words from the location name appear in the caption
           // (or all words if name has fewer than 2 words)
           final requiredMatches = nameParts.length >= 2 ? 2 : nameParts.length;
@@ -288,7 +304,62 @@ class LinkLocationExtractionService {
         if (parsedLocations.isNotEmpty) {
           print('✅ CAPTION EXTRACTION: Parsed ${parsedLocations.length} location(s) from JSON response');
           
-          final parsedToProcess = maxLocations != null ? parsedLocations.take(maxLocations) : parsedLocations;
+          // Filter parsed locations to only include ones that are actually meaningful
+          // (not Facebook UI noise like "University of... 1" or generic words)
+          final filteredParsed = parsedLocations.where((parsed) {
+            final name = parsed['name'] as String?;
+            if (name == null || name.isEmpty) return false;
+            
+            final nameLower = name.toLowerCase();
+            
+            // Skip generic single-word names that are too vague
+            final genericSingleWords = ['university', 'restaurant', 'cafe', 'store', 'shop', 'hotel', 'bar', 'club', 'gym', 'park'];
+            if (!nameLower.contains(' ') && genericSingleWords.contains(nameLower)) {
+              print('⏭️ CAPTION: Skipping generic single-word location: "$name"');
+              return false;
+            }
+            
+            // Skip generic region/county names - these are too vague to be useful
+            final genericRegions = [
+              'orange county', 'los angeles county', 'san diego county', 'riverside county',
+              'san bernardino county', 'ventura county', 'santa barbara county',
+              'california', 'southern california', 'northern california',
+              'united states', 'usa', 'america',
+              'los angeles', 'new york city', 'san francisco', // Skip cities when they appear alone as the only result
+            ];
+            if (genericRegions.contains(nameLower)) {
+              print('⏭️ CAPTION: Skipping generic region/county: "$name"');
+              return false;
+            }
+            
+            // Verify the location name actually appears in the caption meaningfully
+            // (not just scattered words or partial matches)
+            final lowerCaption = caption.toLowerCase();
+            
+            // For multi-word names, check if at least 2 significant words appear together or nearby
+            final nameWords = nameLower.split(' ').where((w) => w.length > 2).toList();
+            if (nameWords.length >= 2) {
+              int matchCount = 0;
+              for (final word in nameWords) {
+                if (lowerCaption.contains(word)) {
+                  matchCount++;
+                }
+              }
+              // Require at least 60% of words to be present
+              if (matchCount / nameWords.length < 0.6) {
+                print('⏭️ CAPTION: Skipping "$name" - not enough words found in caption ($matchCount/${nameWords.length})');
+                return false;
+              }
+            }
+            
+            return true;
+          }).toList();
+          
+          if (filteredParsed.isEmpty && parsedLocations.isNotEmpty) {
+            print('⚠️ CAPTION EXTRACTION: All ${parsedLocations.length} parsed location(s) were filtered out as noise');
+          }
+          
+          final parsedToProcess = maxLocations != null ? filteredParsed.take(maxLocations) : filteredParsed;
           for (final parsed in parsedToProcess) {
             final name = parsed['name'] as String?;
             if (name == null || name.isEmpty) continue;
@@ -380,8 +451,9 @@ class LinkLocationExtractionService {
     final lowerCaption = caption.toLowerCase();
     
     // Common California cities (prioritize specific cities)
+    // Note: Short abbreviations like 'la', 'sf', 'oc' are handled separately with word boundary checks
     final caCities = [
-      'anaheim', 'los angeles', 'la', 'san diego', 'san francisco', 'sf',
+      'anaheim', 'los angeles', 'san diego', 'san francisco',
       'san jose', 'irvine', 'santa monica', 'burbank', 'glendale', 'pasadena',
       'long beach', 'oakland', 'berkeley', 'hollywood', 'west hollywood',
       'beverly hills', 'costa mesa', 'newport beach', 'laguna beach',
@@ -392,6 +464,8 @@ class LinkLocationExtractionService {
       'whittier', 'buena park', 'cypress', 'la habra', 'placentia', 'yorba linda',
       'brea', 'diamond bar', 'rowland heights', 'walnut', 'west covina', 'covina',
       'monrovia', 'azusa', 'glendora', 'san dimas', 'claremont', 'upland', 'rancho cucamonga',
+      'westminster', 'fountain valley', 'tustin', 'lake forest', 'mission viejo',
+      'rancho santa margarita', 'aliso viejo', 'dana point', 'san clemente',
     ];
     
     // Common US cities
@@ -463,9 +537,18 @@ class LinkLocationExtractionService {
       }
     }
     
-    // Check for regional abbreviations
+    // Check for regional abbreviations (use word boundaries for short ones)
     for (final entry in regions.entries) {
-      if (lowerCaption.contains(entry.key)) {
+      // Use word boundary matching for short region keys (< 4 chars) to avoid false matches
+      bool hasMatch;
+      if (entry.key.length < 4) {
+        final regionPattern = RegExp(r'\b' + RegExp.escape(entry.key) + r'\b', caseSensitive: false);
+        hasMatch = regionPattern.hasMatch(lowerCaption);
+      } else {
+        hasMatch = lowerCaption.contains(entry.key);
+      }
+      
+      if (hasMatch) {
         print('🏙️ CONTEXT: Found region: ${entry.key}');
         // For regions like "OC", try to find a more specific city
         // If "OC" is found, look for nearby city mentions
@@ -473,8 +556,10 @@ class LinkLocationExtractionService {
           // Check for specific OC cities
           for (final city in ['anaheim', 'irvine', 'santa ana', 'costa mesa', 
                               'newport beach', 'huntington beach', 'fullerton', 
-                              'garden grove', 'orange', 'tustin']) {
-            if (lowerCaption.contains(city)) {
+                              'garden grove', 'orange', 'tustin', 'westminster',
+                              'fountain valley', 'garden grove']) {
+            final cityPattern = RegExp(r'\b' + RegExp.escape(city) + r'\b', caseSensitive: false);
+            if (cityPattern.hasMatch(lowerCaption)) {
               print('🏙️ CONTEXT: Found specific OC city: $city');
               return city;
             }
@@ -484,15 +569,18 @@ class LinkLocationExtractionService {
       }
     }
     
-    // Check caption text for any city mention
+    // Check caption text for any city mention (use word boundary matching)
     for (final city in caCities) {
-      if (lowerCaption.contains(city)) {
+      // Use word boundary regex to avoid matching "la" inside "La Verne" or "Lam Dong"
+      final cityPattern = RegExp(r'\b' + RegExp.escape(city) + r'\b', caseSensitive: false);
+      if (cityPattern.hasMatch(lowerCaption)) {
         print('🏙️ CONTEXT: Found city mention: $city');
         return city;
       }
     }
     for (final city in usCities) {
-      if (lowerCaption.contains(city)) {
+      final cityPattern = RegExp(r'\b' + RegExp.escape(city) + r'\b', caseSensitive: false);
+      if (cityPattern.hasMatch(lowerCaption)) {
         print('🏙️ CONTEXT: Found city mention: $city');
         return city;
       }
@@ -577,88 +665,91 @@ class LinkLocationExtractionService {
       
       print('🔍 PLACES RESOLVE: Searching for "$searchQuery"');
       
-      final results = await _maps.searchPlaces(searchQuery);
+      // Search with user location bias if available
+      List<Map<String, dynamic>> results;
+      if (userLocation != null) {
+        results = await _maps.searchPlaces(
+          searchQuery,
+          latitude: userLocation.latitude,
+          longitude: userLocation.longitude,
+        );
+      } else {
+        results = await _maps.searchPlaces(searchQuery);
+      }
+      
       if (results.isEmpty) {
         print('⚠️ PLACES RESOLVE: No results for "$searchQuery"');
         return null;
       }
 
-      // Find the best matching result
-      // Priority: 1) Name + city match, 2) Name match only, 3) Text Search fallback
-      Map<String, dynamic>? bestResult;
-      final lowerLocationName = locationName.toLowerCase();
-      final lowerContext = locationContext?.toLowerCase() ?? '';
+      // Use the sophisticated scoring method to find the best match
+      // This properly handles name matching with compact comparison
+      final bestResult = _selectBestPlaceResult(results, locationName);
       
-      // First pass: Look for results that match BOTH name AND city
-      for (final result in results) {
-        final description = (result['description'] as String? ?? '').toLowerCase();
-        
-        // Skip results that are just city/locality names
-        if (_isJustCityResult(description, lowerContext)) {
-          print('⏭️ PLACES RESOLVE: Skipping city-only result: ${result['description']}');
-          continue;
-        }
-        
-        // Check if this result contains BOTH the location name AND the city
-        final containsName = description.contains(lowerLocationName) || 
-            lowerLocationName.contains(description.split(',').first.trim());
-        final containsCity = lowerContext.isEmpty || description.contains(lowerContext);
-        
-        if (containsName && containsCity) {
-          print('🎯 PLACES RESOLVE: Found name+city match: ${result['description']}');
-          bestResult = result;
-          break;
+      if (bestResult == null) {
+        print('⚠️ PLACES RESOLVE: No good match found for "$locationName"');
+        return null;
+      }
+      
+      // Validate the result is actually a good match (not just any result)
+      final resultName = (bestResult['name'] ?? bestResult['description']?.toString().split(',').first ?? '') as String;
+      final normalizedResultName = _normalizeCompact(resultName);
+      final normalizedLocationName = _normalizeCompact(locationName);
+      
+      // Check if the names have reasonable overlap
+      // Include ALL significant words (length > 1 to include "My" in "Thanh My Restaurant")
+      final locationWords = locationName.toLowerCase().split(RegExp(r'\s+')).where((w) => w.length > 1).toList();
+      final resultNameLower = resultName.toLowerCase();
+      int matchedWords = 0;
+      for (final word in locationWords) {
+        if (resultNameLower.contains(word)) {
+          matchedWords++;
         }
       }
       
-      // Second pass: Name match only (ONLY if no city context - otherwise wrong city matches)
-      // If we have a city context but no name+city match, skip to Text Search
-      if (bestResult == null && lowerContext.isEmpty) {
-        for (final result in results) {
-          final description = (result['description'] as String? ?? '').toLowerCase();
-          if (_isJustCityResult(description, lowerContext)) continue;
-          
-          final containsName = description.contains(lowerLocationName) || 
-              lowerLocationName.contains(description.split(',').first.trim());
-          
-          if (containsName) {
-            print('🎯 PLACES RESOLVE: Found name-only match (no city context): ${result['description']}');
-            bestResult = result;
-            break;
-          }
+      final matchRatio = locationWords.isEmpty ? 0.0 : matchedWords / locationWords.length;
+      
+      // Stricter validation for specific place names:
+      // 1. Exact compact match is always good
+      // 2. If result is much shorter than search term, require higher word match
+      // 3. Generic words like "Restaurant" alone are not good matches for specific names
+      final bool isExactMatch = normalizedResultName == normalizedLocationName;
+      final bool resultContainsSearch = normalizedResultName.contains(normalizedLocationName);
+      final bool searchContainsResult = normalizedLocationName.contains(normalizedResultName);
+      
+      // If search contains result (e.g., "thanhmyrestaurant" contains "restaurant"),
+      // check if result is significantly shorter - if so, it's probably too generic
+      bool hasGoodNameMatch = false;
+      if (isExactMatch) {
+        hasGoodNameMatch = true;
+        print('🎯 PLACES RESOLVE: Exact name match');
+      } else if (resultContainsSearch) {
+        hasGoodNameMatch = true;
+        print('🎯 PLACES RESOLVE: Result contains full search term');
+      } else if (searchContainsResult) {
+        // Result is shorter - check if it's a reasonable match
+        final lengthRatio = normalizedResultName.length / normalizedLocationName.length;
+        // Require result to be at least 60% of the search term length
+        // AND at least 60% word match
+        if (lengthRatio >= 0.6 && matchRatio >= 0.6) {
+          hasGoodNameMatch = true;
+          print('🎯 PLACES RESOLVE: Partial match with good overlap (length: ${(lengthRatio * 100).toInt()}%, words: ${(matchRatio * 100).toInt()}%)');
+        } else {
+          print('⚠️ PLACES RESOLVE: Result "$resultName" is too short/generic for "$locationName" (length: ${(lengthRatio * 100).toInt()}%, words: ${(matchRatio * 100).toInt()}%)');
         }
+      } else if (matchRatio >= 0.7) {
+        // High word match even without containment
+        hasGoodNameMatch = true;
+        print('🎯 PLACES RESOLVE: High word match (${(matchRatio * 100).toInt()}%)');
       }
       
-      // If we have a city context but couldn't find name+city match, don't use wrong city results
-      // Better to return null than wrong location
-      if (bestResult == null && lowerContext.isNotEmpty) {
-        print('⚠️ PLACES RESOLVE: No results match both name "$locationName" and city "$locationContext"');
+      if (!hasGoodNameMatch) {
+        print('⚠️ PLACES RESOLVE: Best result "$resultName" doesn\'t match "$locationName" well enough');
         print('   Will add location without coordinates (user can set manually)');
         return null;
       }
       
-      // Last resort (no city context): Use first non-city Autocomplete result
-      if (bestResult == null) {
-        for (final result in results) {
-          final description = (result['description'] as String? ?? '').toLowerCase();
-          if (!_isJustCityResult(description, lowerContext)) {
-            print('⚠️ PLACES RESOLVE: No good match, using first non-city result');
-            bestResult = result;
-            break;
-          }
-        }
-      }
-      
-      // Absolute last resort: First result
-      if (bestResult == null && results.isNotEmpty) {
-        print('⚠️ PLACES RESOLVE: All results are cities, using first result');
-        bestResult = results.first;
-      }
-      
-      if (bestResult == null) {
-        print('⚠️ PLACES RESOLVE: No results found at all');
-        return null;
-      }
+      print('🎯 PLACES RESOLVE: Selected best match: "$resultName"');
 
       final placeId = bestResult['placeId'] as String?;
       
@@ -1010,7 +1101,8 @@ class LinkLocationExtractionService {
         return null;
       }
 
-      final firstResult = results.first;
+      // Use best result selection for consistent scoring across all preview scans
+      final firstResult = _selectBestPlaceResult(results, searchQuery) ?? results.first;
       
       // Get coordinates
       double? lat;
@@ -1370,20 +1462,34 @@ class LinkLocationExtractionService {
         return [];
       }
 
+      // Get the region context from the first location (all locations share the same context)
+      final regionContext = extractedNames.isNotEmpty ? extractedNames.first.regionContext : null;
+      
       print('📷 IMAGE EXTRACTION: Gemini found ${extractedNames.length} potential location(s), verifying with Places API...');
+      if (regionContext != null) {
+        print('🌍 IMAGE EXTRACTION: Region context: "$regionContext"');
+      }
 
       // Step 2: Verify each location with Google Places API
       final results = <ExtractedLocationData>[];
       
       for (final locationInfo in extractedNames) {
         
-        // Build search query from extracted info
+        // Build search query from extracted info - USE REGION CONTEXT for disambiguation
+        // This is CRITICAL: "Tacoma" + "Washington" → Tacoma, WA (correct)
+        //                   "Tacoma" alone with CA location bias → Tacomasa restaurant (WRONG!)
+        final effectiveRegionContext = locationInfo.regionContext ?? regionContext;
+        
         String searchQuery = locationInfo.name;
         if (locationInfo.address != null) {
           searchQuery += ' ${locationInfo.address}';
         }
         if (locationInfo.city != null) {
-          searchQuery += ' ${locationInfo.city}';
+          searchQuery += ', ${locationInfo.city}';
+        }
+        // Add region context for better disambiguation
+        if (effectiveRegionContext != null && effectiveRegionContext.isNotEmpty) {
+          searchQuery += ', $effectiveRegionContext';
         }
         
         print('📷 IMAGE EXTRACTION: Searching Places API for: $searchQuery');
@@ -1395,7 +1501,8 @@ class LinkLocationExtractionService {
           longitude: userLocation?.longitude,
         );
         
-        final placeResult = placeResults.isNotEmpty ? placeResults.first : null;
+        // Use best result selection to prefer exact name matches and respect Gemini's type hints
+        final placeResult = _selectBestPlaceResult(placeResults, locationInfo.name, geminiType: locationInfo.type);
         
         if (placeResult != null) {
           // Note: searchPlaces returns 'placeId' (camelCase) for autocomplete results
@@ -1566,8 +1673,14 @@ class LinkLocationExtractionService {
         return [];
       }
 
+      // Get the region context from the first location (all locations share the same context)
+      final regionContext = extractedNames.isNotEmpty ? extractedNames.first.regionContext : null;
+      
       // Log what Gemini found for debugging
       print('📷 IMAGE EXTRACTION: Gemini returned ${extractedNames.length} location(s):');
+      if (regionContext != null) {
+        print('🌍 IMAGE EXTRACTION: Region context: "$regionContext"');
+      }
       for (final loc in extractedNames) {
         print('   📍 Name: "${loc.name}", City: "${loc.city}", Type: "${loc.type}", Address: "${loc.address}"');
       }
@@ -1578,17 +1691,34 @@ class LinkLocationExtractionService {
       for (final locationInfo in extractedNames) {
         
         // Strategy: Try multiple search queries to get the best result
-        // 1. First try just the name (most specific, avoids locality confusion)
+        // 1. First try name + region context (most accurate for disambiguation)
         // 2. If no good results, try name + city
-        // 3. If still no results, try name + "Los Angeles" or other broad context
+        // 3. If still no results, try just the name
         
         List<Map<String, dynamic>> placeResults = [];
         Map<String, dynamic>? placeResult;
         
-        // Attempt 1: Search with just the name
-        print('📷 IMAGE EXTRACTION: Searching Places API for: ${locationInfo.name}');
+        // Build search query - use region context for disambiguation
+        // This is CRITICAL: "Tacoma" + "Washington" → Tacoma, WA (correct)
+        //                   "Tacoma" alone with CA location bias → Tacomasa restaurant (WRONG!)
+        String searchQuery = locationInfo.name;
+        
+        // Use region context if available (from Gemini's analysis of overall content)
+        final effectiveRegionContext = locationInfo.regionContext ?? regionContext;
+        
+        if (effectiveRegionContext != null && effectiveRegionContext.isNotEmpty) {
+          // Append region context to help Places API find the right location
+          searchQuery = '${locationInfo.name}, $effectiveRegionContext';
+          print('📷 IMAGE EXTRACTION: Searching Places API for: $searchQuery (with region context)');
+        } else if (locationInfo.city != null && locationInfo.city!.isNotEmpty) {
+          searchQuery = '${locationInfo.name}, ${locationInfo.city}';
+          print('📷 IMAGE EXTRACTION: Searching Places API for: $searchQuery (with city)');
+        } else {
+          print('📷 IMAGE EXTRACTION: Searching Places API for: ${locationInfo.name}');
+        }
+        
         placeResults = await _maps.searchPlaces(
-          locationInfo.name,
+          searchQuery,
           latitude: userLocation?.latitude,
           longitude: userLocation?.longitude,
         );
@@ -1606,9 +1736,13 @@ class LinkLocationExtractionService {
           gotGoodResult = isEstablishment || !isLocality;
         }
         
-        // Attempt 2: If no good result and we have a city, try with city
+        // Attempt 2: If no good result and we have a city, try with city (+ region context)
         if (!gotGoodResult && locationInfo.city != null && locationInfo.city!.isNotEmpty) {
-          final queryWithCity = '${locationInfo.name} ${locationInfo.city}';
+          // Include region context for better disambiguation
+          String queryWithCity = '${locationInfo.name}, ${locationInfo.city}';
+          if (effectiveRegionContext != null && effectiveRegionContext.isNotEmpty) {
+            queryWithCity = '${locationInfo.name}, ${locationInfo.city}, $effectiveRegionContext';
+          }
           print('📷 IMAGE EXTRACTION: Retrying with city: $queryWithCity');
           final resultsWithCity = await _maps.searchPlaces(
             queryWithCity,
@@ -1630,9 +1764,12 @@ class LinkLocationExtractionService {
           }
         }
         
-        // Attempt 3: If still no results and we have type info, try name + type
+        // Attempt 3: If still no results and we have type info, try name + type (+ region context)
         if (placeResult == null && locationInfo.type != null) {
-          final queryWithType = '${locationInfo.name} ${locationInfo.type}';
+          String queryWithType = '${locationInfo.name} ${locationInfo.type}';
+          if (effectiveRegionContext != null && effectiveRegionContext.isNotEmpty) {
+            queryWithType = '${locationInfo.name} ${locationInfo.type}, $effectiveRegionContext';
+          }
           print('📷 IMAGE EXTRACTION: Retrying with type: $queryWithType');
           final resultsWithType = await _maps.searchPlaces(
             queryWithType,
@@ -1766,16 +1903,20 @@ class LinkLocationExtractionService {
     }
   }
 
-  /// Select the best place result from a list, preferring businesses over neighborhoods
+  /// Select the best place result from a list, preferring exact name matches and respecting Gemini's type hints
   /// 
   /// When searching for "@kuyalord_la (East Hollywood)", we might get:
   /// 1. "East Hollywood, LA, CA, USA" (locality - NOT what we want)
   /// 2. "Kuya Lord, Melrose Avenue..." (establishment - WHAT WE WANT)
   /// 
+  /// When searching for "Hoh Rainforest" (park type), we might get:
+  /// 1. "Hoh Rainforest Visitor Center" (establishment)
+  /// 2. "Hoh Rain Forest" (national_park) - WHAT WE WANT
+  /// 
   /// This method picks the best match by:
-  /// 1. Preferring establishments (restaurants, cafes, shops) over localities/neighborhoods
-  /// 2. Preferring results whose name contains the original search term
-  /// 3. If [geminiType] is "city", prefer locality results instead of establishments
+  /// 1. STRONGLY preferring exact/close name matches (most important!)
+  /// 2. Using Gemini's type hint to prefer matching place types
+  /// 3. Avoiding localities when searching for specific places
   Map<String, dynamic>? _selectBestPlaceResult(
     List<Map<String, dynamic>> results,
     String originalName, {
@@ -1787,7 +1928,7 @@ class LinkLocationExtractionService {
     // Normalize the original name for comparison
     final normalizedOriginal = _normalizeForComparison(originalName);
     
-    // Types that indicate a locality/neighborhood (NOT what we want)
+    // Types that indicate a locality/neighborhood (usually NOT what we want for specific places)
     const localityTypes = [
       'locality',
       'sublocality',
@@ -1799,27 +1940,48 @@ class LinkLocationExtractionService {
       'political',
     ];
     
-    // Types that indicate an establishment/business (what we WANT)
-    const establishmentTypes = [
-      'establishment',
-      'point_of_interest',
-      'food',
-      'restaurant',
-      'cafe',
-      'bar',
-      'store',
-      'shopping_mall',
-      'meal_delivery',
-      'meal_takeaway',
-      'bakery',
-      'night_club',
-      'tourist_attraction',
-      'museum',
+    // Types that indicate natural features/outdoor attractions
+    const naturalFeatureTypes = [
+      'natural_feature',
       'park',
+      'national_park',
+      'state_park',
+      'campground',
+      'hiking_area',
+      'beach',
+    ];
+    
+    // Types that indicate visitor-related establishments (less preferred when searching for nature)
+    const visitorEstablishmentTypes = [
+      'visitor_center',
+      'travel_agency',
+      'tour_agency',
+      'tourist_information',
     ];
     
     Map<String, dynamic>? bestResult;
     int bestScore = -1;
+    
+    // Check if Gemini identified this as a natural feature type
+    final geminiTypeLower = geminiType?.toLowerCase() ?? '';
+    final isNatureSearch = geminiTypeLower == 'park' || 
+                          geminiTypeLower == 'landmark' ||
+                          geminiTypeLower == 'trail' ||
+                          geminiTypeLower == 'beach' ||
+                          geminiTypeLower == 'natural_feature';
+    final isCitySearch = geminiTypeLower == 'city' || 
+                        geminiTypeLower == 'locality' ||
+                        geminiTypeLower == 'neighborhood' ||
+                        geminiTypeLower == 'region';
+    
+    if (isNatureSearch && bestScore == -1) {
+      print('📷 IMAGE EXTRACTION: Nature/landmark search mode (geminiType: $geminiType)');
+    } else if (isCitySearch && bestScore == -1) {
+      print('📷 IMAGE EXTRACTION: City/locality search mode (geminiType: $geminiType)');
+    }
+    
+    // Also create compact versions for compound word matching
+    final compactOriginal = _normalizeCompact(originalName);
     
     for (final result in results) {
       int score = 0;
@@ -1827,63 +1989,90 @@ class LinkLocationExtractionService {
       // Get the result name and types
       final resultName = (result['name'] ?? result['description']?.toString().split(',').first ?? '') as String;
       final normalizedResultName = _normalizeForComparison(resultName);
+      final compactResultName = _normalizeCompact(resultName);
       final types = (result['types'] as List?)?.cast<String>() ?? [];
       
-      // Score based on name similarity
-      if (normalizedResultName.contains(normalizedOriginal) || 
-          normalizedOriginal.contains(normalizedResultName)) {
-        score += 50; // Strong match
-      }
+      // === CRITICAL: NAME MATCHING (highest priority) ===
+      // Use COMPACT comparison to handle compound word variations:
+      // "James Island Viewpoint" vs "James Island View Point" → both become "jamesislandviewpoint"
+      // "Hoh Rainforest" vs "Hoh Rain Forest" → both become "hohrainforest"
       
-      // Check if the original name words appear in the result
-      final originalWords = normalizedOriginal.split(RegExp(r'\s+')).where((w) => w.length > 2);
-      for (final word in originalWords) {
-        if (normalizedResultName.contains(word)) {
-          score += 10;
+      // Exact match (using compact comparison) gets huge bonus
+      if (compactResultName == compactOriginal) {
+        score += 100; // Exact match - very strong
+        print('📷 IMAGE EXTRACTION:   → Exact compact match bonus: +100');
+      } 
+      // Close match - one contains the other (using compact comparison)
+      else if (compactResultName.contains(compactOriginal) || 
+               compactOriginal.contains(compactResultName)) {
+        // Calculate how close the match is based on character length difference
+        final lengthDifference = (compactResultName.length - compactOriginal.length).abs();
+        
+        // Closer matches score higher - penalize extra characters
+        // If result has many more characters than original, it's probably not what we want
+        // e.g., "hohrainforestvisitorcenter" vs "hohrainforest" = diff 13 chars
+        if (lengthDifference <= 5) {
+          score += 80; // Very close match
+          print('📷 IMAGE EXTRACTION:   → Close compact match bonus: +80 (diff: $lengthDifference chars)');
+        } else if (lengthDifference <= 15) {
+          score += 50 - (lengthDifference ~/ 2); // Medium match
+          print('📷 IMAGE EXTRACTION:   → Medium compact match bonus: +${50 - (lengthDifference ~/ 2)} (diff: $lengthDifference chars)');
+        } else {
+          score += 20; // Weak containment
         }
       }
       
-      // Check if Gemini identified this as a city/locality type
-      final isCitySearch = geminiType?.toLowerCase() == 'city' || 
-                          geminiType?.toLowerCase() == 'locality' ||
-                          geminiType?.toLowerCase() == 'neighborhood';
-      
-      if (isCitySearch && bestScore == -1) {
-        // Log once at the start of scoring
-        print('📷 IMAGE EXTRACTION: City/locality search mode (geminiType: $geminiType)');
+      // Also check word-based matching for partial matches
+      final originalWordsList = normalizedOriginal.split(RegExp(r'\s+')).where((w) => w.length > 2).toList();
+      int matchedWords = 0;
+      for (final word in originalWordsList) {
+        if (normalizedResultName.contains(word)) {
+          matchedWords++;
+        }
+      }
+      // Bonus for word matches
+      if (originalWordsList.isNotEmpty) {
+        final matchRatio = matchedWords / originalWordsList.length;
+        score += (matchRatio * 20).round();
       }
       
+      // === TYPE-BASED SCORING ===
       if (isCitySearch) {
-        // INVERT scoring: When Gemini says it's a city, PREFER localities
+        // When searching for a city, prefer localities
         for (final type in types) {
           if (localityTypes.contains(type)) {
-            score += 40; // Boost localities when searching for a city
+            score += 40;
             break;
           }
         }
-        
-        // Penalize establishments when we're looking for a city
+      } else if (isNatureSearch) {
+        // When searching for nature (parks, trails, beaches), prefer natural features
         for (final type in types) {
-          if (establishmentTypes.contains(type)) {
-            score -= 20;
+          if (naturalFeatureTypes.contains(type)) {
+            score += 30; // Boost natural features
+            break;
+          }
+        }
+        // Penalize visitor centers/agencies when searching for nature
+        for (final type in types) {
+          if (visitorEstablishmentTypes.contains(type)) {
+            score -= 25; // Penalize visitor centers
             break;
           }
         }
       } else {
-        // Normal scoring: Penalize locality/neighborhood results
+        // Default: Penalize localities, slight boost for establishments
         for (final type in types) {
           if (localityTypes.contains(type)) {
             score -= 30;
             break;
           }
         }
-        
-        // Boost establishment/business results
-        for (final type in types) {
-          if (establishmentTypes.contains(type)) {
-            score += 25;
-            break;
-          }
+        // Only boost establishments for non-nature searches
+        final hasEstablishment = types.any((t) => 
+          t == 'establishment' || t == 'point_of_interest');
+        if (hasEstablishment) {
+          score += 15;
         }
       }
       
@@ -1911,6 +2100,15 @@ class LinkLocationExtractionService {
         .replaceAll(RegExp(r'[^a-z0-9\s]'), '')
         .replaceAll(RegExp(r'\s+'), ' ')
         .trim();
+  }
+  
+  /// Normalize for compact comparison - removes ALL spaces to handle compound word variations
+  /// e.g., "James Island View Point" and "James Island Viewpoint" both become "jamesislandviewpoint"
+  /// e.g., "Hoh Rain Forest" and "Hoh Rainforest" both become "hohrainforest"
+  String _normalizeCompact(String text) {
+    return text
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9]'), ''); // Remove ALL non-alphanumeric including spaces
   }
 
   /// Extract coordinates from Places API result

@@ -8200,17 +8200,21 @@ class CollectionsScreenState extends State<CollectionsScreen>
         );
       }
     } else if (isFacebookUrl) {
+      // Use taller height for Facebook Reels
+      final isReel = mediaPath.contains('/reel/') || mediaPath.contains('/reels/');
+      final facebookHeight = isReel ? 700.0 : 500.0;
+
       mediaDisplayWidget = kIsWeb
           ? WebMediaPreviewCard(
             url: mediaPath,
-            experienceName: group.associatedExperiences.isNotEmpty 
-              ? group.associatedExperiences.first.name 
+            experienceName: group.associatedExperiences.isNotEmpty
+              ? group.associatedExperiences.first.name
               : null,
             onOpenPressed: () => _launchUrl(mediaPath),
           )
           : FacebookPreviewWidget(
         url: mediaPath,
-        height: 500.0, // Height for FacebookPreviewWidget
+        height: facebookHeight, // Height for FacebookPreviewWidget
         launchUrlCallback: _launchUrl,
         onWebViewCreated: (_) {},
         onPageFinished: (_) {},

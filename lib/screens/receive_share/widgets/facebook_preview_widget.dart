@@ -68,6 +68,183 @@ class FacebookPreviewWidgetState extends State<FacebookPreviewWidget> {
     }
   }
 
+  /// Extract text content from the WebView page for location analysis
+  Future<String?> extractPageContent() async {
+    if (controller == null) {
+      print('⚠️ FACEBOOK PREVIEW: Controller is null, cannot extract content');
+      return null;
+    }
+    
+    try {
+      // For Reels, we need to interact with the page to reveal the full description
+      // Step 1: Try to expand any collapsed content by clicking "See more" type buttons
+      await controller!.evaluateJavascript(source: '''
+        (function() {
+          try {
+            // Click any "See more", "...more", or expansion buttons
+            var clickTargets = document.querySelectorAll('[role="button"], a, span');
+            clickTargets.forEach(function(el) {
+              var text = (el.innerText || el.textContent || '').toLowerCase().trim();
+              if (text === 'see more' || text === '...more' || text === 'more' || 
+                  text === '... more' || text.endsWith('more') || text === '...') {
+                try { el.click(); } catch(e) {}
+              }
+            });
+            
+            // Also try clicking on the description area to expand it
+            var descAreas = document.querySelectorAll('[data-sigil*="more"], [data-gt*="see_more"]');
+            descAreas.forEach(function(el) {
+              try { el.click(); } catch(e) {}
+            });
+          } catch(e) {}
+        })();
+      ''');
+      
+      // Wait for expansion animation
+      await Future.delayed(const Duration(milliseconds: 800));
+      
+      // Step 2: Scroll down to reveal more content
+      await controller!.evaluateJavascript(source: '''
+        (function() {
+          try {
+            // Scroll down multiple times to load more content
+            window.scrollTo(0, 300);
+            setTimeout(function() { window.scrollTo(0, 600); }, 200);
+            setTimeout(function() { window.scrollTo(0, 900); }, 400);
+          } catch(e) {}
+        })();
+      ''');
+      
+      // Wait for content to load after scroll
+      await Future.delayed(const Duration(milliseconds: 800));
+      
+      // Execute JavaScript to extract text content from the page
+      final result = await controller!.evaluateJavascript(source: '''
+        (function() {
+          try {
+            var content = '';
+            var isReel = window.location.href.includes('/reel/') || window.location.href.includes('/reels/');
+            var seenTexts = new Set();
+            
+            // Helper function to check if text is UI noise
+            function isUIText(text) {
+              var lower = text.toLowerCase();
+              var uiPatterns = [
+                'log in', 'sign up', 'create new account', 'forgot password',
+                'videos', 'reels', 'following', 'for you', 'saved',
+                'like', 'comment', 'share', 'send', 'follow',
+                'notifications', 'menu', 'search', 'home', 'watch',
+                'marketplace', 'groups', 'gaming', 'more'
+              ];
+              // Skip very short text
+              if (text.length < 15) return true;
+              // Skip if it's just a UI element
+              for (var pattern of uiPatterns) {
+                if (lower === pattern || lower === pattern + 's') return true;
+              }
+              // Skip if it matches count patterns (15+ views, 8 likes, etc)
+              if (/^\\d+[KMB]?\\+?\\s*(views?|likes?|comments?|shares?)?\$/i.test(text.trim())) return true;
+              return false;
+            }
+            
+            // Helper to add unique text
+            function addText(text) {
+              text = text.trim();
+              if (text && !seenTexts.has(text) && !isUIText(text)) {
+                seenTexts.add(text);
+                content += text + ' ';
+              }
+            }
+            
+            // ===== STRATEGY 1: Look for spans with dir="auto" (common for user content) =====
+            var dirAutoSpans = document.querySelectorAll('span[dir="auto"]');
+            dirAutoSpans.forEach(function(span) {
+              var text = span.innerText || '';
+              if (text.length > 20) {
+                addText(text);
+              }
+            });
+            
+            // ===== STRATEGY 2: Look for any element containing hashtags or @ mentions =====
+            var allElements = document.querySelectorAll('*');
+            allElements.forEach(function(el) {
+              var text = el.innerText || '';
+              // Look for content with hashtags, @ mentions, or restaurant-like keywords
+              if ((text.includes('#') || text.includes('@') || 
+                   /restaurant|cafe|bar|food|eat|dining|brunch|lunch|dinner/i.test(text)) &&
+                  text.length > 30 && text.length < 3000) {
+                addText(text);
+              }
+            });
+            
+            // ===== STRATEGY 3: Look for text containing location-like content =====
+            var bodyText = document.body.innerText || '';
+            var lines = bodyText.split('\\n');
+            lines.forEach(function(line) {
+              line = line.trim();
+              // Look for lines that look like descriptions (contain addresses, restaurant names, etc)
+              if (line.length > 40 && line.length < 2000 &&
+                  (/\\d+\\.\\s|•|→|📍|🍽|🍴|🥘|🍜|restaurant|cafe|bar|food|place|spot|weekend|try|visit|best|top|favorite/i.test(line))) {
+                addText(line);
+              }
+            });
+            
+            // ===== STRATEGY 4: Get article content =====
+            var articles = document.querySelectorAll('[role="article"], article');
+            articles.forEach(function(article) {
+              var text = article.innerText || '';
+              if (text.length > 50) {
+                addText(text);
+              }
+            });
+            
+            // ===== STRATEGY 5: If still not enough, get all visible text =====
+            if (content.trim().length < 200) {
+              // Get all text from divs that might contain descriptions
+              var divs = document.querySelectorAll('div');
+              divs.forEach(function(div) {
+                var text = div.innerText || '';
+                // Look for divs with substantial text that aren't just UI
+                if (text.length > 100 && text.length < 5000 && 
+                    !div.querySelector('nav, header, footer, [role="navigation"]')) {
+                  addText(text);
+                }
+              });
+            }
+            
+            // ===== ABSOLUTE FALLBACK: Get full body text =====
+            if (content.trim().length < 200) {
+              content = bodyText;
+            }
+            
+            // Clean up content
+            content = content.replace(/\\s+/g, ' ').trim();
+            
+            // Limit to first 15000 characters for processing
+            if (content.length > 15000) {
+              content = content.substring(0, 15000);
+            }
+            
+            return content;
+          } catch(e) {
+            return document.body.innerText || '';
+          }
+        })();
+      ''');
+      
+      if (result != null && result is String && result.isNotEmpty && result != 'null') {
+        print('✅ FACEBOOK PREVIEW: Extracted ${result.length} characters of content');
+        return result;
+      }
+      
+      print('⚠️ FACEBOOK PREVIEW: No content extracted');
+      return null;
+    } catch (e) {
+      print('❌ FACEBOOK PREVIEW: Content extraction failed: $e');
+      return null;
+    }
+  }
+
   Future<void> _launchFacebookUrl() async {
     final Uri uri = Uri.parse(widget.url);
     if (await canLaunchUrl(uri)) {
@@ -125,7 +302,7 @@ class FacebookPreviewWidgetState extends State<FacebookPreviewWidget> {
       );
     }
 
-    final double containerHeight = _isExpanded ? 800 : widget.height;
+    final double containerHeight = _isExpanded ? 1200 : widget.height;
     
     return Column(
       children: [
@@ -208,6 +385,46 @@ class FacebookPreviewWidgetState extends State<FacebookPreviewWidget> {
                     hasError = true;
                     errorMessage = error.description;
                   });
+                },
+                shouldOverrideUrlLoading: (webController, navigationAction) async {
+                  final url = navigationAction.request.url?.toString() ?? '';
+                  
+                  // Handle about:blank URLs
+                  if (url == 'about:blank' || url == 'https://about:blank') {
+                    return NavigationActionPolicy.CANCEL;
+                  }
+                  
+                  // Block custom schemes (fb://, intent://, etc.) that WebView can't handle
+                  final customSchemes = ['fb', 'intent', 'market', 'instagram'];
+                  if (customSchemes.any((scheme) => url.startsWith('$scheme:'))) {
+                    if (kDebugMode) {
+                      print('Facebook WebView: Blocked custom scheme URL: $url');
+                    }
+                    return NavigationActionPolicy.CANCEL;
+                  }
+                  
+                  // Allow Facebook domains and CDN
+                  if (url.contains('facebook.com') || 
+                      url.contains('fb.com') ||
+                      url.contains('fbcdn.net') ||
+                      url.contains('m.facebook.com') ||
+                      url.contains('web.facebook.com') ||
+                      url.contains('static.xx.fbcdn.net')) {
+                    return NavigationActionPolicy.ALLOW;
+                  }
+                  
+                  // For external links, launch externally
+                  if (mounted && !_isDisposed && url.startsWith('http')) {
+                    try {
+                      widget.launchUrlCallback(url);
+                    } catch (e) {
+                      if (kDebugMode) {
+                        print("Error in launchUrlCallback: $e");
+                      }
+                    }
+                  }
+                  
+                  return NavigationActionPolicy.CANCEL;
                 },
               ),
             ),
