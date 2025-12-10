@@ -2510,8 +2510,10 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                             onPageFinished: (_) {},
                           );
                   } else if (isFacebookUrl) {
-                    final double facebookHeight =
-                        previewHeightOverride ?? 500.0;
+                    // Use taller height for Facebook Reels
+                    final isReel = url.contains('/reel/') || url.contains('/reels/');
+                    final double facebookHeight = previewHeightOverride ?? (isReel ? 700.0 : 500.0);
+
                     mediaWidget = kIsWeb
                         ? WebMediaPreviewCard(
                             url: url,

@@ -310,9 +310,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                     hintText: 'https://... or paste content with a URL',
                     border: const OutlineInputBorder(),
                     prefixIcon: const Icon(Icons.link),
+                    contentPadding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 12.0),
                     suffixIconConstraints: const BoxConstraints.tightFor(
                       width: 120,
-                      height: 48,
+                      height: 40,
                     ),
                     suffixIcon: Row(
                       mainAxisSize: MainAxisSize.min,
@@ -517,11 +518,14 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     final hasPreview = _hasActivePreview();
 
     // Determine button text based on URL type
+    // Use "Scan Screen" for YouTube and Facebook Reels (where auto-extraction doesn't work well)
     final url = _currentSharedFiles.isNotEmpty
         ? _extractFirstUrl(_currentSharedFiles.first.path)
         : null;
     final isYouTubeUrl = url != null && _isYouTubeUrl(url);
-    final buttonText = isYouTubeUrl ? 'Scan Screen' : 'Scan Preview';
+    final isFacebookReel = url != null && 
+        (url.contains('facebook.com/reel/') || url.contains('facebook.com/reels/'));
+    final buttonText = (isYouTubeUrl || isFacebookReel) ? 'Scan Screen' : 'Scan Preview';
 
     return Expanded(
       child: Container(
@@ -1029,6 +1033,22 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
     }
 
+    // Try Facebook preview
+    if (_isFacebookUrl(url)) {
+      final facebookPreviewKey = _facebookPreviewKeys[url];
+      if (facebookPreviewKey?.currentState != null) {
+        try {
+          final content = await facebookPreviewKey!.currentState!.extractPageContent();
+          if (content != null && content.isNotEmpty) {
+            print('✅ SCAN PAGE: Extracted content from Facebook preview');
+            return content;
+          }
+        } catch (e) {
+          print('⚠️ SCAN PAGE: Facebook content extraction failed: $e');
+        }
+      }
+    }
+
     // Try Web URL preview
     final webPreviewKey = _webUrlPreviewKeys[url];
     if (webPreviewKey?.currentState != null) {
@@ -1190,7 +1210,52 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   }
 
   /// Capture Facebook preview WebView
+  /// For Reels, uses native screen capture (like YouTube) for better video text capture
+  /// For regular posts, uses WebView screenshot
   Future<Uint8List?> _captureFacebookPreview(String url) async {
+    // Check if this is a Facebook Reel
+    final isReel = url.contains('/reel/') || url.contains('/reels/');
+    
+    if (isReel) {
+      // Use native screen capture for Reels (same as YouTube)
+      try {
+        print('📷 SCAN PREVIEW: Taking native screen capture for Facebook Reel...');
+        
+        final result = await _screenshotChannel.invokeMethod('captureScreen');
+        
+        if (result != null) {
+          Uint8List pngBytes;
+          if (result is Uint8List) {
+            pngBytes = result;
+          } else if (result is List) {
+            pngBytes = Uint8List.fromList(result.cast<int>());
+          } else {
+            print('⚠️ SCAN PREVIEW: Unexpected result type: ${result.runtimeType}');
+            return await _captureFacebookWebViewFallback(url);
+          }
+          
+          print('✅ SCAN PREVIEW: Captured native screen for Facebook Reel (${pngBytes.length} bytes, PNG format)');
+          return pngBytes;
+        } else {
+          print('⚠️ SCAN PREVIEW: Native screenshot returned null');
+          return await _captureFacebookWebViewFallback(url);
+        }
+      } on PlatformException catch (e) {
+        print('⚠️ SCAN PREVIEW: Native screenshot failed: ${e.message}');
+        return await _captureFacebookWebViewFallback(url);
+      } catch (e) {
+        print('⚠️ SCAN PREVIEW: Native screenshot error: $e');
+        return await _captureFacebookWebViewFallback(url);
+      }
+    }
+    
+    // Regular Facebook post - use WebView screenshot
+    return await _captureFacebookWebViewFallback(url);
+  }
+  
+  /// Fallback to WebView screenshot for Facebook (used for both Reels fallback and regular posts)
+  Future<Uint8List?> _captureFacebookWebViewFallback(String url) async {
+    print('📷 SCAN PREVIEW: Using WebView screenshot for Facebook...');
     final previewKey = _facebookPreviewKeys[url];
     if (previewKey == null) {
       print('⚠️ SCAN PREVIEW: No Facebook preview key found');
@@ -1358,6 +1423,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
   // Track TikTok URLs that have already been processed for auto-extraction
   final Set<String> _tiktokCaptionsProcessed = {};
+
+  // Track Facebook URLs that have already been processed for auto-extraction
+  final Set<String> _facebookUrlsProcessed = {};
 
   // Add debounce timer for location updates
   Timer? _locationUpdateDebounce;
@@ -2133,6 +2201,109 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
     } catch (e) {
       print('❌ TIKTOK AUTO-EXTRACT ERROR: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isExtractingLocation = false;
+        });
+      }
+    }
+  }
+
+  /// Handle Facebook page loaded - automatically extract locations from page content
+  Future<void> _onFacebookPageLoaded(String url) async {
+    // Skip if already processed this URL
+    if (_facebookUrlsProcessed.contains(url)) {
+      print('📘 FACEBOOK AUTO-EXTRACT: Already processed $url');
+      return;
+    }
+
+    // Skip if already extracting
+    if (_isExtractingLocation || _isProcessingScreenshot) {
+      print('📘 FACEBOOK AUTO-EXTRACT: Extraction already in progress');
+      return;
+    }
+
+    // Mark as processed to prevent duplicate extractions
+    _facebookUrlsProcessed.add(url);
+
+    print('📘 FACEBOOK AUTO-EXTRACT: Starting automatic location extraction...');
+
+    setState(() {
+      _isExtractingLocation = true;
+    });
+
+    try {
+      // Get user location for better results (optional)
+      LatLng? userLocation;
+      if (_currentUserPosition != null) {
+        userLocation = LatLng(
+          _currentUserPosition!.latitude,
+          _currentUserPosition!.longitude,
+        );
+      }
+
+      // Try to extract page content from the Facebook WebView
+      String? pageContent;
+      final previewKey = _facebookPreviewKeys[url];
+      if (previewKey?.currentState != null) {
+        try {
+          pageContent = await previewKey!.currentState!.extractPageContent();
+        } catch (e) {
+          print('⚠️ FACEBOOK AUTO-EXTRACT: Content extraction failed: $e');
+        }
+      }
+
+      if (pageContent == null || pageContent.isEmpty || pageContent.length < 20) {
+        print('⚠️ FACEBOOK AUTO-EXTRACT: No usable content extracted');
+        Fluttertoast.showToast(
+          msg: '💡 No location found in post. Try the "Scan Preview" button to analyze visible text.',
+          toastLength: Toast.LENGTH_LONG,
+          backgroundColor: Colors.orange[700],
+        );
+        return;
+      }
+
+      print('📘 FACEBOOK AUTO-EXTRACT: Extracted ${pageContent.length} characters');
+      print('📘 FACEBOOK AUTO-EXTRACT: Content preview: ${pageContent.substring(0, pageContent.length > 200 ? 200 : pageContent.length)}...');
+
+      // Use LinkLocationExtractionService (same as TikTok) for proper grounding with Places API
+      final locations = await _locationExtractor.extractLocationsFromCaption(
+        pageContent,
+        platform: 'Facebook',
+        sourceUrl: url,
+        userLocation: userLocation,
+        maxLocations: 5,
+      );
+
+      if (!mounted) return;
+
+      if (locations.isEmpty) {
+        print('⚠️ FACEBOOK AUTO-EXTRACT: No locations found in page content');
+        Fluttertoast.showToast(
+          msg: '💡 No location found in post. Try the "Scan Preview" button to analyze visible text.',
+          toastLength: Toast.LENGTH_LONG,
+          backgroundColor: Colors.orange[700],
+        );
+        return;
+      }
+
+      print('✅ FACEBOOK AUTO-EXTRACT: Found ${locations.length} location(s)');
+
+      final provider = context.read<ReceiveShareProvider>();
+
+      if (locations.length == 1) {
+        await _applySingleExtractedLocation(locations.first, provider);
+        Fluttertoast.showToast(
+          msg: '📍 Found: ${locations.first.name}',
+          toastLength: Toast.LENGTH_SHORT,
+          backgroundColor: Colors.green,
+        );
+      } else {
+        await _handleMultipleExtractedLocations(locations, provider);
+      }
+    } catch (e) {
+      print('❌ FACEBOOK AUTO-EXTRACT ERROR: $e');
     } finally {
       if (mounted) {
         setState(() {
@@ -3076,8 +3247,10 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     setState(() {
       _currentSharedFiles = files;
     });
-    // Clear auto-scanned URLs when new content is shared
+    // Clear auto-scanned URLs and processed URLs when new content is shared
     _autoScannedUrls.clear();
+    _facebookUrlsProcessed.clear();
+    _tiktokCaptionsProcessed.clear();
     _processSharedContent(files);
     _syncSharedUrlControllerFromContent();
   }
@@ -5871,15 +6044,32 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       if (!_facebookPreviewKeys.containsKey(url)) {
         _facebookPreviewKeys[url] = GlobalKey<FacebookPreviewWidgetState>();
       }
+      // Use taller height for Facebook Reels
+      final isReel = url.contains('/reel/') || url.contains('/reels/');
+      final facebookHeight = isReel ? 700.0 : 500.0;
+
       return FacebookPreviewWidget(
         key: _facebookPreviewKeys[url],
         url: url,
-        height: 500,
+        height: facebookHeight,
         onWebViewCreated: (controller) {
           // Handle controller if needed
         },
-        onPageFinished: (url) {
-          // Handle page finished if needed
+        onPageFinished: (loadedUrl) {
+          // Skip auto-extraction for Facebook Reels - their DOM structure is too
+          // obfuscated for reliable scraping. Users can use "Scan Preview" instead.
+          final isReel = url.contains('/reel/') || url.contains('/reels/');
+          if (isReel) {
+            print('📘 FACEBOOK: Skipping auto-extraction for Reel (use Scan Preview instead)');
+            return;
+          }
+          
+          // Automatically extract locations from regular Facebook posts only
+          Future.delayed(const Duration(milliseconds: 1500), () {
+            if (mounted) {
+              _onFacebookPageLoaded(url);
+            }
+          });
         },
         launchUrlCallback: _launchUrl,
       );

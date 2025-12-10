@@ -551,30 +551,29 @@ class ReceiveShareProvider extends ChangeNotifier {
       card.titleController.text = locationData.name;
     }
     
-    // Update location
-    if (locationData.coordinates != null || locationData.address != null) {
-      card.selectedLocation = Location(
-        latitude: locationData.coordinates?.latitude ?? 0.0,
-        longitude: locationData.coordinates?.longitude ?? 0.0,
-        address: locationData.address,
-        placeId: locationData.placeId,
-        displayName: locationData.name,
-        website: locationData.website,
-      );
-      
-      if (locationData.address != null) {
-        card.searchController.text = locationData.address!;
-      }
-      
-      card.placeIdForPreview = locationData.placeId;
-      
-      // Set website if available and card's website is empty
-      if (locationData.website != null && 
-          locationData.website!.isNotEmpty && 
-          card.websiteController.text.isEmpty) {
-        card.websiteController.text = locationData.website!;
-        print("ReceiveShareProvider: Set website for card: ${locationData.website}");
-      }
+    // Always update location when we have a name - even without coordinates/address
+    // This ensures the location name is displayed in the form
+    card.selectedLocation = Location(
+      latitude: locationData.coordinates?.latitude ?? 0.0,
+      longitude: locationData.coordinates?.longitude ?? 0.0,
+      address: locationData.address,
+      placeId: locationData.placeId,
+      displayName: locationData.name,
+      website: locationData.website,
+    );
+    
+    if (locationData.address != null) {
+      card.searchController.text = locationData.address!;
+    }
+    
+    card.placeIdForPreview = locationData.placeId;
+    
+    // Set website if available and card's website is empty
+    if (locationData.website != null && 
+        locationData.website!.isNotEmpty && 
+        card.websiteController.text.isEmpty) {
+      card.websiteController.text = locationData.website!;
+      print("ReceiveShareProvider: Set website for card: ${locationData.website}");
     }
     
     print("ReceiveShareProvider: Updated card $cardId with location '${locationData.name}'");

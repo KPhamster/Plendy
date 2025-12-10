@@ -381,6 +381,38 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
     }
   }
 
+  // --- ADDED: Method to launch Google Maps at location ---
+  Future<void> _launchMapLocation() async {
+    Location? location = widget.cardData.selectedLocation;
+    String mapUrl;
+
+    if (location != null && location.latitude != 0.0 && location.longitude != 0.0) {
+      // Use the Google Maps search API with coordinates
+      final lat = location.latitude;
+      final lng = location.longitude;
+      final placeName = location.displayName ?? location.address ?? 'Selected Location';
+      if (location.placeId != null && location.placeId!.isNotEmpty) {
+        mapUrl = 'https://www.google.com/maps/search/?api=1&query=${Uri.encodeComponent(placeName)}&query_place_id=${location.placeId}';
+      } else {
+        mapUrl = 'https://www.google.com/maps/search/?api=1&query=$lat,$lng';
+      }
+    } else {
+      // Fallback to general Google Maps if no location
+      mapUrl = 'https://www.google.com/maps';
+    }
+
+    final Uri mapUri = Uri.parse(mapUrl);
+    if (!await launchUrl(mapUri, mode: LaunchMode.externalApplication)) {
+      print('Could not launch map location.');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open map location.')),
+        );
+      }
+    }
+  }
+  // --- END ADDED ---
+
   // RENAMED: Helper to find icon for selected category
   String _getIconForSelectedCategory() {
     // Use renamed field
@@ -1221,7 +1253,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                         mainAxisAlignment: MainAxisAlignment.end,
                         children: [
                           Text(
-                            'Search location on Yelp for reference',
+                            'For reference',
                             textAlign: TextAlign.right,
                             style: Theme.of(context)
                                 .textTheme
@@ -1238,6 +1270,19 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                 FontAwesomeIcons.yelp,
                                 size: 22,
                                 color: Colors.red[700],
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          InkWell(
+                            onTap: _launchMapLocation,
+                            borderRadius: BorderRadius.circular(16),
+                            child: Padding(
+                              padding: const EdgeInsets.all(4.0),
+                              child: Icon(
+                                Icons.map_outlined,
+                                size: 22,
+                                color: Colors.green[700],
                               ),
                             ),
                           ),

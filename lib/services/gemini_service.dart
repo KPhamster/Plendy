@@ -928,6 +928,23 @@ Output:
 You are an expert at OCR (Optical Character Recognition) and location extraction. 
 Analyze this screenshot/image and extract ALL location and place information.
 
+=== CRITICAL: DETERMINE REGIONAL CONTEXT FIRST ===
+Before extracting individual locations, analyze the OVERALL content to determine:
+1. What state/country/region is this content primarily about?
+2. What is the geographic focus of the content?
+
+This is CRITICAL for disambiguation! For example:
+- If the content mentions "Olympic Peninsula", "Hoh Rainforest", "Lake Crescent" → region_context = "Washington"
+- If the content mentions "Death Valley", "Joshua Tree", "Palm Springs" → region_context = "California"
+- If the content mentions "Yellowstone", "Grand Teton" → region_context = "Wyoming"
+- If the content mentions "Zion", "Bryce Canyon" → region_context = "Utah"
+
+The region_context helps disambiguate locations like:
+- "Portland" → Could be Oregon OR Maine (region_context tells us which!)
+- "Tacoma" → The city in Washington, NOT "Tacomasa" restaurant in California
+- "Forks" → The town in Washington (from Twilight), NOT a campground elsewhere
+- "Devils Punchbowl" → There are multiple across the US
+
 === YOUTUBE VIDEO SCREENSHOTS (HIGHEST PRIORITY) ===
 For YouTube video screenshots/thumbnails, follow this strict priority:
 
@@ -1041,46 +1058,69 @@ For TikTok/Instagram/Facebook screenshots:
 - Business watermarks or logos visible in video
 
 === OUTPUT FORMAT ===
-Return a JSON array with this exact structure:
-[
-  {
-    "name": "Business or Place Name (NOT the @handle, use converted name)",
-    "address": "Street address if visible (or null)",
-    "city": "City name if visible (or null)", 
-    "type": "restaurant/cafe/store/attraction/park/trail/landmark/region"
-  }
-]
+Return a JSON object with this exact structure:
+{
+  "region_context": "The state or region this content is primarily about (e.g., 'Washington', 'California', 'Oregon', 'Olympic Peninsula, WA'). This is CRITICAL for disambiguating location searches. If content mentions Seattle, Tacoma, Olympic National Park, etc., region_context should be 'Washington'. Set to null ONLY if you cannot determine a specific region.",
+  "locations": [
+    {
+      "name": "Business or Place Name (NOT the @handle, use converted name)",
+      "address": "Street address if visible (or null)",
+      "city": "City name if visible (or null)", 
+      "type": "restaurant/cafe/store/attraction/park/trail/landmark/region"
+    }
+  ]
+}
 
 === EXAMPLES ===
+**WASHINGTON STATE TRAVEL GUIDE EXAMPLE:**
+If you see content mentioning: "Lake Crescent", "Sol Duc Falls", "Hoh Rainforest", "Ruby Beach", "Forks", "Seattle", "Tacoma", "Port Angeles"
+Return:
+{
+  "region_context": "Washington",
+  "locations": [
+    {"name": "Lake Crescent", "address": null, "city": null, "type": "park"},
+    {"name": "Sol Duc Falls", "address": null, "city": null, "type": "landmark"},
+    {"name": "Hoh Rainforest", "address": null, "city": null, "type": "park"},
+    {"name": "Ruby Beach", "address": null, "city": null, "type": "landmark"},
+    {"name": "Forks", "address": null, "city": null, "type": "region"},
+    {"name": "Seattle", "address": null, "city": null, "type": "region"},
+    {"name": "Tacoma", "address": null, "city": null, "type": "region"},
+    {"name": "Port Angeles", "address": null, "city": null, "type": "region"}
+  ]
+}
+NOTE: With region_context "Washington", the search for "Tacoma" will find "Tacoma, WA" not "Tacomasa" restaurant in California!
+
 **YOUTUBE EXAMPLE (IMPORTANT!):**
 If you see a YouTube video with:
 - Title: "Top 10 Orange County Restaurants I've Tried in 2025"  
 - Overlaid text on thumbnail: "PARLOR SAN CLEMENTE" (with a pizza image)
 Return ONLY the specific restaurant, NOT "Orange County":
-[
-  {"name": "Parlor", "address": null, "city": "San Clemente", "type": "restaurant"}
-]
+{
+  "region_context": "Orange County, California",
+  "locations": [
+    {"name": "Parlor", "address": null, "city": "San Clemente", "type": "restaurant"}
+  ]
+}
 DO NOT return: {"name": "Orange County", ...} - this is too broad!
 
-If you see: "@oldferrydonut.us - 6982 Beach Blvd"
-Return: {"name": "Old Ferry Donut", "address": "6982 Beach Blvd", "city": null, "type": "restaurant"}
-
-If you see: "📍 @matecoffeebar"
-Return: {"name": "Mate Coffee Bar", "address": null, "city": null, "type": "cafe"}
-
+**CALIFORNIA ROAD TRIP EXAMPLE:**
 If you see a list like:
 "📍 Point Buchon Trail in Los Osos
 📍 Hearst Castle in San Simeon
 📍 Bixby Bridge
 #california #roadtrip"
-Return only the specific locations, NOT "California":
-[
-  {"name": "Point Buchon Trail", "address": null, "city": "Los Osos", "type": "trail"},
-  {"name": "Hearst Castle", "address": null, "city": "San Simeon", "type": "landmark"},
-  {"name": "Bixby Bridge", "address": null, "city": null, "type": "landmark"}
-]
+Return:
+{
+  "region_context": "California",
+  "locations": [
+    {"name": "Point Buchon Trail", "address": null, "city": "Los Osos", "type": "trail"},
+    {"name": "Hearst Castle", "address": null, "city": "San Simeon", "type": "landmark"},
+    {"name": "Bixby Bridge", "address": null, "city": null, "type": "landmark"}
+  ]
+}
 
 === RULES ===
+- ALWAYS determine region_context FIRST before extracting locations
 - ALWAYS convert @handles to proper business names
 - Extract EVERY distinct location mentioned (from Priority 1 and 2 sections)
 - Include partial information - even just a business name is useful
@@ -1090,8 +1130,8 @@ Return only the specific locations, NOT "California":
 - For YouTube: text OVERLAID on the video thumbnail is MORE important than the video title
 - For YouTube: NEVER return just a county/region name if a business name is visible on the thumbnail
 - IGNORE "More posts from" section and its thumbnails entirely
-- Return ONLY the JSON array, no other text
-- If absolutely no locations found, return: []
+- Return ONLY the JSON object with region_context and locations array, no other text
+- If absolutely no locations found, return: {"region_context": null, "locations": []}
 ''';
   }
 
@@ -1127,16 +1167,34 @@ Return only the specific locations, NOT "California":
       
       // Check for "no locations" responses
       if (jsonText == '[]' || 
+          jsonText == '{"region_context": null, "locations": []}' ||
           jsonText.toLowerCase().contains('no location') ||
           jsonText.toLowerCase().contains('no places')) {
         print('📷 GEMINI VISION: No locations found in image');
         return results;
       }
       
-      // Parse JSON array
+      // Parse JSON - can be either array (legacy) or object with region_context (new format)
       final parsed = jsonDecode(jsonText);
-      if (parsed is List) {
-        for (final item in parsed) {
+      
+      String? regionContext;
+      List<dynamic>? locationsList;
+      
+      if (parsed is Map<String, dynamic>) {
+        // New format: { "region_context": "...", "locations": [...] }
+        regionContext = parsed['region_context'] as String?;
+        locationsList = parsed['locations'] as List?;
+        
+        if (regionContext != null && regionContext.isNotEmpty) {
+          print('🌍 GEMINI VISION: Detected region context: "$regionContext"');
+        }
+      } else if (parsed is List) {
+        // Legacy format: just an array
+        locationsList = parsed;
+      }
+      
+      if (locationsList != null) {
+        for (final item in locationsList) {
           if (item is Map<String, dynamic>) {
             String? name = item['name'] as String?;
             if (name != null && name.isNotEmpty) {
@@ -1148,6 +1206,7 @@ Return only the specific locations, NOT "California":
                 address: item['address'] as String?,
                 city: item['city'] as String?,
                 type: item['type'] as String?,
+                regionContext: regionContext, // Pass region context to each location
               ));
             }
           }
@@ -1367,14 +1426,18 @@ class ExtractedLocationInfo {
   final String? address;
   final String? city;
   final String? type;
+  /// Regional context extracted from the overall content (e.g., "Washington", "Olympic Peninsula, WA")
+  /// This helps disambiguate locations when searching Places API
+  final String? regionContext;
 
   ExtractedLocationInfo({
     required this.name,
     this.address,
     this.city,
     this.type,
+    this.regionContext,
   });
 
   @override
-  String toString() => 'ExtractedLocationInfo(name: $name, address: $address, city: $city, type: $type)';
+  String toString() => 'ExtractedLocationInfo(name: $name, address: $address, city: $city, type: $type, regionContext: $regionContext)';
 }
