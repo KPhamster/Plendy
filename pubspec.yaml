@@ -80,6 +80,7 @@ dependencies:
   email_validator: ^3.0.0
   dnsolve: ^1.0.2
   google_generative_ai: ^0.4.7  # Gemini API for AI-powered location extraction
+  wakelock_plus: ^1.2.8  # Keep screen awake during AI scans to prevent interruption
 
 dev_dependencies:
   flutter_test:

@@ -80,3 +80,5 @@ echo "To check logs:"
 echo "  firebase functions:log --only sendPasswordResetEmail"
 echo ""
 echo "Need help? See SETUP_SENDGRID_NOW.md"
+
+

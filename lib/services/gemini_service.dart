@@ -146,6 +146,287 @@ class GeminiService {
     }
   }
 
+  /// Look up an Instagram handle to find the actual business name
+  /// 
+  /// This uses Google Search grounding to look up what business an Instagram
+  /// handle refers to. Useful for handles that are abbreviations or not obvious.
+  /// 
+  /// For example: "@sofaseattle" → "Social Fabric Cafe & Market"
+  ///              "@rockcreek206" → "RockCreek Seafood & Spirits"
+  /// 
+  /// [handle] - The Instagram handle (with or without @)
+  /// [city] - Optional city for disambiguation
+  /// 
+  /// Returns the actual business name, or null if not found
+  Future<String?> lookupInstagramHandle(
+    String handle, {
+    String? city,
+  }) async {
+    if (!isConfigured) {
+      print('⚠️ GEMINI HANDLE LOOKUP: API key not configured');
+      return null;
+    }
+
+    try {
+      // Clean up the handle
+      String cleanHandle = handle.trim();
+      if (cleanHandle.startsWith('@')) {
+        cleanHandle = cleanHandle.substring(1);
+      }
+      
+      print('🔎 GEMINI HANDLE LOOKUP: Looking up @$cleanHandle${city != null ? " in $city" : ""}...');
+      
+      // Build search query
+      final searchQuery = city != null 
+          ? '@$cleanHandle $city instagram business'
+          : '@$cleanHandle instagram business';
+      
+      final prompt = '''
+What business does the Instagram account "@$cleanHandle" belong to?
+${city != null ? 'Location: $city' : ''}
+
+CRITICAL INSTRUCTIONS:
+1. Search for "@$cleanHandle instagram" to find the actual business
+2. Look for the OFFICIAL business name, not what the handle literally spells
+3. Many handles are abbreviations: "sofa" = "SOcial FAbric", "kwc" = "Know Where Coffee"
+4. The handle "@sofaseattle" is "Social Fabric Cafe & Market" (SOFA = SOcial FAbric), NOT a furniture store!
+
+YOUR RESPONSE MUST BE:
+- ONLY the business name (e.g., "Social Fabric Cafe & Market")
+- NO explanations, NO sentences, NO punctuation except what's in the name
+- If unknown, respond with just: UNKNOWN
+
+EXAMPLES OF CORRECT RESPONSES:
+- Social Fabric Cafe & Market
+- RockCreek Seafood & Spirits
+- Nutty Squirrel Gelato
+- UNKNOWN
+
+WRONG (do NOT do this):
+- "The business is Social Fabric Cafe"
+- "@sofaseattle refers to Couch Seattle"
+- "Based on my search, it's..."
+''';
+
+      // Use Gemini with Google Search grounding to look up the handle
+      final response = await _callGeminiWithSearchGrounding(prompt);
+      
+      if (response == null) {
+        print('⚠️ GEMINI HANDLE LOOKUP: No response from API');
+        return null;
+      }
+      
+      // Extract the business name from the response
+      final businessName = _extractBusinessNameFromResponse(response);
+      
+      if (businessName != null && businessName.isNotEmpty && businessName != 'UNKNOWN') {
+        print('✅ GEMINI HANDLE LOOKUP: @$cleanHandle → "$businessName"');
+        return businessName;
+      } else {
+        print('⚠️ GEMINI HANDLE LOOKUP: Could not determine business for @$cleanHandle');
+        return null;
+      }
+    } catch (e) {
+      print('❌ GEMINI HANDLE LOOKUP ERROR: $e');
+      return null;
+    }
+  }
+
+  /// Look up a specific place by context description
+  /// 
+  /// This uses Google Search grounding to find the actual name of a place
+  /// when we only have a description (e.g., "Toy Story themed restaurant at Hollywood Studios")
+  /// 
+  /// [contextDescription] - The description to search for
+  /// [regionContext] - Optional region for disambiguation
+  /// 
+  /// Returns the actual place name, or null if not found
+  Future<String?> lookupPlaceByContext(
+    String contextDescription, {
+    String? regionContext,
+  }) async {
+    if (!isConfigured) {
+      print('⚠️ GEMINI CONTEXT LOOKUP: API key not configured');
+      return null;
+    }
+
+    try {
+      print('🔎 GEMINI CONTEXT LOOKUP: Searching for "$contextDescription"${regionContext != null ? " in $regionContext" : ""}...');
+      
+      final searchContext = regionContext != null 
+          ? '$contextDescription $regionContext'
+          : contextDescription;
+      
+      final prompt = '''
+What is the EXACT NAME of this place: "$searchContext"?
+
+Search online to find the specific establishment being described.
+
+EXAMPLES:
+- "Toy Story themed restaurant at Hollywood Studios Florida" → "Roundup Rodeo BBQ"
+- "Harry Potter restaurant at Universal Studios" → "Three Broomsticks"
+- "best coffee shop at Seattle airport" → "Starbucks Reserve"
+
+YOUR RESPONSE MUST BE:
+- ONLY the official business/place name (e.g., "Roundup Rodeo BBQ")
+- NO explanations, NO sentences
+- If you cannot find the specific place, respond with: UNKNOWN
+
+WRONG (do NOT do this):
+- "The restaurant is called Roundup Rodeo BBQ"
+- "Based on my search..."
+- "I believe it's..."
+''';
+
+      final response = await _callGeminiWithSearchGrounding(prompt);
+      
+      if (response == null) {
+        print('⚠️ GEMINI CONTEXT LOOKUP: No response from API');
+        return null;
+      }
+      
+      final placeName = _extractBusinessNameFromResponse(response);
+      
+      if (placeName != null && placeName.isNotEmpty && placeName != 'UNKNOWN') {
+        print('✅ GEMINI CONTEXT LOOKUP: "$contextDescription" → "$placeName"');
+        return placeName;
+      } else {
+        print('⚠️ GEMINI CONTEXT LOOKUP: Could not determine place for "$contextDescription"');
+        return null;
+      }
+    } catch (e) {
+      print('❌ GEMINI CONTEXT LOOKUP ERROR: $e');
+      return null;
+    }
+  }
+
+  /// Call Gemini API with Google Search grounding (for web lookups)
+  Future<Map<String, dynamic>?> _callGeminiWithSearchGrounding(String prompt) async {
+    final endpoint = '$_baseUrl/models/$_defaultModel:generateContent';
+    
+    // Build request with Google Search grounding
+    final requestBody = {
+      'contents': [
+        {
+          'parts': [
+            {'text': prompt}
+          ]
+        }
+      ],
+      'tools': [
+        {
+          'googleSearch': {} // Enable Google Search grounding
+        }
+      ],
+      'generationConfig': {
+        'temperature': 0.1, // Low temperature for factual lookups
+        'topP': 0.8,
+        'topK': 40,
+        'maxOutputTokens': 256, // Short response expected
+      }
+    };
+
+    try {
+      final response = await _dio.post(
+        '$endpoint?key=$_apiKey',
+        data: requestBody,
+        options: Options(
+          headers: {'Content-Type': 'application/json'},
+          validateStatus: (status) => status != null && status < 500,
+        ),
+      );
+
+      if (response.statusCode == 200) {
+        return response.data as Map<String, dynamic>;
+      } else {
+        print('❌ GEMINI SEARCH: API returned ${response.statusCode}');
+        print('   Response: ${jsonEncode(response.data)}');
+        return null;
+      }
+    } on DioException catch (e) {
+      print('❌ GEMINI SEARCH DIO ERROR: ${e.message}');
+      return null;
+    }
+  }
+
+  /// Extract business name from Gemini response
+  /// Handles various response formats including sentences and markdown
+  String? _extractBusinessNameFromResponse(Map<String, dynamic> response) {
+    try {
+      final candidates = response['candidates'] as List?;
+      if (candidates == null || candidates.isEmpty) return null;
+      
+      final candidate = candidates.first as Map<String, dynamic>;
+      final content = candidate['content'] as Map<String, dynamic>?;
+      final parts = content?['parts'] as List?;
+      if (parts == null || parts.isEmpty) return null;
+      
+      final text = parts.first['text'] as String?;
+      if (text == null || text.isEmpty) return null;
+      
+      String businessName = text.trim();
+      
+      // Strategy 1: Extract from markdown bold **Business Name**
+      final boldMatch = RegExp(r'\*\*([^*]+)\*\*').firstMatch(businessName);
+      if (boldMatch != null) {
+        businessName = boldMatch.group(1)!.trim();
+        print('📝 HANDLE PARSE: Extracted from markdown bold: "$businessName"');
+      } 
+      // Strategy 2: Extract after "refers to" or "is called" or "is"
+      else if (businessName.toLowerCase().contains('refers to')) {
+        final match = RegExp("refers to\\s+['\"]?([^'\".]+)['\"]?", caseSensitive: false).firstMatch(businessName);
+        if (match != null) {
+          businessName = match.group(1)!.trim();
+          print('📝 HANDLE PARSE: Extracted after "refers to": "$businessName"');
+        }
+      }
+      // Strategy 3: If it's a full sentence, try to extract the business name
+      else if (businessName.contains('.') || businessName.toLowerCase().startsWith('based on') || 
+               businessName.toLowerCase().startsWith('the ')) {
+        // Try to find a capitalized phrase that looks like a business name
+        final businessMatch = RegExp("['\"]([A-Z][^'\"]+)['\"]").firstMatch(businessName);
+        if (businessMatch != null) {
+          businessName = businessMatch.group(1)!.trim();
+          print('📝 HANDLE PARSE: Extracted quoted name: "$businessName"');
+        } else {
+          // Take first line and clean it
+          businessName = businessName.split('\n').first.split('.').first.trim();
+        }
+      }
+      
+      // Clean up the response
+      businessName = businessName.trim();
+      
+      // Remove surrounding quotes if present
+      if ((businessName.startsWith('"') && businessName.endsWith('"')) ||
+          (businessName.startsWith("'") && businessName.endsWith("'"))) {
+        businessName = businessName.substring(1, businessName.length - 1);
+      }
+      
+      // Remove @ handles that might be in the response
+      businessName = businessName.replaceAll(RegExp(r'@\w+'), '').trim();
+      
+      // Remove common prefixes that indicate it's not just a name
+      final badPrefixes = ['based on', 'the business', 'it is', 'this is', 'according to'];
+      for (final prefix in badPrefixes) {
+        if (businessName.toLowerCase().startsWith(prefix)) {
+          businessName = businessName.substring(prefix.length).trim();
+        }
+      }
+      
+      // Skip if it looks invalid
+      final lowerName = businessName.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
+      if (lowerName == 'unknown' || lowerName.isEmpty || businessName.length > 100) {
+        return null;
+      }
+      
+      return businessName;
+    } catch (e) {
+      print('⚠️ GEMINI: Error extracting business name: $e');
+      return null;
+    }
+  }
+
   /// Extract locations from a YouTube video using Vertex AI via Cloud Function
   /// 
   /// This method calls a Firebase Cloud Function that uses Vertex AI to analyze
@@ -673,13 +954,17 @@ CRITICAL: When you find "[Business Name] in [City]", ALWAYS include the city!
 - Names with location pin emoji 📍
 - @handles that are business names (convert them!)
 
-**PRIORITY 3 - HASHTAGS (Use for city context):**
-- Extract city names from hashtags: #anaheim → "Anaheim", #orangecounty → "Orange County"
-- #losangeles, #la → "Los Angeles"
-- #sanfrancisco, #sf → "San Francisco"  
-- #newyork, #nyc → "New York"
-- Use hashtag cities to provide context for businesses found in Priority 1 & 2
+**PRIORITY 3 - HASHTAGS (ONLY for context clues, NOT as locations!):**
+- DO NOT extract place names from hashtags as locations to return
+- Hashtags like #rurukamakura, #cafelife, #foodie should NOT become location results
+- ONLY use hashtags to extract CITY/REGION context for locations found in Priority 1 & 2:
+  - #anaheim → set city to "Anaheim" for businesses found above
+  - #losangeles, #la → set city to "Los Angeles"
+  - #sanfrancisco, #sf → set city to "San Francisco"
+  - #newyork, #nyc → set city to "New York"
+  - #japan, #tokyo, #kamakura → set region_context appropriately
 - If a business is found but no city is explicitly stated, check hashtags for the city
+- NEVER return a hashtag itself as a location name (e.g., don't return "Ruru Kamakura" just because you see #rurukamakura)
 
 === SOCIAL MEDIA HANDLE CONVERSION ===
 Convert @handles to proper business names:
@@ -724,6 +1009,10 @@ Output:
 4. Convert all @handles to readable business names
 5. Return ONLY the JSON array, no other text
 6. If no locations found, return: []
+7. NEVER return a hashtag as a location - hashtags are ONLY for context (city/region)
+8. If you only see hashtags and no actual place names, return: []
+9. NEVER HALLUCINATE or INFER cities - only extract what is EXPLICITLY in the text
+10. DO NOT expand #OrangeCounty into Anaheim, Fullerton, Santa Ana, etc. - only use for context
 ''';
   }
 
@@ -748,11 +1037,1120 @@ Output:
 
   // ============ VISION/IMAGE ANALYSIS METHODS ============
 
+  /// Analyze MULTIPLE images together to extract locations
+  /// 
+  /// This is the preferred method when you have multiple screenshots of the same content
+  /// (e.g., Instagram video screenshot + caption screenshot). It combines context from
+  /// all images to better understand what location is being featured.
+  /// 
+  /// **Three-Step Process:**
+  /// 1. Analyze ALL images together to understand combined context
+  /// 2. Use Google Search grounding to find the actual place name (when name isn't explicit)
+  /// 3. Return verified location information
+  /// 
+  /// [images] - List of image data (bytes and mimeType)
+  /// 
+  /// Returns a list of extracted locations with the combined region context
+  Future<({List<ExtractedLocationInfo> locations, String? regionContext})> extractLocationsFromMultipleImages(
+    List<({Uint8List bytes, String mimeType})> images,
+  ) async {
+    if (!isConfigured) {
+      print('⚠️ GEMINI MULTI-IMAGE: API key not configured');
+      return (locations: <ExtractedLocationInfo>[], regionContext: null);
+    }
+
+    if (images.isEmpty) {
+      print('⚠️ GEMINI MULTI-IMAGE: No images provided');
+      return (locations: <ExtractedLocationInfo>[], regionContext: null);
+    }
+
+    // If only one image, use the standard single-image method
+    if (images.length == 1) {
+      print('📷 GEMINI MULTI-IMAGE: Single image, using standard extraction');
+      final locations = await extractLocationNamesFromImage(
+        images.first.bytes,
+        mimeType: images.first.mimeType,
+      );
+      final regionContext = locations.isNotEmpty ? locations.first.regionContext : null;
+      return (locations: locations, regionContext: regionContext);
+    }
+
+    try {
+      print('📷 GEMINI MULTI-IMAGE: Analyzing ${images.length} images together...');
+      
+      // ========== STEP 1: COMBINED CONTEXT ANALYSIS ==========
+      // Analyze all images together to get a unified understanding
+      final combinedContext = await _analyzeMultipleImagesContext(images);
+      
+      if (combinedContext == null) {
+        print('⚠️ GEMINI MULTI-IMAGE: Could not analyze combined context, falling back to individual analysis');
+        // Fallback: analyze each image separately and merge
+        return _fallbackIndividualAnalysis(images);
+      }
+      
+      print('✅ GEMINI MULTI-IMAGE: Combined context analyzed');
+      print('   📋 Content Type: ${combinedContext.contentType}');
+      print('   🎯 Purpose: ${combinedContext.purpose}');
+      print('   🌍 Geographic Focus: ${combinedContext.geographicFocus ?? "Not specified"}');
+      print('   🔍 Location Types: ${combinedContext.locationTypesToFind.join(", ")}');
+      if (combinedContext.criteria.isNotEmpty) {
+        print('   📌 Criteria: ${combinedContext.criteria.join(", ")}');
+      }
+      if (combinedContext.contextClues.isNotEmpty) {
+        print('   💡 Context Clues: ${combinedContext.contextClues.join("; ")}');
+      }
+      if (combinedContext.contentCreatorHandle != null) {
+        print('   👤 Content Creator: @${combinedContext.contentCreatorHandle}');
+      }
+      if (combinedContext.businessHandles.isNotEmpty) {
+        print('   🏪 Business Handles Found: ${combinedContext.businessHandles.map((h) => "@$h").join(", ")}');
+      }
+      if (combinedContext.extractedText != null && combinedContext.extractedText!.isNotEmpty) {
+        print('   ═══════════════════════════════════════════════════════════');
+        print('   📝 FULL EXTRACTED TEXT FROM ALL IMAGES:');
+        print('   ───────────────────────────────────────────────────────────');
+        // Print the full text, line by line for readability
+        final lines = combinedContext.extractedText!.split('\n');
+        for (final line in lines) {
+          if (line.trim().isNotEmpty) {
+            print('      $line');
+          }
+        }
+        print('   ═══════════════════════════════════════════════════════════');
+      }
+      
+      // ========== CHECK FOR MULTI-LOCATION CONTENT ==========
+      // Detect if this content contains multiple locations (itineraries, guides, lists)
+      // If so, skip Step 2 (single location search) and go directly to Step 3
+      final isMultiLocation = _isMultiLocationContent(combinedContext);
+      
+      if (isMultiLocation) {
+        print('📋 GEMINI MULTI-IMAGE: Detected MULTI-LOCATION content, skipping single search (Step 2)');
+        print('   → Going directly to multi-location extraction (Step 3)');
+      } else {
+        // ========== STEP 2: GOOGLE SEARCH FOR ACTUAL NAME ==========
+        // If the extracted text has context clues but no explicit place name,
+        // use Google Search grounding to find the actual location
+        final searchResult = await _searchForActualLocationName(combinedContext);
+        
+        if (searchResult != null) {
+          print('✅ GEMINI MULTI-IMAGE: Google Search found: "${searchResult.name}"');
+          return (
+            locations: [searchResult],
+            regionContext: combinedContext.geographicFocus,
+          );
+        }
+      }
+      
+      // ========== STEP 3: EXTRACT FROM COMBINED CONTEXT ==========
+      // Extract all locations from the combined context (handles both single and multi-location content)
+      final locations = await _extractLocationsFromCombinedContext(images, combinedContext);
+      
+      print('✅ GEMINI MULTI-IMAGE: Extraction complete - found ${locations.length} location(s)');
+      for (final loc in locations) {
+        print('   📍 ${loc.name} ${loc.city != null ? "(${loc.city})" : ""}');
+      }
+      
+      return (locations: locations, regionContext: combinedContext.geographicFocus);
+    } catch (e, stackTrace) {
+      print('❌ GEMINI MULTI-IMAGE ERROR: $e');
+      print('Stack trace: $stackTrace');
+      return (locations: <ExtractedLocationInfo>[], regionContext: null);
+    }
+  }
+
+  /// Analyze multiple images together to get combined context
+  Future<ContentContext?> _analyzeMultipleImagesContext(
+    List<({Uint8List bytes, String mimeType})> images,
+  ) async {
+    try {
+      print('🔍 GEMINI MULTI-IMAGE STEP 1: Analyzing combined context from ${images.length} images...');
+      
+      final response = await _callGeminiVisionMultiImage(
+        _buildMultiImageContextAnalysisPrompt(images.length),
+        images,
+      );
+      
+      if (response == null) {
+        print('⚠️ GEMINI MULTI-IMAGE STEP 1: No response from API');
+        return null;
+      }
+      
+      return _parseContextResponse(response);
+    } catch (e, stackTrace) {
+      print('❌ GEMINI MULTI-IMAGE STEP 1 ERROR: $e');
+      print('Stack trace: $stackTrace');
+      return null;
+    }
+  }
+
+  /// Detect if content contains multiple locations (itineraries, guides, lists, etc.)
+  /// Returns true if we should skip single-location search and extract all locations
+  bool _isMultiLocationContent(ContentContext context) {
+    final purposeLower = context.purpose.toLowerCase();
+    final extractedTextLower = context.extractedText?.toLowerCase() ?? '';
+    
+    // Check 1: Purpose indicates multiple locations
+    final multiLocationPurposeKeywords = [
+      'itinerary',
+      'guide',
+      'list',
+      'top ',
+      'best ',
+      'roundup',
+      'recommendations',
+      'places to',
+      'things to do',
+      'must visit',
+      'must-visit',
+      'bucket list',
+      'travel guide',
+      'food guide',
+      'restaurant guide',
+      'where to eat',
+      'where to go',
+      'spots in',
+      'spots to',
+    ];
+    
+    for (final keyword in multiLocationPurposeKeywords) {
+      if (purposeLower.contains(keyword)) {
+        print('   🔍 Multi-location detected: purpose contains "$keyword"');
+        return true;
+      }
+    }
+    
+    // Check 2: Multiple different location types (3+ suggests a varied list)
+    if (context.locationTypesToFind.length >= 3) {
+      print('   🔍 Multi-location detected: ${context.locationTypesToFind.length} different location types');
+      return true;
+    }
+    
+    // Check 3: Extracted text contains day-by-day or numbered patterns
+    final dayPatterns = [
+      RegExp(r'day\s*[1-9]', caseSensitive: false),
+      RegExp(r'day\s*one|day\s*two|day\s*three', caseSensitive: false),
+      RegExp(r'stop\s*[1-9]', caseSensitive: false),
+      RegExp(r'#[1-9]\s*[:-]', caseSensitive: false),
+      RegExp(r'\b[1-9]\.\s+[A-Z]', caseSensitive: false), // "1. Restaurant Name"
+    ];
+    
+    int dayMatches = 0;
+    for (final pattern in dayPatterns) {
+      if (pattern.hasMatch(extractedTextLower)) {
+        dayMatches++;
+      }
+    }
+    
+    if (dayMatches >= 1) {
+      print('   🔍 Multi-location detected: found day/numbered patterns in text');
+      return true;
+    }
+    
+    // Check 4: Multiple meal mentions (breakfast, lunch, dinner pattern)
+    final mealKeywords = ['breakfast', 'lunch', 'dinner', 'brunch'];
+    int mealCount = 0;
+    for (final meal in mealKeywords) {
+      if (extractedTextLower.contains(meal)) {
+        mealCount++;
+      }
+    }
+    
+    if (mealCount >= 2) {
+      print('   🔍 Multi-location detected: multiple meal mentions ($mealCount)');
+      return true;
+    }
+    
+    // Check 5: Multiple "visit" or "check out" phrases
+    final visitPattern = RegExp(r'visit\s+(?:the\s+)?[A-Z]|check\s+out\s+(?:the\s+)?[A-Z]', caseSensitive: false);
+    final visitMatches = visitPattern.allMatches(context.extractedText ?? '').length;
+    
+    if (visitMatches >= 2) {
+      print('   🔍 Multi-location detected: multiple "visit/check out" mentions ($visitMatches)');
+      return true;
+    }
+    
+    return false;
+  }
+
+  /// Build prompt for analyzing multiple images together
+  String _buildMultiImageContextAnalysisPrompt(int imageCount) {
+    return '''
+You are an expert content analyst. You are given $imageCount screenshots/images that are ALL from the SAME piece of content (e.g., different frames of the same Instagram post or video).
+
+=== YOUR TASK ===
+Analyze ALL $imageCount images TOGETHER as a single piece of content. Combine information from all images to understand:
+
+1. What TYPE of content is this? (social media post, travel blog, list article, etc.)
+2. What is the PURPOSE/THEME? (e.g., "featuring a unique bookstore", "recommending restaurants")
+3. What GEOGRAPHIC REGION is this focused on? (city, state, country, area)
+4. What TYPES of locations are being featured? (restaurants, cafes, bookstores, libraries, etc.)
+5. Any CRITERIA or filters mentioned? (hidden gem, best of, unique, etc.)
+6. What should we EXCLUDE? (unrelated mentions, UI text, etc.)
+7. Extract ALL visible TEXT from ALL images that might help identify the location
+
+=== CRITICAL: IDENTIFY BUSINESS HANDLES ===
+IMPORTANT: Look for Instagram/social media handles that belong to the LOCATION/BUSINESS being featured (NOT the content creator).
+
+How to distinguish:
+- **Content Creator Handle**: The account posting the content (appears at top of post, after "Post by", etc.)
+- **Business/Location Handle**: The business being FEATURED (often appears in captions, tagged, mentioned with "check out @...", "dm @... to order", etc.)
+
+Examples:
+- "@ariannalakess" posting about "@dolcelunacafe" → dolcelunacafe is the BUSINESS handle
+- "@foodblogger" posting about "@joes_pizza_nyc" → joes_pizza_nyc is the BUSINESS handle
+- "dm @matchabuckets to order" → matchabuckets is the BUSINESS handle
+- "check out her cafe @sweetcafe" → sweetcafe is the BUSINESS handle
+
+=== CRITICAL: COMBINE INFORMATION ===
+- One image might show a sign or art piece name (like "POET TREES")
+- Another image might describe the location ("library in the redwoods of Big Sur")
+- COMBINE these clues: "POET TREES" + "library in Big Sur" = context for searching
+- The actual location name might NOT be explicitly visible - provide context clues to search for it
+
+=== OUTPUT FORMAT ===
+Return a JSON object with this structure:
+{
+  "content_type": "Type of content",
+  "purpose": "What is being featured or recommended",
+  "geographic_focus": "The main region/city/area or null",
+  "location_types_to_find": ["bookstore", "library", "attraction"],
+  "criteria": ["unique", "hidden gem"],
+  "context_clues": ["shows 'POET TREES' sign", "mentions redwoods", "describes as library"],
+  "exclusions": ["UI elements", "navigation buttons"],
+  "extracted_text": "ALL visible text from ALL images combined. Include signs, captions, overlay text, etc.",
+  "search_query_suggestion": "A suggested Google search query to find the actual location name",
+  "content_creator_handle": "The handle of who posted this content (e.g., 'ariannalakess') or null",
+  "business_handles": ["List of handles that likely belong to the BUSINESS/LOCATION being featured, NOT the content creator (e.g., ['dolcelunacafe', 'matchabuckets'])"]
+}
+
+=== EXAMPLES ===
+
+**Example 1: Food blogger featuring a cafe**
+If you see:
+- Post by @ariannalakess
+- Caption: "MATCHA BUCKETS from a home based cafe... dm to order"
+- @dolcelunacafe tagged or mentioned
+Return:
+{
+  "content_creator_handle": "ariannalakess",
+  "business_handles": ["dolcelunacafe"],
+  ...
+}
+
+**Example 2: Travel account featuring a restaurant**
+If you see:
+- Post by @foodie_travels
+- Caption: "Best pizza in NYC! @joes_pizza_nyc"
+Return:
+{
+  "content_creator_handle": "foodie_travels",
+  "business_handles": ["joes_pizza_nyc"],
+  ...
+}
+
+=== IMPORTANT ===
+- Treat all images as ONE piece of content, not separate items
+- Combine clues from different images to form a complete picture
+- The "search_query_suggestion" is CRITICAL - it should combine visual clues + text clues + geographic context
+- ALWAYS look for business handles - they're the most reliable way to find the actual location
+- Return ONLY the JSON object, no other text
+''';
+  }
+
+  /// Use Google Search grounding to find the actual location name based on context
+  Future<ExtractedLocationInfo?> _searchForActualLocationName(ContentContext context) async {
+    // ========== PRIORITY 1: SEARCH FOR BUSINESS HANDLES ==========
+    // Business handles are the most reliable way to find the actual location
+    // e.g., @dolcelunacafe → "Dolce Luna Cafe"
+    if (context.businessHandles.isNotEmpty) {
+      print('🔎 GEMINI MULTI-IMAGE STEP 2: Found ${context.businessHandles.length} business handle(s) to search');
+      
+      for (final handle in context.businessHandles) {
+        print('🔎 GEMINI MULTI-IMAGE STEP 2: Searching for business handle: @$handle');
+        
+        final handleResult = await _searchForBusinessByHandle(handle, context);
+        
+        if (handleResult != null) {
+          print('✅ GEMINI MULTI-IMAGE STEP 2: Found business from handle @$handle: "${handleResult.name}"');
+          return handleResult;
+        }
+      }
+      
+      print('⚠️ GEMINI MULTI-IMAGE STEP 2: Could not find business from handles, trying other methods...');
+    }
+    
+    // ========== PRIORITY 2: BUILD SEARCH QUERY FROM CONTEXT ==========
+    // Build a search query from the context
+    String? searchQuery = context.extractedText;
+    
+    // Try to extract a search query suggestion if present
+    // The context analysis might have suggested a search query
+    if (context.contextClues.isNotEmpty) {
+      // Look for a suggested search query in context clues
+      for (final clue in context.contextClues) {
+        if (clue.toLowerCase().contains('search') || clue.toLowerCase().contains('query')) {
+          searchQuery = clue;
+          break;
+        }
+      }
+    }
+    
+    // Build search query from available information
+    final queryParts = <String>[];
+    
+    // Add location types
+    if (context.locationTypesToFind.isNotEmpty) {
+      queryParts.add(context.locationTypesToFind.first);
+    }
+    
+    // Add geographic focus
+    if (context.geographicFocus != null) {
+      queryParts.add(context.geographicFocus!);
+    }
+    
+    // Add key context clues (but not meta-descriptions)
+    for (final clue in context.contextClues) {
+      if (!clue.toLowerCase().contains('shows') && 
+          !clue.toLowerCase().contains('mentions') &&
+          !clue.toLowerCase().contains('describes') &&
+          clue.length < 50) {
+        queryParts.add(clue);
+      }
+    }
+    
+    // Extract key phrases from extracted text
+    if (context.extractedText != null && context.extractedText!.isNotEmpty) {
+      // Look for potential place name patterns (capitalized words, quoted text)
+      final text = context.extractedText!;
+      
+      // Find capitalized phrases that might be place names
+      final capitalizedPhrases = RegExp(r'\b[A-Z][A-Z\s]+\b').allMatches(text);
+      for (final match in capitalizedPhrases) {
+        final phrase = match.group(0)?.trim();
+        if (phrase != null && 
+            phrase.length > 3 && 
+            phrase.length < 30 &&
+            !_isCommonUIText(phrase)) {
+          queryParts.add(phrase);
+        }
+      }
+    }
+    
+    if (queryParts.isEmpty) {
+      print('⚠️ GEMINI MULTI-IMAGE STEP 2: No search query could be built');
+      return null;
+    }
+    
+    // Deduplicate and join
+    final uniqueParts = queryParts.toSet().toList();
+    final finalQuery = uniqueParts.join(' ');
+    
+    print('🔎 GEMINI MULTI-IMAGE STEP 2: Searching for actual location with query: "$finalQuery"');
+    
+    // Use Google Search grounding to find the actual place name
+    final searchResult = await _searchForPlaceNameWithGrounding(finalQuery, context);
+    
+    return searchResult;
+  }
+  
+  /// Search for a business by its Instagram/social media handle
+  /// Uses Google Search grounding to find the actual business name
+  Future<ExtractedLocationInfo?> _searchForBusinessByHandle(
+    String handle,
+    ContentContext context,
+  ) async {
+    try {
+      final prompt = '''
+I need to find the ACTUAL BUSINESS NAME for the Instagram account "@$handle".
+
+${context.geographicFocus != null ? 'Geographic area: ${context.geographicFocus}' : ''}
+${context.locationTypesToFind.isNotEmpty ? 'Business type: ${context.locationTypesToFind.join(", ")}' : ''}
+
+=== YOUR TASK ===
+Search online to find:
+1. What business does @$handle belong to?
+2. What is the OFFICIAL business name?
+3. Where is it located?
+
+=== SEARCH STRATEGY ===
+1. Search for "@$handle instagram"
+2. Search for "@$handle ${context.geographicFocus ?? ''}"
+3. Look for the business website, Google listing, or Yelp page
+
+=== OUTPUT FORMAT ===
+Return a JSON object:
+{
+  "found": true or false,
+  "name": "The official business name (e.g., 'Dolce Luna Cafe', 'Joe's Pizza')",
+  "city": "City name",
+  "region": "State/Region",
+  "type": "cafe/restaurant/bakery/etc",
+  "confidence": "high/medium/low",
+  "explanation": "How you identified this business"
+}
+
+If you cannot find the business with confidence, return:
+{"found": false, "name": null, "explanation": "Why it couldn't be found"}
+
+=== RULES ===
+- Search for the ACTUAL business name from @$handle
+- Do NOT just convert the handle to a name (e.g., don't just return "Dolce Luna Cafe" from @dolcelunacafe without verifying)
+- Use Google Search to verify the business exists
+- Return ONLY the JSON object, no other text
+''';
+
+      final response = await _callGeminiWithSearchGrounding(prompt);
+      
+      if (response == null) {
+        print('⚠️ GEMINI HANDLE SEARCH: No response from search grounding for @$handle');
+        return null;
+      }
+      
+      // Parse the response
+      final result = _parseSearchGroundingResponse(response, context);
+      
+      if (result != null) {
+        print('✅ GEMINI HANDLE SEARCH: Found business for @$handle: "${result.name}"');
+      }
+      
+      return result;
+    } catch (e) {
+      print('❌ GEMINI HANDLE SEARCH ERROR for @$handle: $e');
+      return null;
+    }
+  }
+
+  /// Check if text is common UI text that should be ignored
+  bool _isCommonUIText(String text) {
+    final commonUI = [
+      'SAVE', 'CANCEL', 'FOLLOW', 'SHARE', 'POST', 'COMMENT', 'LIKE',
+      'PUBLIC', 'PRIVATE', 'UPLOAD', 'SCREENSHOT', 'PREVIEW', 'SCAN',
+      'CONTENT', 'URL', 'HTTP', 'HTTPS', 'WWW', 'COM', 'INSTAGRAM',
+    ];
+    return commonUI.contains(text.toUpperCase().trim());
+  }
+
+  /// Use Gemini with Google Search grounding to find the actual place name
+  Future<ExtractedLocationInfo?> _searchForPlaceNameWithGrounding(
+    String searchQuery,
+    ContentContext context,
+  ) async {
+    try {
+      final prompt = '''
+I need to find the ACTUAL NAME of a specific place based on these clues:
+
+SEARCH QUERY: $searchQuery
+
+CONTEXT:
+- Content Type: ${context.contentType}
+- Purpose: ${context.purpose}
+- Geographic Focus: ${context.geographicFocus ?? "Unknown"}
+- Looking for: ${context.locationTypesToFind.join(", ")}
+- Context Clues: ${context.contextClues.join("; ")}
+
+EXTRACTED TEXT FROM CONTENT:
+${context.extractedText ?? "None"}
+
+=== YOUR TASK ===
+Search online to find the ACTUAL, OFFICIAL NAME of the place being described/featured.
+
+For example:
+- "POET TREES" + "library in Big Sur redwoods" → "Henry Miller Memorial Library" (POET TREES is art there)
+- "coolest bookstore California Big Sur" → "Henry Miller Memorial Library"
+
+=== OUTPUT FORMAT ===
+Return a JSON object:
+{
+  "found": true or false,
+  "name": "The official place name (e.g., 'Henry Miller Memorial Library')",
+  "city": "City name",
+  "region": "State/Region",
+  "type": "library/bookstore/restaurant/etc",
+  "confidence": "high/medium/low",
+  "explanation": "Brief explanation of how you identified this place"
+}
+
+If you cannot find a specific place with confidence, return:
+{"found": false, "name": null, "explanation": "Why it couldn't be found"}
+
+=== RULES ===
+- Search for the ACTUAL place name, not just repeat the search query
+- Use Google Search to verify the place exists
+- Return ONLY the JSON object, no other text
+''';
+
+      final response = await _callGeminiWithSearchGrounding(prompt);
+      
+      if (response == null) {
+        print('⚠️ GEMINI SEARCH: No response from search grounding');
+        return null;
+      }
+      
+      // Parse the response
+      final result = _parseSearchGroundingResponse(response, context);
+      
+      if (result != null) {
+        print('✅ GEMINI SEARCH: Found place via Google Search: "${result.name}"');
+      }
+      
+      return result;
+    } catch (e) {
+      print('❌ GEMINI SEARCH ERROR: $e');
+      return null;
+    }
+  }
+
+  /// Sanitize JSON text from Gemini responses to handle common issues
+  /// 
+  /// Gemini sometimes returns JSON with unescaped quotes in string values:
+  /// e.g., "explanation": "\"Hole-in-the-Wall" is a sea-carved arch..."
+  /// The inner quote after "\"Hole-in-the-Wall should be escaped but isn't.
+  /// 
+  /// This method attempts to fix such issues to allow successful parsing.
+  String _sanitizeGeminiJson(String jsonText) {
+    // Try to parse as-is first - if it works, no sanitization needed
+    try {
+      jsonDecode(jsonText);
+      return jsonText; // Valid JSON, return as-is
+    } catch (_) {
+      // JSON is invalid, try to fix it
+    }
+    
+    // Common pattern: unescaped quotes in string values
+    // Match: "key": "value with "quoted text" inside"
+    // This regex finds string values and tries to escape internal quotes
+    
+    // Approach: Find quoted strings after colons and escape any unescaped internal quotes
+    // We'll process character by character to handle nested quotes properly
+    
+    final result = StringBuffer();
+    bool inString = false;
+    int i = 0;
+    
+    while (i < jsonText.length) {
+      final char = jsonText[i];
+      final prevChar = i > 0 ? jsonText[i - 1] : '';
+      
+      if (char == '"' && prevChar != '\\') {
+        if (!inString) {
+          // Starting a string
+          inString = true;
+          result.write(char);
+        } else {
+          // Ending a string (or embedded quote)
+          // Check if this looks like the end of a string value
+          // by looking at what comes next (should be , } ] or whitespace followed by one of those)
+          int j = i + 1;
+          while (j < jsonText.length && (jsonText[j] == ' ' || jsonText[j] == '\n' || jsonText[j] == '\t' || jsonText[j] == '\r')) {
+            j++;
+          }
+          final nextSignificant = j < jsonText.length ? jsonText[j] : '';
+          final looksLikeEnd = nextSignificant == ',' || nextSignificant == '}' || nextSignificant == ']' || nextSignificant == ':' || j >= jsonText.length;
+          
+          if (looksLikeEnd) {
+            // This is likely the actual end of the string
+            inString = false;
+            result.write(char);
+          } else {
+            // This is likely an embedded quote that should be escaped
+            result.write('\\');
+            result.write(char);
+          }
+        }
+      } else {
+        result.write(char);
+      }
+      i++;
+    }
+    
+    // Try to parse the result
+    final sanitized = result.toString();
+    try {
+      jsonDecode(sanitized);
+      return sanitized;
+    } catch (_) {
+      // Sanitization didn't help, return original (will fail on parse)
+      return jsonText;
+    }
+  }
+
+  /// Parse the search grounding response
+  ExtractedLocationInfo? _parseSearchGroundingResponse(
+    Map<String, dynamic> response,
+    ContentContext context,
+  ) {
+    // Extract text early so it's available for fallback in catch block
+    String? text;
+    try {
+      final candidates = response['candidates'] as List?;
+      if (candidates == null || candidates.isEmpty) return null;
+
+      final candidate = candidates.first as Map<String, dynamic>;
+      final content = candidate['content'] as Map<String, dynamic>?;
+      final parts = content?['parts'] as List?;
+      if (parts == null || parts.isEmpty) return null;
+      
+      text = parts.first['text'] as String?;
+      if (text == null || text.isEmpty) return null;
+
+      // Parse JSON
+      String jsonText = text.trim();
+
+      // Handle markdown code blocks
+      if (jsonText.startsWith('```json')) {
+        jsonText = jsonText.substring(7);
+      } else if (jsonText.startsWith('```')) {
+        jsonText = jsonText.substring(3);
+      }
+      if (jsonText.endsWith('```')) {
+        jsonText = jsonText.substring(0, jsonText.length - 3);
+      }
+      jsonText = jsonText.trim();
+      
+      // Sanitize JSON to handle common Gemini issues like unescaped quotes
+      // e.g., "explanation": "\"Hole-in-the-Wall" is..." → the inner quote needs escaping
+      jsonText = _sanitizeGeminiJson(jsonText);
+
+      Map<String, dynamic> parsed;
+      try {
+        parsed = jsonDecode(jsonText) as Map<String, dynamic>;
+      } catch (jsonError) {
+        // Log the problematic text for debugging
+        final preview = jsonText.length > 200 ? '${jsonText.substring(0, 200)}...' : jsonText;
+        print('⚠️ GEMINI SEARCH: JSON parse error after sanitization');
+        print('   Raw text preview: $preview');
+        rethrow; // Let outer catch handle it with fallback
+      }
+
+      final found = parsed['found'] as bool? ?? false;
+      if (!found) {
+        print('⚠️ GEMINI SEARCH: Search did not find a confident match');
+        return null;
+      }
+
+      final name = parsed['name'] as String?;
+      if (name == null || name.isEmpty) return null;
+      
+      final confidence = parsed['confidence'] as String? ?? 'medium';
+      final explanation = parsed['explanation'] as String?;
+      
+      print('   🔍 Search confidence: $confidence');
+      if (explanation != null) {
+        print('   📝 Explanation: $explanation');
+      }
+      
+      // Only return high/medium confidence results
+      if (confidence == 'low') {
+        print('⚠️ GEMINI SEARCH: Low confidence result, skipping');
+        return null;
+      }
+      
+      return ExtractedLocationInfo(
+        name: name,
+        city: parsed['city'] as String?,
+        type: parsed['type'] as String?,
+        regionContext: context.geographicFocus,
+      );
+    } catch (e) {
+      print('⚠️ GEMINI SEARCH: Error parsing response: $e');
+      
+      // Try fallback regex extraction when JSON parsing fails
+      final fallback = _fallbackExtractFromText(text, context);
+      if (fallback != null) {
+        print('✅ GEMINI SEARCH: Recovered using regex fallback');
+        return fallback;
+      }
+      
+      return null;
+    }
+  }
+  
+  /// Fallback extraction using regex when JSON parsing fails
+  /// This handles cases where Gemini returns malformed JSON due to unescaped quotes
+  ExtractedLocationInfo? _fallbackExtractFromText(String? text, ContentContext context) {
+    if (text == null || text.isEmpty) return null;
+    
+    try {
+      // Check if found is true (look for "found": true pattern)
+      final foundMatch = RegExp(r'"found"\s*:\s*(true|false)', caseSensitive: false).firstMatch(text);
+      if (foundMatch == null || foundMatch.group(1)?.toLowerCase() != 'true') {
+        return null; // Not found or can't determine
+      }
+      
+      // Extract name using regex - look for "name": "..." pattern
+      final nameMatch = RegExp(r'"name"\s*:\s*"([^"]+)"').firstMatch(text);
+      if (nameMatch == null) return null;
+      
+      final name = nameMatch.group(1);
+      if (name == null || name.isEmpty) return null;
+      
+      // Extract city if present
+      final cityMatch = RegExp(r'"city"\s*:\s*"([^"]+)"').firstMatch(text);
+      final city = cityMatch?.group(1);
+      
+      // Extract type if present
+      final typeMatch = RegExp(r'"type"\s*:\s*"([^"]+)"').firstMatch(text);
+      final type = typeMatch?.group(1);
+      
+      // Extract confidence if present
+      final confidenceMatch = RegExp(r'"confidence"\s*:\s*"([^"]+)"').firstMatch(text);
+      final confidence = confidenceMatch?.group(1) ?? 'medium';
+      
+      // Skip low confidence results
+      if (confidence.toLowerCase() == 'low') {
+        print('⚠️ GEMINI SEARCH (fallback): Low confidence result, skipping');
+        return null;
+      }
+      
+      print('   🔍 Search confidence (fallback): $confidence');
+      
+      return ExtractedLocationInfo(
+        name: name,
+        city: city,
+        type: type,
+        regionContext: context.geographicFocus,
+      );
+    } catch (e) {
+      print('⚠️ GEMINI SEARCH: Fallback extraction also failed: $e');
+      return null;
+    }
+  }
+
+  /// Extract locations from combined context using Google Search grounding for each location
+  /// This applies the same verification process as Step 2, but for multiple locations
+  Future<List<ExtractedLocationInfo>> _extractLocationsFromCombinedContext(
+    List<({Uint8List bytes, String mimeType})> images,
+    ContentContext context,
+  ) async {
+    try {
+      print('🔍 GEMINI MULTI-IMAGE STEP 3: Extracting ALL locations from combined context...');
+      
+      // Step 3a: First, extract all raw location names mentioned in the text
+      final rawLocations = await _extractRawLocationNames(context);
+      
+      if (rawLocations.isEmpty) {
+        print('⚠️ GEMINI MULTI-IMAGE STEP 3: No location names found in text');
+        return [];
+      }
+      
+      print('📋 GEMINI MULTI-IMAGE STEP 3: Found ${rawLocations.length} location mention(s) to verify:');
+      for (final loc in rawLocations) {
+        print('   • $loc');
+      }
+      
+      // Step 3b: Verify each location using Google Search grounding (like Step 2)
+      final verifiedLocations = <ExtractedLocationInfo>[];
+      
+      for (int i = 0; i < rawLocations.length; i++) {
+        final rawName = rawLocations[i];
+        print('🔎 GEMINI STEP 3 [${i + 1}/${rawLocations.length}]: Verifying "$rawName"...');
+        
+        final verified = await _verifyLocationWithGrounding(rawName, context);
+        
+        if (verified != null) {
+          // Check for duplicates before adding
+          final isDuplicate = verifiedLocations.any((existing) =>
+              existing.name.toLowerCase() == verified.name.toLowerCase());
+          
+          if (!isDuplicate) {
+            verifiedLocations.add(verified);
+            print('   ✅ Verified: "${verified.name}"${verified.city != null ? " (${verified.city})" : ""}');
+          } else {
+            print('   ⏭️ Skipped duplicate: "${verified.name}"');
+          }
+        } else {
+          print('   ⚠️ Could not verify: "$rawName"');
+        }
+      }
+      
+      print('✅ GEMINI MULTI-IMAGE STEP 3: Verified ${verifiedLocations.length}/${rawLocations.length} locations');
+      return verifiedLocations;
+    } catch (e) {
+      print('❌ GEMINI MULTI-IMAGE STEP 3 ERROR: $e');
+      return [];
+    }
+  }
+  
+  /// Extract raw location names from the extracted text (without verification)
+  Future<List<String>> _extractRawLocationNames(ContentContext context) async {
+    try {
+      final prompt = '''
+You are extracting location/place names from text content.
+
+=== EXTRACTED TEXT ===
+${context.extractedText ?? "No text available"}
+
+=== CONTEXT ===
+- Geographic Focus: ${context.geographicFocus ?? "Not specified"}
+- Content Type: ${context.contentType}
+- Purpose: ${context.purpose}
+- Looking for: ${context.locationTypesToFind.join(", ")}
+
+=== YOUR TASK ===
+Extract ALL specific place names mentioned that are:
+- Restaurants, cafes, bars, hotels
+- Museums, parks, gardens, attractions
+- Landmarks, viewpoints, nature centers
+- Any specific business or place that someone could visit
+
+=== WHAT TO IGNORE ===
+- Generic region names (like "Baton Rouge" or "Louisiana" - only extract SPECIFIC places)
+- Hashtags (they are context, not places)
+- Social media handles (unless they ARE the business name)
+- UI text (Save, Upload, Share, etc.)
+- The airport (unless it's a destination itself)
+
+=== OUTPUT FORMAT ===
+Return a JSON object with an array of location names:
+{
+  "locations": [
+    "Restaurant Name",
+    "Museum Name",
+    "Park Name"
+  ]
+}
+
+=== EXAMPLE ===
+If the text says:
+"Day 1: Visit the Capitol Park Museum, lunch at Cocha Restaurant, drinks at Hayride Scandal"
+
+Return:
+{
+  "locations": ["Capitol Park Museum", "Cocha Restaurant", "Hayride Scandal"]
+}
+
+=== RULES ===
+- Extract the name EXACTLY as written (we'll verify it later)
+- Include ALL places mentioned, not just the first one
+- Strip action words ("Visit the Grand Canyon" → "Grand Canyon")
+- Strip meal labels ("Lunch at Cocha" → "Cocha Restaurant" or just "Cocha")
+- Return ONLY the JSON object, no other text
+''';
+
+      final response = await _callGeminiWithSearchGrounding(prompt);
+      
+      if (response == null) {
+        print('⚠️ RAW EXTRACTION: No response from API');
+        return [];
+      }
+      
+      // Parse the response
+      final candidates = response['candidates'] as List?;
+      if (candidates == null || candidates.isEmpty) return [];
+      
+      final candidate = candidates.first as Map<String, dynamic>;
+      final content = candidate['content'] as Map<String, dynamic>?;
+      final parts = content?['parts'] as List?;
+      if (parts == null || parts.isEmpty) return [];
+      
+      final text = parts.first['text'] as String?;
+      if (text == null || text.isEmpty) return [];
+      
+      // Parse JSON
+      String jsonText = text.trim();
+      if (jsonText.startsWith('```json')) {
+        jsonText = jsonText.substring(7);
+      } else if (jsonText.startsWith('```')) {
+        jsonText = jsonText.substring(3);
+      }
+      if (jsonText.endsWith('```')) {
+        jsonText = jsonText.substring(0, jsonText.length - 3);
+      }
+      jsonText = jsonText.trim();
+      
+      final parsed = json.decode(jsonText) as Map<String, dynamic>;
+      final locations = parsed['locations'] as List?;
+      
+      if (locations == null) return [];
+      
+      return locations.map((e) => e.toString().trim()).where((e) => e.isNotEmpty).toList();
+    } catch (e) {
+      print('❌ RAW EXTRACTION ERROR: $e');
+      return [];
+    }
+  }
+  
+  /// Verify a single location name using Google Search grounding
+  Future<ExtractedLocationInfo?> _verifyLocationWithGrounding(
+    String locationName,
+    ContentContext context,
+  ) async {
+    try {
+      final prompt = '''
+I need to verify and find the OFFICIAL name for this place:
+
+PLACE TO VERIFY: "$locationName"
+
+CONTEXT:
+- Geographic Area: ${context.geographicFocus ?? "Unknown"}
+- Type of place: ${context.locationTypesToFind.join(", ")}
+
+=== YOUR TASK ===
+Search online to verify this place exists and find its official name.
+
+For example:
+- "Cocha Restaurant" in Baton Rouge → verify it exists, get official name "Cocha"
+- "Capitol Park Museum" → verify and confirm "Capitol Park Museum" or "Louisiana State Capitol Park Museum"
+
+=== OUTPUT FORMAT ===
+Return a JSON object:
+{
+  "found": true or false,
+  "name": "The official place name",
+  "city": "City name",
+  "region": "State/Region", 
+  "type": "restaurant/museum/park/etc",
+  "confidence": "high/medium/low",
+  "explanation": "Brief note on verification"
+}
+
+If you cannot verify the place exists, return:
+{"found": false, "name": null, "explanation": "Why it couldn't be verified"}
+
+=== RULES ===
+- Use Google Search to verify the place actually exists
+- Return the OFFICIAL business/place name
+- Return ONLY the JSON object, no other text
+''';
+
+      final response = await _callGeminiWithSearchGrounding(prompt);
+      
+      if (response == null) return null;
+      
+      return _parseSearchGroundingResponse(response, context);
+    } catch (e) {
+      print('❌ VERIFY LOCATION ERROR for "$locationName": $e');
+      return null;
+    }
+  }
+
+  /// Fallback: analyze images individually and merge results
+  Future<({List<ExtractedLocationInfo> locations, String? regionContext})> _fallbackIndividualAnalysis(
+    List<({Uint8List bytes, String mimeType})> images,
+  ) async {
+    final allLocations = <ExtractedLocationInfo>[];
+    String? regionContext;
+    
+    for (int i = 0; i < images.length; i++) {
+      print('📷 GEMINI MULTI-IMAGE FALLBACK: Analyzing image ${i + 1}/${images.length}...');
+      final locations = await extractLocationNamesFromImage(
+        images[i].bytes,
+        mimeType: images[i].mimeType,
+      );
+      
+      for (final loc in locations) {
+        // Update region context if found
+        if (loc.regionContext != null && regionContext == null) {
+          regionContext = loc.regionContext;
+        }
+        
+        // Deduplicate
+        final isDuplicate = allLocations.any((existing) =>
+            existing.name.toLowerCase() == loc.name.toLowerCase());
+        if (!isDuplicate) {
+          allLocations.add(loc);
+        }
+      }
+    }
+    
+    return (locations: allLocations, regionContext: regionContext);
+  }
+
+  /// Call Gemini Vision API with multiple images
+  Future<Map<String, dynamic>?> _callGeminiVisionMultiImage(
+    String prompt,
+    List<({Uint8List bytes, String mimeType})> images,
+  ) async {
+    final endpoint = '$_baseUrl/models/$_defaultModel:generateContent';
+    
+    // Build parts list: images first, then prompt
+    final parts = <Map<String, dynamic>>[];
+    
+    // Add each image
+    for (int i = 0; i < images.length; i++) {
+      final base64Image = base64Encode(images[i].bytes);
+      final imageSizeKb = (base64Image.length * 0.75 / 1024).toStringAsFixed(1);
+      print('📷 GEMINI MULTI-IMAGE: Image ${i + 1} size ~${imageSizeKb}KB');
+      
+      parts.add({
+        'inlineData': {
+          'mimeType': images[i].mimeType,
+          'data': base64Image,
+        }
+      });
+    }
+    
+    // Add text prompt
+    parts.add({'text': prompt});
+    
+    final requestBody = {
+      'contents': [
+        {'parts': parts}
+      ],
+      'generationConfig': {
+        'temperature': 0.2,
+        'topP': 0.9,
+        'topK': 50,
+        'maxOutputTokens': 4096,
+      }
+    };
+
+    try {
+      print('📷 GEMINI MULTI-IMAGE: Calling API with ${images.length} images...');
+      
+      final response = await _dio.post(
+        '$endpoint?key=$_apiKey',
+        data: requestBody,
+        options: Options(
+          headers: {'Content-Type': 'application/json'},
+          validateStatus: (status) => status != null && status < 500,
+        ),
+      );
+
+      if (response.statusCode == 200) {
+        print('✅ GEMINI MULTI-IMAGE: API returned 200 OK');
+        
+        final responseData = response.data as Map<String, dynamic>;
+        final candidates = responseData['candidates'] as List?;
+        if (candidates != null && candidates.isNotEmpty) {
+          final candidate = candidates.first as Map<String, dynamic>;
+          final content = candidate['content'] as Map<String, dynamic>?;
+          final parts = content?['parts'] as List?;
+          if (parts != null && parts.isNotEmpty) {
+            final text = parts.first['text'] as String?;
+            if (text != null) {
+              print('📝 GEMINI MULTI-IMAGE Response: ${text.length > 500 ? '${text.substring(0, 500)}...' : text}');
+            }
+          }
+        }
+        
+        return responseData;
+      } else {
+        print('❌ GEMINI MULTI-IMAGE: API returned ${response.statusCode}');
+        print('   Response: ${jsonEncode(response.data)}');
+        return null;
+      }
+    } on DioException catch (e) {
+      print('❌ GEMINI MULTI-IMAGE DIO ERROR: ${e.message}');
+      return null;
+    }
+  }
+
   /// Extract location names/text from an image using Gemini Vision
   /// 
-  /// This uses a two-step approach:
-  /// 1. Gemini Vision extracts location names/addresses from the image
-  /// 2. The caller uses Places API to verify and get place details
+  /// This uses a TWO-STEP approach for better accuracy:
+  /// 
+  /// **Step 1: Context Understanding**
+  /// - Gemini analyzes the image to understand what it's about
+  /// - Determines content type (travel blog, restaurant review, etc.)
+  /// - Identifies geographic focus and what types of locations to look for
+  /// - Extracts all visible text via OCR
+  /// 
+  /// **Step 2: Context-Aware Location Extraction**
+  /// - Using the context from Step 1, Gemini extracts only RELEVANT locations
+  /// - Filters out irrelevant mentions (author's local stores, sponsors, etc.)
+  /// - Returns structured location data for Places API verification
   /// 
   /// [imageBytes] - The raw bytes of the image to analyze
   /// [mimeType] - The MIME type of the image (e.g., 'image/jpeg', 'image/png')
@@ -768,29 +2166,28 @@ Output:
     }
 
     try {
-      print('📷 GEMINI VISION: Analyzing image for location text...');
+      print('📷 GEMINI VISION: Starting two-step location extraction...');
       
       // Convert image to base64
       final base64Image = base64Encode(imageBytes);
       
-      // Step 1: Use Vision API WITHOUT Maps grounding (Maps grounding doesn't work with images)
-      final response = await _callGeminiVision(
-        _buildImageTextExtractionPrompt(),
-        base64Image,
-        mimeType,
-      );
+      // ========== STEP 1: CONTEXT UNDERSTANDING ==========
+      // First, analyze the image to understand what it's about
+      final context = await _analyzeContentContext(base64Image, mimeType);
       
-      if (response == null) {
-        print('⚠️ GEMINI VISION: No response from API');
-        return [];
+      if (context == null) {
+        print('⚠️ GEMINI VISION: Could not analyze context, falling back to single-step extraction');
+        // Fallback to original single-step approach
+        return _extractLocationsLegacy(base64Image, mimeType);
       }
-
-      // Parse the response to extract location names
-      final locations = _parseLocationNamesFromResponse(response);
       
-      print('✅ GEMINI VISION: Found ${locations.length} location(s) in image');
+      // ========== STEP 2: CONTEXT-AWARE EXTRACTION ==========
+      // Now extract locations using the context understanding
+      final locations = await _extractLocationsWithContext(base64Image, mimeType, context);
+      
+      print('✅ GEMINI VISION: Two-step extraction complete - found ${locations.length} location(s)');
       for (final loc in locations) {
-        print('   📍 ${loc.name} ${loc.address != null ? "(${loc.address})" : ""}');
+        print('   📍 ${loc.name} ${loc.city != null ? "(${loc.city})" : ""}');
       }
       
       return locations;
@@ -799,6 +2196,31 @@ Output:
       print('Stack trace: $stackTrace');
       return [];
     }
+  }
+
+  /// Legacy single-step extraction (used as fallback if context analysis fails)
+  Future<List<ExtractedLocationInfo>> _extractLocationsLegacy(
+    String base64Image,
+    String mimeType,
+  ) async {
+    print('📷 GEMINI VISION (LEGACY): Using single-step extraction...');
+    
+    final response = await _callGeminiVision(
+      _buildImageTextExtractionPrompt(),
+      base64Image,
+      mimeType,
+    );
+    
+    if (response == null) {
+      print('⚠️ GEMINI VISION (LEGACY): No response from API');
+      return [];
+    }
+
+    // Parse the response to extract location names
+    final locations = _parseLocationNamesFromResponse(response);
+    
+    print('✅ GEMINI VISION (LEGACY): Found ${locations.length} location(s) in image');
+    return locations;
   }
 
   /// Extract locations from an image file
@@ -979,16 +2401,31 @@ Instagram preview images typically have THREE sections. Process them in this pri
 - Text like "visited", "at", "went to", "check out" followed by place names
 - Lists of places (e.g., "📍 Point Buchon Trail", "📍 Hearst Castle")
 
-**PRIORITY 3 - HASHTAGS (Only if nothing found above):**
-- Hashtags at the end of captions (#locationname, #cityname)
-- ONLY extract from hashtags if ZERO locations were found in Priority 1 and 2
-- Convert hashtag to readable name: #bigsur → "Big Sur", #sanfrancisco → "San Francisco"
+**PRIORITY 3 - HASHTAGS (ONLY for context clues, NOT as location names!):**
+- DO NOT extract place/business names from hashtags as locations to return
+- Hashtags like #rurukamakura, #cafevibes, #foodie should NOT become location results
+- ONLY use hashtags to:
+  1. Determine the CITY/REGION context for locations found in Priority 1 & 2
+  2. Set the region_context field (e.g., #japan, #california, #washington)
+  3. Fill in missing city info (e.g., #kamakura → city: "Kamakura" for a business found above)
+- Even if you see #bigsur or #hearstcastle, DO NOT return these as location results
+- EXCEPTION: Only extract well-known CITY names from hashtags to use as context (not place names)
 
 **COMPLETELY IGNORE - DO NOT EXTRACT:**
 - "More posts from [username]" section at the bottom
 - Small thumbnail images in the "More posts from" grid
 - Any text from these thumbnail images
 - Suggested accounts or "You might also like" sections
+
+=== CRITICAL: DO NOT HALLUCINATE OR INFER LOCATIONS ===
+ONLY extract locations that are EXPLICITLY VISIBLE in the image. DO NOT:
+- Infer cities from a county/region name (seeing "#OrangeCounty" does NOT mean extract Anaheim, Fullerton, Santa Ana, Orange, etc.)
+- Generate related or nearby cities that aren't explicitly shown
+- Expand a region into its constituent cities
+- Add cities you "know" are in a region if they're not visible in the image
+- Make up locations based on your knowledge of an area
+
+If you see "#OrangeCounty" or "#SoCal", use that ONLY for region_context, do NOT return individual cities unless they are EXPLICITLY written/visible in the image!
 
 === CRITICAL: READ ALL TEXT IN THE IMAGE ===
 Use your OCR capabilities to detect and read ALL visible text, including:
@@ -1022,6 +2459,38 @@ Rules for conversion:
 
 IMPORTANT: When you see "@kuyalord_la (East Hollywood)", the name is "Kuya Lord" NOT "Kuyalord La"!
 The "_la" is a location suffix meaning Los Angeles, it is NOT part of the business name!
+
+=== CRITICAL: AREA CODES IN HANDLES REVEAL LOCATION ===
+Many business Instagram handles include their area code, which tells you the city!
+Extract the area code and use it to set the city field:
+
+COMMON AREA CODES TO RECOGNIZE:
+- 206, 253, 425 → Seattle, Washington
+- 310, 323, 213, 818 → Los Angeles, California  
+- 415, 628 → San Francisco, California
+- 212, 646, 917 → New York City, New York
+- 312, 773 → Chicago, Illinois
+- 305, 786 → Miami, Florida
+- 214, 972 → Dallas, Texas
+- 713, 281 → Houston, Texas
+- 602, 480 → Phoenix, Arizona
+- 404, 678 → Atlanta, Georgia
+- 617 → Boston, Massachusetts
+- 202 → Washington D.C.
+- 503 → Portland, Oregon
+- 619, 858 → San Diego, California
+- 949, 714 → Orange County, California
+- 303, 720 → Denver, Colorado
+- 702 → Las Vegas, Nevada
+- 512 → Austin, Texas
+
+EXAMPLES:
+- "@rockcreek206" → name: "RockCreek", city: "Seattle" (206 = Seattle area code)
+- "@pizzashop312" → name: "Pizza Shop", city: "Chicago" (312 = Chicago area code)
+- "@taco_stand_619" → name: "Taco Stand", city: "San Diego" (619 = San Diego area code)
+- "@bakery_pdx503" → name: "Bakery PDX", city: "Portland" (503 = Portland area code)
+
+When you see a 3-digit number in a handle, check if it's an area code!
 
 === LOOK FOR THESE LOCATION TYPES ===
 1. Business names (restaurants, cafes, shops, bars, hotels)
@@ -1063,13 +2532,19 @@ Return a JSON object with this exact structure:
   "region_context": "The state or region this content is primarily about (e.g., 'Washington', 'California', 'Oregon', 'Olympic Peninsula, WA'). This is CRITICAL for disambiguating location searches. If content mentions Seattle, Tacoma, Olympic National Park, etc., region_context should be 'Washington'. Set to null ONLY if you cannot determine a specific region.",
   "locations": [
     {
-      "name": "Business or Place Name (NOT the @handle, use converted name)",
+      "name": "Business or Place Name (converted from handle if applicable)",
       "address": "Street address if visible (or null)",
       "city": "City name if visible (or null)", 
-      "type": "restaurant/cafe/store/attraction/park/trail/landmark/region"
+      "type": "restaurant/cafe/store/attraction/park/trail/landmark/region",
+      "original_handle": "The ORIGINAL @handle as it appeared in the image (e.g., '@sofaseattle'), or null if name didn't come from a handle. CRITICAL: Include the @ symbol!"
     }
   ]
 }
+
+CRITICAL: When the name came from an Instagram handle, you MUST include the original_handle field!
+- If you see "@sofaseattle" → name: "Sofa Seattle", original_handle: "@sofaseattle"
+- If you see "@rockcreek206" → name: "RockCreek", original_handle: "@rockcreek206"  
+- If you see "Pike Place Market" (not a handle) → name: "Pike Place Market", original_handle: null
 
 === EXAMPLES ===
 **WASHINGTON STATE TRAVEL GUIDE EXAMPLE:**
@@ -1119,9 +2594,56 @@ Return:
   ]
 }
 
+=== CRITICAL: IDENTIFY THE SUBJECT, NOT JUST THE LOCATION ===
+When a post describes "this restaurant at X", "this cafe at X", "a food place at X":
+- The SUBJECT is the restaurant/cafe, NOT just X (the general location)
+- Try to identify the SPECIFIC place being featured
+
+EXAMPLE - THEMED RESTAURANTS:
+If description says: "This Toy Story themed restaurant at Hollywood Studios is so much fun!"
+- The SUBJECT is a "Toy Story themed restaurant" (which is "Roundup Rodeo BBQ")
+- NOT just "Hollywood Studios" (the theme park)
+Return:
+{
+  "region_context": "Florida",
+  "locations": [
+    {"name": "Toy Story themed restaurant at Hollywood Studios", "address": null, "city": null, "type": "restaurant", "context_hint": "Toy Story themed restaurant at Hollywood Studios Florida"}
+  ]
+}
+
+EXAMPLE - SPECIFIC PLACE AT GENERAL LOCATION:
+If description says: "Best coffee shop inside the Seattle airport"
+- Return: {"name": "coffee shop at Seattle airport", "type": "cafe", "context_hint": "best coffee shop Seattle airport"}
+- NOT just: {"name": "Seattle-Tacoma International Airport", "type": "airport"}
+
+When you can't identify the specific name but know the TYPE and CONTEXT:
+- Set type to the specific type (restaurant, cafe, bar, etc.)
+- Add "context_hint" field with searchable description (e.g., "Toy Story restaurant Hollywood Studios Florida")
+- This helps us search for the specific place online
+
+=== CRITICAL: STRIP ACTION WORDS FROM LOCATION NAMES ===
+Video content often has call-to-action text like "Drive [location]", "Visit [location]", "Explore [location]".
+ALWAYS strip these action/imperative words from the beginning of location names:
+- "Drive Kancamagus Highway" → "Kancamagus Highway"
+- "Visit Grand Canyon" → "Grand Canyon"
+- "Explore Yosemite" → "Yosemite"
+- "Go to Pike Place Market" → "Pike Place Market"
+- "Check out Joshua Tree" → "Joshua Tree"
+- "Discover Big Sur" → "Big Sur"
+- "Experience Zion National Park" → "Zion National Park"
+- "Tour Alcatraz Island" → "Alcatraz Island"
+- "See the Golden Gate Bridge" → "Golden Gate Bridge"
+- "Head to Lake Tahoe" → "Lake Tahoe"
+- "Stop by Hearst Castle" → "Hearst Castle"
+
+Words to STRIP from the beginning: Drive, Visit, Explore, Go to, Check out, Discover, Experience, Tour, See, Head to, Stop by, Take a trip to, Hike, Swim at, Eat at, Dine at, Stay at
+
 === RULES ===
+- ALWAYS strip action/imperative words from the beginning of location names (see above)
 - ALWAYS determine region_context FIRST before extracting locations
 - ALWAYS convert @handles to proper business names
+- PRIORITIZE specific places (restaurants, cafes) over general locations (theme parks, malls)
+- When description mentions "this restaurant/cafe/bar at X", focus on finding the SPECIFIC place
 - Extract EVERY distinct location mentioned (from Priority 1 and 2 sections)
 - Include partial information - even just a business name is useful
 - For video text overlays, read character by character if needed
@@ -1130,9 +2652,307 @@ Return:
 - For YouTube: text OVERLAID on the video thumbnail is MORE important than the video title
 - For YouTube: NEVER return just a county/region name if a business name is visible on the thumbnail
 - IGNORE "More posts from" section and its thumbnails entirely
+- NEVER extract place names from hashtags - hashtags are ONLY for city/region context
+- If you only see a place name in a hashtag (e.g., #rurukamakura), do NOT return it as a location
+- NEVER HALLUCINATE or INFER cities - only extract what is EXPLICITLY VISIBLE
+- DO NOT expand #OrangeCounty or similar into Anaheim, Fullerton, Santa Ana, etc.
 - Return ONLY the JSON object with region_context and locations array, no other text
 - If absolutely no locations found, return: {"region_context": null, "locations": []}
 ''';
+  }
+
+  /// Build prompt for Step 1: Context Analysis
+  /// This analyzes the image to understand what it's about BEFORE extracting locations
+  String _buildContextAnalysisPrompt() {
+    return '''
+You are an expert content analyst. Your job is to UNDERSTAND what this image/screenshot is about BEFORE we extract any locations.
+
+=== YOUR TASK ===
+Analyze this image and tell me:
+1. What TYPE of content is this? (social media post, travel blog screenshot, list article, restaurant review, map, etc.)
+2. What is the PURPOSE/THEME? (e.g., "top restaurants in a city", "road trip itinerary", "food recommendations", "travel guide")
+3. What GEOGRAPHIC REGION is this focused on? (city, state, country, or area)
+4. What TYPES of locations should we look for? (restaurants, cafes, hotels, attractions, trails, landmarks, etc.)
+5. Any CRITERIA or filters mentioned? (budget, family-friendly, Michelin-starred, hidden gems, etc.)
+6. What should we EXCLUDE? (author's local stores, sponsor mentions, unrelated locations)
+7. Extract any visible TEXT that might contain location names (OCR the image)
+
+=== IMPORTANT ===
+- DO NOT extract or list specific locations yet - that's the next step
+- Focus on UNDERSTANDING the content first
+- Read ALL visible text in the image using OCR
+- Identify the context so we know what to look for
+
+=== OUTPUT FORMAT ===
+Return a JSON object with this structure:
+{
+  "content_type": "Type of content (e.g., 'Instagram travel post', 'YouTube video screenshot', 'food blog list')",
+  "purpose": "What is this content trying to share? (e.g., 'Top 10 restaurants in San Francisco', 'Hidden gem cafes to try')",
+  "geographic_focus": "The main region/city/area (e.g., 'San Francisco, California', 'Olympic Peninsula, Washington') or null if unclear",
+  "location_types_to_find": ["restaurant", "cafe", "attraction"],
+  "criteria": ["budget-friendly", "family-friendly"],
+  "context_clues": ["mentions 'best of 2024'", "author is a food blogger", "focused on Italian cuisine"],
+  "exclusions": ["grocery stores mentioned for trip prep", "author's hometown recommendations"],
+  "extracted_text": "ALL visible text from the image that might contain location names or addresses. Include post captions, titles, overlay text, signs, etc."
+}
+
+=== EXAMPLES ===
+
+**Example 1: Instagram food post**
+{
+  "content_type": "Instagram food post",
+  "purpose": "Recommending a specific restaurant",
+  "geographic_focus": "San Clemente, California",
+  "location_types_to_find": ["restaurant", "pizzeria"],
+  "criteria": [],
+  "context_clues": ["shows pizza", "tagged location visible"],
+  "exclusions": [],
+  "extracted_text": "PARLOR SAN CLEMENTE - Best pizza on the coast! 📍 San Clemente..."
+}
+
+**Example 2: Travel blog screenshot**
+{
+  "content_type": "Travel blog article screenshot",
+  "purpose": "3-day Death Valley itinerary with places to visit and stay",
+  "geographic_focus": "Death Valley, California",
+  "location_types_to_find": ["hotel", "campground", "viewpoint", "attraction", "restaurant"],
+  "criteria": ["must-see spots", "places to stay"],
+  "context_clues": ["day-by-day itinerary", "includes accommodations"],
+  "exclusions": ["author's local grocery stores for trip prep", "Amazon links for supplies"],
+  "extracted_text": "Day 1: Zabriskie Point, Badwater Basin, Artist's Palette. Stay at The Inn at Death Valley..."
+}
+
+**Example 3: YouTube video thumbnail**
+{
+  "content_type": "YouTube video thumbnail/screenshot",
+  "purpose": "Top 10 restaurants in Orange County",
+  "geographic_focus": "Orange County, California",
+  "location_types_to_find": ["restaurant"],
+  "criteria": ["ranked list", "best of"],
+  "context_clues": ["video title mentions 'Top 10'", "thumbnail shows restaurant interior"],
+  "exclusions": [],
+  "extracted_text": "TOP 10 ORANGE COUNTY RESTAURANTS 2025 - Parlor San Clemente shown on thumbnail"
+}
+
+=== RULES ===
+- Focus on understanding, not extracting locations yet
+- Be thorough with OCR - read ALL text in the image
+- Identify the geographic scope to help filter relevant locations later
+- Return ONLY the JSON object, no other text
+''';
+  }
+
+  /// Build prompt for Step 2: Context-Aware Location Extraction
+  /// Uses the context from Step 1 to extract only relevant locations
+  String _buildContextAwareLocationExtractionPrompt(ContentContext context) {
+    return '''
+You are an expert at extracting location information. Based on the context analysis below, extract ONLY the locations that are RELEVANT to this content.
+
+=== CONTEXT ANALYSIS (from Step 1) ===
+${context.toPromptSummary()}
+
+${context.extractedText != null ? '''=== EXTRACTED TEXT FROM IMAGE ===
+${context.extractedText}
+''' : ''}
+
+=== YOUR TASK ===
+Based on the context above, extract ONLY the locations that match:
+- The PURPOSE: ${context.purpose}
+- The GEOGRAPHIC FOCUS: ${context.geographicFocus ?? 'Not specified'}
+- The TYPES TO FIND: ${context.locationTypesToFind.join(', ')}
+
+=== WHAT TO EXTRACT ===
+✅ INCLUDE:
+- Specific businesses, restaurants, cafes, hotels mentioned as recommendations
+- Attractions, landmarks, viewpoints that are part of the main content
+- Any place that matches the purpose: "${context.purpose}"
+${context.criteria.isNotEmpty ? '- Places matching these criteria: ${context.criteria.join(", ")}' : ''}
+
+❌ EXCLUDE:
+- Locations outside the geographic focus (${context.geographicFocus ?? 'any region'})
+${context.exclusions.map((e) => '- $e').join('\n')}
+- Generic region names if specific places exist (don't return "Orange County" if "Parlor San Clemente" is mentioned)
+- Author's local/personal recommendations unrelated to the main content
+- Sponsor mentions or ads
+- Hashtags as locations (hashtags are ONLY for context, not location results)
+
+=== HANDLE CONVERSION RULES ===
+If you see @handles, convert them to business names:
+- "@oldferrydonut.us" → "Old Ferry Donut"
+- "@kuyalord_la" → "Kuya Lord" (remove _la suffix, split concatenated words)
+- Remove: _la, _nyc, _sf, .us, .co, .official suffixes
+- Replace dots/underscores with spaces, apply Title Case
+
+=== OUTPUT FORMAT ===
+{
+  "region_context": "${context.geographicFocus ?? 'null'}",
+  "locations": [
+    {
+      "name": "Business or Place Name",
+      "address": "Street address if visible (or null)",
+      "city": "City name if visible (or null)",
+      "type": "restaurant/cafe/hotel/attraction/park/trail/landmark",
+      "original_handle": "@handle if name came from a handle (or null)",
+      "relevance_reason": "Brief explanation of why this matches the context"
+    }
+  ]
+}
+
+=== RULES ===
+- ONLY extract locations that match the context analysis
+- Each location should have a "relevance_reason" explaining why it belongs
+- Strip action words from names ("Visit Grand Canyon" → "Grand Canyon")
+- Convert @handles to proper business names
+- Return ONLY the JSON object, no other text
+- If no relevant locations found, return: {"region_context": null, "locations": []}
+''';
+  }
+
+  /// Step 1: Analyze image context to understand what it's about
+  Future<ContentContext?> _analyzeContentContext(
+    String base64Image,
+    String mimeType,
+  ) async {
+    try {
+      print('🔍 GEMINI VISION STEP 1: Analyzing content context...');
+      
+      final response = await _callGeminiVision(
+        _buildContextAnalysisPrompt(),
+        base64Image,
+        mimeType,
+      );
+      
+      if (response == null) {
+        print('⚠️ GEMINI VISION STEP 1: No response from API');
+        return null;
+      }
+      
+      // Parse the context response
+      final context = _parseContextResponse(response);
+      
+      if (context != null) {
+        print('✅ GEMINI VISION STEP 1: Context analyzed');
+        print('   📋 Content Type: ${context.contentType}');
+        print('   🎯 Purpose: ${context.purpose}');
+        print('   🌍 Geographic Focus: ${context.geographicFocus ?? "Not specified"}');
+        print('   🔍 Looking for: ${context.locationTypesToFind.join(", ")}');
+        if (context.extractedText != null && context.extractedText!.isNotEmpty) {
+          final previewLength = context.extractedText!.length > 200 ? 200 : context.extractedText!.length;
+          print('   📝 Extracted text: ${context.extractedText!.substring(0, previewLength)}...');
+        }
+      }
+      
+      return context;
+    } catch (e, stackTrace) {
+      print('❌ GEMINI VISION STEP 1 ERROR: $e');
+      print('Stack trace: $stackTrace');
+      return null;
+    }
+  }
+
+  /// Parse the context analysis response from Gemini
+  ContentContext? _parseContextResponse(Map<String, dynamic> response) {
+    try {
+      final candidates = response['candidates'] as List?;
+      if (candidates == null || candidates.isEmpty) return null;
+      
+      final candidate = candidates.first as Map<String, dynamic>;
+      final content = candidate['content'] as Map<String, dynamic>?;
+      final parts = content?['parts'] as List?;
+      if (parts == null || parts.isEmpty) return null;
+      
+      final text = parts.first['text'] as String?;
+      if (text == null || text.isEmpty) return null;
+      
+      // Parse JSON
+      String jsonText = text.trim();
+      
+      // Handle markdown code blocks
+      if (jsonText.startsWith('```json')) {
+        jsonText = jsonText.substring(7);
+      } else if (jsonText.startsWith('```')) {
+        jsonText = jsonText.substring(3);
+      }
+      if (jsonText.endsWith('```')) {
+        jsonText = jsonText.substring(0, jsonText.length - 3);
+      }
+      jsonText = jsonText.trim();
+      
+      final parsed = jsonDecode(jsonText) as Map<String, dynamic>;
+      
+      // Parse business handles - clean them up (remove @ if present)
+      final rawBusinessHandles = (parsed['business_handles'] as List?)
+          ?.map((e) => e.toString().replaceAll('@', '').trim())
+          .where((h) => h.isNotEmpty)
+          .toList() ?? [];
+      
+      // Parse content creator handle - clean it up
+      String? creatorHandle = parsed['content_creator_handle'] as String?;
+      if (creatorHandle != null) {
+        creatorHandle = creatorHandle.replaceAll('@', '').trim();
+        if (creatorHandle.isEmpty) creatorHandle = null;
+      }
+
+      return ContentContext(
+        contentType: parsed['content_type'] as String? ?? 'unknown',
+        purpose: parsed['purpose'] as String? ?? 'unknown',
+        geographicFocus: parsed['geographic_focus'] as String?,
+        locationTypesToFind: (parsed['location_types_to_find'] as List?)
+            ?.map((e) => e.toString())
+            .toList() ?? ['restaurant', 'cafe', 'attraction'],
+        criteria: (parsed['criteria'] as List?)
+            ?.map((e) => e.toString())
+            .toList() ?? [],
+        contextClues: (parsed['context_clues'] as List?)
+            ?.map((e) => e.toString())
+            .toList() ?? [],
+        exclusions: (parsed['exclusions'] as List?)
+            ?.map((e) => e.toString())
+            .toList() ?? [],
+        extractedText: parsed['extracted_text'] as String?,
+        contentCreatorHandle: creatorHandle,
+        businessHandles: rawBusinessHandles,
+      );
+    } catch (e) {
+      print('⚠️ GEMINI VISION: Error parsing context response: $e');
+      return null;
+    }
+  }
+
+  /// Step 2: Extract locations using the context from Step 1
+  Future<List<ExtractedLocationInfo>> _extractLocationsWithContext(
+    String base64Image,
+    String mimeType,
+    ContentContext context,
+  ) async {
+    try {
+      print('🔍 GEMINI VISION STEP 2: Extracting locations with context...');
+      
+      final response = await _callGeminiVision(
+        _buildContextAwareLocationExtractionPrompt(context),
+        base64Image,
+        mimeType,
+      );
+      
+      if (response == null) {
+        print('⚠️ GEMINI VISION STEP 2: No response from API');
+        return [];
+      }
+      
+      // Parse locations using existing method
+      final locations = _parseLocationNamesFromResponse(response);
+      
+      print('✅ GEMINI VISION STEP 2: Found ${locations.length} relevant location(s)');
+      for (final loc in locations) {
+        print('   📍 ${loc.name} ${loc.city != null ? "(${loc.city})" : ""}');
+      }
+      
+      return locations;
+    } catch (e, stackTrace) {
+      print('❌ GEMINI VISION STEP 2 ERROR: $e');
+      print('Stack trace: $stackTrace');
+      return [];
+    }
   }
 
   /// Parse location names from Gemini Vision response
@@ -1198,8 +3018,27 @@ Return:
           if (item is Map<String, dynamic>) {
             String? name = item['name'] as String?;
             if (name != null && name.isNotEmpty) {
+              // Extract original handle if present (for later lookup)
+              String? originalHandle = item['original_handle'] as String?;
+              
+              // Extract context hint if present (for searching when name is vague)
+              String? contextHint = item['context_hint'] as String?;
+              
               // Clean up the name - convert handles to business names if needed
               name = _convertHandleToBusinessName(name);
+              
+              // Strip action words from the beginning (e.g., "Drive Kancamagus Highway" → "Kancamagus Highway")
+              name = _stripActionWordsFromName(name);
+              
+              // Log if we have a handle for debugging
+              if (originalHandle != null && originalHandle.isNotEmpty) {
+                print('📱 GEMINI VISION: Name "$name" came from handle: $originalHandle');
+              }
+              
+              // Log if we have a context hint for debugging
+              if (contextHint != null && contextHint.isNotEmpty) {
+                print('🔍 GEMINI VISION: Context hint for "$name": "$contextHint"');
+              }
               
               results.add(ExtractedLocationInfo(
                 name: name,
@@ -1207,6 +3046,8 @@ Return:
                 city: item['city'] as String?,
                 type: item['type'] as String?,
                 regionContext: regionContext, // Pass region context to each location
+                originalHandle: originalHandle,
+                contextHint: contextHint,
               ));
             }
           }
@@ -1370,6 +3211,57 @@ Return:
     return word;
   }
 
+  /// Strip action/imperative words from the beginning of location names
+  /// e.g., "Drive Kancamagus Highway" → "Kancamagus Highway"
+  /// e.g., "Visit Grand Canyon" → "Grand Canyon"
+  String _stripActionWordsFromName(String name) {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) return trimmed;
+    
+    // Action words to strip from the beginning (case-insensitive)
+    // Order matters - longer phrases first to avoid partial matches
+    final actionPhrases = [
+      'take a trip to',
+      'go to',
+      'head to',
+      'stop by',
+      'check out',
+      'swim at',
+      'eat at',
+      'dine at',
+      'stay at',
+      'hike',
+      'drive',
+      'visit',
+      'explore',
+      'discover',
+      'experience',
+      'tour',
+      'see',
+    ];
+    
+    final lowerName = trimmed.toLowerCase();
+    
+    for (final phrase in actionPhrases) {
+      if (lowerName.startsWith(phrase)) {
+        // Check if followed by a space (to avoid stripping "Driveway" from "Driveway Inn")
+        final afterPhrase = trimmed.substring(phrase.length);
+        if (afterPhrase.isEmpty) continue; // Nothing left after stripping
+        
+        // Must be followed by whitespace
+        if (afterPhrase.startsWith(' ') || afterPhrase.startsWith('\t')) {
+          final strippedName = afterPhrase.trim();
+          if (strippedName.isNotEmpty) {
+            print('📝 ACTION WORD STRIPPED: "$trimmed" → "$strippedName"');
+            return strippedName;
+          }
+        }
+      }
+    }
+    
+    return trimmed;
+  }
+
   /// Fallback parsing for non-JSON responses
   void _tryFallbackParsing(Map<String, dynamic> response, List<ExtractedLocationInfo> results) {
     try {
@@ -1418,6 +3310,206 @@ Return:
   }
 
   // ============ END VISION/IMAGE ANALYSIS METHODS ============
+
+  // ============ AI RERANKING METHODS ============
+
+  /// Rerank Places API candidates using AI when initial scoring is weak
+  /// 
+  /// This method uses Gemini to compare multiple place candidates and select
+  /// the best match based on semantic understanding of the context.
+  /// 
+  /// [originalLocationCue] - The original location name/handle/context being searched
+  /// [candidates] - List of Places API results to rerank (top N, typically 5-8)
+  /// [regionContext] - Geographic context (e.g., "Seattle, WA", "California")
+  /// [surroundingText] - Caption text, page content, or other contextual text
+  /// [expectedType] - The expected type of place (restaurant, hotel, park, etc.)
+  /// [userLocationBias] - Optional user location for disambiguation
+  /// 
+  /// Returns the index of the best candidate (0-based), or -1 if none fit well
+  Future<({int selectedIndex, double confidence, String? reason})> rerankPlaceCandidates({
+    required String originalLocationCue,
+    required List<Map<String, dynamic>> candidates,
+    String? regionContext,
+    String? surroundingText,
+    String? expectedType,
+    LatLng? userLocationBias,
+  }) async {
+    if (!isConfigured) {
+      print('⚠️ GEMINI RERANK: API key not configured');
+      return (selectedIndex: 0, confidence: 0.5, reason: 'API not configured');
+    }
+
+    if (candidates.isEmpty) {
+      return (selectedIndex: -1, confidence: 0.0, reason: 'No candidates');
+    }
+
+    if (candidates.length == 1) {
+      // Only one candidate, return it but with moderate confidence
+      return (selectedIndex: 0, confidence: 0.6, reason: 'Single candidate');
+    }
+
+    try {
+      print('🤖 GEMINI RERANK: Reranking ${candidates.length} candidates for "$originalLocationCue"');
+      
+      // Build candidate descriptions for the prompt
+      final candidateDescriptions = StringBuffer();
+      for (int i = 0; i < candidates.length && i < 8; i++) {
+        final candidate = candidates[i];
+        final name = candidate['name'] ?? candidate['description']?.toString().split(',').first ?? 'Unknown';
+        final address = candidate['address'] ?? candidate['description'] ?? '';
+        final types = (candidate['types'] as List?)?.cast<String>() ?? [];
+        
+        candidateDescriptions.writeln('[$i] $name');
+        candidateDescriptions.writeln('    Address: $address');
+        if (types.isNotEmpty) {
+          candidateDescriptions.writeln('    Types: ${types.take(5).join(", ")}');
+        }
+        candidateDescriptions.writeln();
+      }
+
+      final prompt = '''
+You are an expert at matching location search results to the intended place.
+
+=== SEARCH CONTEXT ===
+Original search term: "$originalLocationCue"
+${regionContext != null ? 'Region/Area: $regionContext' : ''}
+${expectedType != null ? 'Expected place type: $expectedType' : ''}
+${surroundingText != null && surroundingText.isNotEmpty ? '''
+Surrounding context from content:
+"""
+${surroundingText.length > 500 ? '${surroundingText.substring(0, 500)}...' : surroundingText}
+"""
+''' : ''}
+
+=== CANDIDATES ===
+${candidateDescriptions.toString()}
+
+=== TASK ===
+Select the candidate that best matches the search context. Consider:
+1. Name similarity to the search term (exact matches preferred)
+2. Whether the place type matches the expected type
+3. Geographic relevance (matches the region context)
+4. Semantic relevance to the surrounding context
+
+RESPOND WITH ONLY A JSON OBJECT in this exact format:
+{
+  "selected_index": <number from 0 to ${candidates.length - 1}, or -1 if none fit>,
+  "confidence": <number from 0.0 to 1.0>,
+  "reason": "<brief explanation of why this was selected or why none fit>"
+}
+
+If the search term appears to be a social media handle and none of the candidates match that business, return -1.
+If the search seems to be for a specific named business and none match, return -1.
+''';
+
+      final response = await _callGeminiDirect(prompt);
+      
+      if (response == null) {
+        print('⚠️ GEMINI RERANK: No response from API');
+        return (selectedIndex: 0, confidence: 0.5, reason: 'API returned no response');
+      }
+
+      // Parse the response
+      final result = _parseRerankResponse(response);
+      
+      print('✅ GEMINI RERANK: Selected index ${result.selectedIndex} with confidence ${result.confidence}');
+      if (result.reason != null) {
+        print('   Reason: ${result.reason}');
+      }
+      
+      return result;
+    } catch (e) {
+      print('❌ GEMINI RERANK ERROR: $e');
+      return (selectedIndex: 0, confidence: 0.5, reason: 'Error: $e');
+    }
+  }
+
+  /// Parse the rerank response from Gemini
+  ({int selectedIndex, double confidence, String? reason}) _parseRerankResponse(
+    Map<String, dynamic> response,
+  ) {
+    try {
+      // Extract the text content from Gemini response
+      final candidates = response['candidates'] as List?;
+      if (candidates == null || candidates.isEmpty) {
+        return (selectedIndex: 0, confidence: 0.5, reason: 'No candidates in response');
+      }
+
+      final content = candidates[0]['content'] as Map<String, dynamic>?;
+      if (content == null) {
+        return (selectedIndex: 0, confidence: 0.5, reason: 'No content in response');
+      }
+
+      final parts = content['parts'] as List?;
+      if (parts == null || parts.isEmpty) {
+        return (selectedIndex: 0, confidence: 0.5, reason: 'No parts in response');
+      }
+
+      final text = parts[0]['text'] as String? ?? '';
+      
+      // Extract JSON from the response
+      final jsonMatch = RegExp(r'\{[^}]+\}').firstMatch(text);
+      if (jsonMatch == null) {
+        print('⚠️ GEMINI RERANK: Could not find JSON in response: $text');
+        return (selectedIndex: 0, confidence: 0.5, reason: 'Could not parse response');
+      }
+
+      final jsonStr = jsonMatch.group(0)!;
+      final parsed = json.decode(jsonStr) as Map<String, dynamic>;
+      
+      final selectedIndex = (parsed['selected_index'] as num?)?.toInt() ?? 0;
+      final confidence = (parsed['confidence'] as num?)?.toDouble() ?? 0.5;
+      final reason = parsed['reason'] as String?;
+      
+      return (selectedIndex: selectedIndex, confidence: confidence, reason: reason);
+    } catch (e) {
+      print('⚠️ GEMINI RERANK: Error parsing response: $e');
+      return (selectedIndex: 0, confidence: 0.5, reason: 'Parse error: $e');
+    }
+  }
+
+  /// Call Gemini API directly without any grounding (for simple text analysis)
+  Future<Map<String, dynamic>?> _callGeminiDirect(String prompt) async {
+    final endpoint = '$_baseUrl/models/$_defaultModel:generateContent';
+
+    final requestBody = {
+      'contents': [
+        {
+          'parts': [
+            {'text': prompt}
+          ]
+        }
+      ],
+      'generationConfig': {
+        'temperature': 0.1,  // Low temperature for more deterministic responses
+        'maxOutputTokens': 256,  // Keep responses short
+      },
+    };
+
+    try {
+      final response = await _dio.post(
+        '$endpoint?key=$_apiKey',
+        data: requestBody,
+        options: Options(
+          headers: {'Content-Type': 'application/json'},
+          sendTimeout: const Duration(seconds: 30),
+          receiveTimeout: const Duration(seconds: 30),
+        ),
+      );
+
+      if (response.statusCode == 200) {
+        return response.data as Map<String, dynamic>;
+      } else {
+        print('❌ GEMINI DIRECT: API returned status ${response.statusCode}');
+        return null;
+      }
+    } catch (e) {
+      print('❌ GEMINI DIRECT ERROR: $e');
+      return null;
+    }
+  }
+
+  // ============ END AI RERANKING METHODS ============
 }
 
 /// Simple class to hold extracted location info from images
@@ -1429,6 +3521,13 @@ class ExtractedLocationInfo {
   /// Regional context extracted from the overall content (e.g., "Washington", "Olympic Peninsula, WA")
   /// This helps disambiguate locations when searching Places API
   final String? regionContext;
+  /// Original Instagram/social media handle if the name was derived from one
+  /// e.g., "@sofaseattle" - useful for looking up the actual business name online
+  final String? originalHandle;
+  /// Context hint for searching when the specific name isn't known
+  /// e.g., "Toy Story themed restaurant at Hollywood Studios Florida"
+  /// Used to do a Google Search to find the actual place name
+  final String? contextHint;
 
   ExtractedLocationInfo({
     required this.name,
@@ -1436,8 +3535,97 @@ class ExtractedLocationInfo {
     this.city,
     this.type,
     this.regionContext,
+    this.originalHandle,
+    this.contextHint,
   });
 
   @override
-  String toString() => 'ExtractedLocationInfo(name: $name, address: $address, city: $city, type: $type, regionContext: $regionContext)';
+  String toString() => 'ExtractedLocationInfo(name: $name, address: $address, city: $city, type: $type, regionContext: $regionContext, handle: $originalHandle, contextHint: $contextHint)';
+}
+
+/// Holds the contextual understanding of image/content before location extraction
+/// This is Step 1 of the two-step extraction process
+class ContentContext {
+  /// What type of content is this? (e.g., "travel blog", "restaurant review", "list of cafes", "trip itinerary")
+  final String contentType;
+  
+  /// What is the primary purpose/theme? (e.g., "best restaurants in NYC", "road trip through California", "hidden gem coffee shops")
+  final String purpose;
+  
+  /// What geographic region/area is the content focused on?
+  final String? geographicFocus;
+  
+  /// What types of locations should we look for? (e.g., ["restaurants", "hotels"], ["hiking trails", "viewpoints"])
+  final List<String> locationTypesToFind;
+  
+  /// Any specific criteria or filters mentioned (e.g., "budget-friendly", "family-friendly", "Michelin-starred")
+  final List<String> criteria;
+  
+  /// Key context clues that help identify relevant locations
+  final List<String> contextClues;
+  
+  /// What should be EXCLUDED from extraction (e.g., "author's local grocery stores", "sponsor mentions")
+  final List<String> exclusions;
+  
+  /// Raw extracted text from the image that might contain location names
+  final String? extractedText;
+  
+  /// The handle of the content creator (who posted) - NOT the business being featured
+  final String? contentCreatorHandle;
+  
+  /// Instagram/social media handles that likely belong to the BUSINESS/LOCATION being featured
+  /// These are NOT the content creator, but the actual place being recommended
+  /// e.g., ["dolcelunacafe", "matchabuckets", "joes_pizza_nyc"]
+  final List<String> businessHandles;
+
+  ContentContext({
+    required this.contentType,
+    required this.purpose,
+    this.geographicFocus,
+    required this.locationTypesToFind,
+    this.criteria = const [],
+    this.contextClues = const [],
+    this.exclusions = const [],
+    this.extractedText,
+    this.contentCreatorHandle,
+    this.businessHandles = const [],
+  });
+
+  @override
+  String toString() => '''ContentContext(
+  contentType: $contentType,
+  purpose: $purpose,
+  geographicFocus: $geographicFocus,
+  locationTypesToFind: $locationTypesToFind,
+  criteria: $criteria,
+  contextClues: $contextClues,
+  exclusions: $exclusions,
+  contentCreatorHandle: $contentCreatorHandle,
+  businessHandles: $businessHandles,
+  extractedText: ${extractedText != null && extractedText!.length > 100 ? '${extractedText!.substring(0, 100)}...' : extractedText}
+)''';
+
+  /// Convert to a summary string for use in the location extraction prompt
+  String toPromptSummary() {
+    final buffer = StringBuffer();
+    buffer.writeln('CONTENT TYPE: $contentType');
+    buffer.writeln('PURPOSE: $purpose');
+    if (geographicFocus != null) {
+      buffer.writeln('GEOGRAPHIC FOCUS: $geographicFocus');
+    }
+    buffer.writeln('LOCATION TYPES TO FIND: ${locationTypesToFind.join(", ")}');
+    if (criteria.isNotEmpty) {
+      buffer.writeln('CRITERIA: ${criteria.join(", ")}');
+    }
+    if (contextClues.isNotEmpty) {
+      buffer.writeln('CONTEXT CLUES: ${contextClues.join(", ")}');
+    }
+    if (exclusions.isNotEmpty) {
+      buffer.writeln('EXCLUDE: ${exclusions.join(", ")}');
+    }
+    if (businessHandles.isNotEmpty) {
+      buffer.writeln('BUSINESS HANDLES TO SEARCH: ${businessHandles.map((h) => "@$h").join(", ")}');
+    }
+    return buffer.toString();
+  }
 }
