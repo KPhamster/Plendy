@@ -20,6 +20,7 @@ import 'screens/messages_screen.dart'; // Import MessagesScreen
 import 'screens/chat_screen.dart'; // Import ChatScreen
 import 'services/auth_service.dart';
 import 'services/sharing_service.dart';
+import 'services/foreground_scan_service.dart'; // Import ForegroundScanService for background AI scans
 import 'services/event_service.dart'; // Import EventService
 import 'services/experience_service.dart'; // Import ExperienceService
 import 'models/shared_media_compat.dart';
@@ -521,6 +522,10 @@ void main() async {
   // Conditionally initialize SharingService if not on web
   if (!kIsWeb) {
     SharingService().init();
+
+    // Initialize foreground scan service for background AI scans
+    // This allows scans to continue when the app is minimized
+    unawaited(ForegroundScanService().initialize());
 
     // DEBUG: Start timer to check for shared data (Android only)
     if (Platform.isAndroid) {
