@@ -55,6 +55,7 @@ import 'main_screen.dart';
 import '../models/public_experience.dart';
 import '../services/auth_service.dart';
 import '../services/gemini_service.dart';
+import '../services/foreground_scan_service.dart';
 import 'package:collection/collection.dart';
 import 'package:plendy/config/app_constants.dart';
 import '../models/experience_card_data.dart';
@@ -235,13 +236,14 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   final SharingService _sharingService = SharingService();
   final LinkLocationExtractionService _locationExtractor =
       LinkLocationExtractionService();
+  final ForegroundScanService _foregroundScanService = ForegroundScanService();
 
   // AI Location Extraction state
   bool _isExtractingLocation = false;
   bool _isProcessingScreenshot = false; // For screenshot-based extraction
   Position? _currentUserPosition; // For location-biased extraction
   
-  // Track if AI scan is running (to prevent interruption when app goes to background)
+  // Track if AI scan is running
   bool _isAiScanInProgress = false;
   // Store pending scan results to apply when app returns to foreground
   List<ExtractedLocationData>? _pendingScanResults;
@@ -860,6 +862,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     // Enable wakelock to prevent screen from sleeping during AI scan
     WakelockPlus.enable();
+    
+    // Start foreground service to keep app alive during scan
+    await _foregroundScanService.startScanService();
 
     try {
       print('📷 SCAN PREVIEW: Capturing WebView content...');
@@ -946,8 +951,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         );
       }
     } finally {
-      // Disable wakelock
+      // Disable wakelock and stop foreground service
       WakelockPlus.disable();
+      await _foregroundScanService.stopScanService();
       if (mounted) {
         setState(() {
           _isProcessingScreenshot = false;
@@ -969,6 +975,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     // Enable wakelock to prevent screen from sleeping during AI scan
     WakelockPlus.enable();
+    
+    // Start foreground service to keep app alive during scan
+    await _foregroundScanService.startScanService();
 
     try {
       print('📄 SCAN PAGE: Extracting page content...');
@@ -1091,8 +1100,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         );
       }
     } finally {
-      // Disable wakelock
+      // Disable wakelock and stop foreground service
       WakelockPlus.disable();
+      await _foregroundScanService.stopScanService();
       if (mounted) {
         setState(() {
           _isProcessingScreenshot = false;
@@ -1116,6 +1126,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     // Enable wakelock to prevent screen from sleeping during AI scan
     WakelockPlus.enable();
+    
+    // Start foreground service to keep app alive during scan (prevents interruption when minimized)
+    await _foregroundScanService.startScanService();
 
     try {
       print('🔄 COMBINED SCAN: Starting both screenshot and text extraction...');
@@ -1198,8 +1211,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         );
       }
     } finally {
-      // Disable wakelock
+      // Disable wakelock and stop foreground service
       WakelockPlus.disable();
+      await _foregroundScanService.stopScanService();
       if (mounted) {
         setState(() {
           _isProcessingScreenshot = false;
@@ -1845,6 +1859,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     // Enable wakelock to prevent screen from sleeping during AI scan
     WakelockPlus.enable();
+    
+    // Start foreground service to keep app alive during scan
+    await _foregroundScanService.startScanService();
 
     try {
       // Get user location for better results (optional)
@@ -1916,8 +1933,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         );
       }
     } finally {
-      // Disable wakelock
+      // Disable wakelock and stop foreground service
       WakelockPlus.disable();
+      await _foregroundScanService.stopScanService();
       if (mounted) {
         setState(() {
           _isProcessingScreenshot = false;
@@ -2583,6 +2601,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     // Enable wakelock to prevent screen from sleeping during AI scan
     WakelockPlus.enable();
+    
+    // Start foreground service to keep app alive during scan
+    await _foregroundScanService.startScanService();
 
     try {
       // Get user location for better results (optional)
@@ -2655,8 +2676,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     } catch (e) {
       print('❌ AI EXTRACTION ERROR: $e');
     } finally {
-      // Disable wakelock
+      // Disable wakelock and stop foreground service
       WakelockPlus.disable();
+      await _foregroundScanService.stopScanService();
       if (mounted) {
         setState(() {
           _isExtractingLocation = false;
@@ -2701,6 +2723,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     // Enable wakelock to prevent screen from sleeping during AI scan
     WakelockPlus.enable();
+    
+    // Start foreground service to keep app alive during scan
+    await _foregroundScanService.startScanService();
 
     try {
       // Get user location for better results (optional)
@@ -2768,8 +2793,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     } catch (e) {
       print('❌ TIKTOK AUTO-EXTRACT ERROR: $e');
     } finally {
-      // Disable wakelock
+      // Disable wakelock and stop foreground service
       WakelockPlus.disable();
+      await _foregroundScanService.stopScanService();
       if (mounted) {
         setState(() {
           _isExtractingLocation = false;
@@ -2805,6 +2831,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     // Enable wakelock to prevent screen from sleeping during AI scan
     WakelockPlus.enable();
+    
+    // Start foreground service to keep app alive during scan
+    await _foregroundScanService.startScanService();
 
     try {
       // Get user location for better results (optional)
@@ -2893,8 +2922,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     } catch (e) {
       print('❌ FACEBOOK AUTO-EXTRACT ERROR: $e');
     } finally {
-      // Disable wakelock
+      // Disable wakelock and stop foreground service
       WakelockPlus.disable();
+      await _foregroundScanService.stopScanService();
       if (mounted) {
         setState(() {
           _isExtractingLocation = false;
@@ -3698,8 +3728,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           _isAiScanInProgress = false;
         });
       }
-      // Disable wakelock after applying results
+      // Disable wakelock and stop foreground service after applying results
       WakelockPlus.disable();
+      await _foregroundScanService.stopScanService();
     }
   }
 

@@ -1521,6 +1521,94 @@ If you cannot find the business with confidence, return:
     }
   }
 
+  /// Verify a location without printing detailed explanations (for STEP 3)
+  Future<ExtractedLocationInfo?> _verifyLocationQuietly(String locationName, ContentContext context) async {
+    try {
+      final prompt = '''
+Verify that THIS SPECIFIC place exists: "$locationName"
+
+${context.geographicFocus != null ? 'REGION CONTEXT: ${context.geographicFocus}' : ''}
+${context.locationTypesToFind.isNotEmpty ? 'EXPECTED TYPES: ${context.locationTypesToFind.join(", ")}' : ''}
+
+=== OUTPUT FORMAT ===
+Return a JSON object:
+{
+  "found": true or false,
+  "name": "The place name (preserve the original, just fix spelling/formatting)",
+  "address": "Address or general location description",
+  "city": "City name",
+  "region": "State/Region",
+  "type": "restaurant/museum/park/beach/trail/etc",
+  "confidence": "high/medium/low"
+}
+
+If you cannot verify the place exists, return:
+{"found": false, "name": null}
+
+=== CRITICAL RULES ===
+- VERIFY the place "$locationName" exists - do NOT substitute a different place
+- Keep the SAME place the user mentioned, just clean up spelling/formatting
+- Do NOT replace natural areas with visitor centers (e.g., "Hoh Rain Forest" should NOT become "Hoh Rain Forest Visitor Center")
+- Do NOT replace parks with gift shops, museums, or other buildings within them
+- Do NOT replace beaches/trails/mountains with nearby facilities
+- For natural areas without street addresses, use a general location (e.g., "Olympic National Park, WA")
+- Return ONLY the JSON object, no other text
+''';
+
+      final response = await _callGeminiWithSearchGrounding(prompt);
+
+      if (response == null) return null;
+
+      // Parse response but don't print explanations
+      final candidates = response['candidates'] as List?;
+      if (candidates == null || candidates.isEmpty) return null;
+
+      final candidate = candidates.first as Map<String, dynamic>;
+      final content = candidate['content'] as Map<String, dynamic>?;
+      if (content == null) return null;
+
+      final parts = content['parts'] as List?;
+      if (parts == null || parts.isEmpty) return null;
+
+      final text = parts.first['text'] as String? ?? '';
+
+      final jsonMatch = RegExp(r'\{[\s\S]*\}').firstMatch(text);
+      if (jsonMatch == null) return null;
+
+      try {
+        final parsed = jsonDecode(jsonMatch.group(0)!) as Map<String, dynamic>;
+        final found = parsed['found'] as bool? ?? false;
+
+        if (!found) return null;
+
+        final name = parsed['name'] as String?;
+        if (name == null || name.isEmpty) return null;
+
+        final confidence = parsed['confidence'] as String? ?? 'medium';
+
+        // Only return high/medium confidence results
+        if (confidence == 'low') return null;
+
+        final address = parsed['address'] as String?;
+        if (address != null && address.isNotEmpty) {
+          print('   📍 Grounded address: $address');
+        }
+
+        return ExtractedLocationInfo(
+          name: name,
+          address: address,
+          city: parsed['city'] as String?,
+          type: parsed['type'] as String?,
+          regionContext: context.geographicFocus,
+        );
+      } catch (e) {
+        return null;
+      }
+    } catch (e) {
+      return null;
+    }
+  }
+
   /// Check if text is common UI text that should be ignored
   bool _isCommonUIText(String text) {
     final commonUI = [
@@ -1846,7 +1934,7 @@ If you cannot find a specific place with confidence, return:
         final rawName = rawLocations[i];
         print('🔎 GEMINI STEP 3 [${i + 1}/${rawLocations.length}]: Verifying "$rawName"...');
         
-        final verified = await _verifyLocationWithGrounding(rawName, context);
+        final verified = await _verifyLocationQuietly(rawName, context);
         
         if (verified != null) {
           // Check for duplicates before adding
@@ -3351,6 +3439,21 @@ If you see @handles, convert them to business names:
     try {
       print('🤖 GEMINI RERANK: Reranking ${candidates.length} candidates for "$originalLocationCue"');
       
+      // STEP 1: Get search-grounded description for better context
+      // This uses Google Search to understand what the place ACTUALLY is
+      print('🔍 GEMINI RERANK: Getting search-grounded description first...');
+      final groundedDescription = await getSearchGroundedDescription(
+        placeName: originalLocationCue,
+        regionContext: regionContext,
+        expectedType: expectedType,
+      );
+      
+      if (groundedDescription != null) {
+        print('✅ GEMINI RERANK: Got grounded description for context');
+      } else {
+        print('⚠️ GEMINI RERANK: No grounded description available, using basic context');
+      }
+      
       // Build candidate descriptions for the prompt
       final candidateDescriptions = StringBuffer();
       for (int i = 0; i < candidates.length && i < 8; i++) {
@@ -3374,7 +3477,13 @@ You are an expert at matching location search results to the intended place.
 Original search term: "$originalLocationCue"
 ${regionContext != null ? 'Region/Area: $regionContext' : ''}
 ${expectedType != null ? 'Expected place type: $expectedType' : ''}
+${groundedDescription != null ? '''
+
+=== VERIFIED PLACE INFORMATION (from web search) ===
+$groundedDescription
+''' : ''}
 ${surroundingText != null && surroundingText.isNotEmpty ? '''
+
 Surrounding context from content:
 """
 ${surroundingText.length > 500 ? '${surroundingText.substring(0, 500)}...' : surroundingText}
@@ -3385,11 +3494,13 @@ ${surroundingText.length > 500 ? '${surroundingText.substring(0, 500)}...' : sur
 ${candidateDescriptions.toString()}
 
 === TASK ===
-Select the candidate that best matches the search context. Consider:
+Select the candidate that best matches the search context. ${groundedDescription != null ? 'Use the VERIFIED PLACE INFORMATION above to identify the correct match.' : ''}
+
+Consider:
 1. Name similarity to the search term (exact matches preferred)
 2. Whether the place type matches the expected type
 3. Geographic relevance (matches the region context)
-4. Semantic relevance to the surrounding context
+${groundedDescription != null ? '4. Match to the verified place information - this is the MOST RELIABLE source' : '4. Semantic relevance to the surrounding context'}
 
 RESPOND WITH ONLY A JSON OBJECT in this exact format:
 {
@@ -3465,6 +3576,129 @@ If the search seems to be for a specific named business and none match, return -
     } catch (e) {
       print('⚠️ GEMINI RERANK: Error parsing response: $e');
       return (selectedIndex: 0, confidence: 0.5, reason: 'Parse error: $e');
+    }
+  }
+
+  /// Get a search-grounded description of a place for better reranking context
+  /// 
+  /// Uses Google Search grounding to get real-world information about what a place
+  /// actually is, which helps disambiguate between similar-sounding candidates.
+  /// 
+  /// For example:
+  /// - "Hole-in-the-Wall" → "Hole-in-the-Wall is a sea-carved arch on the Olympic Peninsula coast..."
+  /// - "Cape Flattery" → "Cape Flattery is the northwesternmost point of the contiguous US..."
+  Future<String?> getSearchGroundedDescription({
+    required String placeName,
+    String? regionContext,
+    String? expectedType,
+  }) async {
+    if (!isConfigured) {
+      print('⚠️ GEMINI GROUNDED DESC: API key not configured');
+      return null;
+    }
+
+    try {
+      print('🔍 GEMINI GROUNDED DESC: Getting description for "$placeName"...');
+      
+      final prompt = '''
+I need a brief factual description of this place to help identify it among search results.
+
+PLACE NAME: $placeName
+${regionContext != null ? 'REGION CONTEXT: $regionContext' : ''}
+${expectedType != null ? 'EXPECTED TYPE: $expectedType' : ''}
+
+=== YOUR TASK ===
+Search online and provide a 1-2 sentence factual description of this place that includes:
+1. What type of place it is (landmark, beach, restaurant, park, etc.)
+2. Its specific location (city, state, or notable nearby landmarks)
+3. What makes it distinctive or recognizable
+
+=== OUTPUT FORMAT ===
+Return ONLY a JSON object:
+{
+  "found": true or false,
+  "description": "Brief factual description of the place",
+  "official_name": "The official/full name if different from search term",
+  "location_details": "Specific location info (city, state, nearby landmarks)"
+}
+
+If you cannot find reliable information about this specific place, return:
+{"found": false, "description": null}
+
+=== RULES ===
+- Use Google Search to find accurate, current information
+- Be specific - distinguish between places with similar names
+- Focus on facts that help identify THIS specific place vs others with similar names
+- Return ONLY the JSON object, no other text
+''';
+
+      final response = await _callGeminiWithSearchGrounding(prompt);
+      
+      if (response == null) {
+        print('⚠️ GEMINI GROUNDED DESC: No response from API');
+        return null;
+      }
+
+      // Parse the response to extract description
+      final candidates = response['candidates'] as List?;
+      if (candidates == null || candidates.isEmpty) return null;
+
+      final candidate = candidates.first as Map<String, dynamic>;
+      final content = candidate['content'] as Map<String, dynamic>?;
+      if (content == null) return null;
+
+      final parts = content['parts'] as List?;
+      if (parts == null || parts.isEmpty) return null;
+
+      final text = parts.first['text'] as String? ?? '';
+      
+      // Extract JSON from response
+      final jsonMatch = RegExp(r'\{[\s\S]*\}').firstMatch(text);
+      if (jsonMatch == null) {
+        print('⚠️ GEMINI GROUNDED DESC: Could not find JSON in response');
+        return null;
+      }
+
+      try {
+        final parsed = jsonDecode(jsonMatch.group(0)!) as Map<String, dynamic>;
+        final found = parsed['found'] as bool? ?? false;
+        
+        if (!found) {
+          print('⚠️ GEMINI GROUNDED DESC: Place not found via search');
+          return null;
+        }
+
+        final description = parsed['description'] as String?;
+        final officialName = parsed['official_name'] as String?;
+        final locationDetails = parsed['location_details'] as String?;
+        
+        // Build a comprehensive description string
+        final descParts = <String>[];
+        if (officialName != null && officialName.isNotEmpty && officialName.toLowerCase() != placeName.toLowerCase()) {
+          descParts.add('Official name: $officialName');
+        }
+        if (description != null && description.isNotEmpty) {
+          descParts.add(description);
+        }
+        if (locationDetails != null && locationDetails.isNotEmpty) {
+          descParts.add('Location: $locationDetails');
+        }
+        
+        final fullDescription = descParts.join('. ');
+        
+        if (fullDescription.isNotEmpty) {
+          print('✅ GEMINI GROUNDED DESC: "$fullDescription"');
+          return fullDescription;
+        }
+        
+        return null;
+      } catch (e) {
+        print('⚠️ GEMINI GROUNDED DESC: Error parsing response: $e');
+        return null;
+      }
+    } catch (e) {
+      print('❌ GEMINI GROUNDED DESC ERROR: $e');
+      return null;
     }
   }
 

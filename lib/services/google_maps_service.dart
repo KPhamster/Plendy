@@ -474,7 +474,8 @@ class GoogleMapsService {
   }
 
   /// Get place details by placeId
-  Future<Location> getPlaceDetails(String placeId) async {
+  /// [includePhotoUrl] - Whether to generate photo URLs (can be expensive and unnecessary for some use cases)
+  Future<Location> getPlaceDetails(String placeId, {bool includePhotoUrl = true}) async {
     // 1. Check cache first
     if (_placeDetailsCache.containsKey(placeId)) {
       print('📍 PLACE DETAILS CACHE HIT for Place ID: $placeId');
@@ -569,9 +570,9 @@ class GoogleMapsService {
               photoReference = result['photos'][0]['photo_reference'];
             }
 
-            // If we have a photo reference, create a photo URL
+            // If we have a photo reference, create a photo URL (only if requested)
             String? photoUrl;
-            if (photoReference != null) {
+            if (includePhotoUrl && photoReference != null) {
               photoUrl =
                   'https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference=$photoReference&key=$apiKey';
               print(
@@ -808,7 +809,7 @@ class GoogleMapsService {
             // If found a Place ID for an establishment, get details from Places API v1
             if (placeId != null) {
               try {
-                final location = await getPlaceDetails(placeId);
+                final location = await getPlaceDetails(placeId, includePhotoUrl: false);
                 if (location.displayName != null) {
                   print(
                       '📍 Successfully retrieved establishment name: ${location.displayName}');

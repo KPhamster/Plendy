@@ -798,7 +798,7 @@ class LinkLocationExtractionService {
       if (placeId != null && placeId.isNotEmpty) {
         print('🔍 PLACES RESOLVE: Getting details for Place ID: $placeId');
         try {
-          final placeDetails = await _maps.getPlaceDetails(placeId);
+          final placeDetails = await _maps.getPlaceDetails(placeId, includePhotoUrl: false);
           
           // Extract coordinates from place details
           if (placeDetails.latitude != 0.0 || placeDetails.longitude != 0.0) {
@@ -1664,7 +1664,7 @@ class LinkLocationExtractionService {
                 : 'Name appears to be just an address, fetching business name';
             print('📷 IMAGE EXTRACTION: $reason, fetching place details for: $placeId');
             try {
-              final placeDetails = await _maps.getPlaceDetails(placeId);
+              final placeDetails = await _maps.getPlaceDetails(placeId, includePhotoUrl: false);
               if (placeDetails.latitude != 0.0 || placeDetails.longitude != 0.0) {
                 coordinates = LatLng(placeDetails.latitude, placeDetails.longitude);
                 address = placeDetails.address ?? address;
@@ -1690,7 +1690,7 @@ class LinkLocationExtractionService {
           // If we have a placeId but no website yet, fetch place details to get website
           if (placeId != null && placeId.isNotEmpty && website == null) {
             try {
-              final placeDetails = await _maps.getPlaceDetails(placeId);
+              final placeDetails = await _maps.getPlaceDetails(placeId, includePhotoUrl: false);
               website = placeDetails.website;
               if (website != null) {
                 print('📷 IMAGE EXTRACTION: Fetched website: $website');
@@ -1881,9 +1881,19 @@ class LinkLocationExtractionService {
 
       for (final locationInfo in geminiResult.locations) {
         print('📷 MULTI-IMAGE EXTRACTION: Verifying "${locationInfo.name}" with Places API...');
+        if (locationInfo.address != null && locationInfo.address!.isNotEmpty) {
+          print('📷 MULTI-IMAGE EXTRACTION: Using grounded address for scoring: "${locationInfo.address}"');
+        }
         
-        // Extract context clues for filtering (not for searching)
-        final broaderRegion = _extractBroaderRegion(geminiResult.regionContext);
+        // Extract STATE specifically from context for search queries
+        // This is more reliable than using arbitrary "broader region" which might return
+        // things like "Neah Bay, Olympic National Park" instead of "Washington"
+        final stateFromContext = _extractStateFromContext(geminiResult.regionContext) ??
+            _extractStateFromContext(locationInfo.regionContext) ??
+            _extractStateFromContext(locationInfo.city);
+        
+        // Fall back to broader region only if no state found (for international locations)
+        final broaderRegion = stateFromContext == null ? _extractBroaderRegion(geminiResult.regionContext) : null;
         
         // STRATEGY: Search with region context first (if available), then fall back to exact term
         // This helps disambiguate common names like "Hole-in-the-Wall" by including geographic context
@@ -1892,35 +1902,19 @@ class LinkLocationExtractionService {
         var placeResults = <Map<String, dynamic>>[];
         bool usedBroaderSearch = false;
         
-        // Check if this is a natural feature search (lake, mountain, beach, etc.)
-        // Natural features are NOT "in" cities - they're in regions/states
-        // Adding city to search biases results toward businesses IN that city
-        final geminiTypeLower = locationInfo.type?.toLowerCase() ?? '';
-        final isNatureTypeSearch = geminiTypeLower.contains('lake') ||
-            geminiTypeLower.contains('mountain') ||
-            geminiTypeLower.contains('beach') ||
-            geminiTypeLower.contains('waterfall') ||
-            geminiTypeLower.contains('trail') ||
-            geminiTypeLower.contains('viewpoint') ||
-            geminiTypeLower.contains('park') ||
-            geminiTypeLower.contains('rainforest') ||
-            geminiTypeLower.contains('forest') ||
-            geminiTypeLower.contains('canyon') ||
-            geminiTypeLower.contains('river') ||
-            geminiTypeLower.contains('island') ||
-            geminiTypeLower == 'natural_feature' ||
-            geminiTypeLower == 'landmark';
-        
-        // Build context search query: name + region (skip city for natural features)
-        // For "Lake Crescent" in "Port Angeles, Washington", search "Lake Crescent, Washington"
-        // NOT "Lake Crescent, Port Angeles, Washington" - that biases toward city businesses
+        // Build context search query: ALWAYS use "name, state" format
+        // Adding city makes searches too specific and returns wrong results
+        // For "Makah Reservation" with context "Neah Bay, Washington"
+        // Search "Makah Reservation, Washington" NOT "Makah Reservation, Neah Bay, Washington"
         final contextSearchParts = <String>[locationInfo.name];
-        if (!isNatureTypeSearch && locationInfo.city != null) {
-          // Only add city for non-nature searches (restaurants, hotels, etc.)
-          contextSearchParts.add(locationInfo.city!);
+        if (stateFromContext != null) {
+          // Best case: we found a state, use "name, state" format
+          contextSearchParts.add(stateFromContext);
+        } else if (broaderRegion != null) {
+          // Fallback: no state found, use broader region (for international locations)
+          contextSearchParts.add(broaderRegion);
         }
-        if (broaderRegion != null) contextSearchParts.add(broaderRegion);
-        final hasRegionContext = (!isNatureTypeSearch && locationInfo.city != null) || broaderRegion != null;
+        final hasRegionContext = stateFromContext != null || broaderRegion != null;
         
         // Step 1: If we have region context, search with it first
         if (hasRegionContext) {
@@ -1943,6 +1937,7 @@ class LinkLocationExtractionService {
               geminiType: locationInfo.type,
               city: locationInfo.city,
               regionContext: geminiResult.regionContext,
+              groundedAddress: locationInfo.address,
             );
             
             if (placeResult != null) {
@@ -1979,6 +1974,7 @@ class LinkLocationExtractionService {
               geminiType: locationInfo.type,
               city: locationInfo.city,
               regionContext: geminiResult.regionContext,
+              groundedAddress: locationInfo.address,
             );
             
             if (placeResult != null) {
@@ -2004,13 +2000,14 @@ class LinkLocationExtractionService {
           if (matchQuality.matchScore < 0.95 || !isTypeCompatible) {
             print('🔍 MULTI-IMAGE EXTRACTION: Match quality ${(matchQuality.matchScore * 100).toInt()}% < 95% or type incompatible, running Text Search for more candidates...');
             
-            // Build search query with region context for text search
-            // Skip city for natural features - use broader region only
+            // Build search query with state context for text search
+            // ALWAYS use "name, state" format - never include city
             final textSearchParts = <String>[locationInfo.name];
-            if (!isNatureTypeSearch && locationInfo.city != null) {
-              textSearchParts.add(locationInfo.city!);
+            if (stateFromContext != null) {
+              textSearchParts.add(stateFromContext);
+            } else if (broaderRegion != null) {
+              textSearchParts.add(broaderRegion);
             }
-            if (broaderRegion != null) textSearchParts.add(broaderRegion);
             final textSearchQuery = textSearchParts.join(', ');
 
             print('🔍 MULTI-IMAGE EXTRACTION: Running Text Search with query: "$textSearchQuery"');
@@ -2071,6 +2068,7 @@ class LinkLocationExtractionService {
                 geminiType: locationInfo.type,
                 city: locationInfo.city,
                 regionContext: geminiResult.regionContext,
+                groundedAddress: locationInfo.address,
               );
               
               if (combinedBestResult != null) {
@@ -2123,11 +2121,11 @@ class LinkLocationExtractionService {
           var name = (finalPlaceResult['name'] ?? finalPlaceResult['description']?.toString().split(',').first) as String? ?? locationInfo.name;
           String? website;
           
-          // Fetch place details if needed
+          // Fetch place details if needed (skip photo URLs for efficiency)
           if (placeId != null && placeId.isNotEmpty && coordinates == null) {
             print('📷 MULTI-IMAGE EXTRACTION: Fetching place details for: $placeId');
             try {
-              final placeDetails = await _maps.getPlaceDetails(placeId);
+              final placeDetails = await _maps.getPlaceDetails(placeId, includePhotoUrl: false);
               if (placeDetails.latitude != 0.0 || placeDetails.longitude != 0.0) {
                 coordinates = LatLng(placeDetails.latitude, placeDetails.longitude);
                 address = placeDetails.address ?? address;
@@ -2664,7 +2662,7 @@ class LinkLocationExtractionService {
                 : 'Name appears to be just an address, fetching business name';
             print('📷 IMAGE EXTRACTION: $reason, fetching place details for: $placeId');
             try {
-              final placeDetails = await _maps.getPlaceDetails(placeId);
+              final placeDetails = await _maps.getPlaceDetails(placeId, includePhotoUrl: false);
               if (placeDetails.latitude != 0.0 || placeDetails.longitude != 0.0) {
                 coordinates = LatLng(placeDetails.latitude, placeDetails.longitude);
                 address = placeDetails.address ?? address;
@@ -2689,7 +2687,7 @@ class LinkLocationExtractionService {
           // If we have a placeId but no website yet, fetch place details to get website
           if (placeId != null && placeId.isNotEmpty && website == null) {
             try {
-              final placeDetails = await _maps.getPlaceDetails(placeId);
+              final placeDetails = await _maps.getPlaceDetails(placeId, includePhotoUrl: false);
               website = placeDetails.website;
               if (website != null) {
                 print('📷 IMAGE EXTRACTION: Fetched website: $website');
@@ -3333,6 +3331,7 @@ class LinkLocationExtractionService {
     String? geminiType,
     String? city,
     String? regionContext,
+    String? groundedAddress,
   }) {
     if (results.isEmpty) return null;
     
@@ -3350,8 +3349,8 @@ class LinkLocationExtractionService {
     int bestScore = -999;
     
     for (final result in results) {
-      // Get base score from _selectBestPlaceResult logic
-      final baseScore = _getPlaceScore(result, originalName, geminiType: geminiType);
+      // Get base score from _selectBestPlaceResult logic (includes grounded address matching)
+      final baseScore = _getPlaceScore(result, originalName, geminiType: geminiType, groundedAddress: groundedAddress);
       int contextScore = 0;
       
       // Get the result's address/description for context matching
@@ -3406,7 +3405,7 @@ class LinkLocationExtractionService {
   
   /// Get the base score for a place result (used by _selectBestPlaceResultWithContext)
   /// This is a simplified scoring version that returns the score instead of tracking best result
-  int _getPlaceScore(Map<String, dynamic> result, String originalName, {String? geminiType}) {
+  int _getPlaceScore(Map<String, dynamic> result, String originalName, {String? geminiType, String? groundedAddress}) {
     int score = 0;
     
     final resultName = (result['name'] ?? result['description']?.toString().split(',').first ?? '') as String;
@@ -3415,23 +3414,61 @@ class LinkLocationExtractionService {
     final compactOriginal = _normalizeCompact(originalName);
     final compactResultName = _normalizeCompact(resultName);
     final types = (result['types'] as List?)?.cast<String>() ?? [];
+
+    // === GROUNDED ADDRESS MATCHING (highest priority) ===
+    // If we have a grounded address from Gemini search, use it to score candidates
+    if (groundedAddress != null && groundedAddress.isNotEmpty) {
+      final resultAddress = (result['formatted_address'] ?? result['address'] ?? result['description'] ?? '') as String;
+      if (resultAddress.isNotEmpty) {
+        final addressSimilarity = _calculateAddressSimilarity(groundedAddress, resultAddress);
+        if (addressSimilarity >= 0.8) {
+          score += 100;
+          print('📷 IMAGE EXTRACTION:   → Grounded address match bonus: +100 (similarity: ${(addressSimilarity * 100).toInt()}%)');
+        } else if (addressSimilarity >= 0.6) {
+          score += 60;
+          print('📷 IMAGE EXTRACTION:   → Grounded address partial match: +60 (similarity: ${(addressSimilarity * 100).toInt()}%)');
+        } else if (addressSimilarity >= 0.4) {
+          score += 30;
+          print('📷 IMAGE EXTRACTION:   → Grounded address weak match: +30 (similarity: ${(addressSimilarity * 100).toInt()}%)');
+        }
+      }
+    }
     
     // === NAME MATCHING ===
+
+    // Calculate name similarity score to determine the "closest" match
+    // This gives the EXACT bonus (+150) to the candidate with the highest similarity
+    final similarityScore = _calculateNameSimilarity(originalName, resultName);
+    if (similarityScore >= 0.9) {  // Very close match (90%+ similarity)
+      score += 150;
+      print('📷 IMAGE EXTRACTION:   → EXACT match bonus: +150 (similarity: ${(similarityScore * 100).toInt()}%)');
+    } else if (similarityScore >= 0.8) {  // Close match (80-89% similarity)
+      score += 120;
+      print('📷 IMAGE EXTRACTION:   → Very close match bonus: +120 (similarity: ${(similarityScore * 100).toInt()}%)');
+    } else if (similarityScore >= 0.7) {  // Moderate match (70-79% similarity)
+      score += 100;
+      print('📷 IMAGE EXTRACTION:   → Close match bonus: +100 (similarity: ${(similarityScore * 100).toInt()}%)');
+    }
+
+    // Additional bonuses for compact matching (these stack with similarity bonuses)
     if (compactResultName == compactOriginal) {
-      score += 100; // Exact match
+      score += 50; // Smaller bonus since similarity already accounts for this
+      print('📷 IMAGE EXTRACTION:   → Exact compact match bonus: +50');
     } else if (compactResultName.contains(compactOriginal) || 
                compactOriginal.contains(compactResultName)) {
       final lengthDifference = (compactResultName.length - compactOriginal.length).abs();
       if (lengthDifference <= 5) {
-        score += 80;
+        score += 30;
+        print('📷 IMAGE EXTRACTION:   → Close compact match bonus: +30 (diff: $lengthDifference chars)');
       } else if (lengthDifference <= 15) {
-        score += 50 - (lengthDifference ~/ 2);
+        score += 20 - (lengthDifference ~/ 3);
+        print('📷 IMAGE EXTRACTION:   → Medium compact match bonus: +${20 - (lengthDifference ~/ 3)} (diff: $lengthDifference chars)');
       } else {
-        score += 20;
+        score += 10;
       }
     }
     
-    // Word matching
+    // Word matching (additional bonus)
     final originalWordsList = normalizedOriginal.split(RegExp(r'\s+')).where((w) => w.length > 2).toList();
     int matchedWords = 0;
     for (final word in originalWordsList) {
@@ -3441,7 +3478,7 @@ class LinkLocationExtractionService {
     }
     if (originalWordsList.isNotEmpty) {
       final matchRatio = matchedWords / originalWordsList.length;
-      score += (matchRatio * 20).round();
+      score += (matchRatio * 15).round();  // Reduced from 20 to avoid over-scoring
     }
     
     // === TYPE-BASED SCORING (simplified) ===
@@ -3469,26 +3506,297 @@ class LinkLocationExtractionService {
     final isHotelSearch = hotelTypes.any((t) => geminiTypeLower.contains(t));
     
     if (isCitySearch) {
-      if (types.any((t) => localityTypes.contains(t))) score += 80;
-      if (types.any((t) => ['establishment', 'lodging', 'hotel', 'restaurant'].contains(t))) score -= 60;
+      if (types.any((t) => localityTypes.contains(t))) {
+        score += 80;
+        print('📷 IMAGE EXTRACTION:   → Locality type match bonus: +80');
+      }
+      if (types.any((t) => ['establishment', 'lodging', 'hotel', 'restaurant'].contains(t))) {
+        score -= 60;
+        print('📷 IMAGE EXTRACTION:   → Non-city penalty: -60');
+      }
     } else if (isNatureSearch) {
-      if (types.any((t) => naturalFeatureTypes.contains(t))) score += 50;
+      if (types.any((t) => naturalFeatureTypes.contains(t))) {
+        score += 50;
+        print('📷 IMAGE EXTRACTION:   → Nature type match bonus: +50');
+      }
       // HEAVY penalty for businesses when searching for natural features
       // "Lake Crescent Lodge Dining Room" (restaurant) should NOT match "Lake Crescent" (lake)
-      if (types.any((t) => nonNatureTypes.contains(t))) score -= 100;
+      if (types.any((t) => nonNatureTypes.contains(t))) {
+        score -= 100;
+        print('📷 IMAGE EXTRACTION:   → Non-nature penalty: -100');
+      }
     } else if (isRestaurantSearch) {
-      if (types.any((t) => foodTypes.contains(t))) score += 60;
-      if (types.any((t) => ['route', 'geocode', 'locality'].contains(t))) score -= 80;
+      if (types.any((t) => foodTypes.contains(t))) {
+        score += 60;
+        print('📷 IMAGE EXTRACTION:   → Restaurant type match bonus: +60');
+      }
+      if (types.any((t) => ['route', 'geocode', 'locality'].contains(t))) {
+        score -= 80;
+        print('📷 IMAGE EXTRACTION:   → Non-restaurant penalty: -80');
+      }
     } else if (isHotelSearch) {
-      if (types.any((t) => hotelTypes.contains(t))) score += 60;
-      if (types.any((t) => ['store', 'gift_shop', 'restaurant'].contains(t))) score -= 50;
+      if (types.any((t) => hotelTypes.contains(t))) {
+        score += 60;
+        print('📷 IMAGE EXTRACTION:   → Hotel type match bonus: +60');
+      }
+      if (types.any((t) => ['store', 'gift_shop', 'restaurant'].contains(t))) {
+        score -= 50;
+        print('📷 IMAGE EXTRACTION:   → Non-hotel penalty: -50');
+      }
     } else {
       // Default scoring
-      if (types.any((t) => localityTypes.contains(t))) score -= 30;
-      if (types.any((t) => t == 'establishment' || t == 'point_of_interest')) score += 15;
+      if (types.any((t) => localityTypes.contains(t))) {
+        score -= 30;
+        print('📷 IMAGE EXTRACTION:   → Locality penalty: -30');
+      }
+      if (types.any((t) => t == 'establishment' || t == 'point_of_interest')) {
+        score += 15;
+        print('📷 IMAGE EXTRACTION:   → Establishment bonus: +15');
+      }
     }
     
     return score;
+  }
+  
+  /// Calculate similarity score between two place names (0.0 to 1.0)
+  /// Used to determine which candidate is "closest" to the original search term
+  double _calculateNameSimilarity(String original, String candidate) {
+    if (original.isEmpty || candidate.isEmpty) return 0.0;
+
+    // Normalize both strings
+    final normOriginal = _normalizeForComparison(original);
+    final normCandidate = _normalizeForComparison(candidate);
+
+    // Exact match after normalization
+    if (normOriginal == normCandidate) return 1.0;
+
+    // Case-insensitive exact match (preserves punctuation)
+    if (original.trim().toLowerCase() == candidate.trim().toLowerCase()) return 0.95;
+
+    // Calculate Levenshtein distance for edit similarity
+    final maxLength = math.max(normOriginal.length, normCandidate.length);
+    if (maxLength == 0) return 1.0;
+
+    final distance = _levenshteinDistance(normOriginal, normCandidate);
+    final editSimilarity = 1.0 - (distance / maxLength);
+
+    // Calculate longest common substring ratio
+    final lcsLength = _longestCommonSubstring(normOriginal, normCandidate).length;
+    final lcsRatio = lcsLength / math.max(normOriginal.length, normCandidate.length);
+
+    // Word overlap similarity
+    final originalWords = normOriginal.split(RegExp(r'\s+')).toSet();
+    final candidateWords = normCandidate.split(RegExp(r'\s+')).toSet();
+    final commonWords = originalWords.intersection(candidateWords).length;
+    final wordOverlap = commonWords / math.max(originalWords.length, candidateWords.length);
+
+    // Weighted combination of factors
+    final similarity = (editSimilarity * 0.4) + (lcsRatio * 0.4) + (wordOverlap * 0.2);
+
+    return math.max(0.0, math.min(1.0, similarity));
+  }
+
+  /// Calculate Levenshtein distance between two strings
+  int _levenshteinDistance(String s1, String s2) {
+    final len1 = s1.length;
+    final len2 = s2.length;
+
+    final matrix = List.generate(len1 + 1, (_) => List<int>.filled(len2 + 1, 0));
+
+    for (int i = 0; i <= len1; i++) matrix[i][0] = i;
+    for (int j = 0; j <= len2; j++) matrix[0][j] = j;
+
+    for (int i = 1; i <= len1; i++) {
+      for (int j = 1; j <= len2; j++) {
+        final cost = s1[i - 1] == s2[j - 1] ? 0 : 1;
+        matrix[i][j] = math.min(
+          matrix[i - 1][j] + 1,      // deletion
+          math.min(
+            matrix[i][j - 1] + 1,    // insertion
+            matrix[i - 1][j - 1] + cost, // substitution
+          ),
+        );
+      }
+    }
+
+    return matrix[len1][len2];
+  }
+
+  /// Find longest common substring between two strings
+  String _longestCommonSubstring(String s1, String s2) {
+    final len1 = s1.length;
+    final len2 = s2.length;
+
+    final dp = List.generate(len1 + 1, (_) => List<int>.filled(len2 + 1, 0));
+    int maxLength = 0;
+    int endIndex = 0;
+
+    for (int i = 1; i <= len1; i++) {
+      for (int j = 1; j <= len2; j++) {
+        if (s1[i - 1] == s2[j - 1]) {
+          dp[i][j] = dp[i - 1][j - 1] + 1;
+          if (dp[i][j] > maxLength) {
+            maxLength = dp[i][j];
+            endIndex = i;
+          }
+        }
+      }
+    }
+
+    return maxLength > 0 ? s1.substring(endIndex - maxLength, endIndex) : '';
+  }
+
+  /// Calculate similarity between two addresses (0.0 to 1.0)
+  /// Used to match Gemini's grounded address against Places API candidate addresses
+  double _calculateAddressSimilarity(String groundedAddress, String candidateAddress) {
+    if (groundedAddress.isEmpty || candidateAddress.isEmpty) return 0.0;
+
+    // Normalize addresses for comparison
+    final normGrounded = _normalizeAddress(groundedAddress);
+    final normCandidate = _normalizeAddress(candidateAddress);
+
+    // Exact match
+    if (normGrounded == normCandidate) return 1.0;
+
+    // Extract address components for matching
+    final groundedParts = _extractAddressParts(groundedAddress);
+    final candidateParts = _extractAddressParts(candidateAddress);
+
+    double score = 0.0;
+    int matchedComponents = 0;
+    int totalComponents = 0;
+
+    // Check street match (most important)
+    if (groundedParts['street'] != null && candidateParts['street'] != null) {
+      totalComponents++;
+      final streetSimilarity = _calculateNameSimilarity(
+        groundedParts['street']!,
+        candidateParts['street']!,
+      );
+      if (streetSimilarity >= 0.7) {
+        matchedComponents++;
+        score += 0.4 * streetSimilarity;
+      }
+    }
+
+    // Check city match
+    if (groundedParts['city'] != null && candidateParts['city'] != null) {
+      totalComponents++;
+      if (groundedParts['city']!.toLowerCase() == candidateParts['city']!.toLowerCase()) {
+        matchedComponents++;
+        score += 0.25;
+      }
+    }
+
+    // Check state match
+    if (groundedParts['state'] != null && candidateParts['state'] != null) {
+      totalComponents++;
+      if (_statesMatch(groundedParts['state']!, candidateParts['state']!)) {
+        matchedComponents++;
+        score += 0.2;
+      }
+    }
+
+    // Check zip code match (if available)
+    if (groundedParts['zip'] != null && candidateParts['zip'] != null) {
+      totalComponents++;
+      if (groundedParts['zip'] == candidateParts['zip']) {
+        matchedComponents++;
+        score += 0.15;
+      }
+    }
+
+    // Fallback: use general string similarity if component matching fails
+    if (totalComponents == 0 || matchedComponents == 0) {
+      final editSimilarity = 1.0 - (_levenshteinDistance(normGrounded, normCandidate) / 
+          math.max(normGrounded.length, normCandidate.length));
+      return math.max(0.0, editSimilarity);
+    }
+
+    return math.min(1.0, score);
+  }
+
+  /// Normalize an address string for comparison
+  String _normalizeAddress(String address) {
+    return address
+        .toLowerCase()
+        .replaceAll(RegExp(r'\bstreet\b'), 'st')
+        .replaceAll(RegExp(r'\broad\b'), 'rd')
+        .replaceAll(RegExp(r'\bavenue\b'), 'ave')
+        .replaceAll(RegExp(r'\bdrive\b'), 'dr')
+        .replaceAll(RegExp(r'\bboulevard\b'), 'blvd')
+        .replaceAll(RegExp(r'\blane\b'), 'ln')
+        .replaceAll(RegExp(r'\bcourt\b'), 'ct')
+        .replaceAll(RegExp(r'\bnorth\b'), 'n')
+        .replaceAll(RegExp(r'\bsouth\b'), 's')
+        .replaceAll(RegExp(r'\beast\b'), 'e')
+        .replaceAll(RegExp(r'\bwest\b'), 'w')
+        .replaceAll(RegExp(r'[,.]'), '')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+  }
+
+  /// Extract address components (street, city, state, zip)
+  Map<String, String?> _extractAddressParts(String address) {
+    final parts = <String, String?>{};
+    final cleanAddress = address.trim();
+
+    // Try to extract zip code (5 digits or 5+4 format)
+    final zipMatch = RegExp(r'\b(\d{5})(?:-\d{4})?\b').firstMatch(cleanAddress);
+    if (zipMatch != null) {
+      parts['zip'] = zipMatch.group(1);
+    }
+
+    // Split by comma to get components
+    final components = cleanAddress.split(',').map((c) => c.trim()).toList();
+
+    if (components.isNotEmpty) {
+      // First component is usually street address
+      parts['street'] = components[0];
+    }
+
+    if (components.length >= 2) {
+      // Second component is usually city
+      parts['city'] = components[1];
+    }
+
+    if (components.length >= 3) {
+      // Third component often has state and zip
+      final stateZip = components[2].trim();
+      // Extract state (2-letter abbreviation or full name)
+      final stateMatch = RegExp(r'\b([A-Z]{2})\b').firstMatch(stateZip.toUpperCase());
+      if (stateMatch != null) {
+        parts['state'] = stateMatch.group(1);
+      } else {
+        // Try to match state name
+        for (final stateName in _stateNameVariants.keys) {
+          if (stateZip.toLowerCase().contains(stateName)) {
+            parts['state'] = _stateNameVariants[stateName]?.first ?? stateName;
+            break;
+          }
+        }
+      }
+    }
+
+    return parts;
+  }
+
+  /// Check if two state references match (handles abbreviations and full names)
+  bool _statesMatch(String state1, String state2) {
+    final s1 = state1.toLowerCase().trim();
+    final s2 = state2.toLowerCase().trim();
+
+    if (s1 == s2) return true;
+
+    // Check against state name variants
+    for (final entry in _stateNameVariants.entries) {
+      final variants = [entry.key, ...entry.value];
+      final s1Match = variants.any((v) => v == s1 || s1.contains(v));
+      final s2Match = variants.any((v) => v == s2 || s2.contains(v));
+      if (s1Match && s2Match) return true;
+    }
+
+    return false;
   }
   
   /// Normalize a string for comparison (lowercase, remove special chars)
@@ -3591,6 +3899,140 @@ class LinkLocationExtractionService {
 
     // Fallback: return everything except the first part
     return parts.sublist(1).join(', ');
+  }
+
+  /// Major landmarks/parks that imply a specific US state.
+  /// When state isn't explicitly mentioned, these help infer the correct state.
+  static const Map<String, String> _landmarkToState = {
+    // Washington State
+    'olympic national park': 'Washington',
+    'olympic peninsula': 'Washington',
+    'mount rainier': 'Washington',
+    'mt rainier': 'Washington',
+    'north cascades': 'Washington',
+    'san juan islands': 'Washington',
+    'puget sound': 'Washington',
+    'makah reservation': 'Washington',
+    'neah bay': 'Washington',
+    'shi shi beach': 'Washington',
+    'cape flattery': 'Washington',
+    // California
+    'yosemite': 'California',
+    'death valley': 'California',
+    'joshua tree': 'California',
+    'sequoia national': 'California',
+    'kings canyon': 'California',
+    'redwood national': 'California',
+    'channel islands': 'California',
+    'pinnacles national': 'California',
+    'lassen volcanic': 'California',
+    'point reyes': 'California',
+    // Oregon
+    'crater lake': 'Oregon',
+    'columbia river gorge': 'Oregon',
+    'mount hood': 'Oregon',
+    'mt hood': 'Oregon',
+    // Arizona
+    'grand canyon': 'Arizona',
+    'saguaro national': 'Arizona',
+    'petrified forest': 'Arizona',
+    'monument valley': 'Arizona',
+    // Utah
+    'zion national': 'Utah',
+    'bryce canyon': 'Utah',
+    'arches national': 'Utah',
+    'canyonlands': 'Utah',
+    'capitol reef': 'Utah',
+    // Colorado
+    'rocky mountain national': 'Colorado',
+    'mesa verde': 'Colorado',
+    'great sand dunes': 'Colorado',
+    'black canyon': 'Colorado',
+    // Wyoming
+    'yellowstone': 'Wyoming',
+    'grand teton': 'Wyoming',
+    "devil's tower": 'Wyoming',
+    'devils tower': 'Wyoming',
+    // Montana
+    'glacier national park': 'Montana',
+    // Nevada
+    'great basin national': 'Nevada',
+    'lake tahoe': 'Nevada', // Also California, but Nevada is common reference
+    // Hawaii
+    'hawaii volcanoes': 'Hawaii',
+    'haleakala': 'Hawaii',
+    // Alaska
+    'denali': 'Alaska',
+    'glacier bay': 'Alaska',
+    'kenai fjords': 'Alaska',
+    'katmai': 'Alaska',
+    // Florida
+    'everglades': 'Florida',
+    'dry tortugas': 'Florida',
+    'biscayne national': 'Florida',
+    // Other notable
+    'acadia': 'Maine',
+    'shenandoah': 'Virginia',
+    'great smoky': 'Tennessee', // Also NC
+    'mammoth cave': 'Kentucky',
+    'hot springs national': 'Arkansas',
+    'badlands': 'South Dakota',
+    'wind cave': 'South Dakota',
+    'theodore roosevelt': 'North Dakota',
+    'voyageurs': 'Minnesota',
+    'isle royale': 'Michigan',
+    'cuyahoga valley': 'Ohio',
+    'new river gorge': 'West Virginia',
+    'big bend': 'Texas',
+    'guadalupe mountains': 'Texas',
+    'carlsbad caverns': 'New Mexico',
+    'white sands': 'New Mexico',
+  };
+
+  /// Extract US state name from context string.
+  /// 
+  /// Given context like "Makah Reservation, Neah Bay, Olympic National Park" or 
+  /// "Port Angeles, Washington State, USA", extracts the state name.
+  /// 
+  /// Returns the capitalized state name (e.g., "Washington", "California") or null if not found.
+  String? _extractStateFromContext(String? context) {
+    if (context == null || context.isEmpty) return null;
+    
+    final contextLower = context.toLowerCase();
+    
+    // First, check each state name and its variants (explicit state mentions)
+    for (final entry in _stateNameVariants.entries) {
+      final stateName = entry.key;
+      final variants = entry.value;
+      
+      // Check full state name (with word boundaries to avoid partial matches)
+      // e.g., "washington" should match but not "washington dc" matching just "dc"
+      final statePattern = RegExp(r'\b' + RegExp.escape(stateName) + r'(\s+state)?\b', caseSensitive: false);
+      if (statePattern.hasMatch(contextLower)) {
+        // Return properly capitalized state name
+        return stateName.split(' ').map((w) => w[0].toUpperCase() + w.substring(1)).join(' ');
+      }
+      
+      // Check abbreviations (must be standalone, not part of another word)
+      for (final abbrev in variants) {
+        // For 2-letter abbreviations, require word boundaries
+        // e.g., "WA" should match but "WATER" should not match "WA"
+        final abbrevPattern = RegExp(r'\b' + RegExp.escape(abbrev) + r'\b', caseSensitive: false);
+        if (abbrevPattern.hasMatch(contextLower)) {
+          return stateName.split(' ').map((w) => w[0].toUpperCase() + w.substring(1)).join(' ');
+        }
+      }
+    }
+    
+    // Second, check for major landmarks that imply a state
+    // This handles cases like "Olympic National Park" → Washington
+    for (final entry in _landmarkToState.entries) {
+      if (contextLower.contains(entry.key)) {
+        return entry.value;
+      }
+    }
+    
+    return null;
   }
 
   /// Check if the found place name is a good match for the original search name.
@@ -3975,7 +4417,7 @@ class LinkLocationExtractionService {
     required Map<String, dynamic>? selectedResult,
     String? geminiType,
     bool usedBroaderSearch = false,
-    double baseConfidence = 0.8,
+    double baseConfidence = 0.85,
   }) {
     if (selectedResult == null) {
       return (
