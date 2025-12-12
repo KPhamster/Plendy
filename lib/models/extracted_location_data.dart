@@ -67,6 +67,10 @@ class ExtractedLocationData {
   
   /// Website URL for the place
   final String? website;
+  
+  /// Flag indicating the match quality is low and user should confirm
+  /// This is set when AI reranking couldn't find a confident match
+  final bool needsConfirmation;
 
   const ExtractedLocationData({
     this.placeId,
@@ -80,6 +84,7 @@ class ExtractedLocationData {
     this.googleMapsUri,
     this.placeTypes,
     this.website,
+    this.needsConfirmation = false,
   });
 
   /// Create from a map (for JSON deserialization)
@@ -101,6 +106,7 @@ class ExtractedLocationData {
       googleMapsUri: map['googleMapsUri'] as String?,
       placeTypes: (map['placeTypes'] as List?)?.cast<String>(),
       website: map['website'] as String?,
+      needsConfirmation: map['needsConfirmation'] as bool? ?? false,
     );
   }
 
@@ -119,6 +125,7 @@ class ExtractedLocationData {
       'googleMapsUri': googleMapsUri,
       'placeTypes': placeTypes,
       'website': website,
+      'needsConfirmation': needsConfirmation,
     };
   }
 
@@ -135,6 +142,7 @@ class ExtractedLocationData {
     String? googleMapsUri,
     List<String>? placeTypes,
     String? website,
+    bool? needsConfirmation,
   }) {
     return ExtractedLocationData(
       placeId: placeId ?? this.placeId,
@@ -148,6 +156,7 @@ class ExtractedLocationData {
       googleMapsUri: googleMapsUri ?? this.googleMapsUri,
       placeTypes: placeTypes ?? this.placeTypes,
       website: website ?? this.website,
+      needsConfirmation: needsConfirmation ?? this.needsConfirmation,
     );
   }
 
@@ -206,6 +215,6 @@ class ExtractedLocationData {
 
   @override
   String toString() {
-    return 'ExtractedLocationData(name: $name, placeId: $placeId, source: $source, confidence: $confidence)';
+    return 'ExtractedLocationData(name: $name, placeId: $placeId, source: $source, confidence: $confidence${needsConfirmation ? ', needsConfirmation: true' : ''})';
   }
 }

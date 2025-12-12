@@ -272,3 +272,5 @@ If something goes wrong, you can rollback to Firebase's default:
 3. Run `flutter pub get` and restart app
 
 But trust me, SendGrid works better! 🚀
+
+

@@ -649,6 +649,8 @@ class LinkLocationExtractionService {
     String? address,
     String? locationContext,
     LatLng? userLocation,
+    String? surroundingText, // Optional caption/page text for AI reranking context
+    String? geminiType, // Optional expected type from Gemini extraction
   }) async {
     try {
       // Build search query - combine name with location context for better results
@@ -684,12 +686,15 @@ class LinkLocationExtractionService {
 
       // Use the sophisticated scoring method to find the best match
       // This properly handles name matching with compact comparison
-      final bestResult = _selectBestPlaceResult(results, locationName);
+      final bestResult = _selectBestPlaceResult(results, locationName, geminiType: geminiType);
       
       if (bestResult == null) {
         print('⚠️ PLACES RESOLVE: No good match found for "$locationName"');
         return null;
       }
+      
+      // Find the index of the selected result for potential AI reranking
+      final selectedIndex = results.indexOf(bestResult);
       
       // Validate the result is actually a good match (not just any result)
       final resultName = (bestResult['name'] ?? bestResult['description']?.toString().split(',').first ?? '') as String;
@@ -743,15 +748,46 @@ class LinkLocationExtractionService {
         print('🎯 PLACES RESOLVE: High word match (${(matchRatio * 100).toInt()}%)');
       }
       
-      if (!hasGoodNameMatch) {
+      // === AI RERANKING: Trigger when initial match quality is low ===
+      Map<String, dynamic> finalResult = bestResult;
+      double finalConfidence = 0.85;
+      bool needsConfirmation = false;
+      
+      // Check if we need AI reranking
+      final rerankResult = await _maybeAIRerank(
+        originalName: locationName,
+        candidates: results,
+        selectedIndex: selectedIndex,
+        geminiType: geminiType,
+        regionContext: locationContext,
+        surroundingText: surroundingText,
+        userLocation: userLocation,
+        usedBroaderSearch: !hasGoodNameMatch,
+      );
+      
+      // Use the reranked result
+      if (rerankResult.selectedResult != null) {
+        finalResult = rerankResult.selectedResult!;
+        finalConfidence = rerankResult.confidence;
+        needsConfirmation = rerankResult.needsConfirmation;
+        
+        if (rerankResult.usedAIRerank) {
+          print('🤖 PLACES RESOLVE: AI reranking applied (confidence: ${(finalConfidence * 100).toInt()}%)');
+        }
+      }
+      
+      // If still no good name match and AI couldn't improve it, return null
+      if (!hasGoodNameMatch && !rerankResult.usedAIRerank) {
         print('⚠️ PLACES RESOLVE: Best result "$resultName" doesn\'t match "$locationName" well enough');
         print('   Will add location without coordinates (user can set manually)');
         return null;
       }
       
-      print('🎯 PLACES RESOLVE: Selected best match: "$resultName"');
+      // Get the final result name
+      final finalResultName = (finalResult['name'] ?? finalResult['description']?.toString().split(',').first ?? '') as String;
+      print('🎯 PLACES RESOLVE: Selected best match: "$finalResultName"');
 
-      final placeId = bestResult['placeId'] as String?;
+      final placeId = finalResult['placeId'] as String?;
       
       // Autocomplete doesn't return coordinates - need to call Place Details API
       LatLng? coords;
@@ -770,7 +806,7 @@ class LinkLocationExtractionService {
           }
           
           resolvedAddress = placeDetails.address;
-          resolvedName = placeDetails.displayName ?? bestResult['description'] as String?;
+          resolvedName = placeDetails.displayName ?? finalResult['description'] as String?;
           website = placeDetails.website;
           
           print('✅ PLACES RESOLVE: Got details - "${resolvedName}" at $coords');
@@ -780,12 +816,12 @@ class LinkLocationExtractionService {
         } catch (e) {
           print('⚠️ PLACES RESOLVE: Could not get place details: $e');
           // Fall back to autocomplete data
-          resolvedName = bestResult['description'] as String?;
-          resolvedAddress = bestResult['address'] as String?;
+          resolvedName = finalResult['description'] as String?;
+          resolvedAddress = finalResult['address'] as String?;
         }
       } else {
-        resolvedName = bestResult['description'] as String?;
-        resolvedAddress = bestResult['address'] as String?;
+        resolvedName = finalResult['description'] as String?;
+        resolvedAddress = finalResult['address'] as String?;
       }
       
       print('✅ PLACES RESOLVE: Final result "${resolvedName}" at $coords');
@@ -797,9 +833,10 @@ class LinkLocationExtractionService {
         coordinates: coords,
         type: PlaceType.unknown,
         source: ExtractionSource.placesSearch,
-        confidence: coords != null ? 0.85 : 0.6, // Higher confidence with coords
+        confidence: coords != null ? finalConfidence : finalConfidence * 0.7, // Higher confidence with coords
         metadata: {'original_query': locationName, 'location_context': locationContext},
         website: website,
+        needsConfirmation: needsConfirmation,
       );
     } catch (e) {
       print('❌ PLACES RESOLVE ERROR: $e');
@@ -1487,22 +1524,121 @@ class LinkLocationExtractionService {
         if (locationInfo.city != null) {
           searchQuery += ', ${locationInfo.city}';
         }
-        // Add region context for better disambiguation
+        // Add region context for better disambiguation, BUT only if not already in the name
+        // This prevents "White Mountains, New Hampshire" + "New Hampshire" → "White Mountains, New Hampshire, New Hampshire"
         if (effectiveRegionContext != null && effectiveRegionContext.isNotEmpty) {
-          searchQuery += ', $effectiveRegionContext';
+          final nameLower = locationInfo.name.toLowerCase();
+          final contextLower = effectiveRegionContext.toLowerCase();
+          if (!nameLower.contains(contextLower)) {
+            searchQuery += ', $effectiveRegionContext';
+            print('📷 IMAGE EXTRACTION: Searching Places API for: $searchQuery (with region context)');
+          } else {
+            print('📷 IMAGE EXTRACTION: Searching Places API for: $searchQuery (region already in name)');
+          }
+        } else {
+          print('📷 IMAGE EXTRACTION: Searching Places API for: $searchQuery');
         }
         
-        print('📷 IMAGE EXTRACTION: Searching Places API for: $searchQuery');
-        
         // Search Places API
-        final placeResults = await _maps.searchPlaces(
+        var placeResults = await _maps.searchPlaces(
           searchQuery,
           latitude: userLocation?.latitude,
           longitude: userLocation?.longitude,
         );
         
         // Use best result selection to prefer exact name matches and respect Gemini's type hints
-        final placeResult = _selectBestPlaceResult(placeResults, locationInfo.name, geminiType: locationInfo.type);
+        var placeResult = _selectBestPlaceResult(placeResults, locationInfo.name, geminiType: locationInfo.type);
+        bool usedBroaderSearch = false;
+        
+        // Check if the found result is a good name AND type match
+        // This handles cases like:
+        // - Searching for "Afton Villa Gardens" but finding "Afton Villa Offices"
+        // - Searching for "Lake Crescent" (Lake) but finding "Lake Crescent Road" (route)
+        if (placeResult != null && effectiveRegionContext != null) {
+          final foundName = (placeResult['name'] ?? placeResult['description']?.toString().split(',').first ?? '') as String;
+          final matchQuality = _checkNameMatchQuality(locationInfo.name, foundName);
+          
+          // Also check type compatibility
+          final placeTypes = (placeResult['types'] as List?)?.cast<String>() ?? [];
+          final isTypeCompatible = _isTypeCompatible(locationInfo.type, placeTypes);
+          
+          // Consider it a poor match if either name OR type doesn't match
+          final isGoodMatch = matchQuality.isGoodMatch && isTypeCompatible;
+          
+          if (!isGoodMatch) {
+            final reason = !matchQuality.isGoodMatch 
+                ? 'Poor name match (${(matchQuality.matchScore * 100).toInt()}%)'
+                : 'Type mismatch (expected ${locationInfo.type}, got ${placeTypes.take(3).join(", ")})';
+            print('⚠️ IMAGE EXTRACTION: $reason: "${locationInfo.name}" → "$foundName"');
+            
+            // Try a broader regional search (e.g., just "Louisiana" instead of "Baton Rouge, Louisiana")
+            final broaderRegion = _extractBroaderRegion(effectiveRegionContext);
+            if (broaderRegion != null) {
+              print('🔄 IMAGE EXTRACTION: Trying broader search with region: $broaderRegion');
+              
+              String broaderSearchQuery = locationInfo.name;
+              if (locationInfo.address != null) {
+                broaderSearchQuery += ' ${locationInfo.address}';
+              }
+              broaderSearchQuery += ', $broaderRegion';
+              
+              print('📷 IMAGE EXTRACTION: Broader search: $broaderSearchQuery');
+              
+              final broaderResults = await _maps.searchPlaces(
+                broaderSearchQuery,
+                latitude: userLocation?.latitude,
+                longitude: userLocation?.longitude,
+              );
+              
+              if (broaderResults.isNotEmpty) {
+                final broaderResult = _selectBestPlaceResult(broaderResults, locationInfo.name, geminiType: locationInfo.type);
+                
+                if (broaderResult != null) {
+                  final broaderFoundName = (broaderResult['name'] ?? broaderResult['description']?.toString().split(',').first ?? '') as String;
+                  final broaderMatchQuality = _checkNameMatchQuality(locationInfo.name, broaderFoundName);
+                  final broaderPlaceTypes = (broaderResult['types'] as List?)?.cast<String>() ?? [];
+                  final broaderIsTypeCompatible = _isTypeCompatible(locationInfo.type, broaderPlaceTypes);
+                  
+                  print('📷 IMAGE EXTRACTION: Broader search found: "$broaderFoundName" (match: ${(broaderMatchQuality.matchScore * 100).toInt()}%, type compatible: $broaderIsTypeCompatible)');
+                  
+                  // Use broader result if it's a better match (either better name OR better type)
+                  final broaderIsBetter = (broaderMatchQuality.matchScore > matchQuality.matchScore) ||
+                      (broaderIsTypeCompatible && !isTypeCompatible);
+                  if (broaderIsBetter) {
+                    print('✅ IMAGE EXTRACTION: Using broader search result (better match)');
+                    placeResult = broaderResult;
+                    usedBroaderSearch = true;
+                  } else {
+                    print('📷 IMAGE EXTRACTION: Keeping original result (broader search not better)');
+                  }
+                }
+              }
+            }
+          }
+        } else if (placeResult == null && effectiveRegionContext != null) {
+          // No results with full region context, try broader search
+          final broaderRegion = _extractBroaderRegion(effectiveRegionContext);
+          if (broaderRegion != null) {
+            print('🔄 IMAGE EXTRACTION: No results, trying broader search with: $broaderRegion');
+            
+            String broaderSearchQuery = locationInfo.name;
+            if (locationInfo.address != null) {
+              broaderSearchQuery += ' ${locationInfo.address}';
+            }
+            broaderSearchQuery += ', $broaderRegion';
+            
+            placeResults = await _maps.searchPlaces(
+              broaderSearchQuery,
+              latitude: userLocation?.latitude,
+              longitude: userLocation?.longitude,
+            );
+            
+            if (placeResults.isNotEmpty) {
+              placeResult = _selectBestPlaceResult(placeResults, locationInfo.name, geminiType: locationInfo.type);
+              usedBroaderSearch = true;
+            }
+          }
+        }
         
         if (placeResult != null) {
           // Note: searchPlaces returns 'placeId' (camelCase) for autocomplete results
@@ -1607,22 +1743,73 @@ class LinkLocationExtractionService {
             }
           }
           
+          // === AI RERANKING: Apply when initial match quality is low ===
+          // Collect all candidate results for potential AI reranking
+          final allCandidates = [...placeResults];
+          final selectedIndex = allCandidates.indexOf(placeResult);
+          
+          // Check if we need AI reranking based on match quality
+          final rerankResult = await _maybeAIRerank(
+            originalName: locationInfo.name,
+            candidates: allCandidates,
+            selectedIndex: selectedIndex >= 0 ? selectedIndex : 0,
+            geminiType: locationInfo.type,
+            regionContext: effectiveRegionContext,
+            surroundingText: null, // Could pass caption text here if available
+            userLocation: userLocation,
+            usedBroaderSearch: usedBroaderSearch,
+          );
+          
+          // Update result based on AI reranking
+          var finalPlaceResult = placeResult;
+          var finalConfidence = coordinates != null ? (usedBroaderSearch ? 0.80 : 0.85) : 0.60;
+          var needsConfirmation = false;
+          
+          if (rerankResult.usedAIRerank && rerankResult.selectedResult != null) {
+            finalPlaceResult = rerankResult.selectedResult!;
+            finalConfidence = rerankResult.confidence;
+            needsConfirmation = rerankResult.needsConfirmation;
+            
+            // If AI selected a different result, update placeId and refetch details
+            if (finalPlaceResult != placeResult) {
+              final newPlaceId = (finalPlaceResult['placeId'] ?? finalPlaceResult['place_id']) as String?;
+              if (newPlaceId != null && newPlaceId.isNotEmpty) {
+                print('🤖 IMAGE EXTRACTION: AI reranking selected different result, fetching details for: $newPlaceId');
+                try {
+                  final newPlaceDetails = await _maps.getPlaceDetails(newPlaceId);
+                  if (newPlaceDetails.latitude != 0.0 || newPlaceDetails.longitude != 0.0) {
+                    coordinates = LatLng(newPlaceDetails.latitude, newPlaceDetails.longitude);
+                    address = newPlaceDetails.address ?? address;
+                    website = newPlaceDetails.website ?? website;
+                    name = newPlaceDetails.displayName ?? finalPlaceResult['name'] as String? ?? name;
+                    print('✅ IMAGE EXTRACTION: AI-reranked result: "$name" at ${coordinates?.latitude}, ${coordinates?.longitude}');
+                  }
+                } catch (e) {
+                  print('⚠️ IMAGE EXTRACTION: Error fetching AI-reranked place details: $e');
+                }
+              }
+            }
+          }
+          
           final extractedData = ExtractedLocationData(
             placeId: placeId,
             name: name,
             address: address,
             coordinates: coordinates,
-            type: _inferPlaceTypeFromResult(placeResult, locationInfo.type),
+            type: _inferPlaceTypeFromResult(finalPlaceResult, locationInfo.type),
             source: ExtractionSource.placesSearch,
-            confidence: coordinates != null ? 0.85 : 0.60, // Higher confidence with coordinates
-            placeTypes: (placeResult['types'] as List?)?.cast<String>(),
+            confidence: coordinates != null ? finalConfidence : finalConfidence * 0.7, // Higher confidence with coordinates
+            placeTypes: (finalPlaceResult['types'] as List?)?.cast<String>(),
             website: website,
+            needsConfirmation: needsConfirmation,
           );
           
           // Avoid duplicates
           if (!_isDuplicate(extractedData, results)) {
             results.add(extractedData);
-            print('✅ IMAGE EXTRACTION: Verified location: ${extractedData.name} at ${coordinates?.latitude}, ${coordinates?.longitude}');
+            final searchType = usedBroaderSearch ? ' (via broader search)' : '';
+            final rerankType = rerankResult.usedAIRerank ? ' (AI reranked)' : '';
+            print('✅ IMAGE EXTRACTION: Verified location: ${extractedData.name} at ${coordinates?.latitude}, ${coordinates?.longitude}$searchType$rerankType');
           }
         } else {
           // If Places API doesn't find it, still add with what we have
@@ -1652,14 +1839,361 @@ class LinkLocationExtractionService {
     }
   }
 
+  /// Extract locations from MULTIPLE images analyzed TOGETHER
+  /// 
+  /// This is the preferred method when you have multiple screenshots from the same content
+  /// (e.g., Instagram video frame + caption screenshot). It analyzes all images together
+  /// to understand the combined context and find the actual location.
+  /// 
+  /// **Why this is better than analyzing separately:**
+  /// - Image 1 might show "POET TREES" sign (art at the location)
+  /// - Image 2 might describe "library in the redwoods of Big Sur"
+  /// - Together, this should find "Henry Miller Memorial Library"
+  /// - Separately, neither image has enough context
+  /// 
+  /// [images] - List of image data (bytes and mimeType)
+  /// [userLocation] - Optional user location for better Places API results
+  /// 
+  /// Returns extracted locations with combined region context
+  Future<({List<ExtractedLocationData> locations, String? regionContext})> extractLocationsFromMultipleImages(
+    List<({Uint8List bytes, String mimeType})> images, {
+    LatLng? userLocation,
+  }) async {
+    print('📷 MULTI-IMAGE EXTRACTION: Analyzing ${images.length} images together...');
+
+    try {
+      // Step 1: Use Gemini to analyze all images together
+      final geminiResult = await _gemini.extractLocationsFromMultipleImages(images);
+      
+      if (geminiResult.locations.isEmpty) {
+        print('⚠️ MULTI-IMAGE EXTRACTION: No locations found in combined analysis');
+        return (locations: <ExtractedLocationData>[], regionContext: geminiResult.regionContext);
+      }
+
+      print('📷 MULTI-IMAGE EXTRACTION: Gemini found ${geminiResult.locations.length} location(s)');
+      if (geminiResult.regionContext != null) {
+        print('🌍 MULTI-IMAGE EXTRACTION: Region context: "${geminiResult.regionContext}"');
+      }
+
+      // Step 2: Verify with Places API using "broader first, then filter" strategy
+      // This approach gets more candidates by starting broad, then uses specific details to rank them
+      final results = <ExtractedLocationData>[];
+
+      for (final locationInfo in geminiResult.locations) {
+        print('📷 MULTI-IMAGE EXTRACTION: Verifying "${locationInfo.name}" with Places API...');
+        
+        // Extract context clues for filtering (not for searching)
+        final broaderRegion = _extractBroaderRegion(geminiResult.regionContext);
+        
+        // STRATEGY: Search with region context first (if available), then fall back to exact term
+        // This helps disambiguate common names like "Hole-in-the-Wall" by including geographic context
+        
+        Map<String, dynamic>? placeResult;
+        var placeResults = <Map<String, dynamic>>[];
+        bool usedBroaderSearch = false;
+        
+        // Check if this is a natural feature search (lake, mountain, beach, etc.)
+        // Natural features are NOT "in" cities - they're in regions/states
+        // Adding city to search biases results toward businesses IN that city
+        final geminiTypeLower = locationInfo.type?.toLowerCase() ?? '';
+        final isNatureTypeSearch = geminiTypeLower.contains('lake') ||
+            geminiTypeLower.contains('mountain') ||
+            geminiTypeLower.contains('beach') ||
+            geminiTypeLower.contains('waterfall') ||
+            geminiTypeLower.contains('trail') ||
+            geminiTypeLower.contains('viewpoint') ||
+            geminiTypeLower.contains('park') ||
+            geminiTypeLower.contains('rainforest') ||
+            geminiTypeLower.contains('forest') ||
+            geminiTypeLower.contains('canyon') ||
+            geminiTypeLower.contains('river') ||
+            geminiTypeLower.contains('island') ||
+            geminiTypeLower == 'natural_feature' ||
+            geminiTypeLower == 'landmark';
+        
+        // Build context search query: name + region (skip city for natural features)
+        // For "Lake Crescent" in "Port Angeles, Washington", search "Lake Crescent, Washington"
+        // NOT "Lake Crescent, Port Angeles, Washington" - that biases toward city businesses
+        final contextSearchParts = <String>[locationInfo.name];
+        if (!isNatureTypeSearch && locationInfo.city != null) {
+          // Only add city for non-nature searches (restaurants, hotels, etc.)
+          contextSearchParts.add(locationInfo.city!);
+        }
+        if (broaderRegion != null) contextSearchParts.add(broaderRegion);
+        final hasRegionContext = (!isNatureTypeSearch && locationInfo.city != null) || broaderRegion != null;
+        
+        // Step 1: If we have region context, search with it first
+        if (hasRegionContext) {
+          final contextSearchQuery = contextSearchParts.join(', ');
+          print('📷 MULTI-IMAGE EXTRACTION: Searching with region context: "$contextSearchQuery"');
+          
+          placeResults = await _maps.searchPlaces(
+            contextSearchQuery,
+            latitude: userLocation?.latitude,
+            longitude: userLocation?.longitude,
+          );
+          
+          if (placeResults.isNotEmpty) {
+            print('📷 MULTI-IMAGE EXTRACTION: Found ${placeResults.length} candidates from context search');
+            
+            // Use context clues to filter and score the candidates
+            placeResult = _selectBestPlaceResultWithContext(
+              placeResults,
+              locationInfo.name,
+              geminiType: locationInfo.type,
+              city: locationInfo.city,
+              regionContext: geminiResult.regionContext,
+            );
+            
+            if (placeResult != null) {
+              final foundName = (placeResult['name'] ?? placeResult['description']?.toString().split(',').first ?? '') as String;
+              final matchQuality = _checkNameMatchQuality(locationInfo.name, foundName);
+              final placeTypes = (placeResult['types'] as List?)?.cast<String>() ?? [];
+              final isTypeCompatible = _isTypeCompatible(locationInfo.type, placeTypes);
+              
+              print('📷 MULTI-IMAGE EXTRACTION: Best candidate: "$foundName" (match: ${(matchQuality.matchScore * 100).toInt()}%, type compatible: $isTypeCompatible)');
+            }
+          } else {
+            print('📷 MULTI-IMAGE EXTRACTION: No results from context search');
+          }
+        }
+        
+        // Step 2: If no results from context search (or no context available), try exact term only
+        if (placeResults.isEmpty) {
+          print('📷 MULTI-IMAGE EXTRACTION: Searching exact term: "${locationInfo.name}"');
+          
+          placeResults = await _maps.searchPlaces(
+            locationInfo.name,
+            latitude: userLocation?.latitude,
+            longitude: userLocation?.longitude,
+          );
+          usedBroaderSearch = true; // Mark as broader since we lost region specificity
+          
+          if (placeResults.isNotEmpty) {
+            print('📷 MULTI-IMAGE EXTRACTION: Found ${placeResults.length} candidates from exact search');
+            
+            // Use context clues (type, city, region) to filter and score the candidates
+            placeResult = _selectBestPlaceResultWithContext(
+              placeResults,
+              locationInfo.name,
+              geminiType: locationInfo.type,
+              city: locationInfo.city,
+              regionContext: geminiResult.regionContext,
+            );
+            
+            if (placeResult != null) {
+              final foundName = (placeResult['name'] ?? placeResult['description']?.toString().split(',').first ?? '') as String;
+              final matchQuality = _checkNameMatchQuality(locationInfo.name, foundName);
+              final placeTypes = (placeResult['types'] as List?)?.cast<String>() ?? [];
+              final isTypeCompatible = _isTypeCompatible(locationInfo.type, placeTypes);
+              
+              print('📷 MULTI-IMAGE EXTRACTION: Best candidate: "$foundName" (match: ${(matchQuality.matchScore * 100).toInt()}%, type compatible: $isTypeCompatible)');
+            }
+          }
+        }
+        
+        // Step 3: If match quality is below 95% or type incompatible, run Text Search for more candidates
+        var allCandidates = [...placeResults];
+        if (placeResult != null) {
+          final foundName = (placeResult['name'] ?? placeResult['description']?.toString().split(',').first ?? '') as String;
+          final matchQuality = _checkNameMatchQuality(locationInfo.name, foundName);
+          final placeTypes = (placeResult['types'] as List?)?.cast<String>() ?? [];
+          final isTypeCompatible = _isTypeCompatible(locationInfo.type, placeTypes);
+          
+          // If below 95% match OR type incompatible, get more results from Text Search API
+          if (matchQuality.matchScore < 0.95 || !isTypeCompatible) {
+            print('🔍 MULTI-IMAGE EXTRACTION: Match quality ${(matchQuality.matchScore * 100).toInt()}% < 95% or type incompatible, running Text Search for more candidates...');
+            
+            // Build search query with region context for text search
+            // Skip city for natural features - use broader region only
+            final textSearchParts = <String>[locationInfo.name];
+            if (!isNatureTypeSearch && locationInfo.city != null) {
+              textSearchParts.add(locationInfo.city!);
+            }
+            if (broaderRegion != null) textSearchParts.add(broaderRegion);
+            final textSearchQuery = textSearchParts.join(', ');
+
+            print('🔍 MULTI-IMAGE EXTRACTION: Running Text Search with query: "$textSearchQuery"');
+
+            final textSearchResults = await _maps.searchPlacesTextSearch(
+              textSearchQuery,
+              latitude: userLocation?.latitude,
+              longitude: userLocation?.longitude,
+            );
+
+            print('🔍 MULTI-IMAGE EXTRACTION: Text Search returned ${textSearchResults.length} raw results');
+
+            // Log each text search result
+            for (int i = 0; i < textSearchResults.length; i++) {
+              final result = textSearchResults[i];
+              final name = (result['name'] ?? result['description']?.toString().split(',').first ?? 'Unknown') as String;
+              final placeId = result['placeId'] as String?;
+              final types = (result['types'] as List?)?.cast<String>() ?? [];
+              print('🔍 MULTI-IMAGE EXTRACTION: Text Search result ${i+1}: "$name" (ID: ${placeId ?? 'null'}, types: ${types.take(2).join(', ')})');
+            }
+
+            if (textSearchResults.isEmpty) {
+              print('🔍 MULTI-IMAGE EXTRACTION: Text Search found no additional candidates');
+            }
+
+            if (textSearchResults.isNotEmpty) {
+              print('🔍 MULTI-IMAGE EXTRACTION: Text Search found ${textSearchResults.length} additional candidates');
+
+              // Add text search results that aren't duplicates (by placeId)
+              final existingPlaceIds = placeResults.map((r) => r['placeId'] as String?).toSet();
+              int addedCount = 0;
+              int duplicateCount = 0;
+
+              for (final result in textSearchResults) {
+                final placeId = result['placeId'] as String?;
+                final name = (result['name'] ?? result['description']?.toString().split(',').first ?? 'Unknown') as String;
+
+                if (placeId != null && !existingPlaceIds.contains(placeId)) {
+                  allCandidates.add(result);
+                  existingPlaceIds.add(placeId);
+                  addedCount++;
+                  print('✅ MULTI-IMAGE EXTRACTION: Added new candidate: "$name" (ID: $placeId)');
+                } else if (placeId != null) {
+                  duplicateCount++;
+                  print('⏭️ MULTI-IMAGE EXTRACTION: Skipped duplicate: "$name" (ID: $placeId)');
+                } else {
+                  print('⚠️ MULTI-IMAGE EXTRACTION: Skipped result with no placeId: "$name"');
+                }
+              }
+
+              print('🔍 MULTI-IMAGE EXTRACTION: Added $addedCount new candidates, skipped $duplicateCount duplicates');
+              print('🔍 MULTI-IMAGE EXTRACTION: Combined ${allCandidates.length} total candidates for AI reranking');
+              
+              // Re-select best result from combined candidates
+              final combinedBestResult = _selectBestPlaceResultWithContext(
+                allCandidates,
+                locationInfo.name,
+                geminiType: locationInfo.type,
+                city: locationInfo.city,
+                regionContext: geminiResult.regionContext,
+              );
+              
+              if (combinedBestResult != null) {
+                final combinedFoundName = (combinedBestResult['name'] ?? combinedBestResult['description']?.toString().split(',').first ?? '') as String;
+                final combinedMatchQuality = _checkNameMatchQuality(locationInfo.name, combinedFoundName);
+                final combinedPlaceTypes = (combinedBestResult['types'] as List?)?.cast<String>() ?? [];
+                final combinedIsTypeCompatible = _isTypeCompatible(locationInfo.type, combinedPlaceTypes);
+                
+                print('🔍 MULTI-IMAGE EXTRACTION: Combined best candidate: "$combinedFoundName" (match: ${(combinedMatchQuality.matchScore * 100).toInt()}%, type compatible: $combinedIsTypeCompatible)');
+                placeResult = combinedBestResult;
+              }
+            }
+          }
+        }
+        
+        if (placeResult != null) {
+          // === AI RERANKING: Apply when initial match quality is low ===
+          // IMPORTANT: Use all candidates (from both Autocomplete and Text Search)
+          final selectedIndex = allCandidates.indexOf(placeResult);
+          
+          final rerankResult = await _maybeAIRerank(
+            originalName: locationInfo.name,
+            candidates: allCandidates,
+            selectedIndex: selectedIndex >= 0 ? selectedIndex : 0,
+            geminiType: locationInfo.type,
+            regionContext: geminiResult.regionContext,
+            surroundingText: null,
+            userLocation: userLocation,
+            usedBroaderSearch: usedBroaderSearch,
+          );
+          
+          // Update result based on AI reranking
+          var finalPlaceResult = placeResult;
+          var finalConfidence = 0.85;
+          var needsConfirmation = false;
+          
+          if (rerankResult.usedAIRerank && rerankResult.selectedResult != null) {
+            finalPlaceResult = rerankResult.selectedResult!;
+            finalConfidence = rerankResult.confidence;
+            needsConfirmation = rerankResult.needsConfirmation;
+            print('🤖 MULTI-IMAGE EXTRACTION: AI reranking applied (confidence: ${(finalConfidence * 100).toInt()}%)');
+          } else {
+            finalConfidence = 0.85;
+          }
+          
+          // Extract coordinates and details from final place result
+          final placeId = (finalPlaceResult['placeId'] ?? finalPlaceResult['place_id']) as String?;
+          var coordinates = _extractCoordinates(finalPlaceResult);
+          var address = (finalPlaceResult['formatted_address'] ?? finalPlaceResult['address'] ?? finalPlaceResult['description']) as String?;
+          var name = (finalPlaceResult['name'] ?? finalPlaceResult['description']?.toString().split(',').first) as String? ?? locationInfo.name;
+          String? website;
+          
+          // Fetch place details if needed
+          if (placeId != null && placeId.isNotEmpty && coordinates == null) {
+            print('📷 MULTI-IMAGE EXTRACTION: Fetching place details for: $placeId');
+            try {
+              final placeDetails = await _maps.getPlaceDetails(placeId);
+              if (placeDetails.latitude != 0.0 || placeDetails.longitude != 0.0) {
+                coordinates = LatLng(placeDetails.latitude, placeDetails.longitude);
+                address = placeDetails.address ?? address;
+                website = placeDetails.website;
+                final businessName = placeDetails.displayName ?? placeDetails.getPlaceName();
+                if (businessName.isNotEmpty) {
+                  name = businessName;
+                }
+              }
+            } catch (e) {
+              print('⚠️ MULTI-IMAGE EXTRACTION: Error fetching place details: $e');
+            }
+          }
+          
+          final extractedData = ExtractedLocationData(
+            placeId: placeId,
+            name: name,
+            address: address,
+            coordinates: coordinates,
+            type: _inferPlaceTypeFromResult(finalPlaceResult, locationInfo.type),
+            source: ExtractionSource.placesSearch,
+            confidence: coordinates != null ? finalConfidence : finalConfidence * 0.7,
+            placeTypes: (finalPlaceResult['types'] as List?)?.cast<String>(),
+            website: website,
+            needsConfirmation: needsConfirmation,
+          );
+          
+          if (!_isDuplicate(extractedData, results)) {
+            results.add(extractedData);
+            final searchType = usedBroaderSearch ? ' (via context search)' : ' (via exact search)';
+            final rerankType = rerankResult.usedAIRerank ? ' (AI reranked)' : '';
+            print('✅ MULTI-IMAGE EXTRACTION: Verified "${extractedData.name}" at ${extractedData.address}$searchType$rerankType');
+          }
+        } else {
+          print('⚠️ MULTI-IMAGE EXTRACTION: Could not verify "${locationInfo.name}" with Places API');
+        }
+      }
+
+      print('📷 MULTI-IMAGE EXTRACTION: Final result - ${results.length} verified location(s)');
+      return (locations: results, regionContext: geminiResult.regionContext);
+    } catch (e, stackTrace) {
+      print('❌ MULTI-IMAGE EXTRACTION ERROR: $e');
+      print('Stack trace: $stackTrace');
+      return (locations: <ExtractedLocationData>[], regionContext: null);
+    }
+  }
+
   /// Extract locations from image bytes
   /// No limit on number of locations - extracts all found locations
-  Future<List<ExtractedLocationData>> extractLocationsFromImageBytes(
+  ///
+  /// [regionContextHint] - Optional region context from previous screenshots in the same scan.
+  /// This is used when the current image doesn't have its own region context but we know
+  /// from other images in the same content what region we're looking at.
+  ///
+  /// Returns a tuple-like result: the list of locations AND the detected region context.
+  /// The region context can be used for subsequent screenshot analysis.
+  Future<({List<ExtractedLocationData> locations, String? regionContext})> extractLocationsFromImageBytes(
     Uint8List imageBytes, {
     String mimeType = 'image/jpeg',
     LatLng? userLocation,
+    String? regionContextHint,
   }) async {
     print('📷 IMAGE EXTRACTION: Starting extraction from image bytes...');
+    if (regionContextHint != null) {
+      print('📷 IMAGE EXTRACTION: Using region context hint: "$regionContextHint"');
+    }
     
     try {
       // Step 1: Use Gemini Vision to extract location names
@@ -1670,16 +2204,18 @@ class LinkLocationExtractionService {
 
       if (extractedNames.isEmpty) {
         print('⚠️ IMAGE EXTRACTION: No locations found in image');
-        return [];
+        return (locations: <ExtractedLocationData>[], regionContext: regionContextHint);
       }
 
       // Get the region context from the first location (all locations share the same context)
-      final regionContext = extractedNames.isNotEmpty ? extractedNames.first.regionContext : null;
+      // If not found, use the hint from previous screenshots
+      final detectedRegionContext = extractedNames.isNotEmpty ? extractedNames.first.regionContext : null;
+      final regionContext = detectedRegionContext ?? regionContextHint;
       
       // Log what Gemini found for debugging
       print('📷 IMAGE EXTRACTION: Gemini returned ${extractedNames.length} location(s):');
       if (regionContext != null) {
-        print('🌍 IMAGE EXTRACTION: Region context: "$regionContext"');
+        print('🌍 IMAGE EXTRACTION: Region context: "$regionContext"${detectedRegionContext == null && regionContextHint != null ? " (from hint)" : ""}');
       }
       for (final loc in extractedNames) {
         print('   📍 Name: "${loc.name}", City: "${loc.city}", Type: "${loc.type}", Address: "${loc.address}"');
@@ -1691,29 +2227,69 @@ class LinkLocationExtractionService {
       for (final locationInfo in extractedNames) {
         
         // Strategy: Try multiple search queries to get the best result
-        // 1. First try name + region context (most accurate for disambiguation)
-        // 2. If no good results, try name + city
-        // 3. If still no results, try just the name
+        // 1. First try name + type + city + region (for restaurants/food)
+        // 2. Then try name + region context
+        // 3. If no good results, try name + city
+        // 4. If still no results, try name + type
         
         List<Map<String, dynamic>> placeResults = [];
         Map<String, dynamic>? placeResult;
         
-        // Build search query - use region context for disambiguation
-        // This is CRITICAL: "Tacoma" + "Washington" → Tacoma, WA (correct)
-        //                   "Tacoma" alone with CA location bias → Tacomasa restaurant (WRONG!)
-        String searchQuery = locationInfo.name;
-        
-        // Use region context if available (from Gemini's analysis of overall content)
+        // Use region context if available (from Gemini's analysis of overall content OR from hint)
         final effectiveRegionContext = locationInfo.regionContext ?? regionContext;
         
-        if (effectiveRegionContext != null && effectiveRegionContext.isNotEmpty) {
+        // Check if Gemini identified this as a food establishment
+        final typeLower = locationInfo.type?.toLowerCase() ?? '';
+        final isRestaurantType = typeLower == 'restaurant' ||
+                                 typeLower == 'cafe' ||
+                                 typeLower == 'bar' ||
+                                 typeLower == 'food' ||
+                                 typeLower == 'bakery' ||
+                                 typeLower == 'coffee_shop';
+        // Check if Gemini identified this as a hotel/lodging
+        final isHotelType = typeLower == 'hotel' ||
+                            typeLower == 'lodging' ||
+                            typeLower == 'resort' ||
+                            typeLower == 'inn' ||
+                            typeLower == 'motel';
+        
+        // Build search query - use ALL available context for food establishments
+        // This is CRITICAL for cases like "@rockcreek206" → "RockCreek - Seafood & Spirits"
+        // Search: "Rockcreek restaurant Seattle Washington" instead of just "Rockcreek, Washington"
+        String searchQuery;
+        
+        if (isRestaurantType && locationInfo.city != null && locationInfo.city!.isNotEmpty) {
+          // For restaurants: include type and city in initial search
+          // "Rockcreek restaurant Seattle Washington" is much more specific
+          searchQuery = '${locationInfo.name} ${locationInfo.type}';
+          searchQuery += ', ${locationInfo.city}';
+          // Only add region context if not already in name or city
+          if (effectiveRegionContext != null && effectiveRegionContext.isNotEmpty) {
+            final nameLower = locationInfo.name.toLowerCase();
+            final cityLower = locationInfo.city!.toLowerCase();
+            final contextLower = effectiveRegionContext.toLowerCase();
+            if (!nameLower.contains(contextLower) && !cityLower.contains(contextLower)) {
+              searchQuery += ', $effectiveRegionContext';
+            }
+          }
+          print('📷 IMAGE EXTRACTION: Searching Places API for: $searchQuery (restaurant with city)');
+        } else if (effectiveRegionContext != null && effectiveRegionContext.isNotEmpty) {
           // Append region context to help Places API find the right location
-          searchQuery = '${locationInfo.name}, $effectiveRegionContext';
-          print('📷 IMAGE EXTRACTION: Searching Places API for: $searchQuery (with region context)');
+          // BUT only if not already in the name to avoid "Stowe, Vermont, Vermont"
+          final nameLower = locationInfo.name.toLowerCase();
+          final contextLower = effectiveRegionContext.toLowerCase();
+          if (!nameLower.contains(contextLower)) {
+            searchQuery = '${locationInfo.name}, $effectiveRegionContext';
+            print('📷 IMAGE EXTRACTION: Searching Places API for: $searchQuery (with region context)');
+          } else {
+            searchQuery = locationInfo.name;
+            print('📷 IMAGE EXTRACTION: Searching Places API for: $searchQuery (region already in name)');
+          }
         } else if (locationInfo.city != null && locationInfo.city!.isNotEmpty) {
           searchQuery = '${locationInfo.name}, ${locationInfo.city}';
           print('📷 IMAGE EXTRACTION: Searching Places API for: $searchQuery (with city)');
         } else {
+          searchQuery = locationInfo.name;
           print('📷 IMAGE EXTRACTION: Searching Places API for: ${locationInfo.name}');
         }
         
@@ -1724,24 +2300,91 @@ class LinkLocationExtractionService {
         );
         placeResult = _selectBestPlaceResult(placeResults, locationInfo.name, geminiType: locationInfo.type);
         
-        // Check if we got a good establishment result (not just a locality)
+        // Check if we got a good result appropriate for the type we're searching for
         bool gotGoodResult = false;
         if (placeResult != null) {
           final types = (placeResult['types'] as List?)?.cast<String>() ?? [];
+          final isFood = types.any((t) => 
+            t == 'food' || t == 'restaurant' || t == 'cafe' || t == 'bar' || 
+            t == 'bakery' || t == 'meal_takeaway' || t == 'meal_delivery');
           final isEstablishment = types.any((t) => 
-            t == 'establishment' || t == 'point_of_interest' || t == 'food' || 
-            t == 'restaurant' || t == 'cafe' || t == 'bar' || t == 'store');
+            t == 'establishment' || t == 'point_of_interest' || t == 'store');
           final isLocality = types.any((t) => 
             t == 'locality' || t == 'sublocality' || t == 'neighborhood' || t == 'political');
-          gotGoodResult = isEstablishment || !isLocality;
+          final isRoute = types.any((t) => t == 'route' || t == 'geocode');
+          final isHotel = types.any((t) => 
+            t == 'hotel' || t == 'lodging' || t == 'resort');
+          final isNaturalFeature = types.any((t) => 
+            t == 'natural_feature' || t == 'park' || t == 'national_park');
+          
+          // For restaurant searches, we need a food establishment, not just any establishment
+          if (isRestaurantType) {
+            gotGoodResult = isFood;
+            if (!gotGoodResult && !isRoute && isEstablishment) {
+              gotGoodResult = true; // Accept other establishments as fallback
+            }
+          } else if (isHotelType) {
+            // For hotel searches, we need a lodging establishment
+            gotGoodResult = isHotel;
+            if (!gotGoodResult && isEstablishment) {
+              gotGoodResult = true; // Accept other establishments as fallback
+            }
+          } else if (typeLower == 'region' || typeLower == 'city' || typeLower == 'locality') {
+            // CRITICAL: For region/city searches, localities ARE good results!
+            // This prevents "NYC" (score 160) from being replaced by "City Island" (score 35)
+            gotGoodResult = isLocality || isNaturalFeature;
+          } else {
+            gotGoodResult = isEstablishment || !isLocality;
+          }
         }
         
-        // Attempt 2: If no good result and we have a city, try with city (+ region context)
+        // Attempt 2: If searching for restaurant but didn't get a food result, try with just type
+        if (!gotGoodResult && isRestaurantType) {
+          String queryWithType = '${locationInfo.name} restaurant';
+          if (locationInfo.city != null && locationInfo.city!.isNotEmpty) {
+            queryWithType += ' ${locationInfo.city}';
+          }
+          // Only add region context if not already in name or city
+          if (effectiveRegionContext != null && effectiveRegionContext.isNotEmpty) {
+            final nameLower = locationInfo.name.toLowerCase();
+            final cityLower = (locationInfo.city ?? '').toLowerCase();
+            final contextLower = effectiveRegionContext.toLowerCase();
+            if (!nameLower.contains(contextLower) && !cityLower.contains(contextLower)) {
+              queryWithType += ', $effectiveRegionContext';
+            }
+          }
+          print('📷 IMAGE EXTRACTION: Retrying restaurant search: $queryWithType');
+          final resultsWithType = await _maps.searchPlaces(
+            queryWithType,
+            latitude: userLocation?.latitude,
+            longitude: userLocation?.longitude,
+          );
+          final resultWithType = _selectBestPlaceResult(resultsWithType, locationInfo.name, geminiType: locationInfo.type);
+          
+          if (resultWithType != null) {
+            final types = (resultWithType['types'] as List?)?.cast<String>() ?? [];
+            final isFood = types.any((t) => 
+              t == 'food' || t == 'restaurant' || t == 'cafe' || t == 'bar' || 
+              t == 'bakery' || t == 'meal_takeaway' || t == 'meal_delivery');
+            final isEstablishment = types.any((t) => t == 'establishment' || t == 'point_of_interest');
+            if (isFood || isEstablishment) {
+              placeResult = resultWithType;
+              gotGoodResult = true;
+            }
+          }
+        }
+        
+        // Attempt 3: If no good result and we have a city, try with city (+ region context)
         if (!gotGoodResult && locationInfo.city != null && locationInfo.city!.isNotEmpty) {
-          // Include region context for better disambiguation
+          // Include region context for better disambiguation, but avoid redundancy
           String queryWithCity = '${locationInfo.name}, ${locationInfo.city}';
           if (effectiveRegionContext != null && effectiveRegionContext.isNotEmpty) {
-            queryWithCity = '${locationInfo.name}, ${locationInfo.city}, $effectiveRegionContext';
+            final nameLower = locationInfo.name.toLowerCase();
+            final cityLower = locationInfo.city!.toLowerCase();
+            final contextLower = effectiveRegionContext.toLowerCase();
+            if (!nameLower.contains(contextLower) && !cityLower.contains(contextLower)) {
+              queryWithCity = '${locationInfo.name}, ${locationInfo.city}, $effectiveRegionContext';
+            }
           }
           print('📷 IMAGE EXTRACTION: Retrying with city: $queryWithCity');
           final resultsWithCity = await _maps.searchPlaces(
@@ -1764,11 +2407,223 @@ class LinkLocationExtractionService {
           }
         }
         
-        // Attempt 3: If still no results and we have type info, try name + type (+ region context)
+        // Attempt 4: Handle lookup - ALWAYS do this when we have an original handle
+        // This helps resolve handles like "@sofaseattle" → "Social Fabric Cafe & Market"
+        // CRITICAL: Handle lookup also finds the correct LOCATION for chain businesses
+        // e.g., "@swingersus" in DC context → "Swingers" in Washington DC (not LA)
+        final hasOriginalHandle = locationInfo.originalHandle != null && locationInfo.originalHandle!.isNotEmpty;
+        
+        // Always lookup handles - this is critical for finding correct locations
+        // Chain businesses like "Swingers", "Beat The Bomb", "Muse Paintbar" have multiple locations
+        if (hasOriginalHandle) {
+          final lookupQuery = locationInfo.originalHandle!;
+          print('🔎 HANDLE LOOKUP: Looking up "$lookupQuery" online...');
+          
+          try {
+            // Look up the handle using Google Search - include region context for disambiguation
+            final lookupCity = locationInfo.city ?? effectiveRegionContext?.split(',').first;
+            final actualBusinessName = await _gemini.lookupInstagramHandle(
+              lookupQuery,
+              city: lookupCity,
+            );
+            
+            if (actualBusinessName != null && actualBusinessName.isNotEmpty) {
+              print('✅ HANDLE LOOKUP: $lookupQuery → "$actualBusinessName"');
+              
+              // Search for the actual business name WITH region context
+              // This is critical for chain businesses to find the correct location
+              String handleSearchQuery = actualBusinessName;
+              if (locationInfo.type != null && locationInfo.type!.isNotEmpty && 
+                  locationInfo.type != 'business' && locationInfo.type != 'unknown') {
+                handleSearchQuery += ' ${locationInfo.type}';
+              }
+              if (locationInfo.city != null && locationInfo.city!.isNotEmpty) {
+                handleSearchQuery += ', ${locationInfo.city}';
+              }
+              // Only add region context if not already in business name or city
+              if (effectiveRegionContext != null && effectiveRegionContext.isNotEmpty) {
+                final nameLower = actualBusinessName.toLowerCase();
+                final cityLower = (locationInfo.city ?? '').toLowerCase();
+                final contextLower = effectiveRegionContext.toLowerCase();
+                if (!nameLower.contains(contextLower) && !cityLower.contains(contextLower)) {
+                  handleSearchQuery += ', $effectiveRegionContext';
+                }
+              }
+              
+              print('🔎 HANDLE LOOKUP: Searching for: $handleSearchQuery');
+              final handleResults = await _maps.searchPlaces(
+                handleSearchQuery,
+                latitude: userLocation?.latitude,
+                longitude: userLocation?.longitude,
+              );
+              
+              if (handleResults.isNotEmpty) {
+                print('🔎 HANDLE LOOKUP: Got ${handleResults.length} result(s) from Places API');
+                
+                // First, check if any result directly matches the business name we searched for
+                // This is more reliable than scoring since we searched for an exact name
+                final actualNormalized = _normalizeCompact(actualBusinessName);
+                Map<String, dynamic>? bestMatch;
+                
+                for (final result in handleResults) {
+                  // Get name from either 'name' or 'description' field (autocomplete uses description)
+                  final resultName = (result['name'] ?? result['description']?.toString().split(',').first ?? '') as String;
+                  final resultNormalized = _normalizeCompact(resultName);
+                  
+                  print('🔎 HANDLE LOOKUP: Checking result: "$resultName"');
+                  
+                  // Check if this result matches the business name we looked up
+                  if (actualNormalized.isNotEmpty && resultNormalized.isNotEmpty &&
+                      (resultNormalized.contains(actualNormalized) || actualNormalized.contains(resultNormalized))) {
+                    print('✅ HANDLE LOOKUP: Direct match found: "$resultName"');
+                    bestMatch = result;
+                    break; // Found exact match, use it
+                  }
+                }
+                
+                // If no direct match, use scoring but VALIDATE the result
+                if (bestMatch == null) {
+                  bestMatch = _selectBestPlaceResult(handleResults, actualBusinessName, geminiType: locationInfo.type);
+                  
+                  // CRITICAL: Validate that the result actually matches the business name
+                  // This prevents "@followmeawaytravel" → "Follow Me Away" → "Miracle-Ear Hearing Aid Center"
+                  if (bestMatch != null) {
+                    final resultName = (bestMatch['name'] ?? bestMatch['description']?.toString().split(',').first ?? '') as String;
+                    final resultNormalized = _normalizeCompact(resultName);
+                    final searchNormalized = _normalizeCompact(actualBusinessName);
+                    
+                    // Check if there's any word overlap between result and what we searched for
+                    final searchWords = actualBusinessName.toLowerCase().split(RegExp(r'\s+')).where((w) => w.length > 2).toSet();
+                    final resultWords = resultName.toLowerCase().split(RegExp(r'\s+')).where((w) => w.length > 2).toSet();
+                    final commonWords = searchWords.intersection(resultWords);
+                    
+                    // Also check compact containment
+                    final hasCompactMatch = resultNormalized.contains(searchNormalized) || 
+                                           searchNormalized.contains(resultNormalized);
+                    
+                    if (commonWords.isEmpty && !hasCompactMatch) {
+                      // No word overlap AND no compact match - this is likely a false positive
+                      print('⚠️ HANDLE LOOKUP: Rejecting "$resultName" - no match with searched name "$actualBusinessName"');
+                      bestMatch = null;
+                    }
+                  }
+                }
+                
+                if (bestMatch != null) {
+                  final handleResultName = (bestMatch['name'] ?? bestMatch['description']?.toString().split(',').first ?? '') as String;
+                  
+                  if (handleResultName.isNotEmpty) {
+                    print('✅ HANDLE LOOKUP: Using business: "$handleResultName"');
+                    placeResult = bestMatch;
+                    gotGoodResult = true;
+                  }
+                }
+              }
+            }
+          } catch (e) {
+            print('⚠️ HANDLE LOOKUP: Error during lookup: $e');
+          }
+        }
+        
+        // Attempt 5: Context-based lookup - when we have a context hint or generic attraction type
+        // This helps find specific places like "Toy Story restaurant at Hollywood Studios" → "Roundup Rodeo BBQ"
+        final hasContextHint = locationInfo.contextHint != null && locationInfo.contextHint!.isNotEmpty;
+        final isGenericAttraction = typeLower == 'attraction' || typeLower == 'theme_park' || 
+                                    typeLower == 'amusement_park' || typeLower == 'tourist_attraction';
+        
+        // Check if the name suggests a more specific place type (e.g., "restaurant at X", "cafe at X")
+        final nameLower = locationInfo.name.toLowerCase();
+        final nameContainsPlaceType = nameLower.contains('restaurant') || nameLower.contains('cafe') ||
+                                       nameLower.contains('coffee') || nameLower.contains('bar') ||
+                                       nameLower.contains('food') || nameLower.contains('themed');
+        
+        if (hasContextHint || (isGenericAttraction && nameContainsPlaceType)) {
+          try {
+            // Use context hint if available, otherwise construct from name
+            final contextQuery = hasContextHint 
+                ? locationInfo.contextHint!
+                : '${locationInfo.name} ${effectiveRegionContext ?? ""}';
+            
+            print('🔍 CONTEXT LOOKUP: Searching for specific place from context: "$contextQuery"');
+            
+            final specificPlaceName = await _gemini.lookupPlaceByContext(
+              contextQuery,
+              regionContext: effectiveRegionContext,
+            );
+            
+            if (specificPlaceName != null && specificPlaceName.isNotEmpty) {
+              print('✅ CONTEXT LOOKUP: Found "$specificPlaceName"');
+              
+              // Search Places API for the specific place
+              // Only add region context if not already in the place name
+              String contextSearchQuery = specificPlaceName;
+              if (effectiveRegionContext != null && effectiveRegionContext.isNotEmpty) {
+                final nameLower = specificPlaceName.toLowerCase();
+                final contextLower = effectiveRegionContext.toLowerCase();
+                if (!nameLower.contains(contextLower)) {
+                  contextSearchQuery += ', $effectiveRegionContext';
+                }
+              }
+              
+              print('🔍 CONTEXT LOOKUP: Searching Places API for: $contextSearchQuery');
+              final contextResults = await _maps.searchPlaces(
+                contextSearchQuery,
+                latitude: userLocation?.latitude,
+                longitude: userLocation?.longitude,
+              );
+              
+              if (contextResults.isNotEmpty) {
+                print('🔍 CONTEXT LOOKUP: Got ${contextResults.length} result(s) from Places API');
+                
+                // Find the best matching result
+                final specificNormalized = _normalizeCompact(specificPlaceName);
+                Map<String, dynamic>? bestMatch;
+                
+                for (final result in contextResults) {
+                  final resultName = (result['name'] ?? result['description']?.toString().split(',').first ?? '') as String;
+                  final resultNormalized = _normalizeCompact(resultName);
+                  
+                  print('🔍 CONTEXT LOOKUP: Checking result: "$resultName"');
+                  
+                  if (specificNormalized.isNotEmpty && resultNormalized.isNotEmpty &&
+                      (resultNormalized.contains(specificNormalized) || specificNormalized.contains(resultNormalized))) {
+                    print('✅ CONTEXT LOOKUP: Direct match found: "$resultName"');
+                    bestMatch = result;
+                    break;
+                  }
+                }
+                
+                // If no direct match, use scoring
+                if (bestMatch == null) {
+                  bestMatch = _selectBestPlaceResult(contextResults, specificPlaceName, geminiType: 'restaurant');
+                }
+                
+                if (bestMatch != null) {
+                  final contextResultName = (bestMatch['name'] ?? bestMatch['description']?.toString().split(',').first ?? '') as String;
+                  
+                  if (contextResultName.isNotEmpty) {
+                    print('✅ CONTEXT LOOKUP: Using place: "$contextResultName"');
+                    placeResult = bestMatch;
+                    gotGoodResult = true;
+                  }
+                }
+              }
+            }
+          } catch (e) {
+            print('⚠️ CONTEXT LOOKUP: Error during lookup: $e');
+          }
+        }
+        
+        // Attempt 6: If still no results and we have type info, try name + type (+ region context)
         if (placeResult == null && locationInfo.type != null) {
           String queryWithType = '${locationInfo.name} ${locationInfo.type}';
+          // Only add region context if not already in name
           if (effectiveRegionContext != null && effectiveRegionContext.isNotEmpty) {
-            queryWithType = '${locationInfo.name} ${locationInfo.type}, $effectiveRegionContext';
+            final nameLower = locationInfo.name.toLowerCase();
+            final contextLower = effectiveRegionContext.toLowerCase();
+            if (!nameLower.contains(contextLower)) {
+              queryWithType = '${locationInfo.name} ${locationInfo.type}, $effectiveRegionContext';
+            }
           }
           print('📷 IMAGE EXTRACTION: Retrying with type: $queryWithType');
           final resultsWithType = await _maps.searchPlaces(
@@ -1777,6 +2632,15 @@ class LinkLocationExtractionService {
             longitude: userLocation?.longitude,
           );
           placeResult = _selectBestPlaceResult(resultsWithType, locationInfo.name, geminiType: locationInfo.type);
+        }
+        
+        // CRITICAL: Skip locations from social media handles that couldn't be resolved
+        // If the name came from an @handle and we didn't find a good match, skip it entirely
+        // This prevents "@followmeawaytravel" → random unrelated businesses like "Miracle-Ear"
+        if (hasOriginalHandle && !gotGoodResult && placeResult != null) {
+          final resultName = (placeResult['name'] ?? placeResult['description']?.toString().split(',').first ?? '') as String;
+          print('⚠️ IMAGE EXTRACTION: Skipping handle-derived location "$resultName" - handle "@${locationInfo.originalHandle}" could not be resolved to a real business');
+          continue; // Skip this location entirely
         }
         
         if (placeResult != null) {
@@ -1877,29 +2741,87 @@ class LinkLocationExtractionService {
             }
           }
           
+          // === AI RERANKING: Apply when initial match quality is questionable ===
+          // Even after all retry attempts, the match quality might be uncertain
+          final allCandidates = [...placeResults];
+          final selectedIndex = allCandidates.indexOf(placeResult);
+          
+          // Build surrounding context for AI reranking
+          final contextForRerank = [
+            if (locationInfo.city != null) 'City: ${locationInfo.city}',
+            if (effectiveRegionContext != null) 'Region: $effectiveRegionContext',
+            if (locationInfo.originalHandle != null) 'Handle: @${locationInfo.originalHandle}',
+          ].join(', ');
+          
+          final rerankResult = await _maybeAIRerank(
+            originalName: locationInfo.name,
+            candidates: allCandidates,
+            selectedIndex: selectedIndex >= 0 ? selectedIndex : 0,
+            geminiType: locationInfo.type,
+            regionContext: effectiveRegionContext,
+            surroundingText: contextForRerank.isNotEmpty ? contextForRerank : null,
+            userLocation: userLocation,
+            usedBroaderSearch: !gotGoodResult, // Signal uncertainty if no good result was found
+          );
+          
+          // Update result based on AI reranking
+          var finalPlaceResult = placeResult;
+          var finalConfidence = 0.85;
+          var needsConfirmation = false;
+          
+          if (rerankResult.usedAIRerank && rerankResult.selectedResult != null) {
+            finalPlaceResult = rerankResult.selectedResult!;
+            finalConfidence = rerankResult.confidence;
+            needsConfirmation = rerankResult.needsConfirmation;
+            
+            // If AI selected a different result, update details
+            if (finalPlaceResult != placeResult) {
+              final newPlaceId = (finalPlaceResult['placeId'] ?? finalPlaceResult['place_id']) as String?;
+              if (newPlaceId != null && newPlaceId.isNotEmpty) {
+                print('🤖 IMAGE EXTRACTION: AI reranking selected different result, updating details');
+                try {
+                  final newPlaceDetails = await _maps.getPlaceDetails(newPlaceId);
+                  if (newPlaceDetails.latitude != 0.0 || newPlaceDetails.longitude != 0.0) {
+                    coordinates = LatLng(newPlaceDetails.latitude, newPlaceDetails.longitude);
+                    address = newPlaceDetails.address ?? address;
+                    website = newPlaceDetails.website ?? website;
+                    name = newPlaceDetails.displayName ?? finalPlaceResult['name'] as String? ?? name;
+                    print('✅ IMAGE EXTRACTION: AI-reranked result: "$name"');
+                  }
+                } catch (e) {
+                  print('⚠️ IMAGE EXTRACTION: Error fetching AI-reranked place details: $e');
+                }
+              }
+            }
+            print('🤖 IMAGE EXTRACTION: AI reranking result - confidence: ${(finalConfidence * 100).toInt()}%');
+          }
+          
           final extractedData = ExtractedLocationData(
             placeId: placeId,
             name: name,
             address: address,
             coordinates: coordinates,
-            type: _inferPlaceTypeFromResult(placeResult, locationInfo.type),
+            type: _inferPlaceTypeFromResult(finalPlaceResult, locationInfo.type),
             source: ExtractionSource.placesSearch,
-            confidence: coordinates != null ? 0.85 : 0.60,
-            placeTypes: (placeResult['types'] as List?)?.cast<String>(),
+            confidence: coordinates != null ? finalConfidence : finalConfidence * 0.7,
+            placeTypes: (finalPlaceResult['types'] as List?)?.cast<String>(),
             website: website,
+            needsConfirmation: needsConfirmation,
           );
           
           if (!_isDuplicate(extractedData, results)) {
             results.add(extractedData);
+            final rerankType = rerankResult.usedAIRerank ? ' (AI reranked)' : '';
+            print('✅ IMAGE EXTRACTION: Added "${extractedData.name}"$rerankType');
           }
         }
       }
 
       print('📷 IMAGE EXTRACTION: Extracted ${results.length} location(s)');
-      return results;
+      return (locations: results, regionContext: regionContext);
     } catch (e) {
       print('❌ IMAGE EXTRACTION ERROR: $e');
-      return [];
+      return (locations: <ExtractedLocationData>[], regionContext: regionContextHint);
     }
   }
 
@@ -1923,7 +2845,9 @@ class LinkLocationExtractionService {
     String? geminiType,
   }) {
     if (results.isEmpty) return null;
-    if (results.length == 1) return results.first;
+    // IMPORTANT: Don't skip scoring for single results!
+    // Even with 1 result, we need to validate it matches the search type.
+    // e.g., searching for "Lake Crescent" (Lake type) should NOT accept "Lake Crescent Road"
     
     // Normalize the original name for comparison
     final normalizedOriginal = _normalizeForComparison(originalName);
@@ -1963,21 +2887,152 @@ class LinkLocationExtractionService {
     int bestScore = -1;
     
     // Check if Gemini identified this as a natural feature type
+    // Use contains() for compound types like "scenic viewpoint", "mountain/hiking trail"
     final geminiTypeLower = geminiType?.toLowerCase() ?? '';
     final isNatureSearch = geminiTypeLower == 'park' || 
                           geminiTypeLower == 'landmark' ||
                           geminiTypeLower == 'trail' ||
                           geminiTypeLower == 'beach' ||
-                          geminiTypeLower == 'natural_feature';
+                          geminiTypeLower == 'natural_feature' ||
+                          geminiTypeLower == 'lake' ||
+                          geminiTypeLower == 'waterfall' ||
+                          geminiTypeLower == 'mountain' ||
+                          geminiTypeLower == 'rainforest' ||
+                          geminiTypeLower == 'viewpoint' ||
+                          geminiTypeLower.contains('viewpoint') ||  // "scenic viewpoint"
+                          geminiTypeLower.contains('trail') ||      // "hiking trail"
+                          geminiTypeLower.contains('beach') ||      // "scenic beach"
+                          geminiTypeLower.contains('waterfall') ||
+                          geminiTypeLower.contains('lake') ||
+                          geminiTypeLower.contains('mountain');
+    // "region" is handled separately since it could be a geographic region (mountain range, valley)
+    // OR an administrative region (state, county)
+    final isRegionSearch = geminiTypeLower == 'region';
+    // City/Town search - when user is searching for a locality, not a specific POI
+    // IMPORTANT: Handle compound types like "City with Attractions, Parks..."
     final isCitySearch = geminiTypeLower == 'city' || 
+                        geminiTypeLower == 'town' ||  // Added 'town' for places like "Forks"
                         geminiTypeLower == 'locality' ||
                         geminiTypeLower == 'neighborhood' ||
-                        geminiTypeLower == 'region';
+                        geminiTypeLower.startsWith('city ') ||    // "City with Attractions..."
+                        geminiTypeLower.startsWith('town ') ||    // "Town with..."
+                        RegExp(r'^city\b').hasMatch(geminiTypeLower);  // "city" as first word
+    // Check if Gemini identified this as a restaurant/food establishment
+    final isRestaurantSearch = geminiTypeLower == 'restaurant' ||
+                               geminiTypeLower == 'cafe' ||
+                               geminiTypeLower == 'bar' ||
+                               geminiTypeLower == 'food' ||
+                               geminiTypeLower == 'bakery' ||
+                               geminiTypeLower == 'coffee_shop';
+    // Check if Gemini identified this as a hotel/lodging
+    final isHotelSearch = geminiTypeLower == 'hotel' ||
+                          geminiTypeLower == 'lodging' ||
+                          geminiTypeLower == 'resort' ||
+                          geminiTypeLower == 'inn' ||
+                          geminiTypeLower == 'motel';
+    
+    // Types that are NOT restaurants (should be heavily penalized in restaurant searches)
+    const nonRestaurantTypes = [
+      'route',           // Streets, drives, roads
+      'geocode',         // Generic geocoding result
+      'locality',        // Cities/towns
+      'sublocality',
+      'neighborhood',
+      'political',
+      'administrative_area_level_1',
+      'administrative_area_level_2',
+      'park',            // Parks when searching for restaurants
+      'natural_feature',
+      'airport',
+      'transit_station',
+    ];
+    
+    // Types that indicate food establishments
+    const foodTypes = [
+      'restaurant',
+      'food',
+      'cafe',
+      'bar',
+      'bakery',
+      'meal_takeaway',
+      'meal_delivery',
+      'night_club',
+      'coffee_shop',
+    ];
+    
+    // Types that indicate hotel/lodging establishments
+    const hotelTypes = [
+      'hotel',
+      'lodging',
+      'resort',
+      'motel',
+      'inn',
+      'bed_and_breakfast',
+      'guest_house',
+      'hostel',
+    ];
+    
+    // Types that are NOT hotels (should be penalized in hotel searches)
+    // This prevents "Von Trapp Lodge Gift Shop" from beating "von Trapp Family Lodge & Resort"
+    const nonHotelTypes = [
+      'store',
+      'gift_shop',
+      'shopping_mall',
+      'restaurant',      // Dining rooms inside hotels shouldn't beat the hotel itself
+      'food',
+      'cafe',
+      'bar',
+      'veterinary_care', // "VON TRAPP ANIMAL LODGE"
+      'health',
+      'doctor',
+      'sports_complex',
+      'sports_activity_location',
+    ];
+    
+    // Types that are NOT natural features (should be heavily penalized in nature searches)
+    // This prevents "Lake Crescent Road" from beating "Lake Crescent" (the actual lake)
+    const nonNatureTypes = [
+      'route',           // Roads, streets, highways
+      'geocode',         // Generic geocoding result
+      'street_address',  // Street addresses
+      'intersection',    // Road intersections
+      'premise',         // Buildings, offices
+      'subpremise',      // Floors, suites
+      'hotel',           // Hotels (e.g., "Super 8 by Wyndham Port Angeles")
+      'lodging',
+      'motel',
+      'store',
+      'gift_shop',
+      'restaurant',
+    ];
+    
+    // Types that are NOT cities/towns (should be penalized when searching for localities)
+    // This prevents "Forks Motel" from beating "Forks" (the actual town)
+    const nonCityTypes = [
+      'establishment',   // Businesses, POIs
+      'point_of_interest',
+      'lodging',
+      'hotel',
+      'motel',
+      'restaurant',
+      'store',
+      'food',
+      'route',           // Roads
+      'street_address',
+      'park',            // Parks are not cities
+      'tourist_attraction', // Attractions are not cities
+    ];
     
     if (isNatureSearch && bestScore == -1) {
       print('📷 IMAGE EXTRACTION: Nature/landmark search mode (geminiType: $geminiType)');
+    } else if (isRegionSearch && bestScore == -1) {
+      print('📷 IMAGE EXTRACTION: Region search mode (geminiType: $geminiType) - accepts localities AND natural features');
     } else if (isCitySearch && bestScore == -1) {
       print('📷 IMAGE EXTRACTION: City/locality search mode (geminiType: $geminiType)');
+    } else if (isRestaurantSearch && bestScore == -1) {
+      print('📷 IMAGE EXTRACTION: Restaurant/food search mode (geminiType: $geminiType)');
+    } else if (isHotelSearch && bestScore == -1) {
+      print('📷 IMAGE EXTRACTION: Hotel/lodging search mode (geminiType: $geminiType)');
     }
     
     // Also create compact versions for compound word matching
@@ -2037,28 +3092,107 @@ class LinkLocationExtractionService {
       }
       
       // === TYPE-BASED SCORING ===
-      if (isCitySearch) {
-        // When searching for a city, prefer localities
+      if (isRegionSearch) {
+        // When searching for a region, accept BOTH localities AND natural features
+        // "White Mountains" is a natural feature, "New Hampshire" is a locality
+        bool foundMatch = false;
         for (final type in types) {
           if (localityTypes.contains(type)) {
             score += 40;
+            foundMatch = true;
             break;
           }
+        }
+        if (!foundMatch) {
+          for (final type in types) {
+            if (naturalFeatureTypes.contains(type)) {
+              score += 35; // Slightly lower than locality but still valid for regions
+              break;
+            }
+          }
+        }
+      } else if (isCitySearch) {
+        // CRITICAL: When searching for a city/town, STRONGLY prefer localities
+        // This prevents "Forks Motel" from beating "Forks" (the actual town)
+        // and "City of Port Townsend Parks Dept" from beating "Port Townsend" (the city)
+        final isLocality = types.any((t) => localityTypes.contains(t));
+        final isNonCity = types.any((t) => nonCityTypes.contains(t));
+        
+        if (isLocality) {
+          score += 80; // Strong boost for actual localities/cities - must beat name-match bonuses
+          print('📷 IMAGE EXTRACTION:   → Locality type match bonus: +80');
+        }
+        
+        // HEAVILY penalize non-localities when searching for a city
+        // "Forks Motel" should NOT beat "Forks" just because it has "Forks" in the name
+        if (isNonCity && !isLocality) {
+          score -= 60; // Heavy penalty for hotels, restaurants, POIs when searching for cities
+          print('📷 IMAGE EXTRACTION:   → Non-city penalty: -60');
         }
       } else if (isNatureSearch) {
-        // When searching for nature (parks, trails, beaches), prefer natural features
-        for (final type in types) {
-          if (naturalFeatureTypes.contains(type)) {
-            score += 30; // Boost natural features
-            break;
-          }
+        // CRITICAL: When searching for nature (lakes, parks, trails, beaches), prefer natural features
+        // This prevents "Lake Crescent Road" from beating "Lake Crescent" (the actual lake)
+        final isNature = types.any((t) => naturalFeatureTypes.contains(t));
+        final isNonNature = types.any((t) => nonNatureTypes.contains(t));
+        final isVisitorEstablishment = types.any((t) => visitorEstablishmentTypes.contains(t));
+        
+        if (isNature) {
+          score += 50; // Strong boost for natural features
+          print('📷 IMAGE EXTRACTION:   → Nature type match bonus: +50');
         }
+        
+        // HEAVILY penalize roads/routes when searching for natural features
+        // "Lake Crescent Road" should NOT beat "Lake Crescent" (the lake)
+        if (isNonNature && !isNature) {
+          score -= 70; // Heavy penalty for roads, hotels, etc.
+          print('📷 IMAGE EXTRACTION:   → Non-nature penalty: -70');
+        }
+        
         // Penalize visitor centers/agencies when searching for nature
-        for (final type in types) {
-          if (visitorEstablishmentTypes.contains(type)) {
-            score -= 25; // Penalize visitor centers
-            break;
-          }
+        if (isVisitorEstablishment) {
+          score -= 25; // Penalize visitor centers
+          print('📷 IMAGE EXTRACTION:   → Visitor establishment penalty: -25');
+        }
+      } else if (isRestaurantSearch) {
+        // CRITICAL: When searching for a restaurant, heavily penalize non-establishments
+        // This prevents "Rockcreek Drive" (a street) from beating "RockCreek Seafood" (restaurant)
+        final isNonRestaurant = types.any((t) => nonRestaurantTypes.contains(t));
+        final isFood = types.any((t) => foodTypes.contains(t));
+        final isEstablishment = types.any((t) => t == 'establishment' || t == 'point_of_interest');
+        
+        if (isFood) {
+          score += 60; // Strong boost for food establishments
+          print('📷 IMAGE EXTRACTION:   → Restaurant type match bonus: +60');
+        } else if (isEstablishment && !isNonRestaurant) {
+          score += 30; // Moderate boost for other establishments
+          print('📷 IMAGE EXTRACTION:   → Establishment bonus: +30');
+        }
+        
+        if (isNonRestaurant && !isEstablishment) {
+          score -= 80; // Heavy penalty for routes, localities, geocodes
+          print('📷 IMAGE EXTRACTION:   → Non-restaurant penalty: -80');
+        } else if (isNonRestaurant) {
+          score -= 40; // Moderate penalty if it's also an establishment but wrong type
+          print('📷 IMAGE EXTRACTION:   → Wrong type penalty: -40');
+        }
+      } else if (isHotelSearch) {
+        // CRITICAL: When searching for a hotel, boost lodging and penalize non-lodging
+        // This prevents "Von Trapp Lodge Gift Shop" from beating "von Trapp Family Lodge & Resort"
+        final isHotel = types.any((t) => hotelTypes.contains(t));
+        final isNonHotel = types.any((t) => nonHotelTypes.contains(t));
+        final isEstablishment = types.any((t) => t == 'establishment' || t == 'point_of_interest');
+        
+        if (isHotel) {
+          score += 60; // Strong boost for hotel/lodging establishments
+          print('📷 IMAGE EXTRACTION:   → Hotel type match bonus: +60');
+        } else if (isEstablishment && !isNonHotel) {
+          score += 20; // Small boost for other establishments
+          print('📷 IMAGE EXTRACTION:   → Establishment bonus: +20');
+        }
+        
+        if (isNonHotel) {
+          score -= 50; // Penalty for gift shops, restaurants, etc. inside hotel complexes
+          print('📷 IMAGE EXTRACTION:   → Non-hotel penalty: -50');
         }
       } else {
         // Default: Penalize localities, slight boost for establishments
@@ -2093,6 +3227,270 @@ class LinkLocationExtractionService {
     return bestResult ?? results.first;
   }
   
+  /// Extended version of _selectBestPlaceResult that uses additional context
+  /// (city, region) to better filter/score candidates from broader searches.
+  /// 
+  /// This is used in the "broader first, then filter" strategy where we:
+  /// 1. Search broadly (name + type + state/country)
+  /// 2. Use specific details (city, full region) to score/filter candidates
+  /// US state name to abbreviation mapping (and common variants)
+  static const Map<String, List<String>> _stateNameVariants = {
+    'alabama': ['al', 'ala'],
+    'alaska': ['ak'],
+    'arizona': ['az', 'ariz'],
+    'arkansas': ['ar', 'ark'],
+    'california': ['ca', 'calif', 'cal'],
+    'colorado': ['co', 'colo'],
+    'connecticut': ['ct', 'conn'],
+    'delaware': ['de', 'del'],
+    'florida': ['fl', 'fla'],
+    'georgia': ['ga'],
+    'hawaii': ['hi'],
+    'idaho': ['id'],
+    'illinois': ['il', 'ill'],
+    'indiana': ['in', 'ind'],
+    'iowa': ['ia'],
+    'kansas': ['ks', 'kan', 'kans'],
+    'kentucky': ['ky', 'ken', 'kent'],
+    'louisiana': ['la'],
+    'maine': ['me'],
+    'maryland': ['md'],
+    'massachusetts': ['ma', 'mass'],
+    'michigan': ['mi', 'mich'],
+    'minnesota': ['mn', 'minn'],
+    'mississippi': ['ms', 'miss'],
+    'missouri': ['mo'],
+    'montana': ['mt', 'mont'],
+    'nebraska': ['ne', 'neb', 'nebr'],
+    'nevada': ['nv', 'nev'],
+    'new hampshire': ['nh'],
+    'new jersey': ['nj'],
+    'new mexico': ['nm'],
+    'new york': ['ny'],
+    'north carolina': ['nc'],
+    'north dakota': ['nd'],
+    'ohio': ['oh'],
+    'oklahoma': ['ok', 'okla'],
+    'oregon': ['or', 'ore', 'oreg'],
+    'pennsylvania': ['pa', 'penn', 'penna'],
+    'rhode island': ['ri'],
+    'south carolina': ['sc'],
+    'south dakota': ['sd'],
+    'tennessee': ['tn', 'tenn'],
+    'texas': ['tx', 'tex'],
+    'utah': ['ut'],
+    'vermont': ['vt'],
+    'virginia': ['va'],
+    'washington': ['wa', 'wash'],
+    'west virginia': ['wv'],
+    'wisconsin': ['wi', 'wis', 'wisc'],
+    'wyoming': ['wy', 'wyo'],
+    // Territories
+    'district of columbia': ['dc'],
+    'puerto rico': ['pr'],
+    'guam': ['gu'],
+    'virgin islands': ['vi'],
+  };
+  
+  /// Check if a description contains a state/region match (handles abbreviations)
+  bool _descriptionContainsRegion(String normalizedDescription, String regionPart) {
+    // Direct match first
+    if (normalizedDescription.contains(regionPart)) {
+      return true;
+    }
+    
+    // Check if regionPart is a state name or abbreviation
+    final cleanedPart = regionPart.replaceAll(RegExp(r'\s*(state|st\.?)$'), '').trim();
+    
+    // If it's a full state name, check for abbreviation matches
+    if (_stateNameVariants.containsKey(cleanedPart)) {
+      final variants = _stateNameVariants[cleanedPart]!;
+      for (final variant in variants) {
+        // Match abbreviation with word boundary (e.g., ", WA," or ", WA " or ending with ", WA")
+        final pattern = RegExp('(,\\s*|\\s)$variant(,|\\s|\$)', caseSensitive: false);
+        if (pattern.hasMatch(normalizedDescription)) {
+          return true;
+        }
+      }
+    }
+    
+    // If it's an abbreviation, check for full state name matches
+    for (final entry in _stateNameVariants.entries) {
+      if (entry.value.contains(cleanedPart)) {
+        // Found abbreviation, check if description contains full name
+        if (normalizedDescription.contains(entry.key)) {
+          return true;
+        }
+      }
+    }
+    
+    return false;
+  }
+  
+  Map<String, dynamic>? _selectBestPlaceResultWithContext(
+    List<Map<String, dynamic>> results,
+    String originalName, {
+    String? geminiType,
+    String? city,
+    String? regionContext,
+  }) {
+    if (results.isEmpty) return null;
+    
+    // First, use the base scoring to get initial scores
+    // We'll enhance this with context-based scoring
+    
+    final normalizedCity = city?.toLowerCase().trim();
+    final normalizedRegion = regionContext?.toLowerCase().trim();
+    
+    // Extract location components from region context
+    // e.g., "Neah Bay, Washington State, USA" → ["neah bay", "washington state", "usa"]
+    final regionParts = normalizedRegion?.split(',').map((p) => p.trim()).toList() ?? [];
+    
+    Map<String, dynamic>? bestResult;
+    int bestScore = -999;
+    
+    for (final result in results) {
+      // Get base score from _selectBestPlaceResult logic
+      final baseScore = _getPlaceScore(result, originalName, geminiType: geminiType);
+      int contextScore = 0;
+      
+      // Get the result's address/description for context matching
+      final resultDescription = (result['description'] ?? result['formatted_address'] ?? '') as String;
+      final normalizedDescription = resultDescription.toLowerCase();
+      
+      // === CONTEXT-BASED SCORING ===
+      
+      // Bonus for matching city
+      if (normalizedCity != null && normalizedCity.isNotEmpty) {
+        if (normalizedDescription.contains(normalizedCity)) {
+          contextScore += 30;
+          print('📷 IMAGE EXTRACTION:   → City match bonus: +30 (found "$city" in address)');
+        }
+      }
+      
+      // Bonus for matching region parts (with state abbreviation support)
+      for (final part in regionParts) {
+        if (part.isNotEmpty && _descriptionContainsRegion(normalizedDescription, part)) {
+          // Give higher bonus for state-level matches (more specific than country)
+          final cleanedPart = part.replaceAll(RegExp(r'\s*(state|st\.?)$'), '').trim();
+          final isStateName = _stateNameVariants.containsKey(cleanedPart) ||
+              _stateNameVariants.values.any((variants) => variants.contains(cleanedPart));
+          
+          if (isStateName) {
+            contextScore += 40;
+            print('📷 IMAGE EXTRACTION:   → State match bonus: +40 (found "$part" in address)');
+          } else {
+            contextScore += 15;
+            print('📷 IMAGE EXTRACTION:   → Region match bonus: +15 (found "$part" in address)');
+          }
+        }
+      }
+      
+      final totalScore = baseScore + contextScore;
+      final resultName = (result['name'] ?? result['description']?.toString().split(',').first ?? '') as String;
+      print('📷 IMAGE EXTRACTION: Context scoring "$resultName" = $totalScore (base: $baseScore, context: $contextScore)');
+      
+      if (totalScore > bestScore) {
+        bestScore = totalScore;
+        bestResult = result;
+      }
+    }
+    
+    if (bestResult != null) {
+      final selectedName = (bestResult['name'] ?? bestResult['description']?.toString().split(',').first ?? '') as String;
+      print('📷 IMAGE EXTRACTION: Selected best result with context: "$selectedName" (score: $bestScore)');
+    }
+    
+    return bestResult ?? results.first;
+  }
+  
+  /// Get the base score for a place result (used by _selectBestPlaceResultWithContext)
+  /// This is a simplified scoring version that returns the score instead of tracking best result
+  int _getPlaceScore(Map<String, dynamic> result, String originalName, {String? geminiType}) {
+    int score = 0;
+    
+    final resultName = (result['name'] ?? result['description']?.toString().split(',').first ?? '') as String;
+    final normalizedOriginal = _normalizeForComparison(originalName);
+    final normalizedResultName = _normalizeForComparison(resultName);
+    final compactOriginal = _normalizeCompact(originalName);
+    final compactResultName = _normalizeCompact(resultName);
+    final types = (result['types'] as List?)?.cast<String>() ?? [];
+    
+    // === NAME MATCHING ===
+    if (compactResultName == compactOriginal) {
+      score += 100; // Exact match
+    } else if (compactResultName.contains(compactOriginal) || 
+               compactOriginal.contains(compactResultName)) {
+      final lengthDifference = (compactResultName.length - compactOriginal.length).abs();
+      if (lengthDifference <= 5) {
+        score += 80;
+      } else if (lengthDifference <= 15) {
+        score += 50 - (lengthDifference ~/ 2);
+      } else {
+        score += 20;
+      }
+    }
+    
+    // Word matching
+    final originalWordsList = normalizedOriginal.split(RegExp(r'\s+')).where((w) => w.length > 2).toList();
+    int matchedWords = 0;
+    for (final word in originalWordsList) {
+      if (normalizedResultName.contains(word)) {
+        matchedWords++;
+      }
+    }
+    if (originalWordsList.isNotEmpty) {
+      final matchRatio = matchedWords / originalWordsList.length;
+      score += (matchRatio * 20).round();
+    }
+    
+    // === TYPE-BASED SCORING (simplified) ===
+    final geminiTypeLower = geminiType?.toLowerCase() ?? '';
+    
+    const localityTypes = ['locality', 'sublocality', 'neighborhood', 'political', 'administrative_area_level_1', 'administrative_area_level_2'];
+    const naturalFeatureTypes = ['natural_feature', 'park', 'national_park', 'state_park', 'campground', 'beach'];
+    const foodTypes = ['restaurant', 'food', 'cafe', 'bar', 'bakery', 'meal_takeaway'];
+    const hotelTypes = ['hotel', 'lodging', 'resort', 'motel', 'inn'];
+    // Types that indicate businesses NEAR natural features, NOT the feature itself
+    // e.g., "Lake Crescent Lodge Dining Room" is a restaurant near Lake Crescent, not the lake
+    const nonNatureTypes = [
+      'route', 'geocode', 'street_address',
+      'hotel', 'lodging', 'resort', 'motel',  // Hotels/lodging near features
+      'restaurant', 'food', 'cafe', 'bar', 'bakery', 'meal_takeaway',  // Food businesses
+      'store', 'shopping_mall', 'clothing_store', 'convenience_store',  // Retail
+    ];
+    
+    final isNatureSearch = geminiTypeLower.contains('park') || geminiTypeLower.contains('lake') || 
+                          geminiTypeLower.contains('trail') || geminiTypeLower.contains('beach') ||
+                          geminiTypeLower.contains('mountain') || geminiTypeLower.contains('viewpoint') ||
+                          geminiTypeLower.contains('waterfall') || geminiTypeLower.contains('rainforest');
+    final isCitySearch = geminiTypeLower == 'city' || geminiTypeLower == 'town' || geminiTypeLower == 'locality';
+    final isRestaurantSearch = foodTypes.any((t) => geminiTypeLower.contains(t));
+    final isHotelSearch = hotelTypes.any((t) => geminiTypeLower.contains(t));
+    
+    if (isCitySearch) {
+      if (types.any((t) => localityTypes.contains(t))) score += 80;
+      if (types.any((t) => ['establishment', 'lodging', 'hotel', 'restaurant'].contains(t))) score -= 60;
+    } else if (isNatureSearch) {
+      if (types.any((t) => naturalFeatureTypes.contains(t))) score += 50;
+      // HEAVY penalty for businesses when searching for natural features
+      // "Lake Crescent Lodge Dining Room" (restaurant) should NOT match "Lake Crescent" (lake)
+      if (types.any((t) => nonNatureTypes.contains(t))) score -= 100;
+    } else if (isRestaurantSearch) {
+      if (types.any((t) => foodTypes.contains(t))) score += 60;
+      if (types.any((t) => ['route', 'geocode', 'locality'].contains(t))) score -= 80;
+    } else if (isHotelSearch) {
+      if (types.any((t) => hotelTypes.contains(t))) score += 60;
+      if (types.any((t) => ['store', 'gift_shop', 'restaurant'].contains(t))) score -= 50;
+    } else {
+      // Default scoring
+      if (types.any((t) => localityTypes.contains(t))) score -= 30;
+      if (types.any((t) => t == 'establishment' || t == 'point_of_interest')) score += 15;
+    }
+    
+    return score;
+  }
+  
   /// Normalize a string for comparison (lowercase, remove special chars)
   String _normalizeForComparison(String text) {
     return text
@@ -2103,12 +3501,356 @@ class LinkLocationExtractionService {
   }
   
   /// Normalize for compact comparison - removes ALL spaces to handle compound word variations
-  /// e.g., "James Island View Point" and "James Island Viewpoint" both become "jamesislandviewpoint"
-  /// e.g., "Hoh Rain Forest" and "Hoh Rainforest" both become "hohrainforest"
+  /// AND expands common abbreviations to handle cases like:
+  /// - "Mt Storm King" and "Mount Storm King" → both become "mountstormking"
+  /// - "James Island View Point" and "James Island Viewpoint" → both become "jamesislandviewpoint"
+  /// - "Hoh Rain Forest" and "Hoh Rainforest" → both become "hohrainforest"
   String _normalizeCompact(String text) {
-    return text
-        .toLowerCase()
-        .replaceAll(RegExp(r'[^a-z0-9]'), ''); // Remove ALL non-alphanumeric including spaces
+    var normalized = text.toLowerCase();
+    
+    // Expand common abbreviations BEFORE removing spaces
+    // This allows "Mt Storm King" to become "Mount Storm King" first
+    normalized = normalized
+        .replaceAll(RegExp(r'\bmt\b'), 'mount')      // Mt → Mount
+        .replaceAll(RegExp(r'\brd\b'), 'road')       // Rd → Road
+        .replaceAll(RegExp(r'\bst\b'), 'street')     // St → Street (but not "Saint")
+        .replaceAll(RegExp(r'\bdr\b'), 'drive')      // Dr → Drive
+        .replaceAll(RegExp(r'\bave\b'), 'avenue')    // Ave → Avenue
+        .replaceAll(RegExp(r'\bblvd\b'), 'boulevard') // Blvd → Boulevard
+        .replaceAll(RegExp(r'\bhwy\b'), 'highway')   // Hwy → Highway
+        .replaceAll(RegExp(r'\bpt\b'), 'point')      // Pt → Point
+        .replaceAll(RegExp(r'\bnp\b'), 'nationalpark'); // NP → National Park
+    
+    // Remove ALL non-alphanumeric including spaces
+    return normalized.replaceAll(RegExp(r'[^a-z0-9]'), '');
+  }
+
+  /// Extract the broader region (typically state/country) from a region context.
+  /// 
+  /// IMPORTANT: This now returns the STATE level first, not jumping straight to country.
+  /// For example:
+  /// - "Port Angeles, Washington State, USA" → "Washington State" (NOT "USA")
+  /// - "Washington State, USA" → "Washington" (drop "State" suffix), or "Washington State" if no suffix
+  /// - "Baton Rouge, Louisiana" → "Louisiana"
+  /// - "Seattle, Washington, USA" → "Washington"
+  /// - "Paris, France" → "France"
+  ///
+  /// This is used for fallback searches when a location is in the broader region
+  /// but not in the specific city (e.g., Lake Crescent is in Washington State but
+  /// searching with "Port Angeles" doesn't find it).
+  String? _extractBroaderRegion(String? regionContext) {
+    if (regionContext == null || regionContext.isEmpty) return null;
+
+    // Split by comma and take everything after the first part (the city)
+    final parts = regionContext.split(',').map((p) => p.trim()).where((p) => p.isNotEmpty).toList();
+
+    if (parts.length <= 1) {
+      // Single part like "Louisiana" or "France" - no broader region to extract
+      return null;
+    }
+
+    // CRITICAL FIX: Return the STATE/REGION level, NOT the country
+    // "Washington State, USA" → "Washington State" (or just "Washington")
+    // "Port Angeles, Washington State, USA" → "Washington State"
+    // This prevents searches from going too broad (USA) and finding wrong places
+    // like "Storm King Mountain, NY" instead of "Mt Storm King, WA"
+    
+    // If we have 3+ parts like "Port Angeles, Washington State, USA"
+    // Return the middle part(s) without the country (USA)
+    if (parts.length >= 3) {
+      // Check if last part is a country (USA, United States, etc.)
+      final lastPart = parts.last.toLowerCase();
+      if (lastPart == 'usa' || lastPart == 'united states' || 
+          lastPart == 'us' || lastPart == 'america') {
+        // Return parts[1] to parts[n-1] - the state/region without the country
+        // "Port Angeles, Washington State, USA" → "Washington State"
+        final stateParts = parts.sublist(1, parts.length - 1);
+        if (stateParts.isNotEmpty) {
+          return stateParts.join(', ');
+        }
+      }
+    }
+    
+    // For 2 parts like "Washington State, USA" or "Baton Rouge, Louisiana"
+    // Return the second part (state)
+    if (parts.length == 2) {
+      final secondPart = parts[1];
+      // If it's just "USA" or similar country, we have nowhere broader to go
+      final lower = secondPart.toLowerCase();
+      if (lower == 'usa' || lower == 'united states' || lower == 'us' || lower == 'america') {
+        // Try stripping "State" from the first part if present
+        // "Washington State" → "Washington"
+        final firstPart = parts[0];
+        if (firstPart.toLowerCase().endsWith(' state')) {
+          return firstPart.substring(0, firstPart.length - 6).trim();
+        }
+        return null; // Can't go broader
+      }
+      return secondPart;
+    }
+
+    // Fallback: return everything except the first part
+    return parts.sublist(1).join(', ');
+  }
+
+  /// Check if the found place name is a good match for the original search name.
+  /// Returns true if the match is good, false if we should try a broader search.
+  /// 
+  /// This helps detect cases like:
+  /// - Searching for "Afton Villa Gardens" but finding "Afton Villa Offices"
+  /// - The names share "Afton Villa" but "Gardens" vs "Offices" is a significant difference
+  /// 
+  /// BUT it should NOT flag as poor match when:
+  /// - Searching for "The Vintage" and finding "The Vintage Baton Rouge"
+  /// - The found name is the original + city name for disambiguation
+  ({bool isGoodMatch, double matchScore}) _checkNameMatchQuality(String originalName, String foundName) {
+    final compactOriginal = _normalizeCompact(originalName);
+    final compactFound = _normalizeCompact(foundName);
+    
+    // Exact match is always good
+    if (compactOriginal == compactFound) {
+      return (isGoodMatch: true, matchScore: 1.0);
+    }
+    
+    // Get word counts to detect when extra words indicate a DIFFERENT thing
+    final originalWords = originalName.toLowerCase().split(RegExp(r'\s+')).where((w) => w.length > 1).toList();
+    final foundWords = foundName.toLowerCase().split(RegExp(r'\s+')).where((w) => w.length > 1).toList();
+    final extraWordCount = foundWords.length - originalWords.length;
+    
+    // Words that indicate the found result is a DIFFERENT THING than the original
+    // e.g., "Lake Crescent" vs "Lake Crescent Lodge Dining Room" - the lodge/dining room
+    // is a business NEAR Lake Crescent, not the lake itself
+    const differentThingIndicators = [
+      'lodge', 'hotel', 'motel', 'inn', 'resort', 'cabin', 'cabins',
+      'restaurant', 'dining', 'room', 'cafe', 'coffee', 'bar', 'grill', 'kitchen', 'eatery',
+      'store', 'shop', 'outlet', 'outlets', 'mall', 'market', 'grocery',
+      'trail', 'trailhead', 'road', 'drive', 'street', 'avenue', 'highway', 'route',
+      'parking', 'lot', 'garage',
+      'office', 'offices', 'center', 'building',
+      'airport', 'station', 'terminal',
+    ];
+    
+    // Check if extra words indicate a different thing
+    bool hasDifferentThingIndicator = false;
+    if (extraWordCount > 0) {
+      // Get the extra words (words in found but not matching original)
+      final extraWords = foundWords.where((fw) => 
+        !originalWords.any((ow) => fw.contains(ow) || ow.contains(fw))
+      ).toList();
+      
+      hasDifferentThingIndicator = extraWords.any((w) => 
+        differentThingIndicators.contains(w)
+      );
+    }
+    
+    // If found name STARTS WITH original name, check the extra content
+    if (compactFound.startsWith(compactOriginal)) {
+      // If extra words indicate a different thing (lodge, restaurant, trail near the place),
+      // this is NOT a good match - it's a business/road near the actual place
+      if (hasDifferentThingIndicator) {
+        print('📷 NAME MATCH: "$foundName" contains "$originalName" but has different-thing indicators');
+        // Low score - this is likely a business near the place, not the place itself
+        return (isGoodMatch: false, matchScore: 0.4);
+      }
+      
+      // If just 1-2 extra words (likely city/brand suffix), still a good match
+      // e.g., "The Vintage" → "The Vintage Baton Rouge"
+      if (extraWordCount <= 2) {
+        return (isGoodMatch: true, matchScore: 0.95);
+      }
+      
+      // 3+ extra words without indicators - moderate match, needs review
+      return (isGoodMatch: false, matchScore: 0.6);
+    }
+    
+    // If original contains found completely (found is a subset), also good
+    // e.g., searching for "The Vintage Baton Rouge" finds "The Vintage"
+    if (compactOriginal.startsWith(compactFound)) {
+      // Found name is a prefix of what we searched for
+      final matchRatio = compactFound.length / compactOriginal.length;
+      return (isGoodMatch: matchRatio >= 0.5, matchScore: matchRatio);
+    }
+    
+    // If one contains the other but not at the start, check more carefully
+    if (compactFound.contains(compactOriginal)) {
+      // Original is contained but not at start
+      // Check for different-thing indicators
+      if (hasDifferentThingIndicator) {
+        print('📷 NAME MATCH: "$foundName" contains "$originalName" (not at start) but has different-thing indicators');
+        return (isGoodMatch: false, matchScore: 0.35);
+      }
+      return (isGoodMatch: true, matchScore: 0.85);
+    }
+    
+    if (compactOriginal.contains(compactFound)) {
+      // Found is contained in original
+      final matchRatio = compactFound.length / compactOriginal.length;
+      return (isGoodMatch: matchRatio >= 0.6, matchScore: matchRatio);
+    }
+    
+    // No containment - check word-by-word matching
+    if (originalWords.isEmpty) {
+      return (isGoodMatch: false, matchScore: 0.0);
+    }
+    
+    int matchedWords = 0;
+    for (final word in originalWords) {
+      if (foundWords.any((fw) => fw.contains(word) || word.contains(fw))) {
+        matchedWords++;
+      }
+    }
+    
+    final matchRatio = matchedWords / originalWords.length;
+    
+    // We need at least 70% word match for a good result
+    // "Afton Villa Gardens" vs "Afton Villa Offices" = 2/3 = 66% (not good enough)
+    return (isGoodMatch: matchRatio >= 0.7, matchScore: matchRatio);
+  }
+
+  /// Check if the place result type is compatible with the expected Gemini type
+  /// 
+  /// This prevents cases like:
+  /// - Searching for "Lake Crescent" (Lake) but finding "Lake Crescent Road" (route)
+  /// - Searching for "Cape Flattery" (Scenic viewpoint) but finding "Cape Flattery Road" (route)
+  /// - Searching for "Forks" (Town) but finding "Forks Motel" (lodging)
+  /// - Searching for "Port Angeles" (City) but finding "Super 8 Port Angeles" (hotel)
+  /// 
+  /// Returns true if types are compatible, false if there's a type mismatch
+  bool _isTypeCompatible(String? geminiType, List<String> placeTypes) {
+    if (geminiType == null || geminiType.isEmpty) return true; // No type hint, assume compatible
+    
+    final geminiTypeLower = geminiType.toLowerCase();
+    
+    // Define type compatibility mappings
+    // Nature types should match nature place types, NOT roads/routes
+    // Use contains() checks for compound types like "scenic viewpoint", "hiking trail"
+    final isNatureGeminiType = geminiTypeLower == 'lake' ||
+        geminiTypeLower == 'waterfall' ||
+        geminiTypeLower == 'mountain' ||
+        geminiTypeLower == 'trail' ||
+        geminiTypeLower == 'beach' ||
+        geminiTypeLower == 'park' ||
+        geminiTypeLower == 'rainforest' ||
+        geminiTypeLower == 'viewpoint' ||
+        geminiTypeLower == 'natural_feature' ||
+        geminiTypeLower == 'landmark' ||
+        geminiTypeLower.contains('viewpoint') ||  // "scenic viewpoint"
+        geminiTypeLower.contains('trail') ||      // "hiking trail"
+        geminiTypeLower.contains('beach') ||      // "scenic beach"
+        geminiTypeLower.contains('waterfall') ||  // "scenic waterfall"
+        geminiTypeLower.contains('lake') ||       // "scenic lake"
+        geminiTypeLower.contains('mountain');     // "mountain/hiking trail"
+    
+    final naturePlaceTypes = ['natural_feature', 'park', 'national_park', 'state_park', 'beach', 'campground', 'hiking_area', 'tourist_attraction'];
+    final roadTypes = ['route', 'street_address', 'intersection', 'premise'];
+    // Note: 'geocode' alone is not always bad - some natural features have geocode type
+    
+    // City/Town types should match locality types, NOT businesses or parks
+    // IMPORTANT: Match compound types like "City with Attractions, Parks..." 
+    // by checking if geminiType STARTS with city-related words
+    final isCityGeminiType = geminiTypeLower == 'city' ||
+        geminiTypeLower == 'town' ||
+        geminiTypeLower == 'locality' ||
+        geminiTypeLower == 'neighborhood' ||
+        geminiTypeLower.startsWith('city ') ||    // "City with Attractions..."
+        geminiTypeLower.startsWith('town ') ||    // "Town with..."
+        RegExp(r'^city\b').hasMatch(geminiTypeLower);  // "city" as first word
+    
+    final cityPlaceTypes = ['locality', 'sublocality', 'neighborhood', 'political', 'administrative_area_level_1', 'administrative_area_level_2', 'administrative_area_level_3'];
+    
+    // Check nature type compatibility
+    if (isNatureGeminiType) {
+      // If searching for a nature type (lake, beach, mountain, etc.), reject:
+      // 1. Roads/routes - "Lake Crescent Road" is not "Lake Crescent"
+      // 2. Restaurants/food - "Lake Crescent Lodge Dining Room" is not the lake
+      // 3. Hotels/lodging - "Lake Crescent Lodge" is a business NEAR the lake
+      // 4. Stores/shopping - "Seattle Premium Outlets" is not "Seattle" the city
+      final hasRoadType = placeTypes.any((t) => roadTypes.contains(t));
+      final hasNatureType = placeTypes.any((t) => naturePlaceTypes.contains(t));
+      
+      // Types that indicate a business NEAR the natural feature, not the feature itself
+      const businessTypes = [
+        'restaurant', 'food', 'cafe', 'bar', 'bakery', 'meal_takeaway', 'meal_delivery',
+        'lodging', 'hotel', 'motel', 'resort', 'rv_park',
+        'store', 'shopping_mall', 'clothing_store', 'convenience_store', 'supermarket',
+        'gas_station', 'car_repair', 'car_wash',
+      ];
+      final hasBusinessType = placeTypes.any((t) => businessTypes.contains(t));
+      
+      // Reject if it's a road OR a business type (without being an actual nature type)
+      if ((hasRoadType || hasBusinessType) && !hasNatureType) {
+        final reason = hasRoadType ? 'road/route' : 'business (${placeTypes.take(3).join(', ')})';
+        print('📷 TYPE CHECK: Incompatible - searching for "$geminiType" but found $reason');
+        return false;
+      }
+    }
+    
+    // Check city/town type compatibility - STRICT: must have locality type
+    if (isCityGeminiType) {
+      final hasCityType = placeTypes.any((t) => cityPlaceTypes.contains(t));
+      
+      // For city searches, we REQUIRE a locality type - not just reject businesses
+      // This prevents "Portland" matching "Portland Women's Forum State Scenic Viewpoint"
+      if (!hasCityType) {
+        print('📷 TYPE CHECK: Incompatible - searching for city/town but found non-locality (types: ${placeTypes.join(', ')})');
+        return false;
+      }
+    }
+    
+    return true; // Types are compatible or no specific type check applies
+  }
+
+  /// Check if a name looks like it was derived from an Instagram/social media handle
+  /// These often need to be looked up online to find the actual business name
+  /// 
+  /// Examples:
+  /// - "Sofa Seattle" (from @sofaseattle) → looks like handle (sofa = abbreviation)
+  /// - "Rockcreek" (from @rockcreek206) → looks like handle
+  /// - "Kuya Lord" (from @kuyalord_la) → already converted, but original was handle
+  /// 
+  /// Patterns that suggest a handle-derived name:
+  /// 1. Short name (1-2 words) + city name
+  /// 2. Concatenated words that don't form a common phrase
+  /// 3. Unusual capitalization or word breaks
+  bool _looksLikeHandleDerivedName(String name) {
+    if (name.isEmpty) return false;
+    
+    final words = name.trim().split(RegExp(r'\s+'));
+    final lowerName = name.toLowerCase();
+    
+    // Common city names that might be appended to handles
+    const citySuffixes = [
+      'seattle', 'portland', 'la', 'nyc', 'sf', 'chicago', 'miami',
+      'denver', 'austin', 'dallas', 'houston', 'phoenix', 'atlanta',
+      'boston', 'dc', 'vegas', 'san diego', 'san francisco',
+    ];
+    
+    // Check if it ends with a city name (common handle pattern)
+    for (final city in citySuffixes) {
+      if (lowerName.endsWith(city) && words.length <= 3) {
+        return true;
+      }
+    }
+    
+    // Check for short names that might be abbreviations
+    // "Sofa Seattle" = 2 words, first word is short (4 chars) and unusual
+    if (words.length == 2) {
+      final firstWord = words[0].toLowerCase();
+      final secondWord = words[1].toLowerCase();
+      
+      // First word is short (likely abbreviation) and second is a city
+      if (firstWord.length <= 5 && citySuffixes.contains(secondWord)) {
+        return true;
+      }
+    }
+    
+    // Very short single-word names that aren't common words
+    if (words.length == 1 && name.length <= 10) {
+      // This could be a handle-derived name like "Rockcreek"
+      return true;
+    }
+    
+    return false;
   }
 
   /// Extract coordinates from Places API result
@@ -2213,4 +3955,227 @@ class LinkLocationExtractionService {
   }
 
   // ============ END IMAGE/SCREENSHOT EXTRACTION METHODS ============
+
+  // ============ AI RERANKING METHODS ============
+
+  /// Evaluate the overall match quality of a Places API result
+  /// 
+  /// This combines multiple signals into a single quality assessment:
+  /// - Name match quality (from _checkNameMatchQuality)
+  /// - Type compatibility (from _isTypeCompatible)
+  /// - Whether a broader search fallback was used
+  /// - Confidence score
+  /// 
+  /// Returns a record with:
+  /// - needsRerank: true if the match quality is low enough to warrant AI reranking
+  /// - combinedConfidence: overall confidence score
+  /// - reason: explanation for the assessment
+  ({bool needsRerank, double combinedConfidence, String reason}) _evaluateMatchQuality({
+    required String originalName,
+    required Map<String, dynamic>? selectedResult,
+    String? geminiType,
+    bool usedBroaderSearch = false,
+    double baseConfidence = 0.8,
+  }) {
+    if (selectedResult == null) {
+      return (
+        needsRerank: false, // No result to rerank
+        combinedConfidence: 0.0,
+        reason: 'No result found',
+      );
+    }
+
+    final foundName = (selectedResult['name'] ?? 
+        selectedResult['description']?.toString().split(',').first ?? '') as String;
+    final placeTypes = (selectedResult['types'] as List?)?.cast<String>() ?? [];
+    
+    // Check name match quality
+    final nameQuality = _checkNameMatchQuality(originalName, foundName);
+    
+    // Check type compatibility
+    final isTypeOk = _isTypeCompatible(geminiType, placeTypes);
+    
+    // Calculate combined confidence
+    double confidence = baseConfidence;
+    final reasons = <String>[];
+    
+    // Penalize for poor name match
+    if (!nameQuality.isGoodMatch) {
+      confidence *= 0.6;
+      reasons.add('poor name match (${(nameQuality.matchScore * 100).toInt()}%)');
+    } else if (nameQuality.matchScore < 0.8) {
+      confidence *= 0.85;
+      reasons.add('moderate name match (${(nameQuality.matchScore * 100).toInt()}%)');
+    }
+    
+    // Penalize for type mismatch
+    if (!isTypeOk) {
+      confidence *= 0.5;
+      reasons.add('type mismatch');
+    }
+    
+    // Penalize for broader search fallback
+    if (usedBroaderSearch) {
+      confidence *= 0.85;
+      reasons.add('used broader search');
+    }
+    
+    // Determine if we need AI reranking
+    // Threshold: confidence <= 0.8 OR name match < 0.7 OR type mismatch
+    final needsRerank = confidence <= 0.8 || 
+        nameQuality.matchScore < 0.7 || 
+        !isTypeOk ||
+        (usedBroaderSearch && nameQuality.matchScore < 0.85);
+    
+    return (
+      needsRerank: needsRerank,
+      combinedConfidence: confidence,
+      reason: reasons.isEmpty ? 'Good match' : reasons.join(', '),
+    );
+  }
+
+  /// Attempt AI reranking of Places API candidates when initial scoring is weak
+  /// 
+  /// This method calls Gemini to semantically compare candidates and select
+  /// the best match based on contextual understanding.
+  /// 
+  /// [originalName] - The original location name being searched
+  /// [candidates] - List of Places API results to rerank
+  /// [selectedIndex] - The currently selected index from initial scoring
+  /// [geminiType] - Expected type from Gemini extraction
+  /// [regionContext] - Geographic context
+  /// [surroundingText] - Caption or page text for context
+  /// [userLocation] - User location for disambiguation
+  /// 
+  /// Returns a record with:
+  /// - selectedResult: The chosen result (may be different from initial selection)
+  /// - selectedIndex: Index of the chosen result
+  /// - confidence: Final confidence score
+  /// - usedAIRerank: Whether AI reranking changed the selection
+  /// - needsConfirmation: Whether the result should be flagged for user review
+  Future<({
+    Map<String, dynamic>? selectedResult,
+    int selectedIndex,
+    double confidence,
+    bool usedAIRerank,
+    bool needsConfirmation,
+  })> _maybeAIRerank({
+    required String originalName,
+    required List<Map<String, dynamic>> candidates,
+    required int selectedIndex,
+    String? geminiType,
+    String? regionContext,
+    String? surroundingText,
+    LatLng? userLocation,
+    bool usedBroaderSearch = false,
+  }) async {
+    if (candidates.isEmpty) {
+      return (
+        selectedResult: null,
+        selectedIndex: -1,
+        confidence: 0.0,
+        usedAIRerank: false,
+        needsConfirmation: true,
+      );
+    }
+
+    // Get the initially selected result
+    final initialResult = selectedIndex >= 0 && selectedIndex < candidates.length 
+        ? candidates[selectedIndex] 
+        : candidates.first;
+    
+    // Evaluate if we need reranking
+    final quality = _evaluateMatchQuality(
+      originalName: originalName,
+      selectedResult: initialResult,
+      geminiType: geminiType,
+      usedBroaderSearch: usedBroaderSearch,
+    );
+    
+    print('🔍 RERANK CHECK: "$originalName" - ${quality.reason}');
+    print('   Combined confidence: ${(quality.combinedConfidence * 100).toInt()}%');
+    print('   Needs rerank: ${quality.needsRerank}');
+    
+    if (!quality.needsRerank) {
+      // No reranking needed, return initial selection
+      return (
+        selectedResult: initialResult,
+        selectedIndex: selectedIndex,
+        confidence: quality.combinedConfidence,
+        usedAIRerank: false,
+        needsConfirmation: false,
+      );
+    }
+    
+    // Take top N candidates for reranking (5-8)
+    final topCandidates = candidates.take(math.min(8, candidates.length)).toList();
+    
+    print('🤖 AI RERANK: Triggering for "$originalName" with ${topCandidates.length} candidates');
+    
+    try {
+      final rerankResult = await _gemini.rerankPlaceCandidates(
+        originalLocationCue: originalName,
+        candidates: topCandidates,
+        regionContext: regionContext,
+        surroundingText: surroundingText,
+        expectedType: geminiType,
+        userLocationBias: userLocation,
+      );
+      
+      print('✅ AI RERANK: Selected index ${rerankResult.selectedIndex}, confidence ${(rerankResult.confidence * 100).toInt()}%');
+      if (rerankResult.reason != null) {
+        print('   Reason: ${rerankResult.reason}');
+      }
+      
+      // Handle "none fit" response
+      if (rerankResult.selectedIndex < 0) {
+        print('⚠️ AI RERANK: No good match found, keeping original but flagging for confirmation');
+        return (
+          selectedResult: initialResult,
+          selectedIndex: selectedIndex,
+          confidence: quality.combinedConfidence * 0.5, // Further reduce confidence
+          usedAIRerank: true,
+          needsConfirmation: true, // Flag for user confirmation
+        );
+      }
+      
+      // Get the AI-selected result
+      final aiSelectedResult = topCandidates[rerankResult.selectedIndex];
+      final aiSelectedName = (aiSelectedResult['name'] ?? 
+          aiSelectedResult['description']?.toString().split(',').first ?? '') as String;
+      
+      // Check if AI selected a different result than initial scoring
+      final changedSelection = rerankResult.selectedIndex != selectedIndex;
+      if (changedSelection) {
+        print('🔄 AI RERANK: Changed selection from "${ (initialResult['name'] ?? initialResult['description']?.toString().split(',').first ?? '')}" to "$aiSelectedName"');
+      }
+      
+      // Validate the AI selection through existing type checks
+      final aiPlaceTypes = (aiSelectedResult['types'] as List?)?.cast<String>() ?? [];
+      final aiTypeOk = _isTypeCompatible(geminiType, aiPlaceTypes);
+      
+      // If AI selection also has type mismatch, flag for confirmation
+      final needsConfirmation = !aiTypeOk || rerankResult.confidence < 0.6;
+      
+      return (
+        selectedResult: aiSelectedResult,
+        selectedIndex: rerankResult.selectedIndex,
+        confidence: rerankResult.confidence,
+        usedAIRerank: true,
+        needsConfirmation: needsConfirmation,
+      );
+    } catch (e) {
+      print('❌ AI RERANK ERROR: $e');
+      // Fall back to initial selection with low confidence
+      return (
+        selectedResult: initialResult,
+        selectedIndex: selectedIndex,
+        confidence: quality.combinedConfidence * 0.7, // Reduce confidence due to error
+        usedAIRerank: false,
+        needsConfirmation: true,
+      );
+    }
+  }
+
+  // ============ END AI RERANKING METHODS ============
 }

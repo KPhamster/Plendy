@@ -63,6 +63,7 @@ import '../config/api_secrets.dart'
     if (dart.library.io) '../config/api_secrets.dart'
     if (dart.library.html) '../config/api_secrets.dart';
 import 'package:fluttertoast/fluttertoast.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 // Ensures _ExperienceCardsSection is defined at the top-level
 class _ExperienceCardsSection extends StatelessWidget {
@@ -239,6 +240,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   bool _isExtractingLocation = false;
   bool _isProcessingScreenshot = false; // For screenshot-based extraction
   Position? _currentUserPosition; // For location-biased extraction
+  
+  // Track if AI scan is running (to prevent interruption when app goes to background)
+  bool _isAiScanInProgress = false;
+  // Store pending scan results to apply when app returns to foreground
+  List<ExtractedLocationData>? _pendingScanResults;
+  String? _pendingScanSingleMessage; // Toast message for single result
   final ImagePicker _imagePicker = ImagePicker();
   // URL bar controller and focus node
   late final TextEditingController _sharedUrlController;
@@ -279,6 +286,31 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   String?
       _currentVisibleInstagramUrl; // To track which Instagram preview is potentially visible
   // --- END ADDED FOR SCROLLING FAB ---
+
+  // Custom vibration method for longer, heavier feedback
+  Future<void> _heavyVibration() async {
+    try {
+      // For Android: Use platform channel to vibrate for 500ms
+      if (Platform.isAndroid) {
+        await SystemChannels.platform.invokeMethod('HapticFeedback.vibrate', 500);
+      } else if (Platform.isIOS) {
+        // For iOS: Use multiple heavy impacts with delay
+        await HapticFeedback.heavyImpact();
+        await Future.delayed(const Duration(milliseconds: 100));
+        await HapticFeedback.heavyImpact();
+      } else {
+        // Fallback for other platforms
+        await HapticFeedback.vibrate();
+        await Future.delayed(const Duration(milliseconds: 200));
+        await HapticFeedback.vibrate();
+      }
+    } catch (e) {
+      // Fallback to basic vibration if platform method fails
+      await HapticFeedback.vibrate();
+      await Future.delayed(const Duration(milliseconds: 200));
+      await HapticFeedback.vibrate();
+    }
+  }
 
   // Gate content until URL submitted when required by caller
   bool _urlGateOpen = true;
@@ -804,12 +836,30 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   }
 
   /// Scan the current preview WebView content using AI
+  /// For Instagram, uses combined scan (screenshot + text extraction) for better results
   Future<void> _scanCurrentPreview() async {
     if (_isProcessingScreenshot || _isExtractingLocation) return;
 
+    // Check if this is an Instagram URL - use combined scan for better results
+    final url = _currentSharedFiles.isNotEmpty
+        ? _extractFirstUrl(_currentSharedFiles.first.path)
+        : null;
+    final isInstagram = url != null && _isInstagramUrl(url);
+    
+    if (isInstagram) {
+      // Use combined scan for Instagram - runs both OCR and text extraction
+      print('📷 SCAN PREVIEW: Using combined scan for Instagram...');
+      return _scanPreviewCombined();
+    }
+
+    // For other platforms, use standard screenshot-only scan
     setState(() {
       _isProcessingScreenshot = true;
+      _isAiScanInProgress = true;
     });
+
+    // Enable wakelock to prevent screen from sleeping during AI scan
+    WakelockPlus.enable();
 
     try {
       print('📷 SCAN PREVIEW: Capturing WebView content...');
@@ -840,13 +890,24 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
 
       // Process the captured image
-      final locations = await _locationExtractor.extractLocationsFromImageBytes(
+      final result = await _locationExtractor.extractLocationsFromImageBytes(
         screenshotBytes,
         mimeType: 'image/png',
         userLocation: userLocation,
       );
+      final locations = result.locations;
 
-      if (!mounted) return;
+      // Check if mounted - if not, store results to apply when app resumes
+      if (!mounted) {
+        if (locations.isNotEmpty) {
+          print('📷 SCAN PREVIEW: App backgrounded, storing ${locations.length} result(s) for later');
+          _pendingScanResults = locations;
+          if (locations.length == 1) {
+            _pendingScanSingleMessage = '📷 Found: ${locations.first.name}';
+          }
+        }
+        return;
+      }
 
       if (locations.isEmpty) {
         print('⚠️ SCAN PREVIEW: No locations found in preview');
@@ -860,6 +921,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
 
       print('✅ SCAN PREVIEW: Found ${locations.length} location(s)');
+
+      // Heavy vibration to notify user scan completed
+      _heavyVibration();
 
       final provider = context.read<ReceiveShareProvider>();
 
@@ -875,14 +939,19 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
     } catch (e) {
       print('❌ SCAN PREVIEW ERROR: $e');
-      Fluttertoast.showToast(
-        msg: 'Error scanning preview',
-        backgroundColor: Colors.red,
-      );
+      if (mounted) {
+        Fluttertoast.showToast(
+          msg: 'Error scanning preview',
+          backgroundColor: Colors.red,
+        );
+      }
     } finally {
+      // Disable wakelock
+      WakelockPlus.disable();
       if (mounted) {
         setState(() {
           _isProcessingScreenshot = false;
+          _isAiScanInProgress = false;
         });
       }
     }
@@ -895,7 +964,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     setState(() {
       _isProcessingScreenshot = true;
+      _isAiScanInProgress = true;
     });
+
+    // Enable wakelock to prevent screen from sleeping during AI scan
+    WakelockPlus.enable();
 
     try {
       print('📄 SCAN PAGE: Extracting page content...');
@@ -936,9 +1009,54 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         userLocation: userLocation,
       );
 
-      if (!mounted) return;
+      // Convert Gemini results to ExtractedLocationData first (doesn't need mounted)
+      List<ExtractedLocationData> locations = [];
+      if (result != null && result.locations.isNotEmpty) {
+        print('✅ SCAN PAGE: Found ${result.locations.length} location(s)');
+        for (final loc in result.locations) {
+          final hasPlaceId = loc.placeId.isNotEmpty;
+          final hasCoords = loc.coordinates.latitude != 0 || loc.coordinates.longitude != 0;
+          print('   📍 ${loc.name} (placeId: ${hasPlaceId ? "✓" : "✗"}, coords: ${hasCoords ? "✓" : "✗"})');
+        }
 
-      if (result == null || result.locations.isEmpty) {
+        locations = result.locations.map((loc) {
+          // Infer place type from the types list
+          final placeType = ExtractedLocationData.inferPlaceType(loc.types);
+          
+          // Check if we have valid coordinates (not 0,0 which is our fallback)
+          final hasValidCoords = loc.coordinates.latitude != 0 || loc.coordinates.longitude != 0;
+          
+          // Determine confidence based on whether we have grounding data
+          final hasGrounding = loc.placeId.isNotEmpty;
+          final confidence = hasGrounding ? 0.9 : (hasValidCoords ? 0.7 : 0.5);
+          
+          return ExtractedLocationData(
+            name: loc.name,
+            address: loc.formattedAddress,
+            placeId: loc.placeId.isNotEmpty ? loc.placeId : null,
+            coordinates: hasValidCoords ? loc.coordinates : null, // Don't use (0,0) coordinates
+            type: placeType,
+            source: hasGrounding ? ExtractionSource.geminiGrounding : ExtractionSource.placesSearch,
+            confidence: confidence,
+            googleMapsUri: loc.uri,
+            placeTypes: loc.types,
+          );
+        }).toList();
+      }
+
+      // Check if mounted - if not, store results to apply when app resumes
+      if (!mounted) {
+        if (locations.isNotEmpty) {
+          print('📄 SCAN PAGE: App backgrounded, storing ${locations.length} result(s) for later');
+          _pendingScanResults = locations;
+          if (locations.length == 1) {
+            _pendingScanSingleMessage = '📄 Found: ${locations.first.name}';
+          }
+        }
+        return;
+      }
+
+      if (locations.isEmpty) {
         print('⚠️ SCAN PAGE: No locations found in page content');
         Fluttertoast.showToast(
           msg: '📄 No locations found on this page.',
@@ -948,37 +1066,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         return;
       }
 
-      print('✅ SCAN PAGE: Found ${result.locations.length} location(s)');
-      for (final loc in result.locations) {
-        final hasPlaceId = loc.placeId.isNotEmpty;
-        final hasCoords = loc.coordinates.latitude != 0 || loc.coordinates.longitude != 0;
-        print('   📍 ${loc.name} (placeId: ${hasPlaceId ? "✓" : "✗"}, coords: ${hasCoords ? "✓" : "✗"})');
-      }
-
-      // Convert Gemini results to ExtractedLocationData
-      final locations = result.locations.map((loc) {
-        // Infer place type from the types list
-        final placeType = ExtractedLocationData.inferPlaceType(loc.types);
-        
-        // Check if we have valid coordinates (not 0,0 which is our fallback)
-        final hasValidCoords = loc.coordinates.latitude != 0 || loc.coordinates.longitude != 0;
-        
-        // Determine confidence based on whether we have grounding data
-        final hasGrounding = loc.placeId.isNotEmpty;
-        final confidence = hasGrounding ? 0.9 : (hasValidCoords ? 0.7 : 0.5);
-        
-        return ExtractedLocationData(
-          name: loc.name,
-          address: loc.formattedAddress,
-          placeId: loc.placeId.isNotEmpty ? loc.placeId : null,
-          coordinates: hasValidCoords ? loc.coordinates : null, // Don't use (0,0) coordinates
-          type: placeType,
-          source: hasGrounding ? ExtractionSource.geminiGrounding : ExtractionSource.placesSearch,
-          confidence: confidence,
-          googleMapsUri: loc.uri,
-          placeTypes: loc.types,
-        );
-      }).toList();
+      // Heavy vibration to notify user scan completed
+      _heavyVibration();
 
       final provider = context.read<ReceiveShareProvider>();
 
@@ -995,17 +1084,377 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
     } catch (e) {
       print('❌ SCAN PAGE ERROR: $e');
-      Fluttertoast.showToast(
-        msg: 'Error scanning page content',
-        backgroundColor: Colors.red,
-      );
+      if (mounted) {
+        Fluttertoast.showToast(
+          msg: 'Error scanning page content',
+          backgroundColor: Colors.red,
+        );
+      }
     } finally {
+      // Disable wakelock
+      WakelockPlus.disable();
       if (mounted) {
         setState(() {
           _isProcessingScreenshot = false;
+          _isAiScanInProgress = false;
         });
       }
     }
+  }
+
+  /// Combined scan that runs BOTH screenshot OCR AND text extraction
+  /// This gives better results for Instagram by:
+  /// 1. Screenshot OCR catches text overlays on videos/images
+  /// 2. Text extraction gets captions, handles, and uses Maps grounding for accuracy
+  Future<void> _scanPreviewCombined() async {
+    if (_isProcessingScreenshot || _isExtractingLocation) return;
+
+    setState(() {
+      _isProcessingScreenshot = true;
+      _isAiScanInProgress = true;
+    });
+
+    // Enable wakelock to prevent screen from sleeping during AI scan
+    WakelockPlus.enable();
+
+    try {
+      print('🔄 COMBINED SCAN: Starting both screenshot and text extraction...');
+
+      final url = _currentSharedFiles.isNotEmpty
+          ? _extractFirstUrl(_currentSharedFiles.first.path)
+          : null;
+
+      // Get user location for better results
+      LatLng? userLocation;
+      if (_currentUserPosition != null) {
+        userLocation = LatLng(
+          _currentUserPosition!.latitude,
+          _currentUserPosition!.longitude,
+        );
+      }
+
+      // Run both extraction methods in parallel
+      final results = await Future.wait([
+        _extractLocationsFromScreenshot(userLocation),
+        _extractLocationsFromPageText(url, userLocation),
+      ]);
+
+      final screenshotLocations = results[0];
+      final textLocations = results[1];
+
+      print('🔄 COMBINED SCAN: Screenshot found ${screenshotLocations.length} location(s)');
+      print('🔄 COMBINED SCAN: Text extraction found ${textLocations.length} location(s)');
+
+      // Merge results first (doesn't need mounted)
+      // Prefer text extraction (grounded) results over screenshot (OCR)
+      // Text extraction results have Maps grounding and are more accurate
+      final mergedLocations = _mergeExtractedLocations(textLocations, screenshotLocations);
+      
+      print('🔄 COMBINED SCAN: Merged to ${mergedLocations.length} unique location(s)');
+
+      // Check if mounted - if not, store results to apply when app resumes
+      if (!mounted) {
+        if (mergedLocations.isNotEmpty) {
+          print('🔄 COMBINED SCAN: App backgrounded, storing ${mergedLocations.length} result(s) for later');
+          _pendingScanResults = mergedLocations;
+          if (mergedLocations.length == 1) {
+            _pendingScanSingleMessage = '📷 Found: ${mergedLocations.first.name}';
+          }
+        }
+        return;
+      }
+
+      if (mergedLocations.isEmpty) {
+        print('⚠️ COMBINED SCAN: No locations found from either method');
+        Fluttertoast.showToast(
+          msg: '📷 No locations found. Try pausing video on text, or upload a screenshot.',
+          toastLength: Toast.LENGTH_LONG,
+          backgroundColor: Colors.orange[700],
+        );
+        return;
+      }
+
+      // Heavy vibration to notify user scan completed
+      _heavyVibration();
+
+      final provider = context.read<ReceiveShareProvider>();
+
+      if (mergedLocations.length == 1) {
+        await _applySingleExtractedLocation(mergedLocations.first, provider);
+        Fluttertoast.showToast(
+          msg: '📷 Found: ${mergedLocations.first.name}',
+          toastLength: Toast.LENGTH_SHORT,
+          backgroundColor: Colors.green,
+        );
+      } else {
+        await _handleMultipleExtractedLocations(mergedLocations, provider);
+      }
+    } catch (e) {
+      print('❌ COMBINED SCAN ERROR: $e');
+      if (mounted) {
+        Fluttertoast.showToast(
+          msg: 'Error scanning preview',
+          backgroundColor: Colors.red,
+        );
+      }
+    } finally {
+      // Disable wakelock
+      WakelockPlus.disable();
+      if (mounted) {
+        setState(() {
+          _isProcessingScreenshot = false;
+          _isAiScanInProgress = false;
+        });
+      }
+    }
+  }
+
+  /// Extract locations from screenshots using OCR
+  /// For Instagram, captures BOTH native screen AND WebView screenshots and analyzes them TOGETHER
+  Future<List<ExtractedLocationData>> _extractLocationsFromScreenshot(LatLng? userLocation) async {
+    try {
+      final url = _currentSharedFiles.isNotEmpty
+          ? _extractFirstUrl(_currentSharedFiles.first.path)
+          : null;
+      final isInstagram = url != null && _isInstagramUrl(url);
+      
+      List<Uint8List> screenshots = [];
+      
+      if (isInstagram && url != null) {
+        // For Instagram: capture BOTH native screen AND WebView screenshots
+        print('📷 COMBINED SCAN: Capturing both screenshots for Instagram...');
+        screenshots = await _captureInstagramBothScreenshots(url);
+      } else {
+        // For other platforms: use standard capture
+        print('📷 COMBINED SCAN: Capturing screenshot...');
+        final screenshotBytes = await _tryCaptureaActiveWebView();
+        if (screenshotBytes != null && screenshotBytes.isNotEmpty) {
+          screenshots.add(screenshotBytes);
+        }
+      }
+      
+      if (screenshots.isEmpty) {
+        print('⚠️ COMBINED SCAN: Could not capture any screenshots');
+        return [];
+      }
+
+      // ========== MULTI-IMAGE COMBINED ANALYSIS ==========
+      // When we have multiple screenshots (especially for Instagram), analyze them TOGETHER
+      // This is critical for content where:
+      // - One screenshot shows a sign/name (e.g., "POET TREES")
+      // - Another screenshot shows context (e.g., "library in Big Sur")
+      // Together, they can identify "Henry Miller Memorial Library"
+      
+      if (screenshots.length > 1) {
+        print('📷 COMBINED SCAN: Using multi-image combined analysis for ${screenshots.length} screenshots...');
+        
+        // Convert to the format expected by multi-image extraction
+        final imageList = screenshots.map((bytes) => (
+          bytes: bytes,
+          mimeType: 'image/png',
+        )).toList();
+        
+        final result = await _locationExtractor.extractLocationsFromMultipleImages(
+          imageList,
+          userLocation: userLocation,
+        );
+        
+        print('📷 COMBINED SCAN: Multi-image analysis found ${result.locations.length} location(s)');
+        if (result.regionContext != null) {
+          print('🌍 COMBINED SCAN: Region context: "${result.regionContext}"');
+        }
+        
+        return result.locations;
+      }
+
+      // ========== SINGLE IMAGE ANALYSIS ==========
+      // For single screenshots, use the standard single-image analysis
+      print('📷 COMBINED SCAN: Using single-image analysis...');
+      
+      final result = await _locationExtractor.extractLocationsFromImageBytes(
+        screenshots.first,
+        mimeType: 'image/png',
+        userLocation: userLocation,
+      );
+      
+      print('📷 COMBINED SCAN: Single-image analysis found ${result.locations.length} location(s)');
+      return result.locations;
+    } catch (e) {
+      print('⚠️ COMBINED SCAN: Screenshot extraction error: $e');
+      return [];
+    }
+  }
+
+  /// Check if a location is a duplicate of any in the list
+  bool _isDuplicateLocation(ExtractedLocationData loc, List<ExtractedLocationData> existingList) {
+    final normalizedName = (loc.name ?? '').toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
+    
+    for (final existing in existingList) {
+      // Check place ID match
+      if (loc.placeId != null && existing.placeId != null && loc.placeId == existing.placeId) {
+        return true;
+      }
+      
+      // Check name similarity
+      final existingNormalized = (existing.name ?? '').toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
+      if (normalizedName.isNotEmpty && existingNormalized.isNotEmpty) {
+        // Exact match is definitely a duplicate
+        if (normalizedName == existingNormalized) {
+          return true;
+        }
+        
+        // For containment matches, require the shorter name to be at least 80% of the 
+        // longer name's length to avoid false positives like "Ruru Kamakura" vs "Kamakura"
+        // (8/12 = 67% < 80%, so NOT a duplicate)
+        if (normalizedName.contains(existingNormalized) || existingNormalized.contains(normalizedName)) {
+          final shorterLen = normalizedName.length < existingNormalized.length 
+              ? normalizedName.length 
+              : existingNormalized.length;
+          final longerLen = normalizedName.length > existingNormalized.length 
+              ? normalizedName.length 
+              : existingNormalized.length;
+          final ratio = shorterLen / longerLen;
+          
+          // Only consider it a duplicate if names are very similar in length (80%+ ratio)
+          if (ratio >= 0.80) {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
+  }
+
+  /// Extract locations from page text content using Gemini with Maps grounding
+  Future<List<ExtractedLocationData>> _extractLocationsFromPageText(String? url, LatLng? userLocation) async {
+    try {
+      print('📄 COMBINED SCAN: Extracting page text...');
+      final pageContent = await _tryExtractPageContent();
+      
+      if (pageContent == null || pageContent.isEmpty) {
+        print('⚠️ COMBINED SCAN: Could not extract page content');
+        return [];
+      }
+
+      print('📄 COMBINED SCAN: Extracted ${pageContent.length} chars, analyzing with Gemini...');
+      
+      final geminiService = GeminiService();
+      final result = await geminiService.extractLocationsFromWebPage(
+        pageContent,
+        pageUrl: url,
+        userLocation: userLocation,
+      );
+
+      if (result == null || result.locations.isEmpty) {
+        print('⚠️ COMBINED SCAN: Gemini found no locations in text');
+        return [];
+      }
+
+      // Convert Gemini results to ExtractedLocationData
+      return result.locations.map((loc) {
+        final placeType = ExtractedLocationData.inferPlaceType(loc.types);
+        final hasValidCoords = loc.coordinates.latitude != 0 || loc.coordinates.longitude != 0;
+        final hasGrounding = loc.placeId.isNotEmpty;
+        final confidence = hasGrounding ? 0.9 : (hasValidCoords ? 0.7 : 0.5);
+        
+        return ExtractedLocationData(
+          name: loc.name,
+          address: loc.formattedAddress,
+          placeId: loc.placeId.isNotEmpty ? loc.placeId : null,
+          coordinates: hasValidCoords ? loc.coordinates : null,
+          type: placeType,
+          source: hasGrounding ? ExtractionSource.geminiGrounding : ExtractionSource.placesSearch,
+          confidence: confidence,
+          googleMapsUri: loc.uri,
+          placeTypes: loc.types,
+        );
+      }).toList();
+    } catch (e) {
+      print('⚠️ COMBINED SCAN: Text extraction error: $e');
+      return [];
+    }
+  }
+
+  /// Merge two lists of locations, preferring grounded results and removing duplicates
+  List<ExtractedLocationData> _mergeExtractedLocations(
+    List<ExtractedLocationData> primary,
+    List<ExtractedLocationData> secondary,
+  ) {
+    final merged = <ExtractedLocationData>[];
+    final seenPlaceIds = <String>{};
+    final seenNames = <String>{};
+    
+    // Helper to normalize names for comparison
+    String normalizeName(String name) {
+      return name.toLowerCase()
+          .replaceAll(RegExp(r'[^a-z0-9]'), '')
+          .trim();
+    }
+    
+    // Helper to check if two names are similar enough to be considered duplicates
+    // Requires 80% length similarity for containment matches to avoid false positives
+    // like "Ruru Kamakura" vs "Kamakura" (8/12 = 67% < 80%, so NOT a duplicate)
+    bool isSimilarName(String name, Set<String> existingNames) {
+      if (name.isEmpty) return false;
+      
+      for (final seen in existingNames) {
+        // Exact match is definitely a duplicate
+        if (name == seen) return true;
+        
+        // For containment matches, require high similarity
+        if (seen.contains(name) || name.contains(seen)) {
+          final shorterLen = name.length < seen.length ? name.length : seen.length;
+          final longerLen = name.length > seen.length ? name.length : seen.length;
+          final ratio = shorterLen / longerLen;
+          
+          // Only consider it a duplicate if names are very similar in length (80%+ ratio)
+          if (ratio >= 0.80) return true;
+        }
+      }
+      return false;
+    }
+    
+    // Add primary (grounded) results first - they're more accurate
+    for (final loc in primary) {
+      final normalizedName = normalizeName(loc.name ?? '');
+      
+      // Skip if we've seen this place ID
+      if (loc.placeId != null && seenPlaceIds.contains(loc.placeId)) {
+        continue;
+      }
+      
+      // Skip if we've seen a very similar name
+      if (isSimilarName(normalizedName, seenNames)) {
+        continue;
+      }
+      
+      merged.add(loc);
+      if (loc.placeId != null) seenPlaceIds.add(loc.placeId!);
+      if (normalizedName.isNotEmpty) seenNames.add(normalizedName);
+    }
+    
+    // Add secondary (OCR) results that aren't duplicates
+    for (final loc in secondary) {
+      final normalizedName = normalizeName(loc.name ?? '');
+      
+      // Skip if we've seen this place ID
+      if (loc.placeId != null && seenPlaceIds.contains(loc.placeId)) {
+        print('🔄 MERGE: Skipping duplicate placeId: ${loc.name}');
+        continue;
+      }
+      
+      // Skip if we've seen a very similar name (fuzzy match with 80% threshold)
+      if (isSimilarName(normalizedName, seenNames)) {
+        print('🔄 MERGE: Skipping duplicate name: ${loc.name}');
+        continue;
+      }
+      
+      merged.add(loc);
+      if (loc.placeId != null) seenPlaceIds.add(loc.placeId!);
+      if (normalizedName.isNotEmpty) seenNames.add(normalizedName);
+    }
+    
+    return merged;
   }
 
   /// Try to extract text content from the active WebView
@@ -1095,7 +1544,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     return null;
   }
 
-  /// Capture Instagram preview WebView
+  /// Capture Instagram preview - returns WebView screenshot (for backward compatibility)
+  /// For combined scan, use _captureInstagramBothScreenshots instead
   Future<Uint8List?> _captureInstagramPreview(String url) async {
     final previewKey = _instagramPreviewKeys[url];
     if (previewKey == null) {
@@ -1117,6 +1567,63 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
     }
     return null;
+  }
+
+  /// Capture BOTH native screen AND WebView screenshot for Instagram
+  /// Returns a list of screenshots for comprehensive analysis
+  Future<List<Uint8List>> _captureInstagramBothScreenshots(String url) async {
+    final screenshots = <Uint8List>[];
+    
+    // 1. Try native screen capture (captures entire device screen including video frames)
+    try {
+      print('📷 SCAN PREVIEW: Taking native screen capture for Instagram...');
+      
+      final result = await _screenshotChannel.invokeMethod('captureScreen');
+      
+      if (result != null) {
+        Uint8List pngBytes;
+        if (result is Uint8List) {
+          pngBytes = result;
+        } else if (result is List) {
+          pngBytes = Uint8List.fromList(result.cast<int>());
+        } else {
+          print('⚠️ SCAN PREVIEW: Unexpected native result type: ${result.runtimeType}');
+        }
+        
+        if (result is Uint8List || result is List) {
+          final bytes = result is Uint8List ? result : Uint8List.fromList((result as List).cast<int>());
+          print('✅ SCAN PREVIEW: Captured native screen for Instagram (${bytes.length} bytes)');
+          screenshots.add(bytes);
+        }
+      } else {
+        print('⚠️ SCAN PREVIEW: Native screenshot returned null');
+      }
+    } on PlatformException catch (e) {
+      print('⚠️ SCAN PREVIEW: Native screenshot failed: ${e.message}');
+    } catch (e) {
+      print('⚠️ SCAN PREVIEW: Native screenshot error: $e');
+    }
+    
+    // 2. Also capture WebView screenshot (may capture different content)
+    try {
+      print('📷 SCAN PREVIEW: Taking WebView screenshot for Instagram...');
+      final previewKey = _instagramPreviewKeys[url];
+      if (previewKey != null) {
+        final state = previewKey.currentState;
+        if (state != null) {
+          final webviewScreenshot = await state.takeScreenshot();
+          if (webviewScreenshot != null) {
+            print('✅ SCAN PREVIEW: Captured Instagram WebView (${webviewScreenshot.length} bytes)');
+            screenshots.add(webviewScreenshot);
+          }
+        }
+      }
+    } catch (e) {
+      print('⚠️ SCAN PREVIEW: WebView screenshot failed: $e');
+    }
+    
+    print('📷 SCAN PREVIEW: Captured ${screenshots.length} screenshot(s) for Instagram');
+    return screenshots;
   }
 
   /// Capture TikTok preview WebView
@@ -1333,7 +1840,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     setState(() {
       _isProcessingScreenshot = true;
+      _isAiScanInProgress = true;
     });
+
+    // Enable wakelock to prevent screen from sleeping during AI scan
+    WakelockPlus.enable();
 
     try {
       // Get user location for better results (optional)
@@ -1353,7 +1864,17 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         userLocation: userLocation,
       );
 
-      if (!mounted) return;
+      // Check if mounted - if not, store results to apply when app resumes
+      if (!mounted) {
+        if (locations.isNotEmpty) {
+          print('📷 SCREENSHOT: App backgrounded, storing ${locations.length} result(s) for later');
+          _pendingScanResults = locations;
+          if (locations.length == 1) {
+            _pendingScanSingleMessage = '📷 Found: ${locations.first.name}';
+          }
+        }
+        return;
+      }
 
       if (locations.isEmpty) {
         print('⚠️ SCREENSHOT: No locations found in image');
@@ -1367,6 +1888,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
 
       print('✅ SCREENSHOT: Found ${locations.length} location(s)');
+
+      // Heavy vibration to notify user scan completed
+      _heavyVibration();
 
       final provider = context.read<ReceiveShareProvider>();
 
@@ -1385,14 +1909,19 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
     } catch (e) {
       print('❌ SCREENSHOT ERROR: $e');
-      Fluttertoast.showToast(
-        msg: 'Error processing screenshot',
-        backgroundColor: Colors.red,
-      );
+      if (mounted) {
+        Fluttertoast.showToast(
+          msg: 'Error processing screenshot',
+          backgroundColor: Colors.red,
+        );
+      }
     } finally {
+      // Disable wakelock
+      WakelockPlus.disable();
       if (mounted) {
         setState(() {
           _isProcessingScreenshot = false;
+          _isAiScanInProgress = false;
         });
       }
     }
@@ -2049,7 +2578,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     setState(() {
       _isExtractingLocation = true;
+      _isAiScanInProgress = true;
     });
+
+    // Enable wakelock to prevent screen from sleeping during AI scan
+    WakelockPlus.enable();
 
     try {
       // Get user location for better results (optional)
@@ -2072,7 +2605,17 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         maxLocations: isYouTube ? null : 5, // No limit for YouTube
       );
 
-      if (!mounted) return;
+      // Check if mounted - if not, store results to apply when app resumes
+      if (!mounted) {
+        if (locations.isNotEmpty) {
+          print('🤖 AI EXTRACTION: App backgrounded, storing ${locations.length} result(s) for later');
+          _pendingScanResults = locations;
+          if (locations.length == 1) {
+            _pendingScanSingleMessage = '📍 Found: ${locations.first.name}';
+          }
+        }
+        return;
+      }
 
       if (locations.isEmpty) {
         print('⚠️ AI EXTRACTION: No locations found in URL');
@@ -2090,6 +2633,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
 
       print('✅ AI EXTRACTION: Found ${locations.length} location(s)');
+
+      // Heavy vibration to notify user scan completed
+      _heavyVibration();
 
       final provider = context.read<ReceiveShareProvider>();
 
@@ -2109,9 +2655,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     } catch (e) {
       print('❌ AI EXTRACTION ERROR: $e');
     } finally {
+      // Disable wakelock
+      WakelockPlus.disable();
       if (mounted) {
         setState(() {
           _isExtractingLocation = false;
+          _isAiScanInProgress = false;
         });
       }
     }
@@ -2147,7 +2696,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     setState(() {
       _isExtractingLocation = true;
+      _isAiScanInProgress = true;
     });
+
+    // Enable wakelock to prevent screen from sleeping during AI scan
+    WakelockPlus.enable();
 
     try {
       // Get user location for better results (optional)
@@ -2169,7 +2722,17 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         maxLocations: 5,
       );
 
-      if (!mounted) return;
+      // Check if mounted - if not, store results to apply when app resumes
+      if (!mounted) {
+        if (locations.isNotEmpty) {
+          print('🎬 TIKTOK AUTO-EXTRACT: App backgrounded, storing ${locations.length} result(s) for later');
+          _pendingScanResults = locations;
+          if (locations.length == 1) {
+            _pendingScanSingleMessage = '📍 Found: ${locations.first.name}';
+          }
+        }
+        return;
+      }
 
       if (locations.isEmpty) {
         print('⚠️ TIKTOK AUTO-EXTRACT: No locations found in caption');
@@ -2183,6 +2746,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
 
       print('✅ TIKTOK AUTO-EXTRACT: Found ${locations.length} location(s)');
+
+      // Heavy vibration to notify user scan completed
+      _heavyVibration();
 
       final provider = context.read<ReceiveShareProvider>();
 
@@ -2202,9 +2768,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     } catch (e) {
       print('❌ TIKTOK AUTO-EXTRACT ERROR: $e');
     } finally {
+      // Disable wakelock
+      WakelockPlus.disable();
       if (mounted) {
         setState(() {
           _isExtractingLocation = false;
+          _isAiScanInProgress = false;
         });
       }
     }
@@ -2231,7 +2800,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     setState(() {
       _isExtractingLocation = true;
+      _isAiScanInProgress = true;
     });
+
+    // Enable wakelock to prevent screen from sleeping during AI scan
+    WakelockPlus.enable();
 
     try {
       // Get user location for better results (optional)
@@ -2256,11 +2829,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
       if (pageContent == null || pageContent.isEmpty || pageContent.length < 20) {
         print('⚠️ FACEBOOK AUTO-EXTRACT: No usable content extracted');
-        Fluttertoast.showToast(
-          msg: '💡 No location found in post. Try the "Scan Preview" button to analyze visible text.',
-          toastLength: Toast.LENGTH_LONG,
-          backgroundColor: Colors.orange[700],
-        );
+        if (mounted) {
+          Fluttertoast.showToast(
+            msg: '💡 No location found in post. Try the "Scan Preview" button to analyze visible text.',
+            toastLength: Toast.LENGTH_LONG,
+            backgroundColor: Colors.orange[700],
+          );
+        }
         return;
       }
 
@@ -2276,7 +2851,17 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         maxLocations: 5,
       );
 
-      if (!mounted) return;
+      // Check if mounted - if not, store results to apply when app resumes
+      if (!mounted) {
+        if (locations.isNotEmpty) {
+          print('📘 FACEBOOK AUTO-EXTRACT: App backgrounded, storing ${locations.length} result(s) for later');
+          _pendingScanResults = locations;
+          if (locations.length == 1) {
+            _pendingScanSingleMessage = '📍 Found: ${locations.first.name}';
+          }
+        }
+        return;
+      }
 
       if (locations.isEmpty) {
         print('⚠️ FACEBOOK AUTO-EXTRACT: No locations found in page content');
@@ -2289,6 +2874,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
 
       print('✅ FACEBOOK AUTO-EXTRACT: Found ${locations.length} location(s)');
+
+      // Heavy vibration to notify user scan completed
+      _heavyVibration();
 
       final provider = context.read<ReceiveShareProvider>();
 
@@ -2305,9 +2893,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     } catch (e) {
       print('❌ FACEBOOK AUTO-EXTRACT ERROR: $e');
     } finally {
+      // Disable wakelock
+      WakelockPlus.disable();
       if (mounted) {
         setState(() {
           _isExtractingLocation = false;
+          _isAiScanInProgress = false;
         });
       }
     }
@@ -3061,6 +3652,54 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
     if (state == AppLifecycleState.resumed) {
       _conditionallyReloadCategories();
+      // Apply any pending scan results that were found while app was in background
+      _applyPendingScanResults();
+    }
+  }
+
+  /// Apply any scan results that were found while the app was in the background
+  Future<void> _applyPendingScanResults() async {
+    if (_pendingScanResults == null || _pendingScanResults!.isEmpty) return;
+    if (!mounted) return;
+
+    final results = _pendingScanResults!;
+    final singleMessage = _pendingScanSingleMessage;
+    
+    // Clear pending results
+    _pendingScanResults = null;
+    _pendingScanSingleMessage = null;
+
+    print('🔄 SCAN RESUME: Applying ${results.length} pending scan result(s)');
+
+    // Heavy vibration to notify user that background scan completed
+    _heavyVibration();
+
+    try {
+      final provider = context.read<ReceiveShareProvider>();
+
+      if (results.length == 1) {
+        await _applySingleExtractedLocation(results.first, provider);
+        if (singleMessage != null) {
+          Fluttertoast.showToast(
+            msg: singleMessage,
+            toastLength: Toast.LENGTH_SHORT,
+            backgroundColor: Colors.green,
+          );
+        }
+      } else {
+        await _handleMultipleExtractedLocations(results, provider);
+      }
+    } catch (e) {
+      print('❌ SCAN RESUME ERROR: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isProcessingScreenshot = false;
+          _isAiScanInProgress = false;
+        });
+      }
+      // Disable wakelock after applying results
+      WakelockPlus.disable();
     }
   }
 

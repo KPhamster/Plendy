@@ -190,6 +190,7 @@ class GoogleMapsService {
                 if (placeId != null && displayDescription.isNotEmpty) {
                   results.add({
                     'placeId': placeId,
+                    'name': mainText, // The actual place name from structured format (e.g., "ruru kamakura")
                     'description': displayDescription, // This is the primary text from suggestion
                     'address': secondaryText, // Secondary text often contains address-like info
                     'types': types, 
@@ -343,6 +344,122 @@ class GoogleMapsService {
       print("🔎 PLACES SEARCH ERROR: Top-level error: $e");
       return [];
     }
+  }
+
+  /// Search for places using ONLY the Text Search API (bypasses Autocomplete)
+  /// Returns up to 20 results with full place details including coordinates
+  Future<List<Map<String, dynamic>>> searchPlacesTextSearch(
+    String query, {
+    double? latitude,
+    double? longitude,
+    double? radius,
+  }) async {
+    if (query.isEmpty) {
+      return [];
+    }
+
+    print("\n🔎 TEXT SEARCH: Starting direct text search for query: '$query'");
+    
+    try {
+      // Build base URL
+      String baseUrl =
+          'https://maps.googleapis.com/maps/api/place/textsearch/json';
+      String encodedQuery = Uri.encodeComponent(query);
+      String url = '$baseUrl?query=$encodedQuery&key=$apiKey';
+
+      // Add location bias parameters if provided
+      if (latitude != null && longitude != null) {
+        url += '&location=$latitude,$longitude';
+        url += '&radius=${radius ?? 50000}';
+      }
+
+      print("🔎 TEXT SEARCH: Request URL: ${url.replaceAll(apiKey, 'API_KEY')}");
+
+      final response = await http.get(Uri.parse(url));
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        print("🔎 TEXT SEARCH: Response status: ${data['status']}");
+
+        if (data['status'] == 'OK' && data['results'] != null) {
+          final places = data['results'] as List;
+          print("🔎 TEXT SEARCH: Found ${places.length} places");
+
+          // If we have location bias, sort results by distance
+          if (latitude != null && longitude != null) {
+            places.sort((a, b) {
+              final locA = a['geometry']?['location'];
+              final locB = b['geometry']?['location'];
+              if (locA == null || locB == null) return 0;
+              final distA = _calculateDistance(
+                  latitude, longitude, locA['lat'], locA['lng']);
+              final distB = _calculateDistance(
+                  latitude, longitude, locB['lat'], locB['lng']);
+              return distA.compareTo(distB);
+            });
+          }
+
+          List<Map<String, dynamic>> results = [];
+          for (var place in places) {
+            String? name = place['name'];
+            String? address = place['formatted_address'];
+            String? vicinity = place['vicinity'];
+            double? rating = place['rating']?.toDouble();
+            int? userRatingCount = place['user_ratings_total'];
+            List<String>? types = (place['types'] as List?)?.cast<String>();
+            bool? isOpen = place['opening_hours']?['open_now'];
+            int? priceLevel = place['price_level'];
+            Map<String, dynamic>? geometry = place['geometry'];
+            Map<String, dynamic>? location = geometry?['location'];
+            double? lat = location?['lat'];
+            double? lng = location?['lng'];
+
+            if (name != null &&
+                (address != null || vicinity != null) &&
+                lat != null &&
+                lng != null) {
+              results.add({
+                'placeId': place['place_id'] ?? '',
+                'name': name,
+                'description': name +
+                    (vicinity != null && vicinity != name
+                        ? ' - $vicinity'
+                        : ''),
+                'address': address ?? vicinity,
+                'vicinity': vicinity,
+                'rating': rating,
+                'userRatingCount': userRatingCount,
+                'types': types,
+                'isOpen': isOpen,
+                'priceLevel': priceLevel,
+                'latitude': lat,
+                'longitude': lng,
+                'place': place
+              });
+            }
+          }
+
+          if (results.isNotEmpty) {
+            print("🔎 TEXT SEARCH: Found ${results.length} verified results");
+            for (int i = 0; i < min(3, results.length); i++) {
+              print("🔎 TEXT SEARCH: Result ${i + 1}: '${results[i]['name']}' at '${results[i]['address']}'");
+            }
+            return results;
+          }
+        } else {
+          print("🔎 TEXT SEARCH: API returned status: ${data['status']}");
+          if (data['error_message'] != null) {
+            print("🔎 TEXT SEARCH: Error: ${data['error_message']}");
+          }
+        }
+      } else {
+        print("🔎 TEXT SEARCH: HTTP error: ${response.statusCode}");
+      }
+    } catch (e) {
+      print("🔎 TEXT SEARCH ERROR: $e");
+    }
+
+    return [];
   }
 
   // Helper function to calculate distance between two coordinates (Haversine formula)
