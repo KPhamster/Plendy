@@ -1725,6 +1725,35 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
     final preview = _buildPreviewForItem(item);
     _maybeCheckIfMediaSaved(item);
 
+    final bool isTikTok = _classifyUrl(item.mediaUrl) == _MediaType.tiktok;
+
+    if (isTikTok) {
+      return Column(
+        children: [
+          Expanded(
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                const ColoredBox(color: Colors.black),
+                preview,
+                Positioned(
+                  right: 0,
+                  bottom: 40,
+                  child: _buildActionButtons(item),
+                ),
+              ],
+            ),
+          ),
+          Container(
+            width: double.infinity,
+            color: Colors.black,
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+            child: _buildMetadata(item),
+          ),
+        ],
+      );
+    }
+
     return Stack(
       fit: StackFit.expand,
       children: [
@@ -1837,8 +1866,15 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
 
   Widget _buildActionButtons(_DiscoveryFeedItem item) {
     final sourceButton = _buildSourceActionButton(item);
+    
+    // Check if it's a TikTok preview
+    final bool isTikTok = _classifyUrl(item.mediaUrl) == _MediaType.tiktok;
+    
+    // For TikTok, use a shared container background for all buttons
+    final Color? containerColor = isTikTok ? Colors.black : null;
+    final Color? buttonBackgroundColor = isTikTok ? Colors.transparent : null;
 
-    return Column(
+    Widget content = Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
@@ -1846,22 +1882,17 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
           sourceButton,
           const SizedBox(height: 16),
         ],
-        ValueListenableBuilder<bool?>(
-          valueListenable: item.isMediaAlreadySaved,
-          builder: (context, isSaved, _) {
-            final bool resolvedSaved = isSaved ?? false;
-            return _buildActionButton(
-              icon: resolvedSaved ? Icons.bookmark : Icons.bookmark_border,
-              label: resolvedSaved ? 'Saved' : 'Save',
-              onPressed:
-                  resolvedSaved ? null : () => _handleBookmarkTapped(item),
-            );
-          },
+        _buildActionButton(
+          icon: Icons.share_outlined,
+          label: 'Share',
+          backgroundColor: buttonBackgroundColor,
+          onPressed: _isShareInProgress ? null : () => _handleShareTapped(item),
         ),
         const SizedBox(height: 16),
         _buildActionButton(
           icon: Icons.place_outlined,
           label: 'Location',
+          backgroundColor: buttonBackgroundColor,
           onPressed: () {
             final location = item.experience.location;
             final locationForMap = (location.displayName != null &&
@@ -1879,19 +1910,41 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
           },
         ),
         const SizedBox(height: 16),
-        _buildActionButton(
-          icon: Icons.share_outlined,
-          label: 'Share',
-          onPressed: _isShareInProgress ? null : () => _handleShareTapped(item),
+        ValueListenableBuilder<bool?>(
+          valueListenable: item.isMediaAlreadySaved,
+          builder: (context, isSaved, _) {
+            final bool resolvedSaved = isSaved ?? false;
+            return _buildActionButton(
+              icon: resolvedSaved ? Icons.bookmark : Icons.bookmark_border,
+              label: resolvedSaved ? 'Saved' : 'Save',
+              backgroundColor: buttonBackgroundColor,
+              onPressed:
+                  resolvedSaved ? null : () => _handleBookmarkTapped(item),
+            );
+          },
         ),
         const SizedBox(height: 16),
         _buildActionButton(
           icon: Icons.more_vert,
           label: 'More',
+          backgroundColor: buttonBackgroundColor,
           onPressed: () => _showMoreOptions(item),
         ),
       ],
     );
+    
+    if (isTikTok) {
+      return Container(
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 4),
+        decoration: BoxDecoration(
+          color: containerColor,
+          borderRadius: BorderRadius.circular(32),
+        ),
+        child: content,
+      );
+    }
+    
+    return content;
   }
 
   Widget _buildActionButton({
@@ -2665,6 +2718,7 @@ class DiscoveryScreenState extends State<DiscoveryScreen>
                   url: url,
                   launchUrlCallback: _launchUrl,
                   showControls: false,
+                  isDiscoveryMode: true,
                 ),
         );
       case _MediaType.instagram:

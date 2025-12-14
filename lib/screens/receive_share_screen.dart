@@ -7894,6 +7894,9 @@ class _MultiLocationSelectionDialog extends StatefulWidget {
 class _MultiLocationSelectionDialogState
     extends State<_MultiLocationSelectionDialog> {
   late Set<int> _selectedIndices;
+  
+  /// Confidence threshold - locations below this should be verified by user
+  static const double _lowConfidenceThreshold = 0.9;
 
   @override
   void initState() {
@@ -7911,6 +7914,16 @@ class _MultiLocationSelectionDialogState
       _selectedIndices.where((i) => widget.duplicates.containsKey(i)).length;
   int get _selectedNewCount =>
       _selectedIndices.length - _selectedDuplicateCount;
+  
+  /// Count of locations with low confidence that need verification
+  int get _lowConfidenceCount => widget.locations.where(
+      (loc) => loc.confidence < _lowConfidenceThreshold || loc.needsConfirmation
+    ).length;
+  
+  /// Check if a specific location has low confidence
+  bool _isLowConfidence(ExtractedLocationData location) {
+    return location.confidence < _lowConfidenceThreshold || location.needsConfirmation;
+  }
 
   void _toggleAll() {
     setState(() {
@@ -7938,16 +7951,41 @@ class _MultiLocationSelectionDialogState
     return AlertDialog(
       insetPadding: const EdgeInsets.symmetric(horizontal: 16),
       backgroundColor: Colors.white,
-        title: Row(
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.location_on, color: Colors.blue),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                '${widget.locations.length} Locations Found',
-                overflow: TextOverflow.ellipsis,
-              ),
+            Row(
+              children: [
+                const Icon(Icons.location_on, color: Colors.blue),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '${widget.locations.length} Locations Found',
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
             ),
+            if (_lowConfidenceCount > 0) ...[
+              const SizedBox(height: 4),
+              Row(
+                children: [
+                  Icon(Icons.info_outline, size: 14, color: Colors.red[700]),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(
+                      '$_lowConfidenceCount location${_lowConfidenceCount == 1 ? '' : 's'} may need verification',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.normal,
+                        color: Colors.red[700],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ],
         ),
         content: SizedBox(
@@ -8048,6 +8086,7 @@ class _MultiLocationSelectionDialogState
                       final isSelected = _selectedIndices.contains(index);
                       final isDuplicate = widget.duplicates.containsKey(index);
                       final existingExp = widget.duplicates[index];
+                      final isLowConfidence = _isLowConfidence(location);
 
                       return InkWell(
                         onTap: () => _toggleLocation(index),
@@ -8058,24 +8097,38 @@ class _MultiLocationSelectionDialogState
                             color: isSelected
                                 ? (isDuplicate
                                     ? Colors.orange.withOpacity(0.08)
-                                    : Colors.blue.withOpacity(0.05))
+                                    : isLowConfidence 
+                                        ? Colors.red.withOpacity(0.05)
+                                        : Colors.blue.withOpacity(0.05))
                                 : null,
                             borderRadius: BorderRadius.circular(8),
+                            border: isLowConfidence && isSelected
+                                ? Border.all(color: Colors.red.withOpacity(0.3), width: 1)
+                                : null,
                           ),
                           child: Row(
                             children: [
                               Checkbox(
                                 value: isSelected,
                                 onChanged: (_) => _toggleLocation(index),
-                                activeColor:
-                                    isDuplicate ? Colors.orange : Colors.blue,
+                                activeColor: isDuplicate 
+                                    ? Colors.orange 
+                                    : isLowConfidence 
+                                        ? Colors.red 
+                                        : Colors.blue,
                               ),
                               Icon(
-                                isDuplicate ? Icons.bookmark : Icons.place,
+                                isDuplicate 
+                                    ? Icons.bookmark 
+                                    : isLowConfidence 
+                                        ? Icons.help_outline
+                                        : Icons.place,
                                 size: 18,
                                 color: isDuplicate
                                     ? Colors.orange[600]
-                                    : Colors.grey,
+                                    : isLowConfidence
+                                        ? Colors.red[600]
+                                        : Colors.grey,
                               ),
                               const SizedBox(width: 8),
                               Expanded(
@@ -8117,6 +8170,41 @@ class _MultiLocationSelectionDialogState
                                               ),
                                             ),
                                           ),
+                                        if (isLowConfidence && !isDuplicate)
+                                          Container(
+                                            margin:
+                                                const EdgeInsets.only(left: 4),
+                                            padding: const EdgeInsets.symmetric(
+                                                horizontal: 6, vertical: 2),
+                                            decoration: BoxDecoration(
+                                              color: Colors.red[50],
+                                              borderRadius:
+                                                  BorderRadius.circular(4),
+                                              border: Border.all(
+                                                color: Colors.red[200]!,
+                                                width: 1,
+                                              ),
+                                            ),
+                                            child: Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                Icon(
+                                                  Icons.warning_amber_rounded,
+                                                  size: 10,
+                                                  color: Colors.red[700],
+                                                ),
+                                                const SizedBox(width: 2),
+                                                Text(
+                                                  'Verify',
+                                                  style: TextStyle(
+                                                    fontSize: 10,
+                                                    fontWeight: FontWeight.w600,
+                                                    color: Colors.red[700],
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
                                       ],
                                     ),
                                     if (location.address != null &&
@@ -8132,13 +8220,24 @@ class _MultiLocationSelectionDialogState
                                       ),
                                     if (isDuplicate && existingExp != null)
                                       Text(
-                                        'Will use existing: "${existingExp.name}"',
+                                        'Address already saved as: "${existingExp.name}"',
                                         maxLines: 1,
                                         overflow: TextOverflow.ellipsis,
                                         style: TextStyle(
                                           fontSize: 11,
                                           fontStyle: FontStyle.italic,
                                           color: Colors.orange[700],
+                                        ),
+                                      ),
+                                    if (isLowConfidence && !isDuplicate)
+                                      Text(
+                                        'Please verify this location is correct',
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          fontStyle: FontStyle.italic,
+                                          color: Colors.red[600],
                                         ),
                                       ),
                                   ],
