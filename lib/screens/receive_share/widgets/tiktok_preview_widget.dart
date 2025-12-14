@@ -38,6 +38,7 @@ class TikTokPreviewWidget extends StatefulWidget {
   final void Function(TikTokOEmbedData data)? onOEmbedDataLoaded;
   final bool showControls;
   final Function(InAppWebViewController)? onWebViewCreated;
+  final bool isDiscoveryMode;
 
   const TikTokPreviewWidget({
     super.key,
@@ -48,6 +49,7 @@ class TikTokPreviewWidget extends StatefulWidget {
     this.onOEmbedDataLoaded,
     this.showControls = true,
     this.onWebViewCreated,
+    this.isDiscoveryMode = false,
   });
 
   @override
@@ -61,6 +63,7 @@ class TikTokPreviewWidgetState extends State<TikTokPreviewWidget> with Automatic
   String? _errorMessage;
   String? _currentEmbedHtml;
   bool _isPhotoCarousel = false;
+  String? _postId;
 
   @override
   bool get wantKeepAlive => true;
@@ -68,13 +71,32 @@ class TikTokPreviewWidgetState extends State<TikTokPreviewWidget> with Automatic
   @override
   void initState() {
     super.initState();
-    _fetchTikTokEmbed();
+    _initializeEmbed();
   }
 
   @override
   void dispose() {
     _isDisposed = true;
     super.dispose();
+  }
+
+  /// Extract the TikTok post ID from various URL formats
+  String? _extractPostId(String url) {
+    // Pattern for standard TikTok URLs: /@username/video/ID or /@username/photo/ID
+    final videoPattern = RegExp(r'/(?:video|photo)/(\d+)');
+    final videoMatch = videoPattern.firstMatch(url);
+    if (videoMatch != null) {
+      return videoMatch.group(1);
+    }
+    
+    // Pattern for /v/ URLs: tiktok.com/v/ID
+    final vPattern = RegExp(r'/v/(\d+)');
+    final vMatch = vPattern.firstMatch(url);
+    if (vMatch != null) {
+      return vMatch.group(1);
+    }
+    
+    return null;
   }
 
   /// Take a screenshot of the current WebView content
@@ -103,60 +125,154 @@ class TikTokPreviewWidgetState extends State<TikTokPreviewWidget> with Automatic
     }
   }
 
-  Future<void> _fetchTikTokEmbed() async {
+  Future<void> _initializeEmbed() async {
+    // First, try to extract post ID from URL
+    _postId = _extractPostId(widget.url);
+    
+    if (_postId == null) {
+      // For short URLs (vm.tiktok.com), we need to resolve them first
+      print('TikTok Embed Player: Could not extract post ID from ${widget.url}, trying to resolve...');
+      await _resolveShortUrl();
+    }
+    
+    if (_postId != null) {
+      // Fetch oEmbed data for metadata (title, author, etc.)
+      await _fetchOEmbedMetadata();
+      // Load the embed player
+      _loadEmbedPlayer();
+    } else {
+      print('TikTok Embed Player: Failed to get post ID');
+      setState(() {
+        _errorMessage = 'Could not load TikTok content';
+      });
+      _loadFallbackHtml();
+    }
+  }
+
+  /// Resolve short URLs (vm.tiktok.com) to get the full URL with post ID
+  Future<void> _resolveShortUrl() async {
+    try {
+      // Make a HEAD request to follow redirects and get the final URL
+      final client = http.Client();
+      final request = http.Request('GET', Uri.parse(widget.url))
+        ..followRedirects = false;
+      
+      final response = await client.send(request);
+      
+      if (response.statusCode == 301 || response.statusCode == 302) {
+        final redirectUrl = response.headers['location'];
+        if (redirectUrl != null) {
+          print('TikTok Embed Player: Resolved to $redirectUrl');
+          _postId = _extractPostId(redirectUrl);
+        }
+      }
+      client.close();
+    } catch (e) {
+      print('TikTok Embed Player: Error resolving short URL: $e');
+    }
+  }
+
+  /// Fetch metadata from oEmbed API (for title, author, type info)
+  Future<void> _fetchOEmbedMetadata() async {
     try {
       final Uri oembedUrl = Uri.parse('https://www.tiktok.com/oembed?url=${Uri.encodeComponent(widget.url)}');
       
-      print('TikTok oEmbed: Fetching embed for ${widget.url}');
+      print('TikTok Embed Player: Fetching metadata for ${widget.url}');
       
       final response = await http.get(oembedUrl);
       
       if (!mounted || _isDisposed) return;
       
-      print('TikTok oEmbed: Response status ${response.statusCode}');
-      
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         
-        if (data['html'] != null) {
-          // ONLY check the type field - don't check HTML content as it may contain "photo" in scripts
-          final bool isPhotoPost = data['type'] == 'photo';
-          
-          print('🎬 TIKTOK TYPE: ${data['type']}');
-          print('🎬 IS PHOTO CAROUSEL: $isPhotoPost');
-          print('🎬 HEIGHT WILL BE: ${isPhotoPost ? 350.0 : 700.0}px');
-          
-          // Extract and pass oEmbed data for location extraction
-          final oembedData = TikTokOEmbedData(
-            title: data['title'] as String?,
-            authorName: data['author_name'] as String?,
-            authorUrl: data['author_url'] as String?,
-            thumbnailUrl: data['thumbnail_url'] as String?,
-            type: data['type'] as String? ?? 'video',
-          );
-          
-          print('🎬 TIKTOK CAPTION: ${oembedData.title?.substring(0, (oembedData.title?.length ?? 0) > 100 ? 100 : oembedData.title?.length)}...');
-          print('🎬 TIKTOK AUTHOR: ${oembedData.authorName}');
-          
-          // Notify listener about oEmbed data (for automatic location extraction)
-          widget.onOEmbedDataLoaded?.call(oembedData);
-          
-          if (mounted) {
-            setState(() {
-              _isPhotoCarousel = isPhotoPost;
-            });
-          }
-          
-          if (isPhotoPost) {
-            widget.onPhotoDetected?.call(widget.url, true);
-          } else {
-            widget.onPhotoDetected?.call(widget.url, false);
-          }
-          
-          final double embedHeight = isPhotoPost ? 350.0 : 700.0;
-          final embedHtml = '''
+        // Check the type field to determine if it's a photo carousel
+        final bool isPhotoPost = data['type'] == 'photo';
+        
+        print('🎬 TIKTOK TYPE: ${data['type']}');
+        print('🎬 IS PHOTO CAROUSEL: $isPhotoPost');
+        
+        // Extract and pass oEmbed data for location extraction
+        final oembedData = TikTokOEmbedData(
+          title: data['title'] as String?,
+          authorName: data['author_name'] as String?,
+          authorUrl: data['author_url'] as String?,
+          thumbnailUrl: data['thumbnail_url'] as String?,
+          type: data['type'] as String? ?? 'video',
+        );
+        
+        print('🎬 TIKTOK CAPTION: ${oembedData.title?.substring(0, (oembedData.title?.length ?? 0) > 100 ? 100 : oembedData.title?.length)}...');
+        print('🎬 TIKTOK AUTHOR: ${oembedData.authorName}');
+        
+        // Notify listener about oEmbed data (for automatic location extraction)
+        widget.onOEmbedDataLoaded?.call(oembedData);
+        
+        if (mounted) {
+          setState(() {
+            _isPhotoCarousel = isPhotoPost;
+          });
+        }
+        
+        widget.onPhotoDetected?.call(widget.url, isPhotoPost);
+      }
+    } catch (e) {
+      print('TikTok Embed Player: Error fetching metadata: $e');
+      // Continue anyway - we can still show the player without metadata
+    }
+  }
+
+  /// Load the TikTok Embed Player using direct iframe
+  void _loadEmbedPlayer() {
+    if (_postId == null) {
+      _loadFallbackHtml();
+      return;
+    }
+    
+    // Build the embed player URL with customization parameters
+    // See: https://developers.tiktok.com/doc/embed-player
+    
+    // Default settings (for normal preview mode)
+    // - Show most controls for usability
+    // - Autoplay enabled (since user explicitly tapped)
+    String settings = '?music_info=0'
+        '&description=1'
+        //'&controls=1'
+        '&progress_bar=1'
+        '&timestamp=1'
+        '&play_button=1'
+        '&volume_control=1'
+        '&fullscreen_button=1'
+        '&loop=0'
+        '&autoplay=1'
+        '&native_context_menu=0'
+        '&rel=0';
+        
+    // Discovery mode settings (cleaner look, like a feed)
+    if (widget.isDiscoveryMode) {
+      settings = '?music_info=0'      // Show music info
+        '&description=0'     // Show video description
+        //'&controls=0'        // Hide all control buttons
+        '&progress_bar=0'    // Hide progress bar
+        '&timestamp=0'       // Show timestamp
+        '&play_button=0'     // Hide play button
+        '&volume_control=1'  // Hide volume control
+        '&fullscreen_button=1' // Hide fullscreen button
+        '&loop=1'            // Loop for discovery feed experience
+        '&autoplay=1'       // Autoplay
+        '&native_context_menu=0'
+        '&rel=0';
+    }
+
+    final playerUrl = 'https://www.tiktok.com/player/v1/$_postId$settings';
+    
+    print('🎬 TIKTOK EMBED PLAYER: Loading $playerUrl');
+
+    // In discovery mode, use 100% height to fill the screen. Otherwise use fixed height.
+    final String cssHeight = widget.isDiscoveryMode ? '100%' : '100%';
+
+    final embedHtml = '''
 <!DOCTYPE html>
-<html style="height: ${embedHeight}px; margin: 0; padding: 0;">
+<html style="height: ${cssHeight}; margin: 0; padding: 0;">
 <head>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <style>
@@ -164,149 +280,46 @@ class TikTokPreviewWidgetState extends State<TikTokPreviewWidget> with Automatic
       margin: 0 !important;
       padding: 0 !important;
       background: #000 !important;
-      height: ${embedHeight}px !important;
-      min-height: ${embedHeight}px !important;
-      max-height: ${embedHeight}px !important;
-      overflow-x: hidden;
-      overflow-y: hidden;
+      height: ${cssHeight} !important;
+      min-height: ${cssHeight} !important;
+      max-height: ${cssHeight} !important;
+      overflow: hidden;
     }
     body {
       display: flex;
       justify-content: center;
       align-items: center;
     }
-    .embed-container {
-      width: 100% !important;
-      max-width: 100% !important;
-      height: ${embedHeight}px !important;
-      min-height: ${embedHeight}px !important;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-    }
-    blockquote.tiktok-embed {
-      margin: 0 !important;
-      max-width: 100% !important;
-      min-width: unset !important;
-      height: ${embedHeight}px !important;
-      min-height: ${embedHeight}px !important;
-    }
-    .tiktok-embed iframe {
-      min-height: ${embedHeight}px !important;
-      height: ${embedHeight}px !important;
-      max-height: ${embedHeight}px !important;
-    }
-  </style>
-</head>
-<body>
-  <div class="embed-container">
-    ${data['html']}
-  </div>
-</body>
-</html>
-''';
-          
-          setState(() {
-            _currentEmbedHtml = embedHtml;
-          });
-        } else {
-          if (data['error'] != null) {
-            throw Exception('TikTok API error: ${data['error']}');
-          } else {
-            throw Exception('No embed HTML in response');
-          }
-        }
-      } else {
-        if (response.statusCode == 400) {
-          widget.onPhotoDetected?.call(widget.url, true);
-          _loadDirectEmbed();
-          return;
-        } else {
-          throw Exception('Failed to fetch embed: ${response.statusCode}');
-        }
-      }
-    } catch (e) {
-      print('TikTok oEmbed Error: $e');
-      
-      if (!mounted || _isDisposed) return;
-      
-      String errorMsg = 'Failed to load TikTok content';
-      
-      if (e.toString().contains('not found')) {
-        errorMsg = 'TikTok post not found';
-      } else if (e.toString().contains('private')) {
-        errorMsg = 'This TikTok is private or restricted';
-      } else if (e.toString().contains('photo') || widget.url.contains('photo')) {
-        errorMsg = 'Photo carousels may have limited preview support';
-      }
-      
-      setState(() {
-        _errorMessage = errorMsg;
-      });
-      
-      _loadFallbackHtml();
-    }
-  }
-
-  void _loadDirectEmbed() {
-    if (mounted) {
-      setState(() {
-        _isPhotoCarousel = true;
-      });
-    }
-    
-    final directEmbedHtml = '''
-<!DOCTYPE html>
-<html>
-<head>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <style>
-    body {
-      margin: 0;
-      padding: 0;
-      background: #000;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      min-height: 100vh;
-    }
-    .fallback-container {
-      text-align: center;
-      padding: 40px 20px;
-      color: white;
+    .player-container {
       width: 100%;
-      background: rgba(255, 255, 255, 0.05);
-      border-radius: 12px;
+      height: 100%;
+      display: flex;
+      justify-content: center;
+      align-items: center;
     }
-    .open-button {
-      background: #FE2C55;
-      color: white;
+    iframe {
+      width: 100%;
+      height: ${cssHeight};
       border: none;
-      padding: 14px 28px;
-      border-radius: 8px;
-      font-size: 16px;
-      font-weight: 600;
-      cursor: pointer;
-      margin-top: 24px;
+      max-width: 400px;
     }
   </style>
 </head>
 <body>
-  <div class="fallback-container">      
-    <h2 style="color: white;">Photo Carousel Post</h2>
-    <p style="color: #ccc;">This TikTok contains multiple photos in a slideshow format.</p>
-    <p style="color: #ccc;">Photo carousels cannot be previewed in the app at this time.</p>
-    <button class="open-button" onclick="window.flutter_inappwebview.callHandler('openTikTok');">
-      View Photos on TikTok
-    </button>
+  <div class="player-container">
+    <iframe 
+      src="$playerUrl"
+      allow="fullscreen"
+      allowfullscreen
+      referrerpolicy="no-referrer-when-downgrade"
+    ></iframe>
   </div>
 </body>
 </html>
 ''';
     
     setState(() {
-      _currentEmbedHtml = directEmbedHtml;
-      _errorMessage = null;
+      _currentEmbedHtml = embedHtml;
     });
   }
 
@@ -369,15 +382,76 @@ class TikTokPreviewWidgetState extends State<TikTokPreviewWidget> with Automatic
       });
       _controller!.loadData(data: _currentEmbedHtml!, baseUrl: WebUri('https://www.tiktok.com'));
     } else {
-      _fetchTikTokEmbed();
+      _initializeEmbed();
     }
   }
 
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    final double height = _isPhotoCarousel ? 350.0 : 700.0;
+    final double height = _isPhotoCarousel ? 500.0 : 700.0;
     print('🎬 TIKTOK BUILD: Photo=${_isPhotoCarousel}, Height=${height}px');
+
+    Widget webViewContent = Container(
+      color: Colors.black,
+      child: Stack(
+        children: [
+          if (_currentEmbedHtml != null)
+            InAppWebView(
+              initialData: InAppWebViewInitialData(
+                data: _currentEmbedHtml!,
+                baseUrl: WebUri('https://www.tiktok.com'),
+              ),
+              initialSettings: InAppWebViewSettings(
+                javaScriptEnabled: true,
+                mediaPlaybackRequiresUserGesture: false,
+                allowsInlineMediaPlayback: true,
+                iframeAllowFullscreen: true,
+                transparentBackground: true,
+              ),
+              onWebViewCreated: (controller) {
+                _controller = controller;
+                controller.addJavaScriptHandler(
+                  handlerName: 'openTikTok',
+                  callback: (args) {
+                    widget.launchUrlCallback(widget.url);
+                  },
+                );
+                widget.onWebViewCreated?.call(controller);
+              },
+              onLoadStart: (controller, url) {
+                if (!_isDisposed && mounted) {
+                  setState(() {
+                    _isLoading = true;
+                  });
+                }
+              },
+              onLoadStop: (controller, url) {
+                if (!_isDisposed && mounted) {
+                  setState(() {
+                    _isLoading = false;
+                  });
+                }
+              },
+            ),
+          if (_isLoading)
+            Container(
+              color: Colors.black,
+              child: const Center(
+                child: CircularProgressIndicator(
+                  valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFFE2C55)),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+
+    if (widget.isDiscoveryMode) {
+      return SizedBox.expand(
+        child: webViewContent,
+      );
+    }
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -385,78 +459,7 @@ class TikTokPreviewWidgetState extends State<TikTokPreviewWidget> with Automatic
         SizedBox(
           height: height,
           width: double.infinity,
-          child: Container(
-            color: Colors.black,
-            child: Stack(
-              children: [
-                if (_currentEmbedHtml != null)
-                  InAppWebView(
-                    initialData: InAppWebViewInitialData(
-                      data: _currentEmbedHtml!,
-                      baseUrl: WebUri('https://www.tiktok.com'),
-                    ),
-                    initialSettings: InAppWebViewSettings(
-                      javaScriptEnabled: true,
-                      mediaPlaybackRequiresUserGesture: false,
-                      allowsInlineMediaPlayback: true,
-                      iframeAllowFullscreen: false,
-                      transparentBackground: true,
-                    ),
-                    onWebViewCreated: (controller) {
-                      _controller = controller;
-                      controller.addJavaScriptHandler(
-                        handlerName: 'openTikTok',
-                        callback: (args) {
-                          widget.launchUrlCallback(widget.url);
-                        },
-                      );
-                      widget.onWebViewCreated?.call(controller);
-                    },
-                    onLoadStart: (controller, url) {
-                      if (!_isDisposed && mounted) {
-                        setState(() {
-                          _isLoading = true;
-                        });
-                      }
-                    },
-                    onLoadStop: (controller, url) {
-                      if (!_isDisposed && mounted) {
-                        setState(() {
-                          _isLoading = false;
-                        });
-                        
-                        // Force TikTok embed to respect our height
-                        final double embedHeight = _isPhotoCarousel ? 350.0 : 700.0;
-                        controller.evaluateJavascript(source: '''
-                          (function() {
-                            const iframe = document.querySelector('.tiktok-embed iframe');
-                            if (iframe) {
-                              iframe.style.height = '${embedHeight}px !important';
-                              iframe.style.minHeight = '${embedHeight}px !important';
-                            }
-                            const blockquote = document.querySelector('blockquote.tiktok-embed');
-                            if (blockquote) {
-                              blockquote.style.height = '${embedHeight}px !important';
-                              blockquote.style.minHeight = '${embedHeight}px !important';
-                            }
-                            document.body.style.height = '${embedHeight}px !important';
-                          })();
-                        ''');
-                      }
-                    },
-                  ),
-                if (_isLoading)
-                  Container(
-                    color: Colors.black,
-                    child: const Center(
-                      child: CircularProgressIndicator(
-                        valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFFE2C55)),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
+          child: webViewContent,
         ),
         if (widget.showControls)
           Container(

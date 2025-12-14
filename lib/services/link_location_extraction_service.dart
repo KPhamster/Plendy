@@ -1916,8 +1916,54 @@ class LinkLocationExtractionService {
         }
         final hasRegionContext = stateFromContext != null || broaderRegion != null;
         
-        // Step 1: If we have region context, search with it first
-        if (hasRegionContext) {
+        // Step 0 (NEW): If we have a grounded address, search by address FIRST for best accuracy
+        // This catches cases where the business name returned by Gemini is incorrect,
+        // but the address in the extracted text is correct (e.g., Mother's Kitchen vs Mother's Market & Kitchen)
+        if (locationInfo.address != null && locationInfo.address!.isNotEmpty) {
+          final addressQuery = locationInfo.address!;
+          print('📷 MULTI-IMAGE EXTRACTION: PRIORITY SEARCH by grounded address: "$addressQuery"');
+          
+          final addressResults = await _maps.searchPlaces(
+            addressQuery,
+            latitude: userLocation?.latitude,
+            longitude: userLocation?.longitude,
+          );
+          
+          if (addressResults.isNotEmpty) {
+            print('📷 MULTI-IMAGE EXTRACTION: Found ${addressResults.length} candidates from address search');
+            
+            // For address search, prioritize exact address matches
+            placeResult = _selectBestPlaceResultWithContext(
+              addressResults,
+              locationInfo.name,
+              geminiType: locationInfo.type,
+              city: locationInfo.city,
+              regionContext: geminiResult.regionContext,
+              groundedAddress: locationInfo.address,
+            );
+            
+            if (placeResult != null) {
+              final foundName = (placeResult['name'] ?? placeResult['description']?.toString().split(',').first ?? '') as String;
+              final foundAddress = (placeResult['formatted_address'] ?? placeResult['description'] ?? '') as String;
+              final addressMatchScore = _calculateAddressSimilarity(locationInfo.address!, foundAddress);
+              
+              print('📷 MULTI-IMAGE EXTRACTION: Best candidate from address search: "$foundName"');
+              print('📷 MULTI-IMAGE EXTRACTION: Address match: ${(addressMatchScore * 100).toInt()}%');
+              
+              // If address match is good (>60%), use this result even if name doesn't match
+              if (addressMatchScore >= 0.6) {
+                print('✅ MULTI-IMAGE EXTRACTION: Using address-verified result (name may differ from Gemini search)');
+                placeResults = addressResults;
+              } else {
+                print('⚠️ MULTI-IMAGE EXTRACTION: Address match too low, will try name search');
+                placeResult = null; // Reset to try name search
+              }
+            }
+          }
+        }
+        
+        // Step 1: If we have region context (and no good address match yet), search with it
+        if (placeResults.isEmpty && hasRegionContext) {
           final contextSearchQuery = contextSearchParts.join(', ');
           print('📷 MULTI-IMAGE EXTRACTION: Searching with region context: "$contextSearchQuery"');
           

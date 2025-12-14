@@ -1454,6 +1454,52 @@ Return:
     return searchResult;
   }
   
+  /// Extract street addresses from text using common US address patterns
+  /// Returns a list of potential street addresses found in the text
+  List<String> _extractAddressesFromText(String? text) {
+    if (text == null || text.isEmpty) return [];
+    
+    final addresses = <String>[];
+    
+    // Pattern for US street addresses:
+    // - Starts with numbers (street number)
+    // - Followed by street name words
+    // - Optional street type (Ave, St, Blvd, etc.)
+    // - City, State ZIP pattern
+    final fullAddressPattern = RegExp(
+      r'\b(\d+\s+[\w\s]+(?:Ave(?:nue)?|St(?:reet)?|Blvd|Boulevard|Dr(?:ive)?|Rd|Road|Ln|Lane|Way|Pl(?:ace)?|Ct|Court|Cir(?:cle)?|Pkwy|Parkway|Hwy|Highway)\.?\s*,?\s*[\w\s]+,?\s*(?:CA|California|NY|New York|TX|Texas|FL|Florida|WA|Washington|AZ|Arizona|NV|Nevada|OR|Oregon|CO|Colorado|IL|Illinois|PA|Pennsylvania|OH|Ohio|GA|Georgia|NC|North Carolina|MI|Michigan|NJ|New Jersey|VA|Virginia|MA|Massachusetts|TN|Tennessee|IN|Indiana|MO|Missouri|MD|Maryland|WI|Wisconsin|MN|Minnesota|SC|South Carolina|AL|Alabama|LA|Louisiana|KY|Kentucky|OK|Oklahoma|CT|Connecticut|UT|Utah|IA|Iowa|NE|Nebraska|MS|Mississippi|AR|Arkansas|KS|Kansas|NM|New Mexico|ID|Idaho|WV|West Virginia|HI|Hawaii|NH|New Hampshire|ME|Maine|MT|Montana|RI|Rhode Island|DE|Delaware|SD|South Dakota|ND|North Dakota|AK|Alaska|VT|Vermont|WY|Wyoming|DC)\.?\s*\d{5}(?:-\d{4})?)\b',
+      caseSensitive: false,
+    );
+    
+    // Simpler pattern: just street address with city and state
+    final simpleAddressPattern = RegExp(
+      r'\b(\d+\s+[\w\s]+(?:Ave(?:nue)?|St(?:reet)?|Blvd|Boulevard|Dr(?:ive)?|Rd|Road|Ln|Lane|Way|Pl(?:ace)?|Ct|Court|Cir(?:cle)?|Pkwy|Parkway|Hwy|Highway)\.?\s*,?\s*[\w\s]+,?\s*(?:CA|NY|TX|FL|WA|AZ|NV|OR|CO|IL|PA|OH|GA|NC|MI|NJ|VA|MA|TN|IN|MO|MD|WI|MN|SC|AL|LA|KY|OK|CT|UT|IA|NE|MS|AR|KS|NM|ID|WV|HI|NH|ME|MT|RI|DE|SD|ND|AK|VT|WY|DC))\b',
+      caseSensitive: false,
+    );
+    
+    // Most complete pattern with ZIP code
+    for (final match in fullAddressPattern.allMatches(text)) {
+      final address = match.group(1)?.trim();
+      if (address != null && address.length > 10) {
+        addresses.add(address);
+        print('   📍 HANDLE SEARCH: Found address in text: "$address"');
+      }
+    }
+    
+    // If no full addresses found, try simpler pattern
+    if (addresses.isEmpty) {
+      for (final match in simpleAddressPattern.allMatches(text)) {
+        final address = match.group(1)?.trim();
+        if (address != null && address.length > 10) {
+          addresses.add(address);
+          print('   📍 HANDLE SEARCH: Found partial address in text: "$address"');
+        }
+      }
+    }
+    
+    return addresses;
+  }
+
   /// Search for a business by its Instagram/social media handle
   /// Uses Google Search grounding to find the actual business name
   Future<ExtractedLocationInfo?> _searchForBusinessByHandle(
@@ -1461,33 +1507,63 @@ Return:
     ContentContext context,
   ) async {
     try {
+      // Extract any addresses mentioned in the text - these are CRITICAL for finding the right location
+      final extractedAddresses = _extractAddressesFromText(context.extractedText);
+      final hasExtractedAddress = extractedAddresses.isNotEmpty;
+      
+      if (hasExtractedAddress) {
+        print('🔎 GEMINI HANDLE SEARCH: Found ${extractedAddresses.length} address(es) in extracted text');
+        for (final addr in extractedAddresses) {
+          print('   → "$addr"');
+        }
+      }
+      
+      // Build address context for the prompt
+      String addressContext = '';
+      if (hasExtractedAddress) {
+        addressContext = '''
+
+=== CRITICAL: SPECIFIC ADDRESS FOUND IN SOURCE ===
+The following address(es) were explicitly mentioned in the source content:
+${extractedAddresses.map((a) => '• $a').join('\n')}
+
+*** THIS IS THE MOST IMPORTANT SIGNAL ***
+The business @$handle is LOCATED AT ONE OF THESE ADDRESSES.
+You MUST find the business at this EXACT address, not a similarly-named business elsewhere.
+If @$handle operates at "${extractedAddresses.first}", return that location.
+''';
+      }
+      
       final prompt = '''
 I need to find the ACTUAL BUSINESS NAME for the Instagram account "@$handle".
 
 ${context.geographicFocus != null ? 'Geographic area: ${context.geographicFocus}' : ''}
 ${context.locationTypesToFind.isNotEmpty ? 'Business type: ${context.locationTypesToFind.join(", ")}' : ''}
-
+$addressContext
 === YOUR TASK ===
 Search online to find:
 1. What business does @$handle belong to?
 2. What is the OFFICIAL business name?
-3. Where is it located?
+3. Where is it located?${hasExtractedAddress ? '\n4. VERIFY the business is at the address mentioned above!' : ''}
 
 === SEARCH STRATEGY ===
-1. Search for "@$handle instagram"
-2. Search for "@$handle ${context.geographicFocus ?? ''}"
-3. Look for the business website, Google listing, or Yelp page
+${hasExtractedAddress ? '''1. FIRST: Search for "@$handle ${extractedAddresses.first}" to confirm the address
+2. Search for the address "${extractedAddresses.first}" to find what business is there
+3.''' : '1.'} Search for "@$handle instagram"
+${hasExtractedAddress ? '4.' : '2.'} Search for "@$handle ${context.geographicFocus ?? ''}"
+${hasExtractedAddress ? '5.' : '3.'} Look for the business website, Google listing, or Yelp page
 
 === OUTPUT FORMAT ===
 Return a JSON object:
 {
   "found": true or false,
   "name": "The official business name (e.g., 'Dolce Luna Cafe', 'Joe's Pizza')",
+  "address": "The full street address if known",
   "city": "City name",
   "region": "State/Region",
   "type": "cafe/restaurant/bakery/etc",
   "confidence": "high/medium/low",
-  "explanation": "How you identified this business"
+  "explanation": "How you identified this business"${hasExtractedAddress ? ',\n  "address_verified": true or false' : ''}
 }
 
 If you cannot find the business with confidence, return:
@@ -1495,8 +1571,9 @@ If you cannot find the business with confidence, return:
 
 === RULES ===
 - Search for the ACTUAL business name from @$handle
-- Do NOT just convert the handle to a name (e.g., don't just return "Dolce Luna Cafe" from @dolcelunacafe without verifying)
+- Do NOT just convert the handle to a name (e.g., don't just return "Dolce Luna Cafe" from @dolcelunacafe without verifying)${hasExtractedAddress ? '\n- The address from the source ("' + extractedAddresses.first + '") is the MOST RELIABLE signal - prioritize it!' : ''}
 - Use Google Search to verify the business exists
+${hasExtractedAddress ? '- If you find multiple businesses with similar names, choose the one at the specified address' : ''}
 - Return ONLY the JSON object, no other text
 ''';
 
@@ -1522,14 +1599,28 @@ If you cannot find the business with confidence, return:
   }
 
   /// Verify a location without printing detailed explanations (for STEP 3)
-  Future<ExtractedLocationInfo?> _verifyLocationQuietly(String locationName, ContentContext context) async {
+  Future<ExtractedLocationInfo?> _verifyLocationQuietly(String locationName, ContentContext context, {String? extractedAddress}) async {
     try {
+      // Build address context if we have an extracted address
+      final addressContext = extractedAddress != null && extractedAddress.isNotEmpty
+          ? '''
+
+=== CRITICAL: SPECIFIC ADDRESS PROVIDED ===
+The source content explicitly mentions this address for "$locationName":
+📍 $extractedAddress
+
+*** THIS ADDRESS IS THE MOST RELIABLE SIGNAL ***
+You MUST use this address in your response. Do NOT search for a different address.
+The place "$locationName" is located at "$extractedAddress" - verify this is a real address and use it.
+'''
+          : '';
+      
       final prompt = '''
 Verify that THIS SPECIFIC place exists: "$locationName"
 
 ${context.geographicFocus != null ? 'REGION CONTEXT: ${context.geographicFocus}' : ''}
 ${context.locationTypesToFind.isNotEmpty ? 'EXPECTED TYPES: ${context.locationTypesToFind.join(", ")}' : ''}
-
+$addressContext
 === OUTPUT FORMAT ===
 Return a JSON object:
 {
@@ -1547,7 +1638,7 @@ If you cannot verify the place exists, return:
 
 === CRITICAL RULES ===
 - VERIFY the place "$locationName" exists - do NOT substitute a different place
-- Keep the SAME place the user mentioned, just clean up spelling/formatting
+- Keep the SAME place the user mentioned, just clean up spelling/formatting${extractedAddress != null ? '\n- USE THE PROVIDED ADDRESS "$extractedAddress" - do NOT replace it with a generic location' : ''}
 - Do NOT replace natural areas with visitor centers (e.g., "Hoh Rain Forest" should NOT become "Hoh Rain Forest Visitor Center")
 - Do NOT replace parks with gift shops, museums, or other buildings within them
 - Do NOT replace beaches/trails/mountains with nearby facilities
@@ -1589,14 +1680,30 @@ If you cannot verify the place exists, return:
         // Only return high/medium confidence results
         if (confidence == 'low') return null;
 
-        final address = parsed['address'] as String?;
-        if (address != null && address.isNotEmpty) {
-          print('   📍 Grounded address: $address');
+        // Determine which address to use
+        final geminiAddress = parsed['address'] as String?;
+        String? finalAddress = geminiAddress;
+        
+        // If we have an extracted address from the source, prefer it over generic Gemini responses
+        if (extractedAddress != null && extractedAddress.isNotEmpty) {
+          // Check if Gemini's address is too generic (just city/state/region)
+          final isGenericAddress = geminiAddress == null || 
+              geminiAddress.isEmpty ||
+              !RegExp(r'\d+\s+[\w\s]+(Ave|St|Blvd|Dr|Rd|Road|Ln|Lane|Way|Pl|Ct|Cir|Pkwy|Hwy)', caseSensitive: false).hasMatch(geminiAddress);
+          
+          if (isGenericAddress) {
+            finalAddress = extractedAddress;
+            print('   📍 Using extracted address (more specific): $extractedAddress');
+          } else {
+            print('   📍 Grounded address: $geminiAddress');
+          }
+        } else if (geminiAddress != null && geminiAddress.isNotEmpty) {
+          print('   📍 Grounded address: $geminiAddress');
         }
 
         return ExtractedLocationInfo(
           name: name,
-          address: address,
+          address: finalAddress,
           city: parsed['city'] as String?,
           type: parsed['type'] as String?,
           regionContext: context.geographicFocus,
@@ -1822,8 +1929,16 @@ If you cannot find a specific place with confidence, return:
       
       final confidence = parsed['confidence'] as String? ?? 'medium';
       final explanation = parsed['explanation'] as String?;
+      final address = parsed['address'] as String?;
+      final addressVerified = parsed['address_verified'] as bool?;
       
       print('   🔍 Search confidence: $confidence');
+      if (address != null) {
+        print('   📍 Address found: $address');
+      }
+      if (addressVerified != null) {
+        print('   ✅ Address verified: $addressVerified');
+      }
       if (explanation != null) {
         print('   📝 Explanation: $explanation');
       }
@@ -1836,6 +1951,7 @@ If you cannot find a specific place with confidence, return:
       
       return ExtractedLocationInfo(
         name: name,
+        address: address,
         city: parsed['city'] as String?,
         type: parsed['type'] as String?,
         regionContext: context.geographicFocus,
@@ -1873,6 +1989,10 @@ If you cannot find a specific place with confidence, return:
       final name = nameMatch.group(1);
       if (name == null || name.isEmpty) return null;
       
+      // Extract address if present
+      final addressMatch = RegExp(r'"address"\s*:\s*"([^"]+)"').firstMatch(text);
+      final address = addressMatch?.group(1);
+      
       // Extract city if present
       final cityMatch = RegExp(r'"city"\s*:\s*"([^"]+)"').firstMatch(text);
       final city = cityMatch?.group(1);
@@ -1892,9 +2012,13 @@ If you cannot find a specific place with confidence, return:
       }
       
       print('   🔍 Search confidence (fallback): $confidence');
+      if (address != null) {
+        print('   📍 Address found (fallback): $address');
+      }
       
       return ExtractedLocationInfo(
         name: name,
+        address: address,
         city: city,
         type: type,
         regionContext: context.geographicFocus,
@@ -1914,8 +2038,8 @@ If you cannot find a specific place with confidence, return:
     try {
       print('🔍 GEMINI MULTI-IMAGE STEP 3: Extracting ALL locations from combined context...');
       
-      // Step 3a: First, extract all raw location names mentioned in the text
-      final rawLocations = await _extractRawLocationNames(context);
+      // Step 3a: First, extract all raw location names (with addresses) mentioned in the text
+      final rawLocations = await _extractRawLocationNamesWithAddresses(context);
       
       if (rawLocations.isEmpty) {
         print('⚠️ GEMINI MULTI-IMAGE STEP 3: No location names found in text');
@@ -1924,17 +2048,21 @@ If you cannot find a specific place with confidence, return:
       
       print('📋 GEMINI MULTI-IMAGE STEP 3: Found ${rawLocations.length} location mention(s) to verify:');
       for (final loc in rawLocations) {
-        print('   • $loc');
+        if (loc.address != null) {
+          print('   • ${loc.name} → 📍 ${loc.address}');
+        } else {
+          print('   • ${loc.name}');
+        }
       }
       
       // Step 3b: Verify each location using Google Search grounding (like Step 2)
       final verifiedLocations = <ExtractedLocationInfo>[];
       
       for (int i = 0; i < rawLocations.length; i++) {
-        final rawName = rawLocations[i];
-        print('🔎 GEMINI STEP 3 [${i + 1}/${rawLocations.length}]: Verifying "$rawName"...');
+        final rawLoc = rawLocations[i];
+        print('🔎 GEMINI STEP 3 [${i + 1}/${rawLocations.length}]: Verifying "${rawLoc.name}"${rawLoc.address != null ? ' (has address: ${rawLoc.address})' : ''}...');
         
-        final verified = await _verifyLocationQuietly(rawName, context);
+        final verified = await _verifyLocationQuietly(rawLoc.name, context, extractedAddress: rawLoc.address);
         
         if (verified != null) {
           // Check for duplicates before adding
@@ -1948,7 +2076,7 @@ If you cannot find a specific place with confidence, return:
             print('   ⏭️ Skipped duplicate: "${verified.name}"');
           }
         } else {
-          print('   ⚠️ Could not verify: "$rawName"');
+          print('   ⚠️ Could not verify: "${rawLoc.name}"');
         }
       }
       
@@ -1961,10 +2089,11 @@ If you cannot find a specific place with confidence, return:
   }
   
   /// Extract raw location names from the extracted text (without verification)
-  Future<List<String>> _extractRawLocationNames(ContentContext context) async {
+  /// Returns a list of records containing the location name and any associated address
+  Future<List<({String name, String? address})>> _extractRawLocationNamesWithAddresses(ContentContext context) async {
     try {
       final prompt = '''
-You are extracting location/place names from text content.
+You are extracting location/place names from text content, along with any addresses mentioned near them.
 
 === EXTRACTED TEXT ===
 ${context.extractedText ?? "No text available"}
@@ -1982,6 +2111,30 @@ Extract ALL specific place names mentioned that are:
 - Landmarks, viewpoints, nature centers
 - Any specific business or place that someone could visit
 
+=== CRITICAL: DISTINGUISHING ADDRESSES FROM PLACE NAMES ===
+A REAL ADDRESS contains:
+- A street number + street name (e.g., "123 Main St", "1 Casino Way")
+- Street type words like: St, Street, Ave, Avenue, Rd, Road, Blvd, Way, Dr, Drive, Ln, Lane, Pl, Place, Ct, Court
+- Often includes city, state, zip (e.g., "Avalon, CA 90704")
+
+A PLACE NAME is NOT an address - it's the name of a business/venue:
+- "Pier 24" = PLACE NAME (a restaurant/bar named after a pier number)
+- "Hotel Atwater" = PLACE NAME
+- "Flx Biergarten" = PLACE NAME
+- "Descanso Beach Club" = PLACE NAME
+
+IMPORTANT: When multiple place names are listed together WITHOUT addresses, they are SEPARATE locations!
+Example of a LIST of places (NO addresses):
+  "Hotel Atwater
+   Pier 24
+   Flx Biergarten"
+→ These are THREE separate places, each with address: null
+
+Example WITH addresses:
+  "Catalina Casino
+   1 Casino Way, Avalon, CA 90704"
+→ "1 Casino Way, Avalon, CA 90704" IS an address (has street number + street name)
+
 === WHAT TO IGNORE ===
 - Generic region names (like "Baton Rouge" or "Louisiana" - only extract SPECIFIC places)
 - Hashtags (they are context, not places)
@@ -1990,27 +2143,55 @@ Extract ALL specific place names mentioned that are:
 - The airport (unless it's a destination itself)
 
 === OUTPUT FORMAT ===
-Return a JSON object with an array of location names:
+Return a JSON object with an array of location objects:
 {
   "locations": [
-    "Restaurant Name",
-    "Museum Name",
-    "Park Name"
+    {"name": "Restaurant Name", "address": "123 Main St, City, ST 12345"},
+    {"name": "Museum Name", "address": null},
+    {"name": "Park Name", "address": "456 Park Ave, City, ST"}
   ]
 }
 
-=== EXAMPLE ===
-If the text says:
-"Day 1: Visit the Capitol Park Museum, lunch at Cocha Restaurant, drinks at Hayride Scandal"
+=== EXAMPLE 1: Places WITH addresses ===
+Text:
+"Catalina Casino
+1 Casino Way, Avalon, CA 90704
+El Rancho Escondido
+3rd St, Avalon, CA 90704"
 
-Return:
+Output:
 {
-  "locations": ["Capitol Park Museum", "Cocha Restaurant", "Hayride Scandal"]
+  "locations": [
+    {"name": "Catalina Casino", "address": "1 Casino Way, Avalon, CA 90704"},
+    {"name": "El Rancho Escondido", "address": "3rd St, Avalon, CA 90704"}
+  ]
 }
+
+=== EXAMPLE 2: List of places WITHOUT addresses ===
+Text:
+"Here are some recommended restaurants:
+Hotel Atwater
+Pier 24
+Flx Biergarten
+Descanso Beach Club"
+
+Output:
+{
+  "locations": [
+    {"name": "Hotel Atwater", "address": null},
+    {"name": "Pier 24", "address": null},
+    {"name": "Flx Biergarten", "address": null},
+    {"name": "Descanso Beach Club", "address": null}
+  ]
+}
+NOTE: "Pier 24" is a PLACE NAME (a restaurant), NOT an address for "Hotel Atwater"!
 
 === RULES ===
 - Extract the name EXACTLY as written (we'll verify it later)
 - Include ALL places mentioned, not just the first one
+- Only associate an address if it contains a street number/name pattern
+- If the next line is another place name (not an address), both are separate locations
+- If no address is near a location, set address to null
 - Strip action words ("Visit the Grand Canyon" → "Grand Canyon")
 - Strip meal labels ("Lunch at Cocha" → "Cocha Restaurant" or just "Cocha")
 - Return ONLY the JSON object, no other text
@@ -2047,12 +2228,68 @@ Return:
       }
       jsonText = jsonText.trim();
       
-      final parsed = json.decode(jsonText) as Map<String, dynamic>;
+      // Handle truncated JSON responses from Gemini API
+      // Find all complete location objects and reconstruct valid JSON
+      Map<String, dynamic> parsed;
+      try {
+        parsed = json.decode(jsonText) as Map<String, dynamic>;
+      } catch (parseError) {
+        print('⚠️ RAW EXTRACTION: JSON parse failed, attempting to recover truncated response...');
+        
+        // Try to extract complete location objects from truncated JSON
+        final recoveredLocations = <Map<String, dynamic>>[];
+        
+        // Match complete location objects: {"name": "...", "address": ...}
+        final locationPattern = RegExp(
+          r'\{\s*"name"\s*:\s*"([^"]+)"\s*,\s*"address"\s*:\s*(null|"[^"]*")\s*\}',
+          multiLine: true,
+        );
+        
+        for (final match in locationPattern.allMatches(jsonText)) {
+          final name = match.group(1);
+          final addressRaw = match.group(2);
+          if (name != null && name.isNotEmpty) {
+            String? address;
+            if (addressRaw != null && addressRaw != 'null') {
+              // Remove quotes from address
+              address = addressRaw.replaceAll('"', '');
+            }
+            recoveredLocations.add({
+              'name': name,
+              'address': address,
+            });
+            print('   🔧 Recovered: "$name"${address != null ? " → $address" : ""}');
+          }
+        }
+        
+        if (recoveredLocations.isEmpty) {
+          print('❌ RAW EXTRACTION: Could not recover any locations from truncated response');
+          rethrow;
+        }
+        
+        print('✅ RAW EXTRACTION: Recovered ${recoveredLocations.length} location(s) from truncated JSON');
+        parsed = {'locations': recoveredLocations};
+      }
       final locations = parsed['locations'] as List?;
       
       if (locations == null) return [];
       
-      return locations.map((e) => e.toString().trim()).where((e) => e.isNotEmpty).toList();
+      // Parse location objects with addresses
+      final result = <({String name, String? address})>[];
+      for (final loc in locations) {
+        if (loc is Map<String, dynamic>) {
+          final name = loc['name'] as String?;
+          if (name != null && name.isNotEmpty) {
+            final address = loc['address'] as String?;
+            result.add((name: name.trim(), address: address?.trim()));
+          }
+        } else if (loc is String && loc.isNotEmpty) {
+          // Fallback for simple string format
+          result.add((name: loc.trim(), address: null));
+        }
+      }
+      
+      return result;
     } catch (e) {
       print('❌ RAW EXTRACTION ERROR: $e');
       return [];
