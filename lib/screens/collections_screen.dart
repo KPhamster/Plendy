@@ -4111,7 +4111,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                       tabs: const [
                         Tab(text: 'Categories'),
                         Tab(text: 'Experiences'),
-                        Tab(text: 'Content'),
+                        Tab(text: 'Saves'),
                       ],
                       labelColor: Theme.of(context).primaryColor,
                       unselectedLabelColor: Colors.grey,

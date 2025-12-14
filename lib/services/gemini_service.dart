@@ -1102,6 +1102,12 @@ Output:
       if (combinedContext.contentCreatorHandle != null) {
         print('   👤 Content Creator: @${combinedContext.contentCreatorHandle}');
       }
+      if (combinedContext.mentionedPlaceNames.isNotEmpty) {
+        print('   🏷️ Mentioned Place Names: ${combinedContext.mentionedPlaceNames.join(", ")}');
+      }
+      if (combinedContext.searchQuerySuggestion != null) {
+        print('   🔍 Search Query Suggestion: ${combinedContext.searchQuerySuggestion}');
+      }
       if (combinedContext.businessHandles.isNotEmpty) {
         print('   🏪 Business Handles Found: ${combinedContext.businessHandles.map((h) => "@$h").join(", ")}');
       }
@@ -1319,10 +1325,31 @@ Return a JSON object with this structure:
   "context_clues": ["shows 'POET TREES' sign", "mentions redwoods", "describes as library"],
   "exclusions": ["UI elements", "navigation buttons"],
   "extracted_text": "ALL visible text from ALL images combined. Include signs, captions, overlay text, etc.",
-  "search_query_suggestion": "A suggested Google search query to find the actual location name",
-  "content_creator_handle": "The handle of who posted this content (e.g., 'ariannalakess') or null",
-  "business_handles": ["List of handles that likely belong to the BUSINESS/LOCATION being featured, NOT the content creator (e.g., ['dolcelunacafe', 'matchabuckets'])"]
+  "mentioned_place_names": ["List of ACTUAL PLACE NAMES explicitly mentioned in the text (e.g., 'Del Mar Plaza', 'Griffith Observatory', 'Pike Place Market'). These are the PLACES being RECOMMENDED, not the content creator."],
+  "search_query_suggestion": "A Google search query combining the place name + location (e.g., 'Del Mar Plaza San Diego')",
+  "content_creator_handle": "The handle of who posted this content (e.g., 'socalnation', 'ariannalakess') or null",
+  "business_handles": ["List of handles that belong to the BUSINESS/LOCATION being featured, NOT the content creator (e.g., ['dolcelunacafe', 'matchabuckets'])"]
 }
+
+=== CRITICAL: DISTINGUISH CONTENT CREATOR FROM PLACE BEING RECOMMENDED ===
+VERY IMPORTANT: The content creator (who posted) is DIFFERENT from the place being recommended!
+
+Example 1: "@socalnation" posts "Del Mar Plaza might be your next lunch spot"
+- content_creator_handle: "socalnation" (the blogger who posted)
+- mentioned_place_names: ["Del Mar Plaza"] (the actual place being RECOMMENDED)
+- business_handles: [] (no business handle mentioned)
+- search_query_suggestion: "Del Mar Plaza San Diego"
+
+Example 2: "@foodblogger" posts "Check out @dolcelunacafe for amazing matcha"
+- content_creator_handle: "foodblogger" (the blogger who posted)
+- mentioned_place_names: [] (no explicit place name in text)
+- business_handles: ["dolcelunacafe"] (the business handle tagged)
+- search_query_suggestion: "Dolce Luna Cafe"
+
+PRIORITY ORDER:
+1. **mentioned_place_names** - Actual place names in the text are MOST RELIABLE
+2. **business_handles** - Tagged business handles (NOT the content creator)
+3. **search_query_suggestion** - As a fallback search query
 
 === EXAMPLES ===
 
@@ -1352,16 +1379,59 @@ Return:
 === IMPORTANT ===
 - Treat all images as ONE piece of content, not separate items
 - Combine clues from different images to form a complete picture
-- The "search_query_suggestion" is CRITICAL - it should combine visual clues + text clues + geographic context
-- ALWAYS look for business handles - they're the most reliable way to find the actual location
+- The "mentioned_place_names" is MOST IMPORTANT - look for actual place names mentioned in captions/text
+- The "search_query_suggestion" should combine the place name + geographic context for accurate search
+- Business handles are useful ONLY when an actual place name is not mentioned
+- The content_creator_handle is the person who POSTED, NOT the place being recommended
 - Return ONLY the JSON object, no other text
 ''';
   }
 
   /// Use Google Search grounding to find the actual location name based on context
   Future<ExtractedLocationInfo?> _searchForActualLocationName(ContentContext context) async {
-    // ========== PRIORITY 1: SEARCH FOR BUSINESS HANDLES ==========
-    // Business handles are the most reliable way to find the actual location
+    // ========== PRIORITY 1: SEARCH FOR EXPLICITLY MENTIONED PLACE NAMES ==========
+    // Actual place names mentioned in text are the MOST RELIABLE way to find the location
+    // e.g., "Del Mar Plaza might be your next lunch spot" → search "Del Mar Plaza"
+    if (context.mentionedPlaceNames.isNotEmpty) {
+      print('🏷️ GEMINI MULTI-IMAGE STEP 2: Found ${context.mentionedPlaceNames.length} explicitly mentioned place name(s)');
+      
+      for (final placeName in context.mentionedPlaceNames) {
+        // Build search query with geographic context for better accuracy
+        String searchQuery = placeName;
+        if (context.geographicFocus != null) {
+          searchQuery = '$placeName ${context.geographicFocus}';
+        }
+        
+        print('🏷️ GEMINI MULTI-IMAGE STEP 2: Searching for mentioned place: "$searchQuery"');
+        
+        final placeResult = await _searchForPlaceNameWithGrounding(searchQuery, context);
+        
+        if (placeResult != null) {
+          print('✅ GEMINI MULTI-IMAGE STEP 2: Found place from mentioned name "$placeName": "${placeResult.name}"');
+          return placeResult;
+        }
+      }
+      
+      print('⚠️ GEMINI MULTI-IMAGE STEP 2: Could not find places from mentioned names, trying search query suggestion...');
+    }
+    
+    // ========== PRIORITY 2: USE SEARCH QUERY SUGGESTION ==========
+    // The AI's suggested search query often combines place name + location
+    if (context.searchQuerySuggestion != null && context.searchQuerySuggestion!.isNotEmpty) {
+      print('🔍 GEMINI MULTI-IMAGE STEP 2: Using search query suggestion: "${context.searchQuerySuggestion}"');
+      
+      final suggestionResult = await _searchForPlaceNameWithGrounding(context.searchQuerySuggestion!, context);
+      
+      if (suggestionResult != null) {
+        print('✅ GEMINI MULTI-IMAGE STEP 2: Found place from search suggestion: "${suggestionResult.name}"');
+        return suggestionResult;
+      }
+      
+      print('⚠️ GEMINI MULTI-IMAGE STEP 2: Search query suggestion did not yield results, trying business handles...');
+    }
+    
+    // ========== PRIORITY 3: SEARCH FOR BUSINESS HANDLES ==========
+    // Business handles can help find the location when no explicit name is mentioned
     // e.g., @dolcelunacafe → "Dolce Luna Cafe"
     if (context.businessHandles.isNotEmpty) {
       print('🔎 GEMINI MULTI-IMAGE STEP 2: Found ${context.businessHandles.length} business handle(s) to search');
@@ -1380,7 +1450,7 @@ Return:
       print('⚠️ GEMINI MULTI-IMAGE STEP 2: Could not find business from handles, trying other methods...');
     }
     
-    // ========== PRIORITY 2: BUILD SEARCH QUERY FROM CONTEXT ==========
+    // ========== PRIORITY 4: BUILD SEARCH QUERY FROM CONTEXT ==========
     // Build a search query from the context
     String? searchQuery = context.extractedText;
     
@@ -1724,6 +1794,84 @@ If you cannot verify the place exists, return:
       'CONTENT', 'URL', 'HTTP', 'HTTPS', 'WWW', 'COM', 'INSTAGRAM',
     ];
     return commonUI.contains(text.toUpperCase().trim());
+  }
+
+  /// Check if a string looks like a real street address vs a place name
+  /// Real addresses have patterns like "123 Main St", "1 Casino Way, Avalon, CA"
+  /// Place names like "Pier 24", "Flx Biergarten" should NOT be treated as addresses
+  bool _looksLikeRealAddress(String text) {
+    final trimmed = text.trim();
+    
+    // Common street type suffixes (full and abbreviated)
+    final streetTypes = RegExp(
+      r'\b(street|st|avenue|ave|road|rd|boulevard|blvd|drive|dr|lane|ln|'
+      r'place|pl|court|ct|way|circle|cir|terrace|ter|parkway|pkwy|highway|hwy|'
+      r'trail|trl|loop|pass|crossing|xing|square|sq|alley|aly)\b',
+      caseSensitive: false,
+    );
+    
+    // Pattern: starts with a number followed by street name with street type
+    // Examples: "123 Main St", "1 Casino Way", "456 Oak Avenue"
+    final addressPattern = RegExp(
+      r'^\d+\s+\w+.*\b(street|st|avenue|ave|road|rd|boulevard|blvd|drive|dr|'
+      r'lane|ln|place|pl|court|ct|way|circle|cir|terrace|ter|parkway|pkwy|'
+      r'highway|hwy|trail|trl|loop|pass|crossing|xing|square|sq|alley|aly)\b',
+      caseSensitive: false,
+    );
+    
+    // Check for typical address pattern (number + street name + street type)
+    if (addressPattern.hasMatch(trimmed)) {
+      return true;
+    }
+    
+    // Check for patterns like "Corner of X and Y" which are address-like
+    if (trimmed.toLowerCase().startsWith('corner of')) {
+      return true;
+    }
+    
+    // Check for city, state, zip pattern (e.g., "Avalon, CA 90704")
+    final cityStateZipPattern = RegExp(
+      r',\s*[A-Z]{2}\s*\d{5}',
+      caseSensitive: false,
+    );
+    if (cityStateZipPattern.hasMatch(trimmed) && streetTypes.hasMatch(trimmed)) {
+      return true;
+    }
+    
+    // Check for "X Street" or "X Avenue" patterns (street names without numbers)
+    // but only if they contain common street suffixes
+    // This catches partial addresses like "Chimes Tower Rd" or "3rd St"
+    final partialAddressPattern = RegExp(
+      r'^(\d+\w*\s+)?\w+\s+(street|st|avenue|ave|road|rd|boulevard|blvd|'
+      r'drive|dr|lane|ln|place|pl|court|ct|way|circle|cir|terrace|ter|'
+      r'parkway|pkwy|highway|hwy|trail|trl|loop|pass|crossing|xing|'
+      r'square|sq|alley|aly)(\s|,|$)',
+      caseSensitive: false,
+    );
+    if (partialAddressPattern.hasMatch(trimmed)) {
+      return true;
+    }
+    
+    // NOT an address: things like "Pier 24", "Terminal 5", "Gate A4", "Hall 3"
+    // These are place names that happen to have numbers
+    final placeWithNumberPattern = RegExp(
+      r'^(pier|terminal|gate|hall|building|floor|suite|unit|room|level|dock|'
+      r'stage|hangar|warehouse|studio|lot|platform|station|track)\s*\d+',
+      caseSensitive: false,
+    );
+    if (placeWithNumberPattern.hasMatch(trimmed)) {
+      return false;  // This is a place name, not an address
+    }
+    
+    // If it's just a short text without any address indicators, it's probably a place name
+    // Examples: "Flx Biergarten", "Hotel Atwater", "Descanso Beach Club"
+    if (!streetTypes.hasMatch(trimmed) && 
+        !trimmed.contains(',') && 
+        !RegExp(r'^\d+\s').hasMatch(trimmed)) {
+      return false;  // No street types, no commas, doesn't start with number = place name
+    }
+    
+    return false;  // Default to treating as place name if uncertain
   }
 
   /// Use Gemini with Google Search grounding to find the actual place name
@@ -2281,7 +2429,19 @@ NOTE: "Pier 24" is a PLACE NAME (a restaurant), NOT an address for "Hotel Atwate
           final name = loc['name'] as String?;
           if (name != null && name.isNotEmpty) {
             final address = loc['address'] as String?;
-            result.add((name: name.trim(), address: address?.trim()));
+            
+            // POST-PROCESSING: Check if the "address" is actually a place name, not a real address
+            // Real addresses have patterns like "123 Main St" or "1 Casino Way, Avalon, CA"
+            // Place names like "Pier 24", "Flx Biergarten" should NOT be treated as addresses
+            if (address != null && !_looksLikeRealAddress(address)) {
+              print('   ⚠️ Address "$address" for "$name" looks like a place name, treating as separate location');
+              // Add the original location without address
+              result.add((name: name.trim(), address: null));
+              // Add the "address" as a separate location
+              result.add((name: address.trim(), address: null));
+            } else {
+              result.add((name: name.trim(), address: address?.trim()));
+            }
           }
         } else if (loc is String && loc.isNotEmpty) {
           // Fallback for simple string format
@@ -3217,6 +3377,19 @@ If you see @handles, convert them to business names:
         creatorHandle = creatorHandle.replaceAll('@', '').trim();
         if (creatorHandle.isEmpty) creatorHandle = null;
       }
+      
+      // Parse search query suggestion
+      String? searchQuerySuggestion = parsed['search_query_suggestion'] as String?;
+      if (searchQuerySuggestion != null) {
+        searchQuerySuggestion = searchQuerySuggestion.trim();
+        if (searchQuerySuggestion.isEmpty) searchQuerySuggestion = null;
+      }
+      
+      // Parse explicitly mentioned place names
+      final mentionedPlaceNames = (parsed['mentioned_place_names'] as List?)
+          ?.map((e) => e.toString().trim())
+          .where((p) => p.isNotEmpty)
+          .toList() ?? [];
 
       return ContentContext(
         contentType: parsed['content_type'] as String? ?? 'unknown',
@@ -3237,6 +3410,8 @@ If you see @handles, convert them to business names:
         extractedText: parsed['extracted_text'] as String?,
         contentCreatorHandle: creatorHandle,
         businessHandles: rawBusinessHandles,
+        searchQuerySuggestion: searchQuerySuggestion,
+        mentionedPlaceNames: mentionedPlaceNames,
       );
     } catch (e) {
       print('⚠️ GEMINI VISION: Error parsing context response: $e');
@@ -4048,6 +4223,15 @@ class ContentContext {
   /// These are NOT the content creator, but the actual place being recommended
   /// e.g., ["dolcelunacafe", "matchabuckets", "joes_pizza_nyc"]
   final List<String> businessHandles;
+  
+  /// A suggested Google search query to find the actual location name
+  /// e.g., "Del Mar Plaza San Diego" or "Blue Bottle Coffee Hayes Valley"
+  final String? searchQuerySuggestion;
+  
+  /// Explicitly mentioned place names in the content that should be searched for
+  /// These are proper nouns that refer to actual places (not handles)
+  /// e.g., ["Del Mar Plaza", "Griffith Observatory", "Pike Place Market"]
+  final List<String> mentionedPlaceNames;
 
   ContentContext({
     required this.contentType,
@@ -4060,6 +4244,8 @@ class ContentContext {
     this.extractedText,
     this.contentCreatorHandle,
     this.businessHandles = const [],
+    this.searchQuerySuggestion,
+    this.mentionedPlaceNames = const [],
   });
 
   @override
@@ -4073,6 +4259,8 @@ class ContentContext {
   exclusions: $exclusions,
   contentCreatorHandle: $contentCreatorHandle,
   businessHandles: $businessHandles,
+  searchQuerySuggestion: $searchQuerySuggestion,
+  mentionedPlaceNames: $mentionedPlaceNames,
   extractedText: ${extractedText != null && extractedText!.length > 100 ? '${extractedText!.substring(0, 100)}...' : extractedText}
 )''';
 

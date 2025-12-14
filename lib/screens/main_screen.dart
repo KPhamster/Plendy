@@ -265,7 +265,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
               ),
               const BottomNavigationBarItem(
                 icon: Icon(Icons.event_outlined),
-                label: 'Events',
+                label: 'Plans',
               ),
               BottomNavigationBarItem(
                 icon: IconNotificationDot(

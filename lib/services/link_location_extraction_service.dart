@@ -10,6 +10,12 @@ import 'gemini_service.dart';
 import 'google_maps_service.dart';
 import 'instagram_oembed_service.dart';
 
+/// Callback type for reporting extraction progress
+/// [current] is the current item being processed (1-indexed)
+/// [total] is the total number of items to process
+/// [phase] describes what phase of extraction is happening
+typedef ExtractionProgressCallback = void Function(int current, int total, String phase);
+
 /// Service for extracting location information from shared URLs
 /// 
 /// This service orchestrates multiple extraction strategies:
@@ -1483,15 +1489,18 @@ class LinkLocationExtractionService {
   /// 
   /// [imageFile] - The image file to analyze
   /// [userLocation] - Optional user location for better results
+  /// [onProgress] - Optional callback for progress updates during location verification
   /// No limit on number of locations - extracts all found locations
   Future<List<ExtractedLocationData>> extractLocationsFromImage(
     File imageFile, {
     LatLng? userLocation,
+    ExtractionProgressCallback? onProgress,
   }) async {
     print('📷 IMAGE EXTRACTION: Starting extraction from image...');
     
     try {
       // Step 1: Use Gemini Vision to extract location names/text from the image
+      onProgress?.call(0, 1, 'Analyzing image with AI...');
       final extractedNames = await _gemini.extractLocationNamesFromImageFile(imageFile);
 
       if (extractedNames.isEmpty) {
@@ -1509,8 +1518,12 @@ class LinkLocationExtractionService {
 
       // Step 2: Verify each location with Google Places API
       final results = <ExtractedLocationData>[];
+      final totalLocations = extractedNames.length;
+      var currentIndex = 0;
       
       for (final locationInfo in extractedNames) {
+        currentIndex++;
+        onProgress?.call(currentIndex, totalLocations, 'Verifying ${locationInfo.name}...');
         
         // Build search query from extracted info - USE REGION CONTEXT for disambiguation
         // This is CRITICAL: "Tacoma" + "Washington" → Tacoma, WA (correct)
@@ -1853,16 +1866,19 @@ class LinkLocationExtractionService {
   /// 
   /// [images] - List of image data (bytes and mimeType)
   /// [userLocation] - Optional user location for better Places API results
+  /// [onProgress] - Optional callback for progress updates during location verification
   /// 
   /// Returns extracted locations with combined region context
   Future<({List<ExtractedLocationData> locations, String? regionContext})> extractLocationsFromMultipleImages(
     List<({Uint8List bytes, String mimeType})> images, {
     LatLng? userLocation,
+    ExtractionProgressCallback? onProgress,
   }) async {
     print('📷 MULTI-IMAGE EXTRACTION: Analyzing ${images.length} images together...');
 
     try {
       // Step 1: Use Gemini to analyze all images together
+      onProgress?.call(0, 1, 'Analyzing images with AI...');
       final geminiResult = await _gemini.extractLocationsFromMultipleImages(images);
       
       if (geminiResult.locations.isEmpty) {
@@ -1878,8 +1894,12 @@ class LinkLocationExtractionService {
       // Step 2: Verify with Places API using "broader first, then filter" strategy
       // This approach gets more candidates by starting broad, then uses specific details to rank them
       final results = <ExtractedLocationData>[];
+      final totalLocations = geminiResult.locations.length;
+      var currentIndex = 0;
 
       for (final locationInfo in geminiResult.locations) {
+        currentIndex++;
+        onProgress?.call(currentIndex, totalLocations, 'Verifying ${locationInfo.name}...');
         print('📷 MULTI-IMAGE EXTRACTION: Verifying "${locationInfo.name}" with Places API...');
         if (locationInfo.address != null && locationInfo.address!.isNotEmpty) {
           print('📷 MULTI-IMAGE EXTRACTION: Using grounded address for scoring: "${locationInfo.address}"');
@@ -2225,6 +2245,7 @@ class LinkLocationExtractionService {
   /// [regionContextHint] - Optional region context from previous screenshots in the same scan.
   /// This is used when the current image doesn't have its own region context but we know
   /// from other images in the same content what region we're looking at.
+  /// [onProgress] - Optional callback for progress updates during location verification
   ///
   /// Returns a tuple-like result: the list of locations AND the detected region context.
   /// The region context can be used for subsequent screenshot analysis.
@@ -2233,6 +2254,7 @@ class LinkLocationExtractionService {
     String mimeType = 'image/jpeg',
     LatLng? userLocation,
     String? regionContextHint,
+    ExtractionProgressCallback? onProgress,
   }) async {
     print('📷 IMAGE EXTRACTION: Starting extraction from image bytes...');
     if (regionContextHint != null) {
@@ -2241,6 +2263,7 @@ class LinkLocationExtractionService {
     
     try {
       // Step 1: Use Gemini Vision to extract location names
+      onProgress?.call(0, 1, 'Analyzing image with AI...');
       final extractedNames = await _gemini.extractLocationNamesFromImage(
         imageBytes,
         mimeType: mimeType,
@@ -2267,8 +2290,12 @@ class LinkLocationExtractionService {
 
       // Step 2: Verify with Places API
       final results = <ExtractedLocationData>[];
+      final totalLocations = extractedNames.length;
+      var currentIndex = 0;
       
       for (final locationInfo in extractedNames) {
+        currentIndex++;
+        onProgress?.call(currentIndex, totalLocations, 'Verifying ${locationInfo.name}...');
         
         // Strategy: Try multiple search queries to get the best result
         // 1. First try name + type + city + region (for restaurants/food)

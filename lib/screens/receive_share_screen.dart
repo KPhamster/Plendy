@@ -245,6 +245,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   
   // Track if AI scan is running
   bool _isAiScanInProgress = false;
+  // Track scan progress (0.0 to 1.0)
+  double _scanProgress = 0.0;
   // Store pending scan results to apply when app returns to foreground
   List<ExtractedLocationData>? _pendingScanResults;
   String? _pendingScanSingleMessage; // Toast message for single result
@@ -418,73 +420,121 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                 // AI Location Extraction loading indicator
                 if (_isExtractingLocation) ...[
                   const SizedBox(height: 12),
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: Colors.blue[50],
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.blue[200]!),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            valueColor: AlwaysStoppedAnimation<Color>(
-                                Colors.blue[700]!),
-                          ),
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        padding:
+                            const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: Colors.blue[50],
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.blue[200]!),
                         ),
-                        const SizedBox(width: 10),
-                        Text(
-                          '🤖 AI finding locations...',
-                          style: TextStyle(
-                            color: Colors.blue[800],
-                            fontWeight: FontWeight.w500,
-                            fontSize: 13,
-                          ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation<Color>(
+                                    Colors.blue[700]!),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Text(
+                              '🤖 AI finding locations...',
+                              style: TextStyle(
+                                color: Colors.blue[800],
+                                fontWeight: FontWeight.w500,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ],
                         ),
-                      ],
-                    ),
+                      ),
+                      const SizedBox(height: 8),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(4),
+                        child: TweenAnimationBuilder<double>(
+                          tween: Tween<double>(begin: 0, end: _scanProgress),
+                          duration: const Duration(milliseconds: 300),
+                          curve: Curves.easeInOut,
+                          builder: (context, value, _) {
+                            return LinearProgressIndicator(
+                              value: value,
+                              minHeight: 4,
+                              backgroundColor: Theme.of(context).colorScheme.primary.withOpacity(0.2),
+                              valueColor: AlwaysStoppedAnimation<Color>(
+                                Theme.of(context).colorScheme.primary,
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ],
                   ),
                 ],
                 // Screenshot processing loading indicator
                 if (_isProcessingScreenshot) ...[
                   const SizedBox(height: 12),
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: Colors.purple[50],
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.purple[200]!),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            valueColor: AlwaysStoppedAnimation<Color>(
-                                Colors.purple[700]!),
-                          ),
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        padding:
+                            const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: Colors.purple[50],
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.purple[200]!),
                         ),
-                        const SizedBox(width: 10),
-                        Text(
-                          '📷 Plendy AI analyzing...',
-                          style: TextStyle(
-                            color: Colors.purple[800],
-                            fontWeight: FontWeight.w500,
-                            fontSize: 13,
-                          ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation<Color>(
+                                    Colors.purple[700]!),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Text(
+                              '📷 Plendy AI analyzing...',
+                              style: TextStyle(
+                                color: Colors.purple[800],
+                                fontWeight: FontWeight.w500,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ],
                         ),
-                      ],
-                    ),
+                      ),
+                      const SizedBox(height: 8),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(4),
+                        child: TweenAnimationBuilder<double>(
+                          tween: Tween<double>(begin: 0, end: _scanProgress),
+                          duration: const Duration(milliseconds: 300),
+                          curve: Curves.easeInOut,
+                          builder: (context, value, _) {
+                            return LinearProgressIndicator(
+                              value: value,
+                              minHeight: 4,
+                              backgroundColor: Theme.of(context).colorScheme.primary.withOpacity(0.2),
+                              valueColor: AlwaysStoppedAnimation<Color>(
+                                Theme.of(context).colorScheme.primary,
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ],
@@ -493,6 +543,15 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         );
       },
     );
+  }
+
+  /// Helper method to update scan progress
+  void _updateScanProgress(double progress) {
+    if (mounted) {
+      setState(() {
+        _scanProgress = progress.clamp(0.0, 1.0);
+      });
+    }
   }
 
   /// Build the screenshot upload button widget
@@ -858,6 +917,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     setState(() {
       _isProcessingScreenshot = true;
       _isAiScanInProgress = true;
+      _scanProgress = 0.0;
     });
 
     // Enable wakelock to prevent screen from sleeping during AI scan
@@ -867,10 +927,12 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     await _foregroundScanService.startScanService();
 
     try {
+      _updateScanProgress(0.1);
       print('📷 SCAN PREVIEW: Capturing WebView content...');
 
       // Try to capture the WebView screenshot from any active preview
       Uint8List? screenshotBytes = await _tryCaptureaActiveWebView();
+      _updateScanProgress(0.25);
 
       if (screenshotBytes == null || screenshotBytes.isEmpty) {
         Fluttertoast.showToast(
@@ -884,6 +946,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
       print(
           '📷 SCAN PREVIEW: Captured ${screenshotBytes.length} bytes, sending to AI...');
+      _updateScanProgress(0.35);
 
       // Get user location for better results
       LatLng? userLocation;
@@ -895,12 +958,23 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
 
       // Process the captured image
+      _updateScanProgress(0.45);
       final result = await _locationExtractor.extractLocationsFromImageBytes(
         screenshotBytes,
         mimeType: 'image/png',
         userLocation: userLocation,
+        onProgress: (current, total, phase) {
+          // Map progress from 0.45 to 0.85 range
+          if (current == 0) {
+            _updateScanProgress(0.50); // AI analysis
+          } else {
+            final progress = 0.50 + (0.35 * current / total);
+            _updateScanProgress(progress);
+          }
+        },
       );
       final locations = result.locations;
+      _updateScanProgress(0.85);
 
       // Check if mounted - if not, store results to apply when app resumes
       if (!mounted) {
@@ -926,27 +1000,23 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
 
       print('✅ SCAN PREVIEW: Found ${locations.length} location(s)');
+      _updateScanProgress(0.95);
 
       // Heavy vibration to notify user scan completed
       _heavyVibration();
 
       final provider = context.read<ReceiveShareProvider>();
 
-      if (locations.length == 1) {
-        await _applySingleExtractedLocation(locations.first, provider);
-        Fluttertoast.showToast(
-          msg: '📷 Found: ${locations.first.name}',
-          toastLength: Toast.LENGTH_SHORT,
-          backgroundColor: Colors.green,
-        );
-      } else {
-        await _handleMultipleExtractedLocations(locations, provider);
-      }
+      // Always show the location selection dialog, even for single results
+      // This lets users verify the location is correct before saving
+      await _handleMultipleExtractedLocations(locations, provider);
+      _updateScanProgress(1.0);
     } catch (e) {
       print('❌ SCAN PREVIEW ERROR: $e');
       if (mounted) {
         Fluttertoast.showToast(
-          msg: 'Error scanning preview',
+          msg: '❌ Scan failed. Please try scanning again.',
+          toastLength: Toast.LENGTH_LONG,
           backgroundColor: Colors.red,
         );
       }
@@ -958,6 +1028,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         setState(() {
           _isProcessingScreenshot = false;
           _isAiScanInProgress = false;
+          _scanProgress = 0.0;
         });
       }
     }
@@ -971,6 +1042,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     setState(() {
       _isProcessingScreenshot = true;
       _isAiScanInProgress = true;
+      _scanProgress = 0.0;
     });
 
     // Enable wakelock to prevent screen from sleeping during AI scan
@@ -980,6 +1052,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     await _foregroundScanService.startScanService();
 
     try {
+      _updateScanProgress(0.1);
       print('📄 SCAN PAGE: Extracting page content...');
 
       // Get the URL for context
@@ -989,6 +1062,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
       // Try to extract page content from the active WebView
       String? pageContent = await _tryExtractPageContent();
+      _updateScanProgress(0.25);
 
       if (pageContent == null || pageContent.isEmpty) {
         Fluttertoast.showToast(
@@ -1000,6 +1074,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
 
       print('📄 SCAN PAGE: Extracted ${pageContent.length} characters, sending to Gemini...');
+      _updateScanProgress(0.35);
 
       // Get user location for better results
       LatLng? userLocation;
@@ -1011,12 +1086,14 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
 
       // Process with Gemini
+      _updateScanProgress(0.45);
       final geminiService = GeminiService();
       final result = await geminiService.extractLocationsFromWebPage(
         pageContent,
         pageUrl: url,
         userLocation: userLocation,
       );
+      _updateScanProgress(0.75);
 
       // Convert Gemini results to ExtractedLocationData first (doesn't need mounted)
       List<ExtractedLocationData> locations = [];
@@ -1075,27 +1152,22 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         return;
       }
 
+      _updateScanProgress(0.9);
+
       // Heavy vibration to notify user scan completed
       _heavyVibration();
 
       final provider = context.read<ReceiveShareProvider>();
 
-      if (locations.length == 1) {
-        await _applySingleExtractedLocation(locations.first, provider);
-        Fluttertoast.showToast(
-          msg: '📄 Found: ${locations.first.name}',
-          toastLength: Toast.LENGTH_SHORT,
-          backgroundColor: Colors.green,
-        );
-      } else {
-        // Show selection dialog for multiple locations
-        await _handleMultipleExtractedLocations(locations, provider);
-      }
+      // Always show the location selection dialog, even for single results
+      await _handleMultipleExtractedLocations(locations, provider);
+      _updateScanProgress(1.0);
     } catch (e) {
       print('❌ SCAN PAGE ERROR: $e');
       if (mounted) {
         Fluttertoast.showToast(
-          msg: 'Error scanning page content',
+          msg: '❌ Scan failed. Please try scanning again.',
+          toastLength: Toast.LENGTH_LONG,
           backgroundColor: Colors.red,
         );
       }
@@ -1107,6 +1179,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         setState(() {
           _isProcessingScreenshot = false;
           _isAiScanInProgress = false;
+          _scanProgress = 0.0;
         });
       }
     }
@@ -1122,6 +1195,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     setState(() {
       _isProcessingScreenshot = true;
       _isAiScanInProgress = true;
+      _scanProgress = 0.0;
     });
 
     // Enable wakelock to prevent screen from sleeping during AI scan
@@ -1131,6 +1205,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     await _foregroundScanService.startScanService();
 
     try {
+      _updateScanProgress(0.1);
       print('🔄 COMBINED SCAN: Starting both screenshot and text extraction...');
 
       final url = _currentSharedFiles.isNotEmpty
@@ -1146,11 +1221,28 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         );
       }
 
+      _updateScanProgress(0.2);
+
       // Run both extraction methods in parallel
+      // The screenshot extraction reports per-location progress
       final results = await Future.wait([
-        _extractLocationsFromScreenshot(userLocation),
+        _extractLocationsFromScreenshot(
+          userLocation,
+          onProgress: (current, total, phase) {
+            // Map progress from 0.2 to 0.75 range
+            // Phase 0 = AI analysis (0.2-0.35), Phase 1+ = verifying locations (0.35-0.75)
+            if (current == 0) {
+              _updateScanProgress(0.25); // AI analysis starting
+            } else {
+              // Location verification: spread 0.35-0.75 across all locations
+              final progress = 0.35 + (0.40 * current / total);
+              _updateScanProgress(progress);
+            }
+          },
+        ),
         _extractLocationsFromPageText(url, userLocation),
       ]);
+      _updateScanProgress(0.75);
 
       final screenshotLocations = results[0];
       final textLocations = results[1];
@@ -1162,6 +1254,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       // Prefer text extraction (grounded) results over screenshot (OCR)
       // Text extraction results have Maps grounding and are more accurate
       final mergedLocations = _mergeExtractedLocations(textLocations, screenshotLocations);
+      _updateScanProgress(0.85);
       
       print('🔄 COMBINED SCAN: Merged to ${mergedLocations.length} unique location(s)');
 
@@ -1187,6 +1280,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         return;
       }
 
+      _updateScanProgress(0.9);
+
       // Heavy vibration to notify user scan completed
       _heavyVibration();
 
@@ -1202,11 +1297,13 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       } else {
         await _handleMultipleExtractedLocations(mergedLocations, provider);
       }
+      _updateScanProgress(1.0);
     } catch (e) {
       print('❌ COMBINED SCAN ERROR: $e');
       if (mounted) {
         Fluttertoast.showToast(
-          msg: 'Error scanning preview',
+          msg: '❌ Scan failed. Please try scanning again.',
+          toastLength: Toast.LENGTH_LONG,
           backgroundColor: Colors.red,
         );
       }
@@ -1218,6 +1315,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         setState(() {
           _isProcessingScreenshot = false;
           _isAiScanInProgress = false;
+          _scanProgress = 0.0;
         });
       }
     }
@@ -1225,7 +1323,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
   /// Extract locations from screenshots using OCR
   /// For Instagram, captures BOTH native screen AND WebView screenshots and analyzes them TOGETHER
-  Future<List<ExtractedLocationData>> _extractLocationsFromScreenshot(LatLng? userLocation) async {
+  /// [onProgress] - Optional callback for per-location progress updates (current, total, phase)
+  Future<List<ExtractedLocationData>> _extractLocationsFromScreenshot(
+    LatLng? userLocation, {
+    void Function(int current, int total, String phase)? onProgress,
+  }) async {
     try {
       final url = _currentSharedFiles.isNotEmpty
           ? _extractFirstUrl(_currentSharedFiles.first.path)
@@ -1271,6 +1373,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         final result = await _locationExtractor.extractLocationsFromMultipleImages(
           imageList,
           userLocation: userLocation,
+          onProgress: onProgress,
         );
         
         print('📷 COMBINED SCAN: Multi-image analysis found ${result.locations.length} location(s)');
@@ -1289,6 +1392,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         screenshots.first,
         mimeType: 'image/png',
         userLocation: userLocation,
+        onProgress: onProgress,
       );
       
       print('📷 COMBINED SCAN: Single-image analysis found ${result.locations.length} location(s)');
@@ -1855,6 +1959,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     setState(() {
       _isProcessingScreenshot = true;
       _isAiScanInProgress = true;
+      _scanProgress = 0.0;
     });
 
     // Enable wakelock to prevent screen from sleeping during AI scan
@@ -1864,6 +1969,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     await _foregroundScanService.startScanService();
 
     try {
+      _updateScanProgress(0.1);
+      
       // Get user location for better results (optional)
       LatLng? userLocation;
       if (_currentUserPosition != null) {
@@ -1873,13 +1980,25 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         );
       }
 
+      _updateScanProgress(0.2);
       print('📷 SCREENSHOT: Starting AI location extraction from image...');
 
       // Extract locations using Gemini Vision
+      _updateScanProgress(0.35);
       final locations = await _locationExtractor.extractLocationsFromImage(
         imageFile,
         userLocation: userLocation,
+        onProgress: (current, total, phase) {
+          // Map progress from 0.35 to 0.8 range
+          if (current == 0) {
+            _updateScanProgress(0.40); // AI analysis
+          } else {
+            final progress = 0.40 + (0.40 * current / total);
+            _updateScanProgress(progress);
+          }
+        },
       );
+      _updateScanProgress(0.8);
 
       // Check if mounted - if not, store results to apply when app resumes
       if (!mounted) {
@@ -1905,30 +2024,22 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
 
       print('✅ SCREENSHOT: Found ${locations.length} location(s)');
+      _updateScanProgress(0.9);
 
       // Heavy vibration to notify user scan completed
       _heavyVibration();
 
       final provider = context.read<ReceiveShareProvider>();
 
-      if (locations.length == 1) {
-        // Single location: Update first card or create if none exists
-        await _applySingleExtractedLocation(locations.first, provider);
-
-        Fluttertoast.showToast(
-          msg: '📷 Found: ${locations.first.name}',
-          toastLength: Toast.LENGTH_SHORT,
-          backgroundColor: Colors.green,
-        );
-      } else {
-        // Multiple locations: Ask user before creating multiple cards
-        await _handleMultipleExtractedLocations(locations, provider);
-      }
+      // Always show the location selection dialog, even for single results
+      await _handleMultipleExtractedLocations(locations, provider);
+      _updateScanProgress(1.0);
     } catch (e) {
       print('❌ SCREENSHOT ERROR: $e');
       if (mounted) {
         Fluttertoast.showToast(
-          msg: 'Error processing screenshot',
+          msg: '❌ Scan failed. Please try scanning again.',
+          toastLength: Toast.LENGTH_LONG,
           backgroundColor: Colors.red,
         );
       }
@@ -1940,6 +2051,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         setState(() {
           _isProcessingScreenshot = false;
           _isAiScanInProgress = false;
+          _scanProgress = 0.0;
         });
       }
     }
@@ -2597,6 +2709,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     setState(() {
       _isExtractingLocation = true;
       _isAiScanInProgress = true;
+      _scanProgress = 0.0;
     });
 
     // Enable wakelock to prevent screen from sleeping during AI scan
@@ -2606,6 +2719,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     await _foregroundScanService.startScanService();
 
     try {
+      _updateScanProgress(0.1);
+      
       // Get user location for better results (optional)
       LatLng? userLocation;
       if (_currentUserPosition != null) {
@@ -2615,16 +2730,19 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         );
       }
 
+      _updateScanProgress(0.2);
       print('🤖 AI EXTRACTION: Starting location extraction from URL...');
 
       // Extract locations using Gemini + Maps grounding
       // YouTube videos can have many locations (e.g., "Top 10" videos) - no limit
       final isYouTube = _isYouTubeUrl(url);
+      _updateScanProgress(0.35);
       final locations = await _locationExtractor.extractLocationsFromSharedLink(
         url,
         userLocation: userLocation,
         maxLocations: isYouTube ? null : 5, // No limit for YouTube
       );
+      _updateScanProgress(0.8);
 
       // Check if mounted - if not, store results to apply when app resumes
       if (!mounted) {
@@ -2654,27 +2772,25 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
 
       print('✅ AI EXTRACTION: Found ${locations.length} location(s)');
+      _updateScanProgress(0.9);
 
       // Heavy vibration to notify user scan completed
       _heavyVibration();
 
       final provider = context.read<ReceiveShareProvider>();
 
-      if (locations.length == 1) {
-        // Single location: Update first card or create if none exists
-        await _applySingleExtractedLocation(locations.first, provider);
-
-        Fluttertoast.showToast(
-          msg: '📍 Found: ${locations.first.name}',
-          toastLength: Toast.LENGTH_SHORT,
-          backgroundColor: Colors.green,
-        );
-      } else {
-        // Multiple locations: Ask user before creating multiple cards
-        await _handleMultipleExtractedLocations(locations, provider);
-      }
+      // Always show the location selection dialog, even for single results
+      await _handleMultipleExtractedLocations(locations, provider);
+      _updateScanProgress(1.0);
     } catch (e) {
       print('❌ AI EXTRACTION ERROR: $e');
+      if (mounted) {
+        Fluttertoast.showToast(
+          msg: '❌ Scan failed. Please try scanning again.',
+          toastLength: Toast.LENGTH_LONG,
+          backgroundColor: Colors.red,
+        );
+      }
     } finally {
       // Disable wakelock and stop foreground service
       WakelockPlus.disable();
@@ -2683,6 +2799,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         setState(() {
           _isExtractingLocation = false;
           _isAiScanInProgress = false;
+          _scanProgress = 0.0;
         });
       }
     }
@@ -2719,6 +2836,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     setState(() {
       _isExtractingLocation = true;
       _isAiScanInProgress = true;
+      _scanProgress = 0.0;
     });
 
     // Enable wakelock to prevent screen from sleeping during AI scan
@@ -2728,6 +2846,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     await _foregroundScanService.startScanService();
 
     try {
+      _updateScanProgress(0.1);
+      
       // Get user location for better results (optional)
       LatLng? userLocation;
       if (_currentUserPosition != null) {
@@ -2737,6 +2857,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         );
       }
 
+      _updateScanProgress(0.25);
+      
       // Extract locations from the TikTok caption
       final locations = await _locationExtractor.extractLocationsFromCaption(
         data.title ?? '',
@@ -2746,6 +2868,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         userLocation: userLocation,
         maxLocations: 5,
       );
+      _updateScanProgress(0.8);
 
       // Check if mounted - if not, store results to apply when app resumes
       if (!mounted) {
@@ -2771,27 +2894,25 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
 
       print('✅ TIKTOK AUTO-EXTRACT: Found ${locations.length} location(s)');
+      _updateScanProgress(0.9);
 
       // Heavy vibration to notify user scan completed
       _heavyVibration();
 
       final provider = context.read<ReceiveShareProvider>();
 
-      if (locations.length == 1) {
-        // Single location: Update first card or create if none exists
-        await _applySingleExtractedLocation(locations.first, provider);
-
-        Fluttertoast.showToast(
-          msg: '📍 Found: ${locations.first.name}',
-          toastLength: Toast.LENGTH_SHORT,
-          backgroundColor: Colors.green,
-        );
-      } else {
-        // Multiple locations: Ask user before creating multiple cards
-        await _handleMultipleExtractedLocations(locations, provider);
-      }
+      // Always show the location selection dialog, even for single results
+      await _handleMultipleExtractedLocations(locations, provider);
+      _updateScanProgress(1.0);
     } catch (e) {
       print('❌ TIKTOK AUTO-EXTRACT ERROR: $e');
+      if (mounted) {
+        Fluttertoast.showToast(
+          msg: '❌ Scan failed. Please try scanning again.',
+          toastLength: Toast.LENGTH_LONG,
+          backgroundColor: Colors.red,
+        );
+      }
     } finally {
       // Disable wakelock and stop foreground service
       WakelockPlus.disable();
@@ -2800,6 +2921,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         setState(() {
           _isExtractingLocation = false;
           _isAiScanInProgress = false;
+          _scanProgress = 0.0;
         });
       }
     }
@@ -2827,6 +2949,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     setState(() {
       _isExtractingLocation = true;
       _isAiScanInProgress = true;
+      _scanProgress = 0.0;
     });
 
     // Enable wakelock to prevent screen from sleeping during AI scan
@@ -2836,6 +2959,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     await _foregroundScanService.startScanService();
 
     try {
+      _updateScanProgress(0.1);
+      
       // Get user location for better results (optional)
       LatLng? userLocation;
       if (_currentUserPosition != null) {
@@ -2845,6 +2970,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         );
       }
 
+      _updateScanProgress(0.2);
+      
       // Try to extract page content from the Facebook WebView
       String? pageContent;
       final previewKey = _facebookPreviewKeys[url];
@@ -2855,6 +2982,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
           print('⚠️ FACEBOOK AUTO-EXTRACT: Content extraction failed: $e');
         }
       }
+      _updateScanProgress(0.35);
 
       if (pageContent == null || pageContent.isEmpty || pageContent.length < 20) {
         print('⚠️ FACEBOOK AUTO-EXTRACT: No usable content extracted');
@@ -2870,6 +2998,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
       print('📘 FACEBOOK AUTO-EXTRACT: Extracted ${pageContent.length} characters');
       print('📘 FACEBOOK AUTO-EXTRACT: Content preview: ${pageContent.substring(0, pageContent.length > 200 ? 200 : pageContent.length)}...');
+      _updateScanProgress(0.45);
 
       // Use LinkLocationExtractionService (same as TikTok) for proper grounding with Places API
       final locations = await _locationExtractor.extractLocationsFromCaption(
@@ -2879,6 +3008,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         userLocation: userLocation,
         maxLocations: 5,
       );
+      _updateScanProgress(0.8);
 
       // Check if mounted - if not, store results to apply when app resumes
       if (!mounted) {
@@ -2903,24 +3033,25 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       }
 
       print('✅ FACEBOOK AUTO-EXTRACT: Found ${locations.length} location(s)');
+      _updateScanProgress(0.9);
 
       // Heavy vibration to notify user scan completed
       _heavyVibration();
 
       final provider = context.read<ReceiveShareProvider>();
 
-      if (locations.length == 1) {
-        await _applySingleExtractedLocation(locations.first, provider);
-        Fluttertoast.showToast(
-          msg: '📍 Found: ${locations.first.name}',
-          toastLength: Toast.LENGTH_SHORT,
-          backgroundColor: Colors.green,
-        );
-      } else {
-        await _handleMultipleExtractedLocations(locations, provider);
-      }
+      // Always show the location selection dialog, even for single results
+      await _handleMultipleExtractedLocations(locations, provider);
+      _updateScanProgress(1.0);
     } catch (e) {
       print('❌ FACEBOOK AUTO-EXTRACT ERROR: $e');
+      if (mounted) {
+        Fluttertoast.showToast(
+          msg: '❌ Scan failed. Please try scanning again.',
+          toastLength: Toast.LENGTH_LONG,
+          backgroundColor: Colors.red,
+        );
+      }
     } finally {
       // Disable wakelock and stop foreground service
       WakelockPlus.disable();
@@ -2929,6 +3060,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         setState(() {
           _isExtractingLocation = false;
           _isAiScanInProgress = false;
+          _scanProgress = 0.0;
         });
       }
     }
@@ -3693,7 +3825,6 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     if (!mounted) return;
 
     final results = _pendingScanResults!;
-    final singleMessage = _pendingScanSingleMessage;
     
     // Clear pending results
     _pendingScanResults = null;
@@ -3707,25 +3838,23 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     try {
       final provider = context.read<ReceiveShareProvider>();
 
-      if (results.length == 1) {
-        await _applySingleExtractedLocation(results.first, provider);
-        if (singleMessage != null) {
-          Fluttertoast.showToast(
-            msg: singleMessage,
-            toastLength: Toast.LENGTH_SHORT,
-            backgroundColor: Colors.green,
-          );
-        }
-      } else {
-        await _handleMultipleExtractedLocations(results, provider);
-      }
+      // Always show the location selection dialog, even for single results
+      await _handleMultipleExtractedLocations(results, provider);
     } catch (e) {
       print('❌ SCAN RESUME ERROR: $e');
+      if (mounted) {
+        Fluttertoast.showToast(
+          msg: '❌ Scan failed. Please try scanning again.',
+          toastLength: Toast.LENGTH_LONG,
+          backgroundColor: Colors.red,
+        );
+      }
     } finally {
       if (mounted) {
         setState(() {
           _isProcessingScreenshot = false;
           _isAiScanInProgress = false;
+          _scanProgress = 0.0;
         });
       }
       // Disable wakelock and stop foreground service after applying results
@@ -7896,7 +8025,9 @@ class _MultiLocationSelectionDialogState
   late Set<int> _selectedIndices;
   
   /// Confidence threshold - locations below this should be verified by user
-  static const double _lowConfidenceThreshold = 0.9;
+  /// Note: Good matches from extraction service get 0.85 confidence, so threshold
+  /// must be lower to only flag truly uncertain matches (AI reranked at ~60%)
+  static const double _lowConfidenceThreshold = 0.80;
 
   @override
   void initState() {
@@ -7961,7 +8092,9 @@ class _MultiLocationSelectionDialogState
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    '${widget.locations.length} Locations Found',
+                    widget.locations.length == 1 
+                        ? '1 Location Found' 
+                        : '${widget.locations.length} Locations Found',
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
@@ -8094,11 +8227,12 @@ class _MultiLocationSelectionDialogState
                         child: Container(
                           padding: const EdgeInsets.symmetric(vertical: 4),
                           decoration: BoxDecoration(
+                            // Low confidence takes priority for background color
                             color: isSelected
-                                ? (isDuplicate
-                                    ? Colors.orange.withOpacity(0.08)
-                                    : isLowConfidence 
-                                        ? Colors.red.withOpacity(0.05)
+                                ? (isLowConfidence
+                                    ? Colors.red.withOpacity(0.05)
+                                    : isDuplicate 
+                                        ? Colors.orange.withOpacity(0.08)
                                         : Colors.blue.withOpacity(0.05))
                                 : null,
                             borderRadius: BorderRadius.circular(8),
@@ -8111,23 +8245,25 @@ class _MultiLocationSelectionDialogState
                               Checkbox(
                                 value: isSelected,
                                 onChanged: (_) => _toggleLocation(index),
-                                activeColor: isDuplicate 
-                                    ? Colors.orange 
-                                    : isLowConfidence 
-                                        ? Colors.red 
+                                // Low confidence takes priority (even if duplicate)
+                                activeColor: isLowConfidence 
+                                    ? Colors.red 
+                                    : isDuplicate
+                                        ? Colors.orange 
                                         : Colors.blue,
                               ),
                               Icon(
-                                isDuplicate 
-                                    ? Icons.bookmark 
-                                    : isLowConfidence 
-                                        ? Icons.help_outline
+                                // Low confidence takes priority for icon (even if duplicate)
+                                isLowConfidence
+                                    ? Icons.help_outline
+                                    : isDuplicate 
+                                        ? Icons.bookmark 
                                         : Icons.place,
                                 size: 18,
-                                color: isDuplicate
-                                    ? Colors.orange[600]
-                                    : isLowConfidence
-                                        ? Colors.red[600]
+                                color: isLowConfidence
+                                    ? Colors.red[600]
+                                    : isDuplicate
+                                        ? Colors.orange[600]
                                         : Colors.grey,
                               ),
                               const SizedBox(width: 8),
@@ -8170,7 +8306,8 @@ class _MultiLocationSelectionDialogState
                                               ),
                                             ),
                                           ),
-                                        if (isLowConfidence && !isDuplicate)
+                                        // Show verify badge for low confidence locations (even if also a duplicate)
+                                        if (isLowConfidence)
                                           Container(
                                             margin:
                                                 const EdgeInsets.only(left: 4),
