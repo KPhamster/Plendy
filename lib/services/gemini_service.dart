@@ -1195,6 +1195,7 @@ Output:
   bool _isMultiLocationContent(ContentContext context) {
     final purposeLower = context.purpose.toLowerCase();
     final extractedTextLower = context.extractedText?.toLowerCase() ?? '';
+    final extractedText = context.extractedText ?? '';
     
     // Check 1: Purpose indicates multiple locations
     final multiLocationPurposeKeywords = [
@@ -1205,6 +1206,7 @@ Output:
       'best ',
       'roundup',
       'recommendations',
+      'recommending', // Added: verb form (e.g., "Recommending unique speakeasies")
       'places to',
       'things to do',
       'must visit',
@@ -1217,6 +1219,7 @@ Output:
       'where to go',
       'spots in',
       'spots to',
+      'unique ', // Added: often used in multi-location posts like "unique speakeasies"
     ];
     
     for (final keyword in multiLocationPurposeKeywords) {
@@ -1232,18 +1235,42 @@ Output:
       return true;
     }
     
-    // Check 3: Extracted text contains day-by-day or numbered patterns
+    // Check 3: Multiple business handles (2+ strongly indicates multi-location content)
+    if (context.businessHandles.length >= 2) {
+      print('   🔍 Multi-location detected: ${context.businessHandles.length} business handles found');
+      return true;
+    }
+    
+    // Check 4: Multiple address patterns in text (📍 emoji or explicit addresses)
+    final addressPinCount = '📍'.allMatches(extractedText).length;
+    if (addressPinCount >= 2) {
+      print('   🔍 Multi-location detected: $addressPinCount address pin emojis found');
+      return true;
+    }
+    
+    // Also check for multiple street address patterns (e.g., "123 Main St")
+    final addressPattern = RegExp(r'\d+\s+[A-Za-z]+\s+(St|Street|Ave|Avenue|Blvd|Boulevard|Dr|Drive|Rd|Road|Way|Ln|Lane|Ct|Court)\b', caseSensitive: false);
+    final addressMatches = addressPattern.allMatches(extractedText).length;
+    if (addressMatches >= 2) {
+      print('   🔍 Multi-location detected: $addressMatches street addresses found in text');
+      return true;
+    }
+    
+    // Check 5: Extracted text contains day-by-day or numbered patterns
     final dayPatterns = [
       RegExp(r'day\s*[1-9]', caseSensitive: false),
       RegExp(r'day\s*one|day\s*two|day\s*three', caseSensitive: false),
       RegExp(r'stop\s*[1-9]', caseSensitive: false),
       RegExp(r'#[1-9]\s*[:-]', caseSensitive: false),
       RegExp(r'\b[1-9]\.\s+[A-Z]', caseSensitive: false), // "1. Restaurant Name"
+      RegExp(r'\b[1-9]\.\)\s*@', caseSensitive: false), // "1.) @handle" format
+      RegExp(r'\b[1-9]\)\s*@', caseSensitive: false), // "1) @handle" format
+      RegExp(r'\b[1-9]\.\)\s*[A-Z]', caseSensitive: false), // "1.) Name" format
     ];
     
     int dayMatches = 0;
     for (final pattern in dayPatterns) {
-      if (pattern.hasMatch(extractedTextLower)) {
+      if (pattern.hasMatch(extractedText)) {
         dayMatches++;
       }
     }
@@ -1253,7 +1280,7 @@ Output:
       return true;
     }
     
-    // Check 4: Multiple meal mentions (breakfast, lunch, dinner pattern)
+    // Check 6: Multiple meal mentions (breakfast, lunch, dinner pattern)
     final mealKeywords = ['breakfast', 'lunch', 'dinner', 'brunch'];
     int mealCount = 0;
     for (final meal in mealKeywords) {
@@ -1267,9 +1294,9 @@ Output:
       return true;
     }
     
-    // Check 5: Multiple "visit" or "check out" phrases
+    // Check 7: Multiple "visit" or "check out" phrases
     final visitPattern = RegExp(r'visit\s+(?:the\s+)?[A-Z]|check\s+out\s+(?:the\s+)?[A-Z]', caseSensitive: false);
-    final visitMatches = visitPattern.allMatches(context.extractedText ?? '').length;
+    final visitMatches = visitPattern.allMatches(extractedText).length;
     
     if (visitMatches >= 2) {
       print('   🔍 Multi-location detected: multiple "visit/check out" mentions ($visitMatches)');
@@ -1880,6 +1907,33 @@ If you cannot verify the place exists, return:
     ContentContext context,
   ) async {
     try {
+      // Extract any addresses mentioned in the text - these are CRITICAL for finding the right location
+      final extractedAddresses = _extractAddressesFromText(context.extractedText);
+      final hasExtractedAddress = extractedAddresses.isNotEmpty;
+      
+      if (hasExtractedAddress) {
+        print('🔎 GEMINI SEARCH: Found ${extractedAddresses.length} address(es) in extracted text');
+        for (final addr in extractedAddresses) {
+          print('   → "$addr"');
+        }
+      }
+      
+      // Build address context for the prompt
+      String addressContext = '';
+      if (hasExtractedAddress) {
+        addressContext = '''
+
+=== CRITICAL: SPECIFIC ADDRESS FOUND IN SOURCE ===
+The following address(es) were explicitly mentioned in the source content:
+${extractedAddresses.map((a) => '• $a').join('\n')}
+
+*** THIS IS THE MOST IMPORTANT SIGNAL ***
+The place is LOCATED AT ONE OF THESE ADDRESSES.
+You MUST verify the business is at this EXACT address, not a similarly-named business elsewhere.
+Include this address in your response.
+''';
+      }
+      
       final prompt = '''
 I need to find the ACTUAL NAME of a specific place based on these clues:
 
@@ -1894,7 +1948,7 @@ CONTEXT:
 
 EXTRACTED TEXT FROM CONTENT:
 ${context.extractedText ?? "None"}
-
+$addressContext
 === YOUR TASK ===
 Search online to find the ACTUAL, OFFICIAL NAME of the place being described/featured.
 
@@ -1907,6 +1961,7 @@ Return a JSON object:
 {
   "found": true or false,
   "name": "The official place name (e.g., 'Henry Miller Memorial Library')",
+  "address": "Full street address if known (e.g., '7924 Melrose Ave, Los Angeles, CA 90046')",
   "city": "City name",
   "region": "State/Region",
   "type": "library/bookstore/restaurant/etc",
@@ -1920,6 +1975,7 @@ If you cannot find a specific place with confidence, return:
 === RULES ===
 - Search for the ACTUAL place name, not just repeat the search query
 - Use Google Search to verify the place exists
+- If an address was found in the source, VERIFY the business is at that address${hasExtractedAddress ? '\n- The address from the source content is: ${extractedAddresses.first}' : ''}
 - Return ONLY the JSON object, no other text
 ''';
 
@@ -1930,11 +1986,18 @@ If you cannot find a specific place with confidence, return:
         return null;
       }
       
-      // Parse the response
-      final result = _parseSearchGroundingResponse(response, context);
+      // Parse the response, passing extracted addresses as fallback
+      final result = _parseSearchGroundingResponse(
+        response, 
+        context, 
+        extractedAddressFallback: hasExtractedAddress ? extractedAddresses.first : null,
+      );
       
       if (result != null) {
         print('✅ GEMINI SEARCH: Found place via Google Search: "${result.name}"');
+        if (result.address != null) {
+          print('   📍 Final address: ${result.address}');
+        }
       }
       
       return result;
@@ -2019,10 +2082,13 @@ If you cannot find a specific place with confidence, return:
   }
 
   /// Parse the search grounding response
+  /// [extractedAddressFallback] is an address extracted from the source content
+  /// that will be used if Gemini doesn't return an address
   ExtractedLocationInfo? _parseSearchGroundingResponse(
     Map<String, dynamic> response,
-    ContentContext context,
-  ) {
+    ContentContext context, {
+    String? extractedAddressFallback,
+  }) {
     // Extract text early so it's available for fallback in catch block
     String? text;
     try {
@@ -2077,13 +2143,20 @@ If you cannot find a specific place with confidence, return:
       
       final confidence = parsed['confidence'] as String? ?? 'medium';
       final explanation = parsed['explanation'] as String?;
-      final address = parsed['address'] as String?;
+      var address = parsed['address'] as String?;
       final addressVerified = parsed['address_verified'] as bool?;
       
       print('   🔍 Search confidence: $confidence');
-      if (address != null) {
-        print('   📍 Address found: $address');
+      if (address != null && address.isNotEmpty) {
+        print('   📍 Address from Gemini: $address');
       }
+      
+      // If Gemini didn't return an address but we have one from the extracted text, use it
+      if ((address == null || address.isEmpty) && extractedAddressFallback != null) {
+        address = extractedAddressFallback;
+        print('   📍 Using extracted address fallback: $address');
+      }
+      
       if (addressVerified != null) {
         print('   ✅ Address verified: $addressVerified');
       }
@@ -2108,7 +2181,7 @@ If you cannot find a specific place with confidence, return:
       print('⚠️ GEMINI SEARCH: Error parsing response: $e');
       
       // Try fallback regex extraction when JSON parsing fails
-      final fallback = _fallbackExtractFromText(text, context);
+      final fallback = _fallbackExtractFromText(text, context, extractedAddressFallback: extractedAddressFallback);
       if (fallback != null) {
         print('✅ GEMINI SEARCH: Recovered using regex fallback');
         return fallback;
@@ -2120,7 +2193,12 @@ If you cannot find a specific place with confidence, return:
   
   /// Fallback extraction using regex when JSON parsing fails
   /// This handles cases where Gemini returns malformed JSON due to unescaped quotes
-  ExtractedLocationInfo? _fallbackExtractFromText(String? text, ContentContext context) {
+  /// [extractedAddressFallback] is used if no address is found in the response
+  ExtractedLocationInfo? _fallbackExtractFromText(
+    String? text, 
+    ContentContext context, {
+    String? extractedAddressFallback,
+  }) {
     if (text == null || text.isEmpty) return null;
     
     try {
@@ -2139,7 +2217,13 @@ If you cannot find a specific place with confidence, return:
       
       // Extract address if present
       final addressMatch = RegExp(r'"address"\s*:\s*"([^"]+)"').firstMatch(text);
-      final address = addressMatch?.group(1);
+      var address = addressMatch?.group(1);
+      
+      // Use fallback address if no address found in response
+      if ((address == null || address.isEmpty) && extractedAddressFallback != null) {
+        address = extractedAddressFallback;
+        print('   📍 Using extracted address fallback (fallback parser): $address');
+      }
       
       // Extract city if present
       final cityMatch = RegExp(r'"city"\s*:\s*"([^"]+)"').firstMatch(text);
@@ -2286,9 +2370,22 @@ Example WITH addresses:
 === WHAT TO IGNORE ===
 - Generic region names (like "Baton Rouge" or "Louisiana" - only extract SPECIFIC places)
 - Hashtags (they are context, not places)
-- Social media handles (unless they ARE the business name)
 - UI text (Save, Upload, Share, etc.)
 - The airport (unless it's a destination itself)
+
+=== CRITICAL: SOCIAL MEDIA HANDLES AS BUSINESS NAMES ===
+Social media handles like @businessname are OFTEN the actual business name!
+When you see:
+- A numbered list with handles (e.g., "1.) @businessname - description")
+- A handle followed by 📍 address
+- A handle with associated location info
+→ Convert the handle to a business name and extract it!
+
+Examples of handles that ARE business names:
+- "@youngbloodcocktails" → "Youngblood Cocktails" (convert camelCase to readable name)
+- "@bar.kamon" → "Bar Kamon" (convert dots/periods to spaces)
+- "@52remedies" → "52 Remedies" (keep numbers, add space where logical)
+- "@dolcelunacafe" → "Dolce Luna Cafe"
 
 === OUTPUT FORMAT ===
 Return a JSON object with an array of location objects:
@@ -2334,14 +2431,35 @@ Output:
 }
 NOTE: "Pier 24" is a PLACE NAME (a restaurant), NOT an address for "Hotel Atwater"!
 
+=== EXAMPLE 3: Social media handles with addresses (IMPORTANT!) ===
+Text:
+"1.) @youngbloodcocktails - Inside the Neighborhood is a 3-course cocktail experience
+📍 777 G St, San Diego, CA 92101
+2.) @bar.kamon - Tucked inside Asa Bakery, this place takes you back to 1920s Japan
+📍 634 14th St #110, San Diego, CA 92101
+3.) @52remedies - Hidden behind a glowing white door inside Common Theory
+📍 4805 Convoy St, San Diego, CA 92111"
+
+Output:
+{
+  "locations": [
+    {"name": "Youngblood Cocktails", "address": "777 G St, San Diego, CA 92101"},
+    {"name": "Bar Kamon", "address": "634 14th St #110, San Diego, CA 92101"},
+    {"name": "52 Remedies", "address": "4805 Convoy St, San Diego, CA 92111"}
+  ]
+}
+NOTE: Each @handle is converted to a readable business name, and the 📍 address below each entry belongs to that business!
+
 === RULES ===
 - Extract the name EXACTLY as written (we'll verify it later)
 - Include ALL places mentioned, not just the first one
+- When @handles appear with 📍 addresses, extract ALL of them as separate businesses
 - Only associate an address if it contains a street number/name pattern
 - If the next line is another place name (not an address), both are separate locations
 - If no address is near a location, set address to null
 - Strip action words ("Visit the Grand Canyon" → "Grand Canyon")
 - Strip meal labels ("Lunch at Cocha" → "Cocha Restaurant" or just "Cocha")
+- Convert @handles to readable names: @dolcelunacafe → "Dolce Luna Cafe"
 - Return ONLY the JSON object, no other text
 ''';
 
