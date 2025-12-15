@@ -3488,21 +3488,30 @@ class LinkLocationExtractionService {
     final compactResultName = _normalizeCompact(resultName);
     final types = (result['types'] as List?)?.cast<String>() ?? [];
 
-    // === GROUNDED ADDRESS MATCHING (highest priority) ===
-    // If we have a grounded address from Gemini search, use it to score candidates
+    // === GROUNDED ADDRESS MATCHING (HIGHEST priority) ===
+    // If we have a grounded address from the source content (e.g., "7924 Melrose Ave, Los Angeles, CA"),
+    // this is the MOST reliable signal and should override name matching.
+    // A location with same name but different address should NOT beat the correct address.
     if (groundedAddress != null && groundedAddress.isNotEmpty) {
       final resultAddress = (result['formatted_address'] ?? result['address'] ?? result['description'] ?? '') as String;
       if (resultAddress.isNotEmpty) {
         final addressSimilarity = _calculateAddressSimilarity(groundedAddress, resultAddress);
         if (addressSimilarity >= 0.8) {
-          score += 100;
-          print('📷 IMAGE EXTRACTION:   → Grounded address match bonus: +100 (similarity: ${(addressSimilarity * 100).toInt()}%)');
+          // Strong match - this should be definitive
+          score += 250;
+          print('📷 IMAGE EXTRACTION:   → Grounded address match bonus: +250 (similarity: ${(addressSimilarity * 100).toInt()}%)');
         } else if (addressSimilarity >= 0.6) {
-          score += 60;
-          print('📷 IMAGE EXTRACTION:   → Grounded address partial match: +60 (similarity: ${(addressSimilarity * 100).toInt()}%)');
+          // Partial match - still significant
+          score += 150;
+          print('📷 IMAGE EXTRACTION:   → Grounded address partial match: +150 (similarity: ${(addressSimilarity * 100).toInt()}%)');
         } else if (addressSimilarity >= 0.4) {
-          score += 30;
-          print('📷 IMAGE EXTRACTION:   → Grounded address weak match: +30 (similarity: ${(addressSimilarity * 100).toInt()}%)');
+          // Weak match - some bonus
+          score += 75;
+          print('📷 IMAGE EXTRACTION:   → Grounded address weak match: +75 (similarity: ${(addressSimilarity * 100).toInt()}%)');
+        } else if (addressSimilarity < 0.2) {
+          // Address mismatch penalty - this location is likely wrong
+          score -= 100;
+          print('📷 IMAGE EXTRACTION:   → Address mismatch PENALTY: -100 (similarity: ${(addressSimilarity * 100).toInt()}%)');
         }
       }
     }
