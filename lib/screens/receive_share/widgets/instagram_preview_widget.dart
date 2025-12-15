@@ -1,25 +1,29 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'dart:async';
-import 'dart:io' show Platform;
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show kIsWeb;
+import '../../../services/instagram_oembed_service.dart';
+
+// Conditional imports for web support
+import 'instagram_web_logic.dart' if (dart.library.io) 'instagram_web_logic_stub.dart' as web_logic;
 
 /// Instagram WebView widget using flutter_inappwebview for screenshot support
+/// On web, uses Meta oEmbed API for embedding Instagram content
 class InstagramWebView extends StatefulWidget {
   final String url;
   final double height;
   final Future<void> Function(String) launchUrlCallback;
-  final Function(InAppWebViewController) onWebViewCreated;
-  final Function(String) onPageFinished;
+  final Function(InAppWebViewController)? onWebViewCreated;
+  final Function(String)? onPageFinished;
 
   const InstagramWebView({
     super.key,
     required this.url,
     required this.height,
     required this.launchUrlCallback,
-    required this.onWebViewCreated,
-    required this.onPageFinished,
+    this.onWebViewCreated,
+    this.onPageFinished,
   });
 
   @override
@@ -32,6 +36,20 @@ class InstagramWebViewState extends State<InstagramWebView> {
   
   int _loadingDelayOperationId = 0;
   bool _isDisposed = false;
+  
+  // Web-specific state
+  String? _webViewType;
+  String? _oembedHtml;
+  String? _webErrorMessage;
+  bool _webViewRegistered = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (kIsWeb) {
+      _initializeWebEmbed();
+    }
+  }
 
   @override
   void dispose() {
@@ -39,9 +57,146 @@ class InstagramWebViewState extends State<InstagramWebView> {
     super.dispose();
   }
 
+  /// Initialize the web embed using Meta oEmbed API
+  Future<void> _initializeWebEmbed() async {
+    if (!kIsWeb) return;
+    
+    setState(() {
+      isLoading = true;
+      _webErrorMessage = null;
+    });
+    
+    try {
+      print('📸 INSTAGRAM WEB: Fetching oEmbed data for ${widget.url}');
+      
+      final oembedService = InstagramOEmbedService();
+      
+      if (!oembedService.isConfigured) {
+        print('⚠️ INSTAGRAM WEB: oEmbed service not configured');
+        setState(() {
+          _webErrorMessage = 'Instagram API not configured';
+          isLoading = false;
+        });
+        return;
+      }
+      
+      final metadata = await oembedService.getPostMetadata(widget.url);
+      
+      if (!mounted || _isDisposed) return;
+      
+      if (metadata != null && metadata['html'] != null) {
+        final embedHtml = metadata['html'] as String;
+        print('✅ INSTAGRAM WEB: Got oEmbed HTML (${embedHtml.length} chars)');
+        
+        // Create full HTML document with Instagram embed.js
+        final fullHtml = _buildEmbedHtmlDocument(embedHtml);
+        
+        // Generate unique view type for this widget instance
+        _webViewType = 'instagram-oembed-${widget.url.hashCode}-${DateTime.now().millisecondsSinceEpoch}';
+        
+        // Register the view factory
+        web_logic.registerInstagramViewFactory(_webViewType!, fullHtml);
+        
+        setState(() {
+          _oembedHtml = fullHtml;
+          _webViewRegistered = true;
+          isLoading = false;
+        });
+        
+        // Notify parent that page finished loading
+        widget.onPageFinished?.call(widget.url);
+      } else {
+        print('❌ INSTAGRAM WEB: No oEmbed HTML returned');
+        setState(() {
+          _webErrorMessage = 'Could not load Instagram preview';
+          isLoading = false;
+        });
+      }
+    } catch (e) {
+      print('❌ INSTAGRAM WEB ERROR: $e');
+      if (mounted && !_isDisposed) {
+        setState(() {
+          _webErrorMessage = 'Error loading Instagram preview';
+          isLoading = false;
+        });
+      }
+    }
+  }
+  
+  /// Build the full HTML document with Instagram embed
+  String _buildEmbedHtmlDocument(String embedHtml) {
+    return '''
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    html, body {
+      width: 100%;
+      height: 100%;
+      background: #fafafa;
+      overflow: auto;
+    }
+    body {
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      padding: 8px;
+    }
+    .instagram-media {
+      max-width: 100% !important;
+      min-width: 280px !important;
+      width: 100% !important;
+      margin: 0 auto !important;
+    }
+    blockquote.instagram-media {
+      background: #FFF;
+      border: 0;
+      border-radius: 8px;
+      box-shadow: 0 0 1px 0 rgba(0,0,0,0.5), 0 1px 10px 0 rgba(0,0,0,0.15);
+      margin: 0 auto;
+      max-width: 540px;
+      min-width: 280px;
+      padding: 0;
+      width: calc(100% - 2px);
+    }
+  </style>
+</head>
+<body>
+  $embedHtml
+  <script async src="//www.instagram.com/embed.js"></script>
+  <script>
+    // Force process embeds when script loads
+    if (window.instgrm) {
+      window.instgrm.Embeds.process();
+    } else {
+      document.querySelector('script[src*="embed.js"]').addEventListener('load', function() {
+        if (window.instgrm) {
+          window.instgrm.Embeds.process();
+        }
+      });
+    }
+  </script>
+</body>
+</html>
+''';
+  }
+
   /// Take a screenshot of the current WebView content
   /// Uses PNG format for best quality OCR/text detection
+  /// Note: Screenshot is not available on web
   Future<Uint8List?> takeScreenshot() async {
+    if (kIsWeb) {
+      print('⚠️ INSTAGRAM PREVIEW: Screenshot not available on web');
+      return null;
+    }
+    
     if (controller == null) {
       print('⚠️ INSTAGRAM PREVIEW: Controller is null, cannot take screenshot');
       return null;
@@ -66,7 +221,10 @@ class InstagramWebViewState extends State<InstagramWebView> {
   }
 
   void refresh() {
-    if (kIsWeb) return;
+    if (kIsWeb) {
+      _initializeWebEmbed();
+      return;
+    }
     
     if (mounted && !_isDisposed && controller != null) {
       controller!.loadUrl(
@@ -94,14 +252,104 @@ class InstagramWebViewState extends State<InstagramWebView> {
     }
   }
 
+  /// Build the web-specific view using Meta oEmbed
+  Widget _buildWebView() {
+    final double containerHeight = widget.height;
+    
+    // Show loading state
+    if (isLoading) {
+      return Container(
+        height: containerHeight,
+        width: double.infinity,
+        decoration: BoxDecoration(
+          color: const Color(0xFFFAFAFA),
+          border: Border.all(color: Colors.grey[300]!),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: const Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 16),
+              Text('Loading Instagram content...'),
+            ],
+          ),
+        ),
+      );
+    }
+    
+    // Show error state
+    if (_webErrorMessage != null) {
+      return Container(
+        height: containerHeight,
+        width: double.infinity,
+        decoration: BoxDecoration(
+          color: Colors.grey[100],
+          border: Border.all(color: Colors.grey[300]!),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.error_outline, color: Colors.grey[600], size: 48),
+              const SizedBox(height: 16),
+              Text(
+                _webErrorMessage!,
+                style: TextStyle(color: Colors.grey[600]),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 16),
+              ElevatedButton.icon(
+                onPressed: () => widget.launchUrlCallback(widget.url),
+                icon: const Icon(Icons.open_in_new),
+                label: const Text('Open in Instagram'),
+              ),
+              const SizedBox(height: 8),
+              TextButton(
+                onPressed: _initializeWebEmbed,
+                child: const Text('Retry'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    
+    // Show the embedded content
+    if (_webViewRegistered && _webViewType != null) {
+      return Container(
+        height: containerHeight,
+        width: double.infinity,
+        decoration: BoxDecoration(
+          border: Border.all(color: Colors.grey[300]!),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        clipBehavior: Clip.hardEdge,
+        child: web_logic.buildInstagramWebViewForWeb(_webViewType!),
+      );
+    }
+    
+    // Fallback - shouldn't reach here normally
+    return Container(
+      height: containerHeight,
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: Colors.grey[100],
+        border: Border.all(color: Colors.grey[300]!),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: const Center(
+        child: Text('Instagram preview unavailable'),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (kIsWeb) {
-      return SizedBox(
-        height: widget.height,
-        width: double.infinity,
-        child: const Center(child: Text("Web implementation not yet available")),
-      );
+      return _buildWebView();
     }
 
     final double containerHeight = widget.height;
@@ -131,7 +379,7 @@ class InstagramWebViewState extends State<InstagramWebView> {
             ),
             onWebViewCreated: (webController) {
               controller = webController;
-              widget.onWebViewCreated(webController);
+              widget.onWebViewCreated?.call(webController);
             },
             onLoadStart: (webController, url) {
               if (!mounted || _isDisposed) return;
@@ -145,7 +393,7 @@ class InstagramWebViewState extends State<InstagramWebView> {
               
               // Notify parent
               try {
-                widget.onPageFinished(url?.toString() ?? '');
+                widget.onPageFinished?.call(url?.toString() ?? '');
               } catch (e) {
                 print("Error in onPageFinished callback: $e");
               }

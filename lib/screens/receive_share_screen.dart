@@ -293,6 +293,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
   // Custom vibration method for longer, heavier feedback
   Future<void> _heavyVibration() async {
+    // FIXED: Skip vibration on web to avoid Platform crash
+    if (kIsWeb) return;
     try {
       // For Android: Use platform channel to vibrate for 500ms
       if (Platform.isAndroid) {
@@ -320,6 +322,11 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
   bool _urlGateOpen = true;
   bool _didDeferredInit = false;
   bool _sharedMediaIsPrivate = false;
+
+  // Quick Add dialog state
+  Location? _quickAddSelectedLocation;
+  Experience? _quickAddSelectedExperience; // Non-null if saved experience selected
+  bool _isQuickAddSavedExperience = false;
 
   Widget _buildSharedUrlBar({required bool showInstructions}) {
     // Rebuilds show suffix icons immediately based on controller text
@@ -1287,16 +1294,9 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
       final provider = context.read<ReceiveShareProvider>();
 
-      if (mergedLocations.length == 1) {
-        await _applySingleExtractedLocation(mergedLocations.first, provider);
-        Fluttertoast.showToast(
-          msg: '📷 Found: ${mergedLocations.first.name}',
-          toastLength: Toast.LENGTH_SHORT,
-          backgroundColor: Colors.green,
-        );
-      } else {
-        await _handleMultipleExtractedLocations(mergedLocations, provider);
-      }
+      // Always show the location dialog, even for single locations
+      // This allows users to verify the extracted location before saving
+      await _handleMultipleExtractedLocations(mergedLocations, provider);
       _updateScanProgress(1.0);
     } catch (e) {
       print('❌ COMBINED SCAN ERROR: $e');
@@ -3360,7 +3360,28 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
       if (selectedLocations.length > 1) {
         _showMultiLocationInfoDialog(selectedLocations.length);
       }
+
+      // Scroll to the top-most experience card after a brief delay for UI to update
+      _scrollToExperienceCardsTop();
     }
+  }
+
+  /// Scroll to the top of the experience cards section
+  void _scrollToExperienceCardsTop() {
+    // Use a post-frame callback to ensure the cards are built before scrolling
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      
+      final experienceCardsContext = _experienceCardsSectionKey.currentContext;
+      if (experienceCardsContext != null) {
+        Scrollable.ensureVisible(
+          experienceCardsContext,
+          duration: const Duration(milliseconds: 500),
+          curve: Curves.easeInOut,
+          alignment: 0.0, // Align to top
+        );
+      }
+    });
   }
 
   /// Show informational dialog about multiple cards added
@@ -6123,6 +6144,124 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
     }
   }
 
+  // --- Quick Add Dialog ---
+  Future<void> _showQuickAddDialog() async {
+    FocusManager.instance.primaryFocus?.unfocus();
+    await Future.microtask(() {});
+
+    // Reset quick add state
+    _quickAddSelectedLocation = null;
+    _quickAddSelectedExperience = null;
+    _isQuickAddSavedExperience = false;
+
+    await showGeneralDialog(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: 'Quick Add Dialog',
+      barrierColor: Colors.black54,
+      transitionDuration: const Duration(milliseconds: 200),
+      pageBuilder: (dialogContext, animation, secondaryAnimation) {
+        return _QuickAddDialog(
+          mapsService: _mapsService,
+          experienceService: _experienceService,
+          onLocationSelected: (location, experience) {
+            setState(() {
+              _quickAddSelectedLocation = location;
+              _quickAddSelectedExperience = experience;
+              _isQuickAddSavedExperience = experience != null;
+            });
+            Navigator.of(dialogContext).pop();
+          },
+        );
+      },
+      transitionBuilder: (context, animation, secondaryAnimation, child) {
+        return SlideTransition(
+          position: Tween<Offset>(
+            begin: const Offset(0, -1),
+            end: Offset.zero,
+          ).animate(CurvedAnimation(
+            parent: animation,
+            curve: Curves.easeOutCubic,
+          )),
+          child: child,
+        );
+      },
+    );
+
+    // After dialog closes, handle the selected location/experience
+    if (!mounted) return;
+    
+    if (_quickAddSelectedLocation != null) {
+      await _handleQuickAddSelection(
+        _quickAddSelectedLocation!,
+        _quickAddSelectedExperience,
+      );
+    }
+  }
+
+  /// Handle the Quick Add selection - fills an empty card or creates a new one
+  Future<void> _handleQuickAddSelection(
+    Location location,
+    Experience? existingExperience,
+  ) async {
+    final provider = context.read<ReceiveShareProvider>();
+
+    // Find an empty card (no location selected)
+    ExperienceCardData? targetCard;
+    for (final card in provider.experienceCards) {
+      if (card.selectedLocation == null ||
+          card.selectedLocation!.placeId == null ||
+          card.selectedLocation!.placeId!.isEmpty) {
+        targetCard = card;
+        break;
+      }
+    }
+
+    // If no empty card found, create a new one
+    if (targetCard == null) {
+      provider.addExperienceCard();
+      targetCard = provider.experienceCards.last;
+    }
+
+    if (existingExperience != null) {
+      // User selected an existing saved experience
+      provider.updateCardWithExistingExperience(
+        targetCard.id,
+        existingExperience,
+      );
+      
+      // Show toast for saved experience
+      Fluttertoast.showToast(
+        msg: '✓ Added saved experience: ${existingExperience.name}',
+        toastLength: Toast.LENGTH_SHORT,
+        gravity: ToastGravity.BOTTOM,
+        backgroundColor: Colors.green,
+        textColor: Colors.white,
+      );
+    } else {
+      // User selected a new location - fill in location and website
+      provider.updateCardData(
+        targetCard,
+        location: location,
+        title: location.displayName ?? location.getPlaceName(),
+        website: location.website,
+        searchQuery: location.address,
+        placeIdForPreview: location.placeId,
+      );
+      
+      // Show toast for new location
+      final locationName = location.displayName ?? location.getPlaceName();
+      Fluttertoast.showToast(
+        msg: '✓ Added location: $locationName',
+        toastLength: Toast.LENGTH_SHORT,
+        gravity: ToastGravity.BOTTOM,
+        backgroundColor: Colors.blue,
+        textColor: Colors.white,
+      );
+    }
+  }
+  // --- End Quick Add Dialog ---
+
   void _handleFabPress() {
     if (!_scrollController.hasClients || !mounted) {
       return;
@@ -6262,6 +6401,14 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
 
   @override
   Widget build(BuildContext context) {
+    // #region agent log
+    debugPrint('[DEBUG H1] ReceiveShareScreen.build: START, kIsWeb=$kIsWeb, requireUrlFirst=${widget.requireUrlFirst}');
+    // #endregion
+    // FIXED: Check kIsWeb before Platform.isIOS to avoid crash on web
+    final bool useIOSBackIcon = !kIsWeb && Platform.isIOS;
+    // #region agent log
+    debugPrint('[DEBUG H1] ReceiveShareScreen.build: Platform check passed, useIOSBackIcon=$useIOSBackIcon');
+    // #endregion
     return _wrapWithWillPopScope(Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
@@ -6272,7 +6419,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
         surfaceTintColor: Colors.white,
         title: const Text('Save Content'),
         leading: IconButton(
-          icon: Icon(Platform.isIOS ? Icons.arrow_back_ios : Icons.arrow_back),
+          icon: Icon(useIOSBackIcon ? Icons.arrow_back_ios : Icons.arrow_back),
           onPressed: () {
             _sharingService.markShareFlowAsInactive();
             if (mounted) {
@@ -6324,12 +6471,18 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                     future:
                         _combinedCategoriesFuture, // MODIFIED: Use stable combined future
                     builder: (context, AsyncSnapshot<List<dynamic>> snapshot) {
+                      // #region agent log
+                      debugPrint('[DEBUG H2] FutureBuilder: _combinedCategoriesFuture=${_combinedCategoriesFuture != null}, connectionState=${snapshot.connectionState}, requireUrlFirst=${widget.requireUrlFirst}');
+                      // #endregion
                       // Primary Loading State: Show spinner if the future is null (early init) or still running.
                       if (_combinedCategoriesFuture == null ||
                           snapshot.connectionState == ConnectionState.waiting) {
                         // print("FutureBuilder: STATE_WAITING (Future is null or connection is waiting)");
                         // In URL-first mode, show the UI with URL bar so user can proceed
                         if (widget.requireUrlFirst) {
+                          // #region agent log
+                          debugPrint('[DEBUG H2] FutureBuilder: Returning URL bar for requireUrlFirst mode');
+                          // #endregion
                           return Column(
                             mainAxisSize: MainAxisSize.min,
                             children: [
@@ -6603,6 +6756,15 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                     child: const Text('Cancel'),
                                   ),
                                   ElevatedButton.icon(
+                                    onPressed: _showQuickAddDialog,
+                                    icon: const Icon(Icons.add, color: Colors.white),
+                                    label: const Text('Quick Add', style: TextStyle(color: Colors.white)),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: Theme.of(context).primaryColor,
+                                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                    ),
+                                  ),
+                                  ElevatedButton.icon(
                                     onPressed:
                                         _isSaving ? null : _saveExperience,
                                     icon: _isSaving
@@ -6618,7 +6780,7 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                                         : const Icon(Icons.save),
                                     label: Text(_isSaving
                                         ? 'Saving...'
-                                        : 'Save Experience(s)'),
+                                        : 'Save'),
                                     style: ElevatedButton.styleFrom(
                                       backgroundColor:
                                           Theme.of(context).primaryColor,
@@ -8445,6 +8607,635 @@ class _MultiLocationSelectionDialogState
     }
   }
 }
+
+// --- Quick Add Dialog Widget ---
+class _QuickAddDialog extends StatefulWidget {
+  final GoogleMapsService mapsService;
+  final ExperienceService experienceService;
+  final void Function(Location location, Experience? experience) onLocationSelected;
+
+  const _QuickAddDialog({
+    required this.mapsService,
+    required this.experienceService,
+    required this.onLocationSelected,
+  });
+
+  @override
+  State<_QuickAddDialog> createState() => _QuickAddDialogState();
+}
+
+class _QuickAddDialogState extends State<_QuickAddDialog> {
+  final TextEditingController _searchController = TextEditingController();
+  final FocusNode _searchFocusNode = FocusNode();
+  List<Map<String, dynamic>> _searchResults = [];
+  bool _isSearching = false;
+  bool _showSearchResults = false;
+  Timer? _debounce;
+  Location? _selectedLocation;
+  Experience? _selectedExperience;
+  bool _isLoadingDetails = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _searchFocusNode.requestFocus();
+    });
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    _searchFocusNode.dispose();
+    _debounce?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _searchPlaces(String query) async {
+    if (_debounce?.isActive ?? false) _debounce!.cancel();
+    _debounce = Timer(const Duration(milliseconds: 500), () async {
+      if (query.isEmpty) {
+        if (mounted) {
+          setState(() {
+            _searchResults = [];
+            _showSearchResults = false;
+          });
+        }
+        return;
+      }
+
+      if (mounted) {
+        setState(() {
+          _isSearching = true;
+        });
+      }
+
+      try {
+        // Search user's saved experiences first
+        List<Experience> userExperiences = [];
+        try {
+          userExperiences = await widget.experienceService.getUserExperiences();
+        } catch (e) {
+          debugPrint('Error fetching user experiences: $e');
+        }
+
+        final String queryLower = query.toLowerCase();
+        final List<Map<String, dynamic>> experienceResults = userExperiences
+            .where((exp) {
+              final nameMatch = exp.name.toLowerCase().contains(queryLower);
+              final locationMatch = exp.location.displayName
+                      ?.toLowerCase()
+                      .contains(queryLower) ??
+                  false;
+              final addressMatch =
+                  exp.location.address?.toLowerCase().contains(queryLower) ??
+                      false;
+              return nameMatch || locationMatch || addressMatch;
+            })
+            .take(5)
+            .map((exp) => {
+                  'type': 'experience',
+                  'experience': exp,
+                  'description': exp.name,
+                  'address': exp.location.address,
+                  'latitude': exp.location.latitude,
+                  'longitude': exp.location.longitude,
+                })
+            .toList();
+
+        // Then search Google Maps
+        final mapsResults = await widget.mapsService.searchPlaces(query);
+
+        // Fetch place details for top results to get ratings
+        final List<Map<String, dynamic>> markedMapsResults = [];
+        for (int i = 0; i < mapsResults.length && i < 5; i++) {
+          final result = mapsResults[i];
+          final placeId = result['placeId'];
+          
+          // Try to get rating from place details
+          double? rating;
+          int? userRatingCount;
+          if (placeId != null && placeId.isNotEmpty) {
+            try {
+              final location = await widget.mapsService.getPlaceDetails(placeId);
+              rating = location.rating;
+              userRatingCount = location.userRatingCount;
+            } catch (e) {
+              debugPrint('Error fetching place details for rating: $e');
+            }
+          }
+          
+          markedMapsResults.add({
+            'type': 'place',
+            ...result,
+            if (rating != null) 'rating': rating,
+            if (userRatingCount != null) 'userRatingCount': userRatingCount,
+          });
+        }
+        
+        // Add remaining results without ratings
+        for (int i = 5; i < mapsResults.length; i++) {
+          markedMapsResults.add({
+            'type': 'place',
+            ...mapsResults[i],
+          });
+        }
+
+        // Combine results: experiences first, then places
+        final combinedResults = [...experienceResults, ...markedMapsResults];
+
+        if (mounted) {
+          setState(() {
+            _searchResults = combinedResults;
+            _showSearchResults = combinedResults.isNotEmpty;
+            _isSearching = false;
+          });
+        }
+      } catch (e) {
+        debugPrint('Error searching places: $e');
+        if (mounted) {
+          setState(() {
+            _isSearching = false;
+          });
+        }
+      }
+    });
+  }
+
+  Future<void> _selectSearchResult(Map<String, dynamic> result) async {
+    FocusScope.of(context).unfocus();
+
+    setState(() {
+      _showSearchResults = false;
+      _isLoadingDetails = true;
+    });
+
+    try {
+      if (result['type'] == 'experience') {
+        // User's saved experience
+        final Experience experience = result['experience'];
+        setState(() {
+          _selectedLocation = experience.location;
+          _selectedExperience = experience;
+          _isLoadingDetails = false;
+          _searchController.text = experience.name;
+        });
+      } else {
+        // Google Maps place - get full details
+        final placeId = result['placeId'];
+        if (placeId != null && placeId.isNotEmpty) {
+          final location = await widget.mapsService.getPlaceDetails(placeId);
+          setState(() {
+            _selectedLocation = location;
+            _selectedExperience = null;
+            _isLoadingDetails = false;
+            _searchController.text = location.displayName ?? result['description'] ?? '';
+          });
+        } else {
+          setState(() {
+            _isLoadingDetails = false;
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('Error selecting search result: $e');
+      if (mounted) {
+        setState(() {
+          _isLoadingDetails = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error getting location details: $e')),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final mediaQuery = MediaQuery.of(context);
+    final topPadding = mediaQuery.padding.top;
+
+    return Align(
+      alignment: Alignment.topCenter,
+      child: Material(
+        color: Colors.transparent,
+        child: Container(
+          margin: EdgeInsets.only(top: topPadding),
+          constraints: BoxConstraints(
+            maxHeight: mediaQuery.size.height * 0.7,
+          ),
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.only(
+              bottomLeft: Radius.circular(16),
+              bottomRight: Radius.circular(16),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black26,
+                blurRadius: 10,
+                offset: Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Header
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).primaryColor,
+                  borderRadius: const BorderRadius.only(
+                    bottomLeft: Radius.circular(0),
+                    bottomRight: Radius.circular(0),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.add_location_alt, color: Colors.white),
+                    const SizedBox(width: 12),
+                    const Text(
+                      'Quick Add',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const Spacer(),
+                    IconButton(
+                      icon: const Icon(Icons.close, color: Colors.white),
+                      onPressed: () => Navigator.of(context).pop(),
+                    ),
+                  ],
+                ),
+              ),
+
+              // Search field
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: TextField(
+                  controller: _searchController,
+                  focusNode: _searchFocusNode,
+                  decoration: InputDecoration(
+                    hintText: 'Search locations or saved experiences...',
+                    prefixIcon: const Icon(Icons.search),
+                    suffixIcon: _isSearching
+                        ? const Padding(
+                            padding: EdgeInsets.all(12),
+                            child: SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          )
+                        : _searchController.text.isNotEmpty
+                            ? IconButton(
+                                icon: const Icon(Icons.clear),
+                                onPressed: () {
+                                  _searchController.clear();
+                                  setState(() {
+                                    _searchResults = [];
+                                    _showSearchResults = false;
+                                    _selectedLocation = null;
+                                    _selectedExperience = null;
+                                  });
+                                },
+                              )
+                            : null,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                  onChanged: _searchPlaces,
+                ),
+              ),
+
+              // Search results
+              if (_showSearchResults)
+                Flexible(
+                  child: Container(
+                    constraints: BoxConstraints(
+                      maxHeight: mediaQuery.size.height * 0.35,
+                    ),
+                    margin: const EdgeInsets.symmetric(horizontal: 16),
+                    decoration: BoxDecoration(
+                      color: Colors.grey[50],
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.grey[300]!),
+                    ),
+                    child: ListView.separated(
+                      shrinkWrap: true,
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      itemCount: _searchResults.length,
+                      separatorBuilder: (context, index) =>
+                          Divider(height: 1, indent: 56, endIndent: 16),
+                      itemBuilder: (context, index) {
+                        final result = _searchResults[index];
+                        final bool isUserExperience = result['type'] == 'experience';
+                        final String? address = result['address'] ??
+                            (result['structured_formatting'] != null
+                                ? result['structured_formatting']['secondary_text']
+                                : null);
+                        final bool hasRating = result['rating'] != null && !isUserExperience;
+                        final double rating = hasRating ? (result['rating'] as num).toDouble() : 0.0;
+
+                        return Material(
+                          color: Colors.transparent,
+                          child: InkWell(
+                            onTap: () => _selectSearchResult(result),
+                            borderRadius: BorderRadius.circular(8),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 4.0),
+                              child: ListTile(
+                                leading: CircleAvatar(
+                                  backgroundColor: isUserExperience
+                                      ? Colors.green.withOpacity(0.1)
+                                      : Theme.of(context).primaryColor.withOpacity(0.1),
+                                  child: isUserExperience
+                                      ? const Icon(
+                                          Icons.bookmark,
+                                          color: Colors.green,
+                                          size: 18,
+                                        )
+                                      : Icon(
+                                          Icons.location_on,
+                                          color: Theme.of(context).primaryColor,
+                                          size: 18,
+                                        ),
+                                ),
+                                title: Row(
+                                  children: [
+                                    if (isUserExperience) ...[
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 6, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: Colors.green.withOpacity(0.1),
+                                          borderRadius: BorderRadius.circular(4),
+                                          border: Border.all(
+                                              color: Colors.green.withOpacity(0.3)),
+                                        ),
+                                        child: Text(
+                                          'Saved',
+                                          style: TextStyle(
+                                            color: Colors.green[700],
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                    ],
+                                    Expanded(
+                                      child: Text(
+                                        result['description'] ?? 'Unknown Place',
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.w500,
+                                          fontSize: 15,
+                                        ),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                subtitle: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    if (address != null)
+                                      Padding(
+                                        padding: const EdgeInsets.only(top: 4.0),
+                                        child: Row(
+                                          children: [
+                                            Icon(Icons.location_on,
+                                                size: 14, color: Colors.grey[600]),
+                                            const SizedBox(width: 4),
+                                            Expanded(
+                                              child: Text(
+                                                address,
+                                                style: TextStyle(
+                                                  color: Colors.grey[600],
+                                                  fontSize: 13,
+                                                ),
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    if (hasRating)
+                                      Padding(
+                                        padding: const EdgeInsets.only(top: 4.0),
+                                        child: Row(
+                                          children: [
+                                            ...List.generate(
+                                              5,
+                                              (i) => Icon(
+                                                i < rating.floor()
+                                                    ? Icons.star
+                                                    : (i < rating)
+                                                        ? Icons.star_half
+                                                        : Icons.star_border,
+                                                size: 14,
+                                                color: Colors.amber,
+                                              ),
+                                            ),
+                                            const SizedBox(width: 4),
+                                            if (result['userRatingCount'] != null)
+                                              Text(
+                                                '(${result['userRatingCount']})',
+                                                style: TextStyle(
+                                                  color: Colors.grey[600],
+                                                  fontSize: 12,
+                                                ),
+                                              ),
+                                          ],
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+
+              // Selected location display
+              if (_selectedLocation != null && !_showSearchResults)
+                Container(
+                  margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: _selectedExperience != null
+                        ? Colors.green.withOpacity(0.05)
+                        : Colors.blue.withOpacity(0.05),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: _selectedExperience != null
+                          ? Colors.green.withOpacity(0.3)
+                          : Colors.blue.withOpacity(0.3),
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            _selectedExperience != null
+                                ? Icons.bookmark
+                                : Icons.location_on,
+                            color: _selectedExperience != null
+                                ? Colors.green
+                                : Theme.of(context).primaryColor,
+                          ),
+                          const SizedBox(width: 8),
+                          if (_selectedExperience != null)
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: Colors.green.withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(4),
+                                border: Border.all(
+                                    color: Colors.green.withOpacity(0.3)),
+                              ),
+                              child: Text(
+                                'Saved Experience',
+                                style: TextStyle(
+                                  color: Colors.green[700],
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            )
+                          else
+                            Text(
+                              'New Location',
+                              style: TextStyle(
+                                color: Colors.grey[600],
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          // Show rating on the right side for new locations
+                          if (_selectedExperience == null && _selectedLocation!.rating != null) ...[
+                            const Spacer(),
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                ...List.generate(
+                                  5,
+                                  (i) => Icon(
+                                    i < _selectedLocation!.rating!.floor()
+                                        ? Icons.star
+                                        : (i < _selectedLocation!.rating!)
+                                            ? Icons.star_half
+                                            : Icons.star_border,
+                                    size: 16,
+                                    color: Colors.amber,
+                                  ),
+                                ),
+                                const SizedBox(width: 4),
+                                if (_selectedLocation!.userRatingCount != null)
+                                  Text(
+                                    '(${_selectedLocation!.userRatingCount})',
+                                    style: TextStyle(
+                                      color: Colors.grey[600],
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ],
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        _selectedLocation!.displayName ?? 'Unnamed Location',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
+                      ),
+                      if (_selectedLocation!.address != null) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          _selectedLocation!.address!,
+                          style: TextStyle(
+                            color: Colors.grey[600],
+                            fontSize: 14,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+
+              // Loading indicator for details
+              if (_isLoadingDetails)
+                const Padding(
+                  padding: EdgeInsets.all(24),
+                  child: CircularProgressIndicator(),
+                ),
+
+              // Action buttons
+              if (_selectedLocation != null && !_showSearchResults && !_isLoadingDetails)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () {
+                            setState(() {
+                              _selectedLocation = null;
+                              _selectedExperience = null;
+                              _searchController.clear();
+                            });
+                          },
+                          child: const Text('Clear'),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        flex: 2,
+                        child: ElevatedButton.icon(
+                          onPressed: () {
+                            widget.onLocationSelected(
+                              _selectedLocation!,
+                              _selectedExperience,
+                            );
+                          },
+                          icon: const Icon(Icons.check),
+                          label: Text(_selectedExperience != null
+                              ? 'Add Saved Experience'
+                              : 'Add Location'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Theme.of(context).primaryColor,
+                            foregroundColor: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+              // Bottom padding
+              const SizedBox(height: 8),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+// --- End Quick Add Dialog Widget ---
 
 extension LocationNameHelper on Location {
   String getPlaceName() {

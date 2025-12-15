@@ -1,13 +1,13 @@
 // instagram_web_logic_stub.dart
+// Stub file for non-web platforms
 import 'package:flutter/widgets.dart';
 
-// Stub functions for non-web platforms
+// This function is a no-op on non-web platforms
 void registerInstagramViewFactory(String viewType, String htmlSrcDoc) {
-  // This should not be called on mobile.
-  throw UnimplementedError('Web-only method registerInstagramViewFactory called on mobile');
+  // No-op on mobile/desktop platforms
 }
 
+// This function returns a placeholder widget on non-web platforms
 Widget buildInstagramWebViewForWeb(String viewType) {
-  // This should not be called on mobile.
-  throw UnimplementedError('Web-only method buildInstagramWebViewForWeb called on mobile');
-} 
+  return const SizedBox.shrink();
+}
