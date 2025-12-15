@@ -499,9 +499,12 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
 
     // Note: _userCategoriesNotifier.value will be used by ValueListenableBuilder inside StatefulBuilder
 
+    final searchController = TextEditingController();
+
     final String? selectedValue = await showDialog<String>(
       context: context,
       builder: (BuildContext dialogContext) {
+        String searchQuery = '';
         // Use StatefulBuilder to allow the dialog's content to rebuild when notifiers change
         return StatefulBuilder(
           builder: (stfContext, stfSetState) {
@@ -515,6 +518,15 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                 }
                 final uniqueCategoryList =
                     uniqueCategoriesByName.values.toList();
+
+                // Filter categories based on search query
+                final filteredCategories = searchQuery.isEmpty
+                    ? uniqueCategoryList
+                    : uniqueCategoryList
+                        .where((cat) => cat.name
+                            .toLowerCase()
+                            .contains(searchQuery.toLowerCase()))
+                        .toList();
 
                 return Dialog(
                   backgroundColor: Colors.white,
@@ -534,40 +546,93 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                             style: Theme.of(stfContext).textTheme.titleLarge,
                           ),
                         ),
-                        Expanded(
-                          child: ListView.builder(
-                            shrinkWrap: true,
-                            itemCount: uniqueCategoryList.length,
-                            itemBuilder: (context, index) {
-                              final category = uniqueCategoryList[index];
-                              final bool isSelected = category.id ==
-                                  widget.cardData.selectedCategoryId;
-                              final sharedLabel = _sharedOwnerLabel(
-                                  category.sharedOwnerDisplayName);
-                              return ListTile(
-                                leading: Text(category.icon,
-                                    style: const TextStyle(fontSize: 20)),
-                                title: Text(category.name),
-                                subtitle: sharedLabel != null
-                                    ? Text(
-                                        sharedLabel,
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .bodySmall
-                                            ?.copyWith(color: Colors.grey[600]),
-                                      )
-                                    : null,
-                                trailing: isSelected
-                                    ? const Icon(Icons.check,
-                                        color: Colors.blue)
-                                    : null,
-                                onTap: () {
-                                  Navigator.pop(dialogContext, category.id);
-                                },
-                                visualDensity: VisualDensity.compact,
-                              );
+                        // Search bar
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                          child: TextField(
+                            controller: searchController,
+                            decoration: InputDecoration(
+                              hintText: 'Search categories...',
+                              prefixIcon: const Icon(Icons.search, size: 20),
+                              suffixIcon: searchQuery.isNotEmpty
+                                  ? IconButton(
+                                      icon: const Icon(Icons.clear, size: 20),
+                                      onPressed: () {
+                                        searchController.clear();
+                                        stfSetState(() {
+                                          searchQuery = '';
+                                        });
+                                      },
+                                    )
+                                  : null,
+                              isDense: true,
+                              contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 12, vertical: 8),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(8),
+                                borderSide: BorderSide(color: Colors.grey.shade300),
+                              ),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(8),
+                                borderSide: BorderSide(color: Colors.grey.shade300),
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(8),
+                                borderSide: BorderSide(color: Colors.blue),
+                              ),
+                            ),
+                            onChanged: (value) {
+                              stfSetState(() {
+                                searchQuery = value;
+                              });
                             },
                           ),
+                        ),
+                        Expanded(
+                          child: filteredCategories.isEmpty
+                              ? Center(
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(16.0),
+                                    child: Text(
+                                      'No categories found',
+                                      style: TextStyle(color: Colors.grey[600]),
+                                    ),
+                                  ),
+                                )
+                              : ListView.builder(
+                                  shrinkWrap: true,
+                                  itemCount: filteredCategories.length,
+                                  itemBuilder: (context, index) {
+                                    final category = filteredCategories[index];
+                                    final bool isSelected = category.id ==
+                                        widget.cardData.selectedCategoryId;
+                                    final sharedLabel = _sharedOwnerLabel(
+                                        category.sharedOwnerDisplayName);
+                                    return ListTile(
+                                      leading: Text(category.icon,
+                                          style: const TextStyle(fontSize: 20)),
+                                      title: Text(category.name),
+                                      subtitle: sharedLabel != null
+                                          ? Text(
+                                              sharedLabel,
+                                              style: Theme.of(context)
+                                                  .textTheme
+                                                  .bodySmall
+                                                  ?.copyWith(color: Colors.grey[600]),
+                                            )
+                                          : null,
+                                      trailing: isSelected
+                                          ? const Icon(Icons.check,
+                                              color: Colors.blue)
+                                          : null,
+                                      onTap: () {
+                                        FocusScope.of(dialogContext).unfocus();
+                                        Navigator.pop(dialogContext, category.id);
+                                      },
+                                      visualDensity: VisualDensity.compact,
+                                    );
+                                  },
+                                ),
                         ),
                         const Divider(height: 1),
                         Padding(
@@ -582,6 +647,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                 label: Text('Add New Category',
                                     style: TextStyle(color: Colors.blue[700])),
                                 onPressed: () {
+                                  FocusScope.of(dialogContext).unfocus();
                                   Navigator.pop(
                                       dialogContext, _dialogActionAdd);
                                 },
@@ -627,6 +693,9 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
         );
       },
     );
+
+    // Note: searchController will be garbage collected - don't dispose synchronously
+    // as animations may still be running after unfocus
 
     // --- Handle the dialog result --- (This part remains largely the same)
     if (selectedValue != null) {
@@ -741,9 +810,12 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
     FocusScope.of(context).unfocus();
     await Future.microtask(() {});
 
+    final searchController = TextEditingController();
+
     final String? selectedValue = await showDialog<String>(
       context: context,
       builder: (BuildContext dialogContext) {
+        String searchQuery = '';
         // Use StatefulBuilder to allow the dialog's content to rebuild when notifiers change
         return StatefulBuilder(
           builder: (stfContext, stfSetState) {
@@ -753,6 +825,15 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
               builder: (context, currentColorCategories, child) {
                 final List<ColorCategory> categoriesToShow =
                     List.from(currentColorCategories);
+
+                // Filter categories based on search query
+                final filteredCategories = searchQuery.isEmpty
+                    ? categoriesToShow
+                    : categoriesToShow
+                        .where((cat) => cat.name
+                            .toLowerCase()
+                            .contains(searchQuery.toLowerCase()))
+                        .toList();
 
                 return Dialog(
                   backgroundColor: Colors.white,
@@ -772,47 +853,100 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                             style: Theme.of(stfContext).textTheme.titleLarge,
                           ),
                         ),
-                        Expanded(
-                          child: ListView.builder(
-                            itemCount: categoriesToShow.length,
-                            itemBuilder: (context, index) {
-                              final category = categoriesToShow[index];
-                              final bool isSelected = category.id ==
-                                  widget.cardData.selectedColorCategoryId;
-                              final sharedLabel = _sharedOwnerLabel(
-                                  category.sharedOwnerDisplayName);
-                              return ListTile(
-                                leading: Container(
-                                  width: 24,
-                                  height: 24,
-                                  decoration: BoxDecoration(
-                                      color: category.color,
-                                      shape: BoxShape.circle,
-                                      border: Border.all(
-                                          color: Colors.grey.shade400,
-                                          width: 1)),
-                                ),
-                                title: Text(category.name),
-                                subtitle: sharedLabel != null
-                                    ? Text(
-                                        sharedLabel,
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .bodySmall
-                                            ?.copyWith(color: Colors.grey[600]),
-                                      )
-                                    : null,
-                                trailing: isSelected
-                                    ? const Icon(Icons.check,
-                                        color: Colors.blue)
-                                    : null,
-                                onTap: () {
-                                  Navigator.pop(dialogContext, category.id);
-                                },
-                                visualDensity: VisualDensity.compact,
-                              );
+                        // Search bar
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                          child: TextField(
+                            controller: searchController,
+                            decoration: InputDecoration(
+                              hintText: 'Search color categories...',
+                              prefixIcon: const Icon(Icons.search, size: 20),
+                              suffixIcon: searchQuery.isNotEmpty
+                                  ? IconButton(
+                                      icon: const Icon(Icons.clear, size: 20),
+                                      onPressed: () {
+                                        searchController.clear();
+                                        stfSetState(() {
+                                          searchQuery = '';
+                                        });
+                                      },
+                                    )
+                                  : null,
+                              isDense: true,
+                              contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 12, vertical: 8),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(8),
+                                borderSide: BorderSide(color: Colors.grey.shade300),
+                              ),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(8),
+                                borderSide: BorderSide(color: Colors.grey.shade300),
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(8),
+                                borderSide: BorderSide(color: Colors.blue),
+                              ),
+                            ),
+                            onChanged: (value) {
+                              stfSetState(() {
+                                searchQuery = value;
+                              });
                             },
                           ),
+                        ),
+                        Expanded(
+                          child: filteredCategories.isEmpty
+                              ? Center(
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(16.0),
+                                    child: Text(
+                                      'No color categories found',
+                                      style: TextStyle(color: Colors.grey[600]),
+                                    ),
+                                  ),
+                                )
+                              : ListView.builder(
+                                  itemCount: filteredCategories.length,
+                                  itemBuilder: (context, index) {
+                                    final category = filteredCategories[index];
+                                    final bool isSelected = category.id ==
+                                        widget.cardData.selectedColorCategoryId;
+                                    final sharedLabel = _sharedOwnerLabel(
+                                        category.sharedOwnerDisplayName);
+                                    return ListTile(
+                                      leading: Container(
+                                        width: 24,
+                                        height: 24,
+                                        decoration: BoxDecoration(
+                                            color: category.color,
+                                            shape: BoxShape.circle,
+                                            border: Border.all(
+                                                color: Colors.grey.shade400,
+                                                width: 1)),
+                                      ),
+                                      title: Text(category.name),
+                                      subtitle: sharedLabel != null
+                                          ? Text(
+                                              sharedLabel,
+                                              style: Theme.of(context)
+                                                  .textTheme
+                                                  .bodySmall
+                                                  ?.copyWith(color: Colors.grey[600]),
+                                            )
+                                          : null,
+                                      trailing: isSelected
+                                          ? const Icon(Icons.check,
+                                              color: Colors.blue)
+                                          : null,
+                                      onTap: () {
+                                        FocusScope.of(dialogContext).unfocus();
+                                        Navigator.pop(dialogContext, category.id);
+                                      },
+                                      visualDensity: VisualDensity.compact,
+                                    );
+                                  },
+                                ),
                         ),
                         const Divider(height: 1),
                         Padding(
@@ -827,6 +961,7 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
                                 label: Text('Add New Color Category',
                                     style: TextStyle(color: Colors.blue[700])),
                                 onPressed: () {
+                                  FocusScope.of(dialogContext).unfocus();
                                   Navigator.pop(
                                       dialogContext, _addColorCategoryValue);
                                 },
@@ -870,6 +1005,9 @@ class _ExperienceCardFormState extends State<ExperienceCardForm> {
         );
       },
     );
+
+    // Note: searchController will be garbage collected - don't dispose synchronously
+    // as animations may still be running after unfocus
 
     // Handle the dialog result
     if (selectedValue != null) {
@@ -1784,6 +1922,8 @@ class _OtherCategoriesSelectionDialog extends StatefulWidget {
 class _OtherCategoriesSelectionDialogState
     extends State<_OtherCategoriesSelectionDialog> {
   late Set<String> _selectedIds;
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
 
   String? _sharedOwnerLabel(String? ownerName) {
     if (ownerName == null) return null;
@@ -1796,6 +1936,12 @@ class _OtherCategoriesSelectionDialogState
   void initState() {
     super.initState();
     _selectedIds = Set<String>.from(widget.initiallySelectedIds);
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   @override
@@ -1822,45 +1968,106 @@ class _OtherCategoriesSelectionDialogState
                 .where((cat) => cat.id != widget.primaryCategoryId)
                 .toList();
 
+            // Filter based on search query
+            final filteredCategories = _searchQuery.isEmpty
+                ? availableCategories
+                : availableCategories
+                    .where((cat) => cat.name
+                        .toLowerCase()
+                        .contains(_searchQuery.toLowerCase()))
+                    .toList();
+
             return Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Expanded(
-                  child: ListView.builder(
-                    itemCount: availableCategories.length,
-                    itemBuilder: (context, index) {
-                      final category = availableCategories[index];
-                      final bool isSelected =
-                          _selectedIds.contains(category.id);
-                      final sharedLabel =
-                          _sharedOwnerLabel(category.sharedOwnerDisplayName);
-                      return CheckboxListTile(
-                        title: Text(category.name),
-                        subtitle: sharedLabel != null
-                            ? Text(
-                                sharedLabel,
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .bodySmall
-                                    ?.copyWith(color: Colors.grey[600]),
-                              )
-                            : null,
-                        secondary: Text(category.icon,
-                            style: const TextStyle(fontSize: 20)),
-                        value: isSelected,
-                        onChanged: (bool? value) {
-                          setState(() {
-                            if (value == true) {
-                              _selectedIds.add(category.id);
-                            } else {
-                              _selectedIds.remove(category.id);
-                            }
-                          });
-                        },
-                        controlAffinity: ListTileControlAffinity.leading,
-                      );
+                // Search bar
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                  child: TextField(
+                    controller: _searchController,
+                    decoration: InputDecoration(
+                      hintText: 'Search categories...',
+                      prefixIcon: const Icon(Icons.search, size: 20),
+                      suffixIcon: _searchQuery.isNotEmpty
+                          ? IconButton(
+                              icon: const Icon(Icons.clear, size: 20),
+                              onPressed: () {
+                                _searchController.clear();
+                                setState(() {
+                                  _searchQuery = '';
+                                });
+                              },
+                            )
+                          : null,
+                      isDense: true,
+                      contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 8),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: BorderSide(color: Colors.grey.shade300),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: BorderSide(color: Colors.grey.shade300),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: BorderSide(color: Colors.blue),
+                      ),
+                    ),
+                    onChanged: (value) {
+                      setState(() {
+                        _searchQuery = value;
+                      });
                     },
                   ),
+                ),
+                Expanded(
+                  child: filteredCategories.isEmpty
+                      ? Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(16.0),
+                            child: Text(
+                              'No categories found',
+                              style: TextStyle(color: Colors.grey[600]),
+                            ),
+                          ),
+                        )
+                      : ListView.builder(
+                          itemCount: filteredCategories.length,
+                          itemBuilder: (context, index) {
+                            final category = filteredCategories[index];
+                            final bool isSelected =
+                                _selectedIds.contains(category.id);
+                            final sharedLabel =
+                                _sharedOwnerLabel(category.sharedOwnerDisplayName);
+                            return CheckboxListTile(
+                              title: Text(category.name),
+                              subtitle: sharedLabel != null
+                                  ? Text(
+                                      sharedLabel,
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodySmall
+                                          ?.copyWith(color: Colors.grey[600]),
+                                    )
+                                  : null,
+                              secondary: Text(category.icon,
+                                  style: const TextStyle(fontSize: 20)),
+                              value: isSelected,
+                              onChanged: (bool? value) {
+                                setState(() {
+                                  if (value == true) {
+                                    _selectedIds.add(category.id);
+                                  } else {
+                                    _selectedIds.remove(category.id);
+                                  }
+                                });
+                              },
+                              controlAffinity: ListTileControlAffinity.leading,
+                            );
+                          },
+                        ),
                 ),
                 const Divider(height: 1),
                 Padding(
@@ -1876,6 +2083,7 @@ class _OtherCategoriesSelectionDialogState
                         label: Text('Add New Category',
                             style: TextStyle(color: Colors.blue[700])),
                         onPressed: () async {
+                          FocusScope.of(context).unfocus();
                           Navigator.of(context).pop();
                           await widget.onAddCategory();
                         },
@@ -1909,12 +2117,14 @@ class _OtherCategoriesSelectionDialogState
         TextButton(
           child: const Text('Cancel'),
           onPressed: () {
+            FocusScope.of(context).unfocus();
             Navigator.of(context).pop();
           },
         ),
         TextButton(
           child: const Text('Confirm'),
           onPressed: () {
+            FocusScope.of(context).unfocus();
             Navigator.of(context).pop(_selectedIds.toList());
           },
         ),
@@ -1949,6 +2159,8 @@ class _OtherColorCategoriesSelectionDialog extends StatefulWidget {
 class _OtherColorCategoriesSelectionDialogState
     extends State<_OtherColorCategoriesSelectionDialog> {
   late Set<String> _selectedIds;
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
 
   String? _sharedOwnerLabel(String? ownerName) {
     if (ownerName == null) return null;
@@ -1961,6 +2173,12 @@ class _OtherColorCategoriesSelectionDialogState
   void initState() {
     super.initState();
     _selectedIds = Set<String>.from(widget.initiallySelectedIds);
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   @override
@@ -1979,52 +2197,113 @@ class _OtherColorCategoriesSelectionDialogState
                 .where((cat) => cat.id != widget.primaryColorCategoryId)
                 .toList();
 
+            // Filter based on search query
+            final filteredCategories = _searchQuery.isEmpty
+                ? availableCategories
+                : availableCategories
+                    .where((cat) => cat.name
+                        .toLowerCase()
+                        .contains(_searchQuery.toLowerCase()))
+                    .toList();
+
             return Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Expanded(
-                  child: ListView.builder(
-                    itemCount: availableCategories.length,
-                    itemBuilder: (context, index) {
-                      final category = availableCategories[index];
-                      final bool isSelected =
-                          _selectedIds.contains(category.id);
-                      final sharedLabel =
-                          _sharedOwnerLabel(category.sharedOwnerDisplayName);
-                      return CheckboxListTile(
-                        title: Text(category.name),
-                        subtitle: sharedLabel != null
-                            ? Text(
-                                sharedLabel,
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .bodySmall
-                                    ?.copyWith(color: Colors.grey[600]),
-                              )
-                            : null,
-                        secondary: Container(
-                          width: 24,
-                          height: 24,
-                          decoration: BoxDecoration(
-                            color: category.color,
-                            shape: BoxShape.circle,
-                            border: Border.all(color: Colors.grey.shade400),
-                          ),
-                        ),
-                        value: isSelected,
-                        onChanged: (bool? value) {
-                          setState(() {
-                            if (value == true) {
-                              _selectedIds.add(category.id);
-                            } else {
-                              _selectedIds.remove(category.id);
-                            }
-                          });
-                        },
-                        controlAffinity: ListTileControlAffinity.leading,
-                      );
+                // Search bar
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                  child: TextField(
+                    controller: _searchController,
+                    decoration: InputDecoration(
+                      hintText: 'Search color categories...',
+                      prefixIcon: const Icon(Icons.search, size: 20),
+                      suffixIcon: _searchQuery.isNotEmpty
+                          ? IconButton(
+                              icon: const Icon(Icons.clear, size: 20),
+                              onPressed: () {
+                                _searchController.clear();
+                                setState(() {
+                                  _searchQuery = '';
+                                });
+                              },
+                            )
+                          : null,
+                      isDense: true,
+                      contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 8),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: BorderSide(color: Colors.grey.shade300),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: BorderSide(color: Colors.grey.shade300),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: BorderSide(color: Colors.blue),
+                      ),
+                    ),
+                    onChanged: (value) {
+                      setState(() {
+                        _searchQuery = value;
+                      });
                     },
                   ),
+                ),
+                Expanded(
+                  child: filteredCategories.isEmpty
+                      ? Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(16.0),
+                            child: Text(
+                              'No color categories found',
+                              style: TextStyle(color: Colors.grey[600]),
+                            ),
+                          ),
+                        )
+                      : ListView.builder(
+                          itemCount: filteredCategories.length,
+                          itemBuilder: (context, index) {
+                            final category = filteredCategories[index];
+                            final bool isSelected =
+                                _selectedIds.contains(category.id);
+                            final sharedLabel =
+                                _sharedOwnerLabel(category.sharedOwnerDisplayName);
+                            return CheckboxListTile(
+                              title: Text(category.name),
+                              subtitle: sharedLabel != null
+                                  ? Text(
+                                      sharedLabel,
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodySmall
+                                          ?.copyWith(color: Colors.grey[600]),
+                                    )
+                                  : null,
+                              secondary: Container(
+                                width: 24,
+                                height: 24,
+                                decoration: BoxDecoration(
+                                  color: category.color,
+                                  shape: BoxShape.circle,
+                                  border: Border.all(color: Colors.grey.shade400),
+                                ),
+                              ),
+                              value: isSelected,
+                              onChanged: (bool? value) {
+                                setState(() {
+                                  if (value == true) {
+                                    _selectedIds.add(category.id);
+                                  } else {
+                                    _selectedIds.remove(category.id);
+                                  }
+                                });
+                              },
+                              controlAffinity: ListTileControlAffinity.leading,
+                            );
+                          },
+                        ),
                 ),
                 const Divider(height: 1),
                 Padding(
@@ -2040,6 +2319,7 @@ class _OtherColorCategoriesSelectionDialogState
                         label: Text('Add New Color Category',
                             style: TextStyle(color: Colors.blue[700])),
                         onPressed: () async {
+                          FocusScope.of(context).unfocus();
                           Navigator.of(context).pop();
                           await widget.onAddColorCategory();
                         },
@@ -2073,12 +2353,14 @@ class _OtherColorCategoriesSelectionDialogState
         TextButton(
           child: const Text('Cancel'),
           onPressed: () {
+            FocusScope.of(context).unfocus();
             Navigator.of(context).pop();
           },
         ),
         TextButton(
           child: const Text('Confirm'),
           onPressed: () {
+            FocusScope.of(context).unfocus();
             Navigator.of(context).pop(_selectedIds.toList());
           },
         ),
