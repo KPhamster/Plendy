@@ -4739,18 +4739,27 @@ class CollectionsScreenState extends State<CollectionsScreen>
   }
 
   Future<void> _showAddContentModal() async {
+    // #region agent log
+    debugPrint('[DEBUG H1] _showAddContentModal: Opening Add Content modal');
+    // #endregion
     // Open ReceiveShareScreen as a modal, with UI disabled until URL entered
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (_) {
+        // #region agent log
+        debugPrint('[DEBUG H1] _showAddContentModal: Modal builder called');
+        // #endregion
         return DraggableScrollableSheet(
           expand: false,
           initialChildSize: 0.95,
           minChildSize: 0.5,
           maxChildSize: 0.95,
           builder: (context, scrollController) {
+            // #region agent log
+            debugPrint('[DEBUG H4] DraggableScrollableSheet builder called');
+            // #endregion
             return ChangeNotifierProvider(
               create: (_) => ReceiveShareProvider(),
               child: Container(
