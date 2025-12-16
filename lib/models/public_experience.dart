@@ -17,6 +17,8 @@ class PublicExperience {
   // Track which users have voted (for preventing duplicates and restoring state)
   final List<String> thumbsUpUserIds;
   final List<String> thumbsDownUserIds;
+  // Category icon (emoji) derived from experiences with the same placeID
+  final String? icon;
 
   PublicExperience({
     required this.id,
@@ -30,6 +32,7 @@ class PublicExperience {
     this.thumbsDownCount = 0,
     this.thumbsUpUserIds = const [],
     this.thumbsDownUserIds = const [],
+    this.icon,
   });
 
   // CopyWith method for immutability
@@ -45,6 +48,7 @@ class PublicExperience {
     int? thumbsDownCount,
     List<String>? thumbsUpUserIds,
     List<String>? thumbsDownUserIds,
+    String? icon,
   }) {
     return PublicExperience(
       id: id ?? this.id,
@@ -58,6 +62,7 @@ class PublicExperience {
       thumbsDownCount: thumbsDownCount ?? this.thumbsDownCount,
       thumbsUpUserIds: thumbsUpUserIds ?? this.thumbsUpUserIds,
       thumbsDownUserIds: thumbsDownUserIds ?? this.thumbsDownUserIds,
+      icon: icon ?? this.icon,
     );
   }
 
@@ -74,6 +79,7 @@ class PublicExperience {
       'thumbsDownCount': thumbsDownCount,
       'thumbsUpUserIds': thumbsUpUserIds,
       'thumbsDownUserIds': thumbsDownUserIds,
+      'icon': icon,
       // id is not stored in the document data itself
     };
   }
@@ -95,6 +101,7 @@ class PublicExperience {
       thumbsDownCount: data['thumbsDownCount'] ?? 0,
       thumbsUpUserIds: List<String>.from(data['thumbsUpUserIds'] ?? []),
       thumbsDownUserIds: List<String>.from(data['thumbsDownUserIds'] ?? []),
+      icon: data['icon'] as String?,
     );
   }
 
@@ -113,6 +120,7 @@ class PublicExperience {
       thumbsDownCount: map['thumbsDownCount'] ?? 0,
       thumbsUpUserIds: List<String>.from(map['thumbsUpUserIds'] ?? []),
       thumbsDownUserIds: List<String>.from(map['thumbsDownUserIds'] ?? []),
+      icon: map['icon'] as String?,
     );
   }
   
@@ -216,7 +224,8 @@ class PublicExperience {
         other.thumbsUpCount == thumbsUpCount &&
         other.thumbsDownCount == thumbsDownCount &&
         ListEquality().equals(other.thumbsUpUserIds, thumbsUpUserIds) &&
-        ListEquality().equals(other.thumbsDownUserIds, thumbsDownUserIds);
+        ListEquality().equals(other.thumbsDownUserIds, thumbsDownUserIds) &&
+        other.icon == icon;
   }
 
   @override
@@ -232,7 +241,8 @@ class PublicExperience {
         thumbsUpCount.hashCode ^
         thumbsDownCount.hashCode ^
         ListEquality().hash(thumbsUpUserIds) ^
-        ListEquality().hash(thumbsDownUserIds);
+        ListEquality().hash(thumbsDownUserIds) ^
+        icon.hashCode;
   }
 }
 

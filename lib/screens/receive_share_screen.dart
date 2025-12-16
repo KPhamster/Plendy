@@ -5623,7 +5623,8 @@ class _ReceiveShareScreenState extends State<ReceiveShareScreen>
                     placeID: placeId,
                     yelpUrl: cardYelpUrl.isNotEmpty ? cardYelpUrl : null,
                     website: cardWebsite.isNotEmpty ? cardWebsite : null,
-                    allMediaPaths: uniqueMediaPaths);
+                    allMediaPaths: uniqueMediaPaths,
+                    icon: selectedCategoryObject?.icon);
                 await _experienceService
                     .createPublicExperience(newPublicExperience);
                 if (!mounted) return;

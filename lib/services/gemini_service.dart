@@ -301,7 +301,14 @@ WRONG (do NOT do this):
   }
 
   /// Call Gemini API with Google Search grounding (for web lookups)
-  Future<Map<String, dynamic>?> _callGeminiWithSearchGrounding(String prompt) async {
+  /// 
+  /// [prompt] - The prompt to send
+  /// [maxOutputTokens] - Max tokens for response (default 256 for simple lookups, 
+  ///                     use 2048+ for multi-location extraction)
+  Future<Map<String, dynamic>?> _callGeminiWithSearchGrounding(
+    String prompt, {
+    int maxOutputTokens = 256,
+  }) async {
     final endpoint = '$_baseUrl/models/$_defaultModel:generateContent';
     
     // Build request with Google Search grounding
@@ -322,7 +329,7 @@ WRONG (do NOT do this):
         'temperature': 0.1, // Low temperature for factual lookups
         'topP': 0.8,
         'topK': 40,
-        'maxOutputTokens': 256, // Short response expected
+        'maxOutputTokens': maxOutputTokens,
       }
     };
 
@@ -2463,7 +2470,10 @@ NOTE: Each @handle is converted to a readable business name, and the 📍 addres
 - Return ONLY the JSON object, no other text
 ''';
 
-      final response = await _callGeminiWithSearchGrounding(prompt);
+      // Use higher token limit for multi-location extraction (default 256 is too small)
+      // Each location in JSON takes ~100-150 chars, so 30 locations needs ~4000 chars = ~1000 tokens
+      // Using 2048 tokens to safely handle up to 50+ locations
+      final response = await _callGeminiWithSearchGrounding(prompt, maxOutputTokens: 2048);
       
       if (response == null) {
         print('⚠️ RAW EXTRACTION: No response from API');
