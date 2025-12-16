@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
@@ -1840,6 +1842,84 @@ class ExperienceService {
           'findAccessibleExperiencesByPlaceId: Error fetching experiences for placeId $placeId: $e');
     }
     return [];
+  }
+
+  /// Updates the icon field on a public experience document.
+  /// Returns true if successful, false otherwise.
+  Future<bool> updatePublicExperienceIcon(String publicExperienceId, String icon) async {
+    if (publicExperienceId.isEmpty || icon.isEmpty) {
+      debugPrint('updatePublicExperienceIcon: Invalid arguments');
+      return false;
+    }
+    
+    try {
+      await _publicExperiencesCollection.doc(publicExperienceId).update({
+        'icon': icon,
+      });
+      debugPrint('updatePublicExperienceIcon: Successfully set icon "$icon" for public experience $publicExperienceId');
+      return true;
+    } catch (e) {
+      debugPrint('updatePublicExperienceIcon: Error updating icon for $publicExperienceId: $e');
+      return false;
+    }
+  }
+
+  /// Finds any experience by placeId (from any user) and returns the category icon.
+  /// This is used for public experiences to inherit a category icon from existing experiences.
+  /// If [publicExperienceId] is provided and an icon is found, it will be persisted to the
+  /// public experience document so we don't need to look it up again.
+  /// Returns null if no experience is found or no icon is available.
+  Future<String?> findCategoryIconByPlaceId(String? placeId, {String? publicExperienceId}) async {
+    if (placeId == null || placeId.isEmpty) {
+      return null;
+    }
+
+    try {
+      final querySnapshot = await _experiencesCollection
+          .where('location.placeId', isEqualTo: placeId)
+          .limit(10) // Check a few experiences in case some don't have icons
+          .get();
+
+      for (final doc in querySnapshot.docs) {
+        final data = doc.data() as Map<String, dynamic>;
+        
+        // First try the denormalized icon
+        final String? categoryIconDenorm = data['categoryIconDenorm'] as String?;
+        if (categoryIconDenorm != null && categoryIconDenorm.isNotEmpty) {
+          debugPrint('findCategoryIconByPlaceId: Found denormalized icon "$categoryIconDenorm" for placeId: $placeId');
+          // Persist to public experience if ID provided
+          if (publicExperienceId != null && publicExperienceId.isNotEmpty) {
+            unawaited(updatePublicExperienceIcon(publicExperienceId, categoryIconDenorm));
+          }
+          return categoryIconDenorm;
+        }
+        
+        // Fallback: look up the category via categoryId + createdBy
+        final String? categoryId = data['categoryId'] as String?;
+        final String? createdBy = data['createdBy'] as String?;
+        if (categoryId != null && categoryId.isNotEmpty && 
+            createdBy != null && createdBy.isNotEmpty) {
+          try {
+            final category = await getUserCategoryByOwner(createdBy, categoryId);
+            if (category != null && category.icon.isNotEmpty) {
+              debugPrint('findCategoryIconByPlaceId: Found category icon "${category.icon}" via lookup for placeId: $placeId');
+              // Persist to public experience if ID provided
+              if (publicExperienceId != null && publicExperienceId.isNotEmpty) {
+                unawaited(updatePublicExperienceIcon(publicExperienceId, category.icon));
+              }
+              return category.icon;
+            }
+          } catch (e) {
+            debugPrint('findCategoryIconByPlaceId: Failed to lookup category $categoryId for owner $createdBy: $e');
+            // Continue to next experience doc
+          }
+        }
+      }
+      debugPrint('findCategoryIconByPlaceId: No category icon found for placeId: $placeId');
+    } catch (e) {
+      debugPrint('findCategoryIconByPlaceId: Error fetching experiences for placeId $placeId: $e');
+    }
+    return null;
   }
 
   /// Update an existing experience

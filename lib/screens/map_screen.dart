@@ -33,6 +33,7 @@ import '../services/experience_share_service.dart';
 import '../widgets/event_editor_modal.dart';
 import '../widgets/share_experience_bottom_sheet.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:fluttertoast/fluttertoast.dart';
 
 // Helper function to parse hex color string
 Color _parseColor(String hexColor) {
@@ -1481,6 +1482,29 @@ class _MapScreenState extends State<MapScreen> {
     }
   }
 
+  // ADDED: Helper method to find a category icon for a public experience
+  // Searches Firestore for any Experience with the same placeId and returns its category icon
+  // Also persists the icon to the public experience document so we don't need to look it up again
+  Future<String?> _findCategoryIconForPublicExperience(PublicExperience publicExp) async {
+    // If the public experience already has an icon, use it
+    if (publicExp.icon != null && publicExp.icon!.isNotEmpty) {
+      return publicExp.icon;
+    }
+    
+    // Search Firestore for any experience with the same placeId
+    // Pass the publicExperienceId so the icon gets persisted to the document
+    if (publicExp.placeID.isNotEmpty) {
+      final icon = await _experienceService.findCategoryIconByPlaceId(
+        publicExp.placeID,
+        publicExperienceId: publicExp.id,
+      );
+      if (icon != null && icon.isNotEmpty) {
+        return icon;
+      }
+    }
+    return null;
+  }
+
   // ADDED: Generate markers for public experiences
   Future<void> _generatePublicExperienceMarkers() async {
     print(
@@ -1493,8 +1517,8 @@ class _MapScreenState extends State<MapScreen> {
       return;
     }
 
-    // Generate cached icons for public experiences (default and selected states)
-    final BitmapDescriptor publicIcon = await _bitmapDescriptorFromText(
+    // Generate default globe icon for public experiences without a category icon
+    final BitmapDescriptor defaultPublicIcon = await _bitmapDescriptorFromText(
       String.fromCharCode(Icons.public.codePoint),
       size: 60,
       backgroundColor: Colors.black,
@@ -1503,7 +1527,7 @@ class _MapScreenState extends State<MapScreen> {
       fontFamily: Icons.public.fontFamily,
     );
 
-    final BitmapDescriptor publicSelectedIcon = await _bitmapDescriptorFromText(
+    final BitmapDescriptor defaultPublicSelectedIcon = await _bitmapDescriptorFromText(
       String.fromCharCode(Icons.public.codePoint),
       size: 80,
       backgroundColor: Colors.black,
@@ -1512,11 +1536,50 @@ class _MapScreenState extends State<MapScreen> {
       fontFamily: Icons.public.fontFamily,
     );
 
+    // Cache for category-based icons to avoid regenerating
+    final Map<String, BitmapDescriptor> publicCategoryIconCache = {};
+    final Map<String, BitmapDescriptor> publicCategorySelectedIconCache = {};
+
     for (final publicExp in _nearbyPublicExperiences) {
       final position = LatLng(
         publicExp.location.latitude,
         publicExp.location.longitude,
       );
+
+      // Try to find a category icon for this public experience (searches Firestore)
+      final String? categoryIcon = await _findCategoryIconForPublicExperience(publicExp);
+      
+      // Determine which icons to use
+      BitmapDescriptor publicIcon;
+      BitmapDescriptor publicSelectedIcon;
+      
+      if (categoryIcon != null && categoryIcon.isNotEmpty) {
+        // Use category icon - check cache first
+        if (publicCategoryIconCache.containsKey(categoryIcon)) {
+          publicIcon = publicCategoryIconCache[categoryIcon]!;
+          publicSelectedIcon = publicCategorySelectedIconCache[categoryIcon]!;
+        } else {
+          // Generate new icons for this category
+          publicIcon = await _bitmapDescriptorFromText(
+            categoryIcon,
+            size: 60,
+            backgroundColor: Colors.black,
+            backgroundOpacity: 1.0,
+          );
+          publicSelectedIcon = await _bitmapDescriptorFromText(
+            categoryIcon,
+            size: 80,
+            backgroundColor: Colors.black,
+            backgroundOpacity: 1.0,
+          );
+          publicCategoryIconCache[categoryIcon] = publicIcon;
+          publicCategorySelectedIconCache[categoryIcon] = publicSelectedIcon;
+        }
+      } else {
+        // Use default globe icon
+        publicIcon = defaultPublicIcon;
+        publicSelectedIcon = defaultPublicSelectedIcon;
+      }
 
       final markerId = MarkerId('public_${publicExp.id}');
       final marker = Marker(
@@ -1529,13 +1592,27 @@ class _MapScreenState extends State<MapScreen> {
           print(
               "🗺️ MAP SCREEN: Public experience marker tapped: '${publicExp.name}'");
 
+          // Determine icon for selected marker
+          final String? tappedCategoryIcon = await _findCategoryIconForPublicExperience(publicExp);
+          BitmapDescriptor tappedSelectedIcon;
+          if (tappedCategoryIcon != null && tappedCategoryIcon.isNotEmpty) {
+            tappedSelectedIcon = await _bitmapDescriptorFromText(
+              tappedCategoryIcon,
+              size: 80,
+              backgroundColor: Colors.black,
+              backgroundOpacity: 1.0,
+            );
+          } else {
+            tappedSelectedIcon = defaultPublicSelectedIcon;
+          }
+
           // Create a temporary marker for the selected public experience
           final tappedMarkerId = MarkerId('selected_public_experience');
           final tappedMarker = Marker(
             markerId: tappedMarkerId,
             position: position,
             infoWindow: _infoWindowForPlatform(publicExp.name),
-            icon: publicSelectedIcon,
+            icon: tappedSelectedIcon,
             zIndex: 1.0,
           );
 
@@ -1649,6 +1726,17 @@ class _MapScreenState extends State<MapScreen> {
         _lastGlobeMapCenter = center;
       });
 
+      // Show loading toast
+      Fluttertoast.showToast(
+        msg: 'Finding experiences from the community...',
+        toastLength: Toast.LENGTH_SHORT,
+        gravity: ToastGravity.BOTTOM,
+        timeInSecForIosWeb: 2,
+        backgroundColor: Colors.grey[800],
+        textColor: Colors.white,
+        fontSize: 16.0,
+      );
+
       // Fetch nearby public experiences
       await _fetchNearbyPublicExperiences(center);
 
@@ -1656,7 +1744,24 @@ class _MapScreenState extends State<MapScreen> {
       if (mounted) {
         setState(() {
           _isGlobeLoading = false;
+          // If no experiences were found, turn off the globe toggle
+          if (_nearbyPublicExperiences.isEmpty) {
+            _isGlobalToggleActive = false;
+            _publicExperienceMarkers.clear();
+            _lastGlobeMapCenter = null;
+          }
         });
+
+        // Show completion toast with count
+        Fluttertoast.showToast(
+          msg: 'Showing ${_nearbyPublicExperiences.length} experiences from the community!',
+          toastLength: Toast.LENGTH_LONG,
+          gravity: ToastGravity.BOTTOM,
+          timeInSecForIosWeb: 3,
+          backgroundColor: Colors.grey[800],
+          textColor: Colors.white,
+          fontSize: 16.0,
+        );
       }
 
       print(
