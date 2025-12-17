@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Plendy - oEmbed Feature Demo</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+        
+        header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+        
+        header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+        }
+        
+        header p {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+        
+        .logo {
+            width: 80px;
+            height: 80px;
+            background: white;
+            border-radius: 20px;
+            margin: 0 auto 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2.5rem;
+        }
+        
+        .card {
+            background: white;
+            border-radius: 16px;
+            padding: 24px;
+            margin-bottom: 24px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+        }
+        
+        .card h2 {
+            color: #333;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .card h2 .icon {
+            font-size: 1.5rem;
+        }
+        
+        .card p {
+            color: #666;
+            line-height: 1.6;
+            margin-bottom: 16px;
+        }
+        
+        .feature-list {
+            list-style: none;
+            margin-bottom: 20px;
+        }
+        
+        .feature-list li {
+            padding: 10px 0;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+        }
+        
+        .feature-list li:last-child {
+            border-bottom: none;
+        }
+        
+        .feature-list .check {
+            color: #22c55e;
+            font-weight: bold;
+        }
+        
+        .embed-container {
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        
+        .embed-label {
+            font-size: 0.875rem;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 12px;
+            font-weight: 600;
+        }
+        
+        .instagram-embed, .facebook-embed {
+            display: flex;
+            justify-content: center;
+            min-height: 400px;
+        }
+        
+        .api-demo {
+            background: #1e1e1e;
+            border-radius: 8px;
+            padding: 16px;
+            overflow-x: auto;
+        }
+        
+        .api-demo code {
+            color: #d4d4d4;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 0.875rem;
+            white-space: pre;
+        }
+        
+        .api-demo .keyword { color: #569cd6; }
+        .api-demo .string { color: #ce9178; }
+        .api-demo .comment { color: #6a9955; }
+        
+        .flow-diagram {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin: 20px 0;
+        }
+        
+        .flow-step {
+            background: #667eea;
+            color: white;
+            padding: 12px 20px;
+            border-radius: 8px;
+            font-weight: 500;
+            text-align: center;
+        }
+        
+        .flow-arrow {
+            color: #667eea;
+            font-size: 1.5rem;
+        }
+        
+        .badge {
+            display: inline-block;
+            background: #667eea;
+            color: white;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .badge.instagram {
+            background: linear-gradient(45deg, #f09433, #e6683c, #dc2743, #cc2366, #bc1888);
+        }
+        
+        .badge.facebook {
+            background: #1877f2;
+        }
+        
+        footer {
+            text-align: center;
+            color: white;
+            margin-top: 40px;
+            opacity: 0.8;
+        }
+        
+        footer a {
+            color: white;
+        }
+        
+        .screenshot-section {
+            margin-top: 20px;
+        }
+        
+        .screenshot-section img {
+            max-width: 100%;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+        
+        @media (max-width: 600px) {
+            header h1 {
+                font-size: 1.8rem;
+            }
+            
+            .flow-diagram {
+                flex-direction: column;
+            }
+            
+            .flow-arrow {
+                transform: rotate(90deg);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="logo">📍</div>
+            <h1>Plendy oEmbed Feature Demo</h1>
+            <p>Demonstrating Meta oEmbed Read integration for embedding Instagram & Facebook content</p>
+        </header>
+        
+        <!-- Overview Card -->
+        <div class="card">
+            <h2><span class="icon">📋</span> What is Plendy?</h2>
+            <p>
+                Plendy is a location-based experience sharing app that helps users save, organize, and share 
+                places they discover on social media. When users share Instagram or Facebook posts containing 
+                restaurant recommendations, travel spots, or other locations, Plendy uses <strong>Meta's oEmbed API</strong> 
+                to display rich previews of this content.
+            </p>
+            
+            <h3 style="margin-top: 20px; margin-bottom: 12px;">How oEmbed is Used:</h3>
+            <ul class="feature-list">
+                <li>
+                    <span class="check">✓</span>
+                    <span><strong>Preview Instagram Posts:</strong> When a user shares an Instagram post URL, we use oEmbed to fetch and display the post preview with caption and media.</span>
+                </li>
+                <li>
+                    <span class="check">✓</span>
+                    <span><strong>Preview Facebook Content:</strong> Facebook page posts and videos are embedded using oEmbed to show rich previews.</span>
+                </li>
+                <li>
+                    <span class="check">✓</span>
+                    <span><strong>Extract Location Data:</strong> The caption text from oEmbed response helps us identify location mentions for saving experiences.</span>
+                </li>
+            </ul>
+        </div>
+        
+        <!-- User Flow Card -->
+        <div class="card">
+            <h2><span class="icon">🔄</span> User Flow with oEmbed</h2>
+            <p>Here's how Plendy uses Meta oEmbed when a user shares content:</p>
+            
+            <div class="flow-diagram">
+                <div class="flow-step">1. User shares<br>Instagram URL</div>
+                <span class="flow-arrow">→</span>
+                <div class="flow-step">2. Plendy calls<br>oEmbed API</div>
+                <span class="flow-arrow">→</span>
+                <div class="flow-step">3. Display<br>embed preview</div>
+                <span class="flow-arrow">→</span>
+                <div class="flow-step">4. User saves<br>to experiences</div>
+            </div>
+        </div>
+        
+        <!-- API Integration Card -->
+        <div class="card">
+            <h2><span class="icon">⚙️</span> API Integration</h2>
+            <p>Plendy uses the official Meta Graph API oEmbed endpoints:</p>
+            
+            <div class="api-demo">
+                <code><span class="comment">// Instagram oEmbed API Call</span>
+<span class="keyword">GET</span> <span class="string">https://graph.facebook.com/v21.0/instagram_oembed</span>
+    ?url=<span class="string">{instagram_post_url}</span>
+    &access_token=<span class="string">{app_id}|{app_secret}</span>
+
+<span class="comment">// Response includes HTML embed code</span>
+{
+  <span class="string">"html"</span>: <span class="string">"&lt;blockquote class='instagram-media'&gt;...&lt;/blockquote&gt;"</span>,
+  <span class="string">"author_name"</span>: <span class="string">"username"</span>,
+  <span class="string">"provider_name"</span>: <span class="string">"Instagram"</span>
+}</code>
+            </div>
+        </div>
+        
+        <!-- Live Instagram Demo -->
+        <div class="card">
+            <h2><span class="icon">📸</span> Live Instagram oEmbed Demo <span class="badge instagram">Instagram</span></h2>
+            <p>Below is a real Instagram post embedded using Meta's oEmbed API. This is exactly how content appears in the Plendy app:</p>
+            
+            <div class="embed-container">
+                <div class="embed-label">Instagram Post Preview via oEmbed</div>
+                <div class="instagram-embed">
+                    <blockquote class="instagram-media" data-instgrm-captioned data-instgrm-permalink="https://www.instagram.com/p/Csfba8nsuUn/" data-instgrm-version="14" style="background:#FFF; border:0; border-radius:3px; box-shadow:0 0 1px 0 rgba(0,0,0,0.5),0 1px 10px 0 rgba(0,0,0,0.15); margin: 1px; max-width:540px; min-width:326px; padding:0; width:99.375%; width:-webkit-calc(100% - 2px); width:calc(100% - 2px);">
+                        <div style="padding:16px;">
+                            <a href="https://www.instagram.com/p/Csfba8nsuUn/" style="background:#FFFFFF; line-height:0; padding:0 0; text-align:center; text-decoration:none; width:100%;" target="_blank">
+                                <div style="display: flex; flex-direction: row; align-items: center;">
+                                    <div style="background-color: #F4F4F4; border-radius: 50%; flex-grow: 0; height: 40px; margin-right: 14px; width: 40px;"></div>
+                                    <div style="display: flex; flex-direction: column; flex-grow: 1; justify-content: center;">
+                                        <div style="background-color: #F4F4F4; border-radius: 4px; flex-grow: 0; height: 14px; margin-bottom: 6px; width: 100px;"></div>
+                                        <div style="background-color: #F4F4F4; border-radius: 4px; flex-grow: 0; height: 14px; width: 60px;"></div>
+                                    </div>
+                                </div>
+                                <div style="padding: 19% 0;"></div>
+                                <div style="display:block; height:50px; margin:0 auto 12px; width:50px;">
+                                    <svg width="50px" height="50px" viewBox="0 0 60 60" version="1.1" xmlns="http://www.w3.org/2000/svg"><g stroke="none" stroke-width="1" fill="none" fill-rule="evenodd"><g transform="translate(-511.000000, -20.000000)" fill="#000000"><g><path d="M556.869,30.41 C554.814,30.41 553.148,32.076 553.148,34.131 C553.148,36.186 554.814,37.852 556.869,37.852 C558.924,37.852 560.59,36.186 560.59,34.131 C560.59,32.076 558.924,30.41 556.869,30.41 M541,60.657 C535.114,60.657 530.342,55.887 530.342,50 C530.342,44.114 535.114,39.342 541,39.342 C546.887,39.342 551.658,44.114 551.658,50 C551.658,55.887 546.887,60.657 541,60.657 M541,33.886 C532.1,33.886 524.886,41.1 524.886,50 C524.886,58.899 532.1,66.113 541,66.113 C549.9,66.113 557.115,58.899 557.115,50 C557.115,41.1 549.9,33.886 541,33.886 M565.378,62.101 C565.244,65.022 564.756,66.606 564.346,67.663 C563.803,69.06 563.154,70.057 562.106,71.106 C561.058,72.155 560.06,72.803 558.662,73.347 C557.607,73.757 556.021,74.244 553.102,74.378 C549.944,74.521 548.997,74.552 541,74.552 C533.003,74.552 532.056,74.521 528.898,74.378 C525.979,74.244 524.393,73.757 523.338,73.347 C521.94,72.803 520.942,72.155 519.894,71.106 C518.846,70.057 518.197,69.06 517.654,67.663 C517.244,66.606 516.755,65.022 516.623,62.101 C516.479,58.943 516.448,57.996 516.448,50 C516.448,42.003 516.479,41.056 516.623,37.899 C516.755,34.978 517.244,33.391 517.654,32.338 C518.197,30.938 518.846,29.942 519.894,28.894 C520.942,27.846 521.94,27.196 523.338,26.654 C524.393,26.244 525.979,25.756 528.898,25.623 C532.057,25.479 533.004,25.448 541,25.448 C548.997,25.448 549.943,25.479 553.102,25.623 C556.021,25.756 557.607,26.244 558.662,26.654 C560.06,27.196 561.058,27.846 562.106,28.894 C563.154,29.942 563.803,30.938 564.346,32.338 C564.756,33.391 565.244,34.978 565.378,37.899 C565.522,41.056 565.552,42.003 565.552,50 C565.552,57.996 565.522,58.943 565.378,62.101 M570.82,37.631 C570.674,34.438 570.167,32.258 569.425,30.349 C568.659,28.377 567.633,26.702 565.965,25.035 C564.297,23.368 562.623,22.342 560.652,21.575 C558.743,20.834 556.562,20.326 553.369,20.18 C550.169,20.033 549.148,20 541,20 C532.853,20 531.831,20.033 528.631,20.18 C525.438,20.326 523.257,20.834 521.349,21.575 C519.376,22.342 517.703,23.368 516.035,25.035 C514.368,26.702 513.342,28.377 512.574,30.349 C511.834,32.258 511.326,34.438 511.181,37.631 C511.035,40.831 511,41.851 511,50 C511,58.147 511.035,59.17 511.181,62.369 C511.326,65.562 511.834,67.743 512.574,69.651 C513.342,71.625 514.368,73.296 516.035,74.965 C517.703,76.634 519.376,77.658 521.349,78.425 C523.257,79.167 525.438,79.673 528.631,79.82 C531.831,79.965 532.853,80.001 541,80.001 C549.148,80.001 550.169,79.965 553.369,79.82 C556.562,79.673 558.743,79.167 560.652,78.425 C562.623,77.658 564.297,76.634 565.965,74.965 C567.633,73.296 568.659,71.625 569.425,69.651 C570.167,67.743 570.674,65.562 570.82,62.369 C570.966,59.17 571,58.147 571,50 C571,41.851 570.966,40.831 570.82,37.631"></path></g></g></g></svg>
+                                </div>
+                                <div style="padding-top: 8px;">
+                                    <div style="color:#3897f0; font-family:Arial,sans-serif; font-size:14px; font-style:normal; font-weight:550; line-height:18px;">View this post on Instagram</div>
+                                </div>
+                            </a>
+                        </div>
+                    </blockquote>
+                </div>
+            </div>
+            
+            <p style="color: #888; font-size: 0.875rem;">
+                <strong>Note:</strong> The embed above is rendered using the HTML returned from Meta's instagram_oembed API endpoint.
+            </p>
+        </div>
+        
+        <!-- Facebook Demo -->
+        <div class="card">
+            <h2><span class="icon">📘</span> Facebook oEmbed Support <span class="badge facebook">Facebook</span></h2>
+            <p>Plendy also supports embedding Facebook posts, videos, and Reels using the Facebook oEmbed API:</p>
+            
+            <div class="embed-container">
+                <div class="embed-label">Facebook Reel Preview via oEmbed</div>
+                <div class="facebook-embed">
+                    <div id="fb-root"></div>
+                    <div class="fb-video" data-href="https://www.facebook.com/reel/1513979749833451" data-width="500" data-show-text="true">
+                        <blockquote cite="https://www.facebook.com/reel/1513979749833451" class="fb-xfbml-parse-ignore">
+                            <p>Loading Facebook content...</p>
+                        </blockquote>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Mobile App Screenshots -->
+        <div class="card">
+            <h2><span class="icon">📱</span> In-App Experience</h2>
+            <p>Here's how the oEmbed feature appears in the Plendy mobile app when users share Instagram content:</p>
+            
+            <div class="feature-list">
+                <li>
+                    <span class="check">✓</span>
+                    <span>User shares an Instagram post URL via iOS/Android share sheet</span>
+                </li>
+                <li>
+                    <span class="check">✓</span>
+                    <span>Plendy receives the URL and calls the Meta oEmbed API</span>
+                </li>
+                <li>
+                    <span class="check">✓</span>
+                    <span>The embedded preview is displayed in an interactive card</span>
+                </li>
+                <li>
+                    <span class="check">✓</span>
+                    <span>User can extract location data and save to their experiences</span>
+                </li>
+            </div>
+            
+            <p style="color: #666; margin-top: 16px;">
+                <strong>Test Instructions:</strong> To test on mobile, download Plendy from the App Store or Google Play, 
+                then share any public Instagram post to the app. The oEmbed preview will appear automatically.
+            </p>
+        </div>
+        
+        <!-- Contact Info -->
+        <div class="card">
+            <h2><span class="icon">📧</span> Contact Information</h2>
+            <p>For any questions about our oEmbed implementation:</p>
+            <ul class="feature-list">
+                <li>
+                    <span class="check">📧</span>
+                    <span><strong>Email:</strong> support@plendy.app</span>
+                </li>
+                <li>
+                    <span class="check">🌐</span>
+                    <span><strong>Website:</strong> <a href="https://plendy.app">https://plendy.app</a></span>
+                </li>
+                <li>
+                    <span class="check">📱</span>
+                    <span><strong>App Store:</strong> Search "Plendy" on iOS App Store or Google Play</span>
+                </li>
+            </ul>
+        </div>
+        
+        <footer>
+            <p>© 2024 Plendy. This demo page demonstrates Meta oEmbed Read integration.</p>
+            <p><a href="https://plendy.app">Back to Plendy</a></p>
+        </footer>
+    </div>
+    
+    <!-- Instagram Embed Script -->
+    <script async src="//www.instagram.com/embed.js"></script>
+    
+    <!-- Facebook SDK -->
+    <script async defer crossorigin="anonymous" src="https://connect.facebook.net/en_US/sdk.js#xfbml=1&version=v18.0&appId=668837752407795" nonce="abc123"></script>
+    
+    <script>
+        // Process Instagram embeds when script loads
+        window.addEventListener('load', function() {
+            if (window.instgrm) {
+                window.instgrm.Embeds.process();
+            }
+        });
+    </script>
+</body>
+</html>
+

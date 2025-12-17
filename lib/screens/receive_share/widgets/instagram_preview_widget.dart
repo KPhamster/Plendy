@@ -8,8 +8,9 @@ import '../../../services/instagram_oembed_service.dart';
 // Conditional imports for web support
 import 'instagram_web_logic.dart' if (dart.library.io) 'instagram_web_logic_stub.dart' as web_logic;
 
-/// Instagram WebView widget using flutter_inappwebview for screenshot support
-/// On web, uses Meta oEmbed API for embedding Instagram content
+/// Instagram WebView widget using Meta oEmbed API for embedding Instagram content
+/// On web, uses oEmbed API to get embed HTML and renders in an iframe
+/// On mobile, uses oEmbed API to get embed HTML and renders in InAppWebView
 class InstagramWebView extends StatefulWidget {
   final String url;
   final double height;
@@ -37,18 +38,17 @@ class InstagramWebViewState extends State<InstagramWebView> {
   int _loadingDelayOperationId = 0;
   bool _isDisposed = false;
   
-  // Web-specific state
+  // oEmbed state (used for both web and mobile)
   String? _webViewType;
   String? _oembedHtml;
-  String? _webErrorMessage;
+  String? _errorMessage;
   bool _webViewRegistered = false;
+  bool _useOEmbed = true; // Whether to use oEmbed API
 
   @override
   void initState() {
     super.initState();
-    if (kIsWeb) {
-      _initializeWebEmbed();
-    }
+    _initializeOEmbed();
   }
 
   @override
@@ -57,68 +57,99 @@ class InstagramWebViewState extends State<InstagramWebView> {
     super.dispose();
   }
 
-  /// Initialize the web embed using Meta oEmbed API
-  Future<void> _initializeWebEmbed() async {
-    if (!kIsWeb) return;
-    
+  /// Initialize the embed using Meta oEmbed API
+  Future<void> _initializeOEmbed() async {
     setState(() {
       isLoading = true;
-      _webErrorMessage = null;
+      _errorMessage = null;
     });
     
     try {
-      print('📸 INSTAGRAM WEB: Fetching oEmbed data for ${widget.url}');
+      // Normalize URL: convert /reel/ and /tv/ to /p/, remove query params
+      final normalizedUrl = _normalizeInstagramUrl(widget.url);
+      print('📸 INSTAGRAM: Fetching oEmbed data for $normalizedUrl (original: ${widget.url})');
       
       final oembedService = InstagramOEmbedService();
       
       if (!oembedService.isConfigured) {
-        print('⚠️ INSTAGRAM WEB: oEmbed service not configured');
-        setState(() {
-          _webErrorMessage = 'Instagram API not configured';
-          isLoading = false;
-        });
+        print('⚠️ INSTAGRAM: oEmbed service not configured');
+        if (kIsWeb) {
+          setState(() {
+            _errorMessage = 'Instagram API not configured';
+            isLoading = false;
+          });
+        } else {
+          // On mobile, fall back to direct WebView loading
+          setState(() {
+            _useOEmbed = false;
+            isLoading = false;
+          });
+        }
         return;
       }
       
-      final metadata = await oembedService.getPostMetadata(widget.url);
+      final metadata = await oembedService.getPostMetadata(normalizedUrl);
       
       if (!mounted || _isDisposed) return;
       
       if (metadata != null && metadata['html'] != null) {
         final embedHtml = metadata['html'] as String;
-        print('✅ INSTAGRAM WEB: Got oEmbed HTML (${embedHtml.length} chars)');
+        print('✅ INSTAGRAM: Got oEmbed HTML (${embedHtml.length} chars)');
         
         // Create full HTML document with Instagram embed.js
         final fullHtml = _buildEmbedHtmlDocument(embedHtml);
         
-        // Generate unique view type for this widget instance
-        _webViewType = 'instagram-oembed-${widget.url.hashCode}-${DateTime.now().millisecondsSinceEpoch}';
-        
-        // Register the view factory
-        web_logic.registerInstagramViewFactory(_webViewType!, fullHtml);
-        
-        setState(() {
-          _oembedHtml = fullHtml;
-          _webViewRegistered = true;
-          isLoading = false;
-        });
+        if (kIsWeb) {
+          // On web, register the view factory for iframe
+          _webViewType = 'instagram-oembed-${widget.url.hashCode}-${DateTime.now().millisecondsSinceEpoch}';
+          web_logic.registerInstagramViewFactory(_webViewType!, fullHtml);
+          
+          setState(() {
+            _oembedHtml = fullHtml;
+            _webViewRegistered = true;
+            isLoading = false;
+          });
+        } else {
+          // On mobile, we'll load the HTML in InAppWebView
+          setState(() {
+            _oembedHtml = fullHtml;
+            _useOEmbed = true;
+            isLoading = false;
+          });
+        }
         
         // Notify parent that page finished loading
         widget.onPageFinished?.call(widget.url);
       } else {
-        print('❌ INSTAGRAM WEB: No oEmbed HTML returned');
-        setState(() {
-          _webErrorMessage = 'Could not load Instagram preview';
-          isLoading = false;
-        });
+        print('❌ INSTAGRAM: No oEmbed HTML returned');
+        if (kIsWeb) {
+          setState(() {
+            _errorMessage = 'Could not load Instagram preview';
+            isLoading = false;
+          });
+        } else {
+          // On mobile, fall back to direct URL loading
+          setState(() {
+            _useOEmbed = false;
+            isLoading = false;
+          });
+        }
       }
     } catch (e) {
-      print('❌ INSTAGRAM WEB ERROR: $e');
+      print('❌ INSTAGRAM ERROR: $e');
       if (mounted && !_isDisposed) {
-        setState(() {
-          _webErrorMessage = 'Error loading Instagram preview';
-          isLoading = false;
-        });
+        if (kIsWeb) {
+          setState(() {
+            _errorMessage = 'Error loading Instagram preview';
+            isLoading = false;
+          });
+        } else {
+          // On mobile, fall back to direct URL loading
+          setState(() {
+            _useOEmbed = false;
+            isLoading = false;
+          });
+        }
       }
     }
   }
@@ -221,30 +252,42 @@ class InstagramWebViewState extends State<InstagramWebView> {
   }
 
   void refresh() {
-    if (kIsWeb) {
-      _initializeWebEmbed();
-      return;
-    }
-    
-    if (mounted && !_isDisposed && controller != null) {
-      controller!.loadUrl(
-        urlRequest: URLRequest(url: WebUri(_cleanInstagramUrl(widget.url))),
-      );
-    }
+    _initializeOEmbed();
   }
 
-  String _cleanInstagramUrl(String url) {
+  /// Normalize Instagram URL:
+  /// - Convert /reel/ to /p/ format (both point to same content)
+  /// - Remove query parameters
+  /// - Ensure trailing slash
+  String _normalizeInstagramUrl(String url) {
     try {
       Uri uri = Uri.parse(url);
-      String cleanUrl = '${uri.scheme}://${uri.host}${uri.path}';
+      String path = uri.path;
+      
+      // Convert /reel/ to /p/ - both formats point to the same content
+      // but /p/ is more universally supported by the oEmbed API
+      if (path.contains('/reel/')) {
+        path = path.replaceFirst('/reel/', '/p/');
+      }
+      
+      // Also handle /tv/ (IGTV) - convert to /p/
+      if (path.contains('/tv/')) {
+        path = path.replaceFirst('/tv/', '/p/');
+      }
+      
+      String cleanUrl = '${uri.scheme}://${uri.host}$path';
       if (!cleanUrl.endsWith('/')) {
         cleanUrl = '$cleanUrl/';
       }
       return cleanUrl;
     } catch (e) {
+      // Fallback: simple string manipulation
       if (url.contains('?')) {
         url = url.split('?')[0];
       }
+      // Convert /reel/ to /p/
+      url = url.replaceFirst('/reel/', '/p/');
+      url = url.replaceFirst('/tv/', '/p/');
       if (!url.endsWith('/')) {
         url = '$url/';
       }
@@ -280,7 +323,7 @@ class InstagramWebViewState extends State<InstagramWebView> {
     }
     
     // Show error state
-    if (_webErrorMessage != null) {
+    if (_errorMessage != null) {
       return Container(
         height: containerHeight,
         width: double.infinity,
@@ -296,7 +339,7 @@ class InstagramWebViewState extends State<InstagramWebView> {
               Icon(Icons.error_outline, color: Colors.grey[600], size: 48),
               const SizedBox(height: 16),
               Text(
-                _webErrorMessage!,
+                _errorMessage!,
                 style: TextStyle(color: Colors.grey[600]),
                 textAlign: TextAlign.center,
               ),
@@ -308,7 +351,7 @@ class InstagramWebViewState extends State<InstagramWebView> {
               ),
               const SizedBox(height: 8),
               TextButton(
-                onPressed: _initializeWebEmbed,
+                onPressed: _initializeOEmbed,
                 child: const Text('Retry'),
               ),
             ],
@@ -354,6 +397,9 @@ class InstagramWebViewState extends State<InstagramWebView> {
 
     final double containerHeight = widget.height;
     
+    // If using oEmbed and we have HTML, load it in WebView
+    final bool loadOEmbedHtml = _useOEmbed && _oembedHtml != null;
+    
     return Stack(
       alignment: Alignment.center,
       children: [
@@ -366,9 +412,16 @@ class InstagramWebViewState extends State<InstagramWebView> {
           ),
           clipBehavior: Clip.hardEdge,
           child: InAppWebView(
-            initialUrlRequest: URLRequest(
-              url: WebUri(_cleanInstagramUrl(widget.url)),
-            ),
+            initialUrlRequest: loadOEmbedHtml 
+                ? null 
+                : URLRequest(url: WebUri(_normalizeInstagramUrl(widget.url))),
+            initialData: loadOEmbedHtml 
+                ? InAppWebViewInitialData(
+                    data: _oembedHtml!,
+                    mimeType: 'text/html',
+                    encoding: 'utf-8',
+                  )
+                : null,
             initialSettings: InAppWebViewSettings(
               javaScriptEnabled: true,
               mediaPlaybackRequiresUserGesture: false,

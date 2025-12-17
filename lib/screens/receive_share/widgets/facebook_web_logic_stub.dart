@@ -1,14 +1,13 @@
 // facebook_web_logic_stub.dart
-// This file provides stubs for non-web platforms
+// Stub file for non-web platforms
 import 'package:flutter/widgets.dart';
 
-// Stub implementation for non-web platforms
+/// No-op on non-web platforms
 void registerFacebookViewFactory(String viewType, String htmlSrcDoc) {
-  // No-op on non-web platforms
+  // No-op on mobile/desktop platforms
 }
 
-// Stub implementation for non-web platforms
+/// Returns a placeholder widget on non-web platforms
 Widget buildFacebookWebViewForWeb(String viewType) {
-  // This should never be called on non-web platforms
-  return Container();
-} 
+  return const SizedBox.shrink();
+}

@@ -5133,6 +5133,7 @@ class _MapScreenState extends State<MapScreen> {
             onLaunchUrl: _launchExternalUrl,
             category: _publicReadOnlyCategory,
             userColorCategories: const <ColorCategory>[],
+            isPublicExperience: true,
           );
         },
       );
