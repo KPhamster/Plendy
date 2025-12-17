@@ -33,6 +33,7 @@ class SharedMediaPreviewModal extends StatefulWidget {
   final List<ColorCategory> userColorCategories;
   final List<UserCategory> additionalUserCategories;
   final bool showSavedDate; // Whether to show the "Saved" date/time in metadata
+  final bool isPublicExperience; // Whether this is a public experience from the community
   final VoidCallback? onViewExperience; // Custom handler for viewing the experience
 
   const SharedMediaPreviewModal({
@@ -45,6 +46,7 @@ class SharedMediaPreviewModal extends StatefulWidget {
     this.userColorCategories = const <ColorCategory>[],
     this.additionalUserCategories = const <UserCategory>[],
     this.showSavedDate = true, // Default to showing it
+    this.isPublicExperience = false, // Default to false (personal experience)
     this.onViewExperience, // Optional custom handler
   });
 
@@ -64,7 +66,7 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
   final Map<String, Future<Map<String, dynamic>?>> _mapsPreviewFutures = {};
   final ExperienceShareService _experienceShareService = ExperienceShareService();
   static const double _defaultPreviewHeight = 640.0;
-  static const double _maxExpandedPreviewHeight = 825.0;
+  static const double _maxExpandedPreviewHeight = 845.0;
   static const List<String> _monthAbbreviations = [
     'Jan',
     'Feb',
@@ -663,6 +665,10 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
     final createdAt = mediaItem.createdAt;
     final formattedDate = _formatFullTimestamp(createdAt);
 
+    // For public experiences, show "Shared by community" instead of saved date
+    final String dateLabel = widget.isPublicExperience ? 'Shared by community' : 'Saved';
+    final String dateValue = widget.isPublicExperience ? 'Community experience' : formattedDate;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -686,9 +692,9 @@ class _SharedMediaPreviewModalState extends State<SharedMediaPreviewModal> {
             children: [
               if (widget.showSavedDate) ...[
                 _buildMetadataRow(
-                  icon: Icons.schedule,
-                  label: 'Saved',
-                  value: formattedDate,
+                  icon: widget.isPublicExperience ? Icons.people : Icons.schedule,
+                  label: dateLabel,
+                  value: dateValue,
                   iconColor: Colors.white,
                   labelColor: Colors.white,
                   valueColor: Colors.white,

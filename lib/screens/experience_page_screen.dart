@@ -1202,15 +1202,20 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                         // Column for Name and Rating
                         Expanded(
                           // Allow text column to take available space
-                          child: Column(
-                            crossAxisAlignment:
-                                CrossAxisAlignment.start, // Align text left
-                            mainAxisSize:
-                                MainAxisSize.min, // Fit content vertically
-                            children: [
-                              // Name
-                              Text(
-                                experience.name,
+                          child: Padding(
+                            // Add right padding to prevent text from overlapping with thumbs up/down buttons
+                            // which are positioned at bottom-right
+                            padding: EdgeInsets.only(
+                                right: _currentUserId != null ? 100.0 : 0),
+                            child: Column(
+                              crossAxisAlignment:
+                                  CrossAxisAlignment.start, // Align text left
+                              mainAxisSize:
+                                  MainAxisSize.min, // Fit content vertically
+                              children: [
+                                // Name
+                                Text(
+                                  experience.name,
                                 style: Theme.of(context)
                                     .textTheme
                                     .headlineMedium
@@ -1229,7 +1234,8 @@ class _ExperiencePageScreenState extends State<ExperiencePageScreen>
                             ],
                           ),
                         ),
-                      ]),
+                      ),
+                    ]),
                   if (widget.readOnlyPreview) ...[
                     const SizedBox(height: 16), // Spacing below the top row
 
