@@ -43,6 +43,7 @@ import 'package:flutter/foundation.dart'
 import 'package:flutter_web_plugins/url_strategy.dart';
 import 'package:app_links/app_links.dart';
 import 'package:firebase_app_check/firebase_app_check.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'screens/share_preview_screen.dart';
 import 'screens/category_share_preview_screen.dart';
 import 'screens/public_profile_screen.dart';
@@ -1620,16 +1621,47 @@ class _MyAppState extends State<MyApp> {
       _deferredDiscoveryShareToken = null;
     }
 
+    final baseTheme = ThemeData(
+      primarySwatch: const MaterialColor(
+        0xFF9E2A39,
+        <int, Color>{
+          50: Color(0xFFFCE8E8),
+          100: Color(0xFFF5C2C2),
+          200: Color(0xFFE79797),
+          300: Color(0xFFD96C6C),
+          400: Color(0xFFCB4949),
+          500: Color(0xFF9E2A39),
+          600: Color(0xFF8E2433),
+          700: Color(0xFF7D1E2D),
+          800: Color(0xFF6D1827),
+          900: Color(0xFF5C1221),
+        },
+      ),
+      primaryColor: const Color(0xFF9E2A39), // Bold red for primary elements
+      colorScheme: ColorScheme.fromSeed(
+        seedColor: const Color(0xFF9E2A39),
+        primary: const Color(0xFF9E2A39),
+        secondary: Colors.white, // Lighter red for secondary elements
+      ),
+    );
+    final TextStyle? appBarTitleStyle = GoogleFonts.notoSerif(
+      textStyle: baseTheme.textTheme.titleLarge,
+      fontSize: 24.0,
+      fontWeight: FontWeight.w700,
+    );
+
     return MaterialApp(
       navigatorKey: navigatorKey, // Assign the key to MaterialApp
       debugShowCheckedModeBanner: false, // Optional: removes debug banner
-      theme: ThemeData(
-        primarySwatch: Colors.red,
-        primaryColor: const Color(0xFFD40000), // Bold red for primary elements
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFFD40000),
-          primary: const Color(0xFFD40000),
-          secondary: Colors.white, // Lighter red for secondary elements
+      theme: baseTheme.copyWith(
+        textTheme: baseTheme.textTheme.copyWith(
+          titleLarge: baseTheme.textTheme.titleLarge?.copyWith(
+            fontSize: 24.0,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        appBarTheme: baseTheme.appBarTheme.copyWith(
+          titleTextStyle: appBarTitleStyle,
         ),
       ),
       builder: (context, child) {

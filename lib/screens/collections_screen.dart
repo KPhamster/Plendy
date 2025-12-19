@@ -16,6 +16,7 @@ import 'package:geolocator/geolocator.dart';
 import 'dart:async'; // <-- ADDED Import for TimeoutException
 import 'package:url_launcher/url_launcher.dart'; // ADDED for launching URLs
 import 'package:font_awesome_flutter/font_awesome_flutter.dart'; // ADDED for icons
+import 'package:google_fonts/google_fonts.dart';
 // ADDED: Import Instagram Preview Widget (adjust alias if needed)
 import 'receive_share/widgets/instagram_preview_widget.dart'
     as instagram_widget;
@@ -36,6 +37,7 @@ import '../models/share_permission.dart'; // ADDED Import for SharePermission
 import '../models/enums/share_enums.dart'; // ADDED Import for ShareableItemType and ShareAccessLevel
 import '../models/category_sort_type.dart';
 import '../models/experience_sort_type.dart'; // ADDED Import for shared ExperienceSortType and ContentSortType
+import '../config/colors.dart'; // ADDED: Import for AppColors
 import 'package:collection/collection.dart'; // ADDED: Import for groupBy
 import 'map_screen.dart'; // ADDED: Import for MapScreen
 import 'package:flutter/foundation.dart'; // ADDED: Import for kIsWeb
@@ -3231,7 +3233,10 @@ class CollectionsScreenState extends State<CollectionsScreen>
             contentPadding: const EdgeInsets.symmetric(horizontal: 7.0),
             minLeadingWidth: 24,
             leading: leadingWidget,
-            title: Text(category.name),
+            title: Text(
+              category.name,
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
             subtitle: subtitleWidget,
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
@@ -3783,7 +3788,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
     return Scaffold(
       appBar: AppBar(
         title: const Text('Collection'),
-        backgroundColor: Colors.white,
+        backgroundColor: Color(0xFFF8F5F2),
         foregroundColor: Colors.black,
         actions: [
           // ADDED: Map Button with text label
@@ -3795,7 +3800,10 @@ class CollectionsScreenState extends State<CollectionsScreen>
                 'assets/icon/icon-cropped.png',
                 height: 24,
               ),
-              label: const Text('Map'),
+              label: Text(
+                'Map',
+                style: GoogleFonts.notoSerif(fontWeight: FontWeight.w700),
+              ),
               onPressed: () {
                 Navigator.push(
                   context,
@@ -3989,13 +3997,13 @@ class CollectionsScreenState extends State<CollectionsScreen>
       ),
       body: _isLoading
           ? Container(
-              color: Colors.white,
+              color: Color(0xFFF8F5F2),
               child: Center(
                 child: CircularProgressIndicator(color: Colors.black54),
               ),
             )
           : Container(
-              color: Colors.white,
+              color: Color(0xFFF8F5F2),
               child: Column(
                 children: [
                   // ADDED: Search Bar Area
@@ -4039,10 +4047,21 @@ class CollectionsScreenState extends State<CollectionsScreen>
                               autofocus: false,
                               decoration: InputDecoration(
                                 labelText: 'Search your experiences',
+                                filled: true,
+                                fillColor: Color(0xFFE5E4DF),
                                 prefixIcon: Icon(Icons.search,
                                     color: Theme.of(context).primaryColor),
                                 border: OutlineInputBorder(
                                   borderRadius: BorderRadius.circular(25.0),
+                                  borderSide: BorderSide(color: Color(0xFFE5E4DF)),
+                                ),
+                                enabledBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(25.0),
+                                  borderSide: BorderSide(color: Color(0xFFE5E4DF)),
+                                ),
+                                focusedBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(25.0),
+                                  borderSide: BorderSide(color: Color(0xFFE5E4DF)),
                                 ),
                                 suffixIcon: IconButton(
                                   icon: const Icon(Icons.clear),
@@ -4105,17 +4124,39 @@ class CollectionsScreenState extends State<CollectionsScreen>
                   }),
                   // ADDED: TabBar placed here in the body's Column
                   Container(
-                    color: Colors.white,
-                    child: TabBar(
-                      controller: _tabController,
-                      tabs: const [
-                        Tab(text: 'Categories'),
-                        Tab(text: 'Experiences'),
-                        Tab(text: 'Saves'),
-                      ],
-                      labelColor: Theme.of(context).primaryColor,
-                      unselectedLabelColor: Colors.grey,
-                      indicatorColor: Theme.of(context).primaryColor,
+                    color: const Color(0xFFF8F5F2),
+                    padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                    child: Container(
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: Color(0xFFE5E4DF),
+                        borderRadius: BorderRadius.circular(20.0),
+                      ),
+                      child: TabBar(
+                        controller: _tabController,
+                        tabs: const [
+                          Tab(text: 'Categories'),
+                          Tab(text: 'Experiences'),
+                          Tab(text: 'Saves'), // Changed "Saves" to "Content" to match image/context if needed, or keep Saves
+                        ],
+                        labelColor: Colors.black,
+                        unselectedLabelColor: Colors.grey[600],
+                        indicator: BoxDecoration(
+                          borderRadius: BorderRadius.circular(20.0),
+                          color: Colors.white,
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.05),
+                              blurRadius: 2,
+                              offset: const Offset(0, 1),
+                            ),
+                          ],
+                        ),
+                        indicatorSize: TabBarIndicatorSize.tab,
+                        dividerColor: Colors.transparent,
+                        labelStyle: const TextStyle(fontWeight: FontWeight.w600),
+                        unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.normal),
+                      ),
                     ),
                   ),
                   // Existing TabBarView wrapped in Expanded
@@ -4129,7 +4170,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                         //     : _buildCategoryExperiencesList(_selectedCategory!),
                         // --- MODIFIED: First tab now uses Column and toggle ---
                         Container(
-                          color: Colors.white,
+                          color: AppColors.backgroundColor,
                           child: Column(
                             children: [
                               Padding(
@@ -4427,12 +4468,12 @@ class CollectionsScreenState extends State<CollectionsScreen>
                         ),
                         // --- END MODIFIED ---
                         Container(
-                          color: Colors.white,
+                          color: const Color(0xFFF8F5F2),
                           child: Column(
                             children: [
                               Padding(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 7.0, vertical: 8.0),
+                                padding: const EdgeInsets.only(
+                                    left: 7.0, right: 7.0, top: 8.0, bottom: 2.0),
                                 child: Row(
                                   children: [
                                     Builder(builder: (context) {
@@ -4575,7 +4616,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                         ),
                         // MODIFIED: Call builder for Content tab
                         Container(
-                          color: Colors.white,
+                          color: AppColors.backgroundColor,
                           child: _buildContentTabBody(),
                         ),
                       ],
@@ -4804,7 +4845,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
     );
     final Color leadingBoxColor = colorCategoryForBox != null
         ? _parseColor(colorCategoryForBox.colorHex).withOpacity(0.5)
-        : Colors.white;
+        : Colors.grey[200]!;
     // Number of related content items
     final int contentCount = experience.sharedMediaItemIds.length;
     final SharePermission? sharePermission =
@@ -4854,7 +4895,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
       alignment: Alignment.center,
       decoration: BoxDecoration(
         color: leadingBoxColor,
-        borderRadius: BorderRadius.circular(8.0),
+        borderRadius: BorderRadius.circular(28.0), // Make it circular
       ),
       child: MediaQuery(
         data: MediaQuery.of(context).copyWith(textScaleFactor: 1.0),
@@ -4900,10 +4941,26 @@ class CollectionsScreenState extends State<CollectionsScreen>
     // Check if this experience is in an upcoming/ongoing event
     final Event? matchingEvent = _experienceIdToEvent[experience.id];
     
-    return ListTile(
-      key: ValueKey(experience.id), // Use experience ID as key
-      contentPadding: const EdgeInsets.symmetric(horizontal: 8.0),
-      visualDensity: const VisualDensity(horizontal: -4),
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20.0),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.12),
+            blurRadius: 20,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: ListTile(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20.0),
+        ),
+        key: ValueKey(experience.id), // Use experience ID as key
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+        visualDensity: const VisualDensity(horizontal: -4),
       isThreeLine: true,
       titleAlignment: ListTileTitleAlignment.threeLine,
       leading: leadingWidget,
@@ -4916,6 +4973,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
               experience.name,
               overflow: TextOverflow.ellipsis,
               maxLines: 1,
+              style: const TextStyle(fontWeight: FontWeight.bold),
             ),
           ),
           if (matchingEvent != null) ...[
@@ -4943,9 +5001,73 @@ class CollectionsScreenState extends State<CollectionsScreen>
                   ?.copyWith(color: Colors.grey[600]),
             ),
           if (fullAddress != null && fullAddress.isNotEmpty)
-            Text(
-              fullAddress,
-              style: Theme.of(context).textTheme.bodySmall,
+            Padding(
+              padding: const EdgeInsets.only(bottom: 2.0),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      fullAddress,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ),
+                  if (contentCount > 0) ...[
+                    const SizedBox(width: 8),
+                    SizedBox(
+                      width: playButtonDiameter,
+                      height: playButtonDiameter,
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () => _openExperienceContentPreview(experience),
+                        child: Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            Container(
+                              width: playButtonDiameter,
+                              height: playButtonDiameter,
+                              decoration: BoxDecoration(
+                                color: Theme.of(context).primaryColor,
+                                shape: BoxShape.circle,
+                              ),
+                              child: Icon(
+                                Icons.play_arrow,
+                                color: Colors.white,
+                                size: playIconSize,
+                              ),
+                            ),
+                            Positioned(
+                              bottom: badgeOffset,
+                              right: badgeOffset,
+                              child: Container(
+                                width: badgeDiameter,
+                                height: badgeDiameter,
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: Theme.of(context).primaryColor,
+                                    width: badgeBorderWidth,
+                                  ),
+                                ),
+                                child: Center(
+                                  child: Text(
+                                    contentCount.toString(),
+                                    style: TextStyle(
+                                      color: Theme.of(context).primaryColor,
+                                      fontSize: badgeFontSize,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
             ),
           // Row for subcategory icons and/or content count; also lift notes here when no subcategories
           if (shouldShowSubRow)
@@ -5017,57 +5139,6 @@ class CollectionsScreenState extends State<CollectionsScreen>
                       ],
                     ),
                   ),
-                  if (contentCount > 0) ...[
-                    const SizedBox(width: 12),
-                    GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: () => _openExperienceContentPreview(experience),
-                      child: Stack(
-                        clipBehavior: Clip.none,
-                        children: [
-                          Container(
-                            width: playButtonDiameter,
-                            height: playButtonDiameter,
-                            decoration: BoxDecoration(
-                              color: Theme.of(context).primaryColor,
-                              shape: BoxShape.circle,
-                            ),
-                            child: Icon(
-                              Icons.play_arrow,
-                              color: Colors.white,
-                              size: playIconSize,
-                            ),
-                          ),
-                          Positioned(
-                            bottom: badgeOffset,
-                            right: badgeOffset,
-                            child: Container(
-                              width: badgeDiameter,
-                              height: badgeDiameter,
-                              decoration: BoxDecoration(
-                                color: Colors.white,
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: Theme.of(context).primaryColor,
-                                  width: badgeBorderWidth,
-                                ),
-                              ),
-                              child: Center(
-                                child: Text(
-                                  contentCount.toString(),
-                                  style: TextStyle(
-                                    color: Theme.of(context).primaryColor,
-                                    fontSize: badgeFontSize,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
                 ],
               ),
             ),
@@ -5111,6 +5182,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
           });
         }
       },
+      ),
     );
   }
 
@@ -5489,9 +5561,9 @@ class CollectionsScreenState extends State<CollectionsScreen>
     // Build count header widget
     Widget countHeader = Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+      padding: const EdgeInsets.only(top: 2, bottom: 12, left: 16, right: 16),
       decoration: const BoxDecoration(
-        color: Colors.white,
+        color: Color(0xFFF8F5F2),
       ),
       child: Text(
         '${_filteredExperiences.length} ${_filteredExperiences.length == 1 ? 'Experience' : 'Experiences'}',
@@ -5922,7 +5994,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
                         children: [
                           SizedBox(
                             width: 16,
-                            child: Center(child: Text(category.icon)),
+                            child: Center(child: UserCategory.buildIconText(category.icon)),
                           ),
                           const SizedBox(width: 12),
                           Expanded(
@@ -6054,10 +6126,10 @@ class CollectionsScreenState extends State<CollectionsScreen>
       width: double.infinity,
       padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
       decoration: const BoxDecoration(
-        color: Colors.white,
+        color: AppColors.backgroundColor,
       ),
       child: Text(
-        '${_filteredGroupedContentItems.length} ${_filteredGroupedContentItems.length == 1 ? 'Saved Content' : 'Saved Content'}',
+        '${_filteredGroupedContentItems.length} ${_filteredGroupedContentItems.length == 1 ? 'Save' : 'Saves'}',
         style: Theme.of(context).textTheme.titleMedium?.copyWith(
               fontWeight: FontWeight.w400,
               color: Colors.grey,
@@ -7552,7 +7624,10 @@ class CollectionsScreenState extends State<CollectionsScreen>
             contentPadding: const EdgeInsets.symmetric(horizontal: 7.0),
             minLeadingWidth: 24,
             leading: leadingWidget,
-            title: Text(category.name),
+            title: Text(
+              category.name,
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
             subtitle: subtitleWidget,
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
@@ -8288,6 +8363,9 @@ class CollectionsScreenState extends State<CollectionsScreen>
       elevation: 2.0,
       margin: EdgeInsets
           .zero, // Remove card's own margin to better fit GridView cell
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16.0),
+      ),
       child: InkWell(
         onTap: () {
           _showMediaDetailsDialog(group);
@@ -8643,7 +8721,7 @@ class CollectionsScreenState extends State<CollectionsScreen>
             margin: EdgeInsets.zero,
             decoration: BoxDecoration(
               color: Colors.white,
-              borderRadius: BorderRadius.circular(4.0),
+              borderRadius: BorderRadius.circular(16.0),
               boxShadow: [
                 BoxShadow(
                   color: Colors.black.withOpacity(0.1),

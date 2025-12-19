@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:equatable/equatable.dart';
 
@@ -138,5 +139,16 @@ class UserCategory extends Equatable {
         isPrivate: false,
       );
     }).toList();
+  }
+
+  // ADDED: Helper method to build text widget for icon
+  static Widget buildIconText(String icon, {double? fontSize, Color? color}) {
+    return Text(
+      icon,
+      style: TextStyle(
+        fontSize: fontSize,
+        color: color,
+      ),
+    );
   }
 }
