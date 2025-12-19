@@ -276,7 +276,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
               ),
             ],
             currentIndex: _selectedIndex,
-            selectedItemColor: const Color(0xFFD40000), // Red theme color
+            selectedItemColor: Theme.of(context).primaryColor,
             unselectedItemColor: Colors.grey,
             backgroundColor: Colors.white,
             onTap: _onItemTapped,
